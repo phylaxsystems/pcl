@@ -1,6 +1,6 @@
 [workspace]
 members = [
-  "bin/cl", 
+  "bin/cl", "crates/config", 
 ]
 default-members = ["bin/cl"]
 resolver = '2'
@@ -14,3 +14,8 @@ rust-version = "1.80"
 license = "GPL-3.0-only"
 repository = "https://github.com/phylaxsystems/cl"
 exclude = [".github/"]
+
+
+[workspace.dependencies]
+alloy = { version = "0.6.4", features = ["full"] }
+alloy-primitives = "0.8.12"
