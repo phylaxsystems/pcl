@@ -9,4 +9,6 @@ description = "Credible Layer CLI"
 default-run = "cl"
 
 [dependencies]
-clap = { version = "4.5.21", features = ["derive"] }
+tokio.workspace = true
+clap.workspace = true
+cl-config.workspace = true

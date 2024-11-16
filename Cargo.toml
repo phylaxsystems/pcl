@@ -1,6 +1,7 @@
 [workspace]
 members = [
-  "bin/cl", "crates/config", 
+  "bin/cl", 
+  "crates/config", 
 ]
 default-members = ["bin/cl"]
 resolver = '2'
@@ -17,5 +18,10 @@ exclude = [".github/"]
 
 
 [workspace.dependencies]
+cl-config = { path = "crates/config" }
+
 alloy = { version = "0.6.4", features = ["full"] }
 alloy-primitives = "0.8.12"
+
+clap = { version = "4.5.21", features = ["derive"] }
+tokio = { version = "1.34.0", features = ["full"] }
