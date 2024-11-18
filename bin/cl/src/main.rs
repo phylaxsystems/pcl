@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use sp1::host::config::PoRInputs;
+use cl_sp1_host::config::PoRInputs;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

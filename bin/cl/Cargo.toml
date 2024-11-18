@@ -9,5 +9,8 @@ description = "Credible Layer CLI"
 default-run = "cl"
 
 [dependencies]
+
+cl-sp1-host.workspace = true
+
 tokio.workspace = true
 clap.workspace = true

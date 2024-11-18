@@ -1,6 +1,6 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-fn main() {
+pub fn main() {
     println!("Hello, world!");
 }

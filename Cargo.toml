@@ -1,7 +1,8 @@
 [workspace]
 members = [
   "bin/cl", 
-  "crates/sp1"
+  "crates/sp1/host",
+  "crates/sp1/client"
 ]
 default-members = ["bin/cl"]
 resolver = '2'
@@ -18,7 +19,7 @@ exclude = [".github/"]
 
 
 [workspace.dependencies]
-cl-config = { path = "crates/config" }
+cl-sp1-host = { path = "crates/sp1/host" }
 
 alloy = { version = "0.6", features = ["full"] }
 alloy-primitives = "0.8"

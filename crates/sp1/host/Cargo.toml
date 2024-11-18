@@ -1,5 +1,5 @@
 [package]
-name = "cl-sp1"
+name = "cl-sp1-host"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -13,7 +13,6 @@ clap.workspace = true
 
 # workspace
 sp1-cc-host-executor = { git = "https://github.com/succinctlabs/sp1-contract-call", branch = "main" }
-sp1-cc-client-executor = { git = "https://github.com/succinctlabs/sp1-contract-call", branch = "main" }
 
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
