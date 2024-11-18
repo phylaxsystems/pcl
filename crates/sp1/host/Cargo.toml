@@ -30,6 +30,8 @@ eyre.workspace = true
 bincode.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
 
 # sp1
 sp1-sdk = "3.2.0"

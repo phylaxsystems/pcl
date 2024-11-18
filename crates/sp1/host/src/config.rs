@@ -1,8 +1,8 @@
 use clap::Parser;
 use alloy_primitives::{Address, BlockHash, BlockNumber, Bytes};
-
-#[derive(Debug, Parser)]
-pub struct PoRInputs {
+use serde::Serialize;
+#[derive(Debug, Parser, Serialize)]
+pub struct PoRUserInputs {
     /// The Ethereum address of the assertion adopter that will receive the proof
     #[arg(short = 'a', long, help = "Ethereum address of the assertion adopter")]
     assertion_adopter_address: Address,
@@ -22,4 +22,9 @@ pub struct PoRInputs {
     /// The assertion bytes containing the proof data
     #[arg(short = 'b', long, help = "Assertion bytes containing proof data")]
     assertion: Bytes,
+}
+
+
+pub struct PoRInputs {
+    pub user_inputs: PoRUserInputs,
 }

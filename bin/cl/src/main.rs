@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use cl_sp1_host::config::PoRInputs;
+use cl_sp1_host::config::PoRUserInputs;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -12,7 +12,7 @@ struct Cli {
 enum Commands {
     /// Generate Proof of Realization
     #[command(name = "por")]
-    PoR(PoRInputs),
+    PoR(PoRUserInputs),
 }
 
 #[tokio::main]

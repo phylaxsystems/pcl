@@ -1743,7 +1743,9 @@ dependencies = [
  "sp1-cc-host-executor",
  "sp1-helper",
  "sp1-sdk",
+ "thiserror 2.0.3",
  "tokio",
+ "tracing",
  "url",
 ]
 
