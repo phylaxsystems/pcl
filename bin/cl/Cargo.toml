@@ -11,4 +11,3 @@ default-run = "cl"
 [dependencies]
 tokio.workspace = true
 clap.workspace = true
-cl-config.workspace = true
