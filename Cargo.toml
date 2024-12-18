@@ -4,7 +4,7 @@ members = [
   "crates/phoundry",
   "crates/common"
 ]
-default-members = ["bin/cl"]
+default-members = ["bin/pcl"]
 resolver = '2'
 
 
@@ -14,11 +14,13 @@ authors = ["Phylax Systems"]
 edition = "2021"
 rust-version = "1.80"
 license = "GPL-3.0-only"
-repository = "https://github.com/phylaxsystems/cl"
+repository = "https://github.com/phylaxsystems/pcl"
 exclude = [".github/"]
 
 
 [workspace.dependencies]
 forge = { git = "https://github.com/phylaxsystems/phoundry.git", branch = "master" }
 foundry_cli = { git = "https://github.com/phylaxsystems/phoundry.git", branch = "master" }
-tokio = "1.39.0"
+tokio = { version = "1.39.0", features = ["full"] }
+clap = { version = "4.5.23", features = ["derive"] }
+eyre = "0.6.12"

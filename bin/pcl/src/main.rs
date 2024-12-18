@@ -1,20 +1,19 @@
-use clap::Parser;
-use foundry_cli::forge::Forge;
+use clap::{command, Parser, Subcommand};
+use eyre::Result;
 
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
-    " (",
+    "\nCommit: ",
     env!("VERGEN_GIT_SHA"),
-    " ",
+    "\nBuild Timestamp: ",
     env!("VERGEN_BUILD_TIMESTAMP"),
-    ")"
 );
 
 #[derive(Parser)]
 #[command(
-    name = "cl",
+    name = "pcl",
     version = VERSION_MESSAGE,
-    about = "Command line interface for Phylax Systems tools"
+    about = "The Credible CLI for the Credible Layer"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -23,27 +22,13 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Commands {
-    /// Forge commands for smart contract development
-    Forge(forge::Forge),
-    
-    /// Local development and testing tools
-    Dev {
-        #[arg(short, long)]
-        verbose: bool,
-    },
 }
 
 #[tokio::main]
-async fn main() -> eyre::Result<()> {
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Forge(cmd) => cmd.run().await?,
-        Commands::Dev { verbose } => {
-            if verbose {
-                println!("Running in verbose mode");
-            }
-        }
     }
 
     Ok(())
