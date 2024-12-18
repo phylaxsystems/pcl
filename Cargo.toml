@@ -19,8 +19,10 @@ exclude = [".github/"]
 
 
 [workspace.dependencies]
-forge = { git = "https://github.com/phylaxsystems/phoundry.git", branch = "master" }
-foundry_cli = { git = "https://github.com/phylaxsystems/phoundry.git", branch = "master" }
+pcl-phoundry = { path = "crates/phoundry" }
+pcl-common = { path = "crates/common" }
+
 tokio = { version = "1.39.0", features = ["full"] }
 clap = { version = "4.5.23", features = ["derive"] }
 eyre = "0.6.12"
+thiserror = "2"

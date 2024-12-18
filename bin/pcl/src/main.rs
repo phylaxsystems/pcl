@@ -1,5 +1,6 @@
 use clap::{command, Parser};
 use eyre::Result;
+use pcl_phoundry::Phoundry;
 
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -22,11 +23,15 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Commands {
+    Phoundry(Phoundry),
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _cli = Cli::parse();
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::Phoundry(phoundry) => phoundry.run(phoundry.args.clone()),
+    }?;
     Ok(())
 }
 

@@ -1314,6 +1314,7 @@ dependencies = [
  "anyhow",
  "clap",
  "eyre",
+ "pcl-phoundry",
  "tokio",
  "vergen-gix",
 ]
@@ -1325,6 +1326,10 @@ version = "0.0.1"
 [[package]]
 name = "pcl-phoundry"
 version = "0.0.1"
+dependencies = [
+ "clap",
+ "thiserror",
+]
 
 [[package]]
 name = "percent-encoding"

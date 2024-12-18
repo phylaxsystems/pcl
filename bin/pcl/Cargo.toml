@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+pcl-phoundry = { workspace = true }
+
 clap = { workspace = true }
 tokio = { workspace = true }
 eyre = { workspace = true }
@@ -15,4 +17,3 @@ eyre = { workspace = true }
 [build-dependencies]
 vergen-gix = { version = "1.0.3", features = ["build", "cargo", "rustc", "si"] }
 anyhow = "1"
-
