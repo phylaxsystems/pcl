@@ -28,6 +28,9 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Check if forge is installed
+    Phoundry::forge_must_be_installed()?;
+
     let cli = Cli::parse();
     match cli.command {
         Commands::Phoundry(phoundry) => phoundry.run(phoundry.args.clone()),
