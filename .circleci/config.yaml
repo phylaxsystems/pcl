@@ -1,0 +1,67 @@
+version: 2.1
+executors:
+  rust:
+    docker:
+      - image: cimg/rust:1.83
+    working_directory: /mnt/ramdisk
+
+commands:
+  git-auth:
+    steps:
+      - run:
+          name: Configure Git Auth
+          command: |
+            git config --global url."https://$GITHUB_TOKEN@github.com".insteadOf ssh://git@github.com
+            git config --global url."https://$GITHUB_TOKEN@github.com/".insteadOf git@github.com:
+  install-deps:
+    steps:
+      - run:
+          name: Install Dependencies
+          command: |
+            sudo apt update && sudo apt install --yes clang
+
+references:
+  context: &context
+    context:
+      - phylax
+
+jobs:
+  test:
+    executor: rust
+    steps:
+      - checkout
+      - install-deps
+      - git-auth
+      - run:
+          name: Run cargo test
+          command: cargo test
+
+  format:
+    executor: rust
+    steps:
+      - checkout
+      - git-auth
+      - run:
+          name: Check formatting
+          command: cargo fmt --all -- --check
+
+  clippy:
+    executor: rust
+    steps:
+      - checkout
+      - install-deps
+      - git-auth
+      - run:
+          name: Run clippy
+          command: cargo clippy -- -D warnings
+
+workflows:
+  version: 2
+  test-and-lint:
+    jobs:
+      - test:
+          <<: *context
+      - format:
+          <<: *context
+      - clippy:
+          <<: *context
