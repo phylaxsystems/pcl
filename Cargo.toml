@@ -1,6 +1,8 @@
 [workspace]
 members = [
-  "bin/cl", 
+  "bin/pcl", 
+  "crates/phoundry",
+  "crates/common"
 ]
 default-members = ["bin/cl"]
 resolver = '2'
@@ -14,3 +16,9 @@ rust-version = "1.80"
 license = "GPL-3.0-only"
 repository = "https://github.com/phylaxsystems/cl"
 exclude = [".github/"]
+
+
+[workspace.dependencies]
+forge = { git = "https://github.com/phylaxsystems/phoundry.git", branch = "master" }
+foundry_cli = { git = "https://github.com/phylaxsystems/phoundry.git", branch = "master" }
+tokio = "1.39.0"
