@@ -1,4 +1,4 @@
-use clap::{command, Parser, Subcommand};
+use clap::{command, Parser};
 use eyre::Result;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -26,10 +26,7 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
-
-    match cli.command {
-    }
-
+    let _cli = Cli::parse();
     Ok(())
 }
+
