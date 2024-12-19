@@ -1,0 +1,6 @@
+[submodule "mocks/mock-protocol/mocks/mock-protocol/mocks/mock-protocol/lib/credible-std"]
+	path = mocks/mock-protocol/mocks/mock-protocol/mocks/mock-protocol/lib/credible-std
+	url = https://github.com/phylaxsystems/credible-std
+[submodule "mocks/mock-protocol/lib/credible-std"]
+	path = mocks/mock-protocol/lib/credible-std
+	url = https://github.com/phylaxsystems/credible-std

@@ -9,5 +9,8 @@ repository.workspace = true
 
 
 [dependencies]
+# PCL deps
+pcl-common = { workspace = true }
+
 clap = { workspace = true }
 thiserror = { workspace = true }

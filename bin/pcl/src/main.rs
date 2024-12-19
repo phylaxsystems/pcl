@@ -1,6 +1,7 @@
 use clap::{command, Parser};
 use eyre::Result;
 use pcl_phoundry::Phoundry;
+use pcl_common::args::CliArgs;
 
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -19,6 +20,8 @@ const VERSION_MESSAGE: &str = concat!(
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    #[command(flatten)]
+    args: CliArgs,
 }
 
 #[derive(clap::Subcommand)]
@@ -33,8 +36,7 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Phoundry(phoundry) => phoundry.run(phoundry.args.clone()),
+        Commands::Phoundry(phoundry) => phoundry.run(cli.args.clone(), phoundry.args.clone()),
     }?;
     Ok(())
 }
-

@@ -1314,20 +1314,25 @@ dependencies = [
  "anyhow",
  "clap",
  "eyre",
+ "pcl-common",
  "pcl-phoundry",
  "tokio",
  "vergen-gix",
 ]
 
 [[package]]
-name = "pcl-auth"
+name = "pcl-common"
 version = "0.0.1"
+dependencies = [
+ "clap",
+]
 
 [[package]]
 name = "pcl-phoundry"
 version = "0.0.1"
 dependencies = [
  "clap",
+ "pcl-common",
  "thiserror",
 ]
 

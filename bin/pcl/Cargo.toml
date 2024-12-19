@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 pcl-phoundry = { workspace = true }
+pcl-common = { workspace = true }
 
 clap = { workspace = true }
 tokio = { workspace = true }
