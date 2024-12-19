@@ -1,6 +1,6 @@
 use clap::{command, Parser};
 use eyre::Result;
-use pcl_phoundry::Phoundry;
+use pcl_phoundry::{build::BuildArgs, Phoundry, PhoundryError};
 use pcl_common::args::CliArgs;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -27,6 +27,7 @@ struct Cli {
 #[derive(clap::Subcommand)]
 enum Commands {
     Phoundry(Phoundry),
+    Build(BuildArgs),
 }
 
 #[tokio::main]
@@ -36,7 +37,14 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Phoundry(phoundry) => phoundry.run(cli.args.clone(), phoundry.args.clone()),
+        Commands::Phoundry(phoundry) => {
+            let _ = phoundry.run(cli.args.clone(), true)?;
+            Ok::<(), PhoundryError>(())
+        }
+        Commands::Build(build) => {
+            build.run(cli.args.clone())?;
+            Ok::<(), PhoundryError>(())
+        }
     }?;
     Ok(())
 }

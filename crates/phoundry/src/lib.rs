@@ -1,7 +1,9 @@
-use std::{env, path::Path, process::Command};
+use std::{env, path::Path, process::{Command, Output}};
 
 use pcl_common::args::CliArgs;
 use thiserror::Error;
+
+pub mod build;
 
 const FORGE_BINARY_PATH: &str = "forge";
 
@@ -17,29 +19,26 @@ impl Phoundry {
     /// We do this so that we don't have to re-write the forge command in the CLI, as 
     /// a lot of the functionality is implemented as part of the forge binary, which we can't import
     /// as a crate.
-    pub fn run(&self, cli_args: CliArgs, phoundry_args: Vec<String>) -> Result<(), PhoundryError> {
-
+    pub fn run(&self, cli_args: CliArgs, print_output: bool) -> Result<Output, PhoundryError> {
         // Execute forge and pass through all output exactly as-is
         let mut command = Command::new(FORGE_BINARY_PATH);
 
-        command.args(phoundry_args);
+        command.args(self.args.clone());
 
         // Only valid for the context of this binary execution
         env::set_var("FOUNDRY_SRC", cli_args.assertions_src().as_os_str().to_str().unwrap());
         env::set_var("FOUNDRY_TEST", cli_args.assertions_test().as_os_str().to_str().unwrap());
         
         let output = command.output()?;
-
-
         
         // Pass through stdout/stderr exactly as forge produced them
-        if !output.stdout.is_empty() {
+        if print_output && !output.stdout.is_empty() {
             print!("{}", String::from_utf8_lossy(&output.stdout));
         }
         if !output.stderr.is_empty() {
             eprint!("{}", String::from_utf8_lossy(&output.stderr)); 
         }
-        Ok(())
+        Ok(output)
     }
 
     /// Check if forge is installed and available in the PATH.
@@ -54,20 +53,7 @@ impl Phoundry {
         Ok(())
     }
 
-    pub fn build_assertions(&self, assertions_path: &Path) -> Result<(), PhoundryError> {
-        let mut command = Command::new(FORGE_BINARY_PATH);
-        command.args(["--force", "-C", assertions_path.as_os_str().to_str().unwrap()]);
-        let output = command.output()?;
-        
-        // Pass through stdout/stderr exactly as forge produced them
-        if !output.stdout.is_empty() {
-            print!("{}", String::from_utf8_lossy(&output.stdout));
-        }
-        if !output.stderr.is_empty() {
-            eprint!("{}", String::from_utf8_lossy(&output.stderr)); 
-        }
-        Ok(())
-    }
+
 
 }
 
@@ -77,6 +63,8 @@ pub enum PhoundryError {
     ForgeNotInstalled,
     #[error("forge command failed")]
     ForgeCommandFailed(#[from] std::io::Error),
+    #[error("invalid forge output")]
+    InvalidForgeOutput(&'static str),
 }
 
 
