@@ -129,3 +129,170 @@ impl BuildArgs {
         Ok(String::from_utf8_lossy(&flatten_output.stdout).to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn get_sample_forge_output() -> serde_json::Value {
+        serde_json::from_str(include_str!("../../../testdata/forge-build-output.json"))
+            .expect("Failed to parse test JSON")
+    }
+
+    #[test]
+    fn test_parse_forge_output() {
+        let args = BuildArgs { assertions: vec![] };
+        let json_bytes = serde_json::to_vec(&get_sample_forge_output()).unwrap();
+        
+        let result = args.parse_forge_output(&json_bytes);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_extract_contracts() {
+        let args = BuildArgs { assertions: vec![] };
+        let json = get_sample_forge_output();
+        
+        let contracts = args.extract_contracts(&json);
+        assert!(contracts.is_ok());
+        
+        let contracts = contracts.unwrap();
+        assert!(contracts.contains_key("/Users/odysseas/code/phylax/pcl/mocks/mock-protocol/assertions/src/Assertion.sol"));
+    }
+
+    #[test]
+    fn test_process_contracts() {
+        let args = BuildArgs { 
+            assertions: vec!["TestIncrement".to_string()]
+        };
+        let json = get_sample_forge_output();
+        let contracts = args.extract_contracts(&json).unwrap();
+        
+        let builds = args.process_contracts(contracts);
+        assert!(builds.is_ok());
+        
+        let builds = builds.unwrap();
+        assert!(!builds.is_empty());
+        assert_eq!(builds[0].contract_name, "TestIncrement");
+    }
+
+    #[test]
+    fn test_extract_metadata() {
+        let args = BuildArgs { assertions: vec![] };
+        let impl_data = json!({
+            "contract": {
+                "metadata": "{\"compiler\":{\"version\":\"0.8.28+commit.7893614a\"}}"
+            }
+        });
+
+        let metadata = args.extract_metadata(&impl_data);
+        assert!(metadata.is_ok());
+        assert!(metadata.unwrap().contains("0.8.28"));
+    }
+
+    #[test]
+    fn test_extract_bytecode() {
+        let args = BuildArgs { assertions: vec![] };
+        let impl_data = json!({
+            "contract": {
+                "evm": {
+                    "bytecode": {
+                        "object": "6080604052"
+                    }
+                }
+            }
+        });
+
+        let bytecode = args.extract_bytecode(&impl_data);
+        assert!(bytecode.is_ok());
+        assert_eq!(bytecode.unwrap(), "6080604052");
+    }
+
+    #[test]
+    fn test_process_contracts_with_multiple_assertions() {
+        let args = BuildArgs { 
+            assertions: vec!["TestIncrement".to_string(), "Assertion".to_string()]
+        };
+        let json = get_sample_forge_output();
+        let contracts = args.extract_contracts(&json).unwrap();
+        
+        let builds = args.process_contracts(contracts).unwrap();
+        assert_eq!(builds.len(), 3); // Should find both TestIncrement implementations and the Assertion 
+    }
+
+    #[test]
+    fn test_process_contracts_with_nonexistent_assertion() {
+        let args = BuildArgs { 
+            assertions: vec!["NonexistentContract".to_string()]
+        };
+        let json = get_sample_forge_output();
+        let contracts = args.extract_contracts(&json).unwrap();
+        
+        let builds = args.process_contracts(contracts).unwrap();
+        assert!(builds.is_empty());
+    }
+
+    #[test]
+    fn test_extract_real_metadata() {
+        let args = BuildArgs { assertions: vec![] };
+        let json = get_sample_forge_output();
+        let contracts = args.extract_contracts(&json).unwrap();
+        
+        // Get TestIncrement implementation data
+        let test_increment_contract = contracts
+            .get("/Users/odysseas/code/phylax/pcl/mocks/mock-protocol/assertions/src/Assertion.sol")
+            .unwrap()
+            .get("TestIncrement")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .first()
+            .unwrap();
+
+        let metadata = args.extract_metadata(test_increment_contract).unwrap();
+        assert!(metadata.contains("0.8.28+commit.7893614a"));
+        assert!(metadata.contains("TestIncrement"));
+        assert!(metadata.contains("assertions/src/Assertion.sol"));
+    }
+
+    #[test]
+    fn test_extract_real_bytecode() {
+        let args = BuildArgs { assertions: vec![] };
+        let json = get_sample_forge_output();
+        let contracts = args.extract_contracts(&json).unwrap();
+        
+        // Get TestIncrement implementation data
+        let test_increment_contract = contracts
+            .get("/Users/odysseas/code/phylax/pcl/mocks/mock-protocol/assertions/src/Assertion.sol")
+            .unwrap()
+            .get("TestIncrement")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .first()
+            .unwrap();
+
+        let bytecode = args.extract_bytecode(test_increment_contract).unwrap();
+        assert_eq!(bytecode, "6080604052348015600e575f5ffd5b50606280601a5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063220ba53014602a575b5f5ffd5b00fea264697066735822122018124cd9024a76b0f76b2f8dadfc710b78dbc511767938c9833fddf657c8553c64736f6c634300081c0033");
+    }
+
+    #[test]
+    fn test_all_contract_paths() {
+        let args = BuildArgs { assertions: vec![] };
+        let json = get_sample_forge_output();
+        let contracts = args.extract_contracts(&json).unwrap();
+        
+        let expected_paths = vec![
+            "/Users/odysseas/code/phylax/pcl/mocks/mock-protocol/assertions/src/Assertion.sol",
+            "/Users/odysseas/code/phylax/pcl/mocks/mock-protocol/assertions/test/Increment.t.sol",
+            "/Users/odysseas/code/phylax/pcl/mocks/mock-protocol/lib/credible-std/src/Assertion.sol",
+            "/Users/odysseas/code/phylax/pcl/mocks/mock-protocol/lib/credible-std/src/Credible.sol",
+            "/Users/odysseas/code/phylax/pcl/mocks/mock-protocol/lib/credible-std/src/PhEvm.sol",
+        ];
+
+        for path in expected_paths {
+            assert!(contracts.contains_key(path));
+        }
+    }
+}
