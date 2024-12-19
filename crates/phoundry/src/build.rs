@@ -13,7 +13,8 @@ pub struct BuildArgs {
 struct AssertionBuildOutput {
     pub contract_name: String,
     pub bytecode: String,
-    pub source: String
+    pub source: String,
+    pub compiler_metadata: String
 }
 
 impl BuildArgs {    
@@ -44,14 +45,16 @@ impl BuildArgs {
                         .ok_or(PhoundryError::InvalidForgeOutput("invalid implementations format"))?;
 
                     for impl_data in implementations {
+
+                        let compiler_metadata = impl_data.get("contract").and_then(|c| c.get("metadata")).and_then(|m| m.as_str()).ok_or(PhoundryError::InvalidForgeOutput("missing or invalid metadata"))?.to_string();
                         // Extract bytecode using chained get() calls
-                        let bytecode_str = impl_data
+                        let bytecode = impl_data
                             .get("contract")
                             .and_then(|c| c.get("evm"))
                             .and_then(|e| e.get("bytecode"))
                             .and_then(|b| b.get("object"))
                             .and_then(|o| o.as_str())
-                            .ok_or(PhoundryError::InvalidForgeOutput("missing or invalid bytecode"))?;
+                            .ok_or(PhoundryError::InvalidForgeOutput("missing or invalid bytecode"))?.to_string();
 
                         // Get flattened source
                         let flatten_args = vec!["flatten".to_string(), path.to_string()];
@@ -61,8 +64,9 @@ impl BuildArgs {
 
                         assertion_builds.push(AssertionBuildOutput {
                             contract_name: contract_name.clone(),
-                            bytecode: bytecode_str.to_string(),
+                            bytecode,
                             source,
+                            compiler_metadata
                         });
                     }
                 }
