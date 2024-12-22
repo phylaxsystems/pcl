@@ -5,7 +5,7 @@ use thiserror::Error;
 
 pub mod build;
 
-const FORGE_BINARY_PATH: &str = "forge";
+const FORGE_BINARY_PATH: &str = "phorge";
 
 #[derive(clap::Parser)]
 pub struct Phoundry {
