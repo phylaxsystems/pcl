@@ -1,4 +1,4 @@
-use std::{env, path::Path, process::{Command, Output}};
+use std::{env, process::{Command, Output}};
 
 use pcl_common::args::CliArgs;
 use thiserror::Error;

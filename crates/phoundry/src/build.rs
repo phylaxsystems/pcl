@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use clap::Parser;
 use pcl_common::args::CliArgs;
 
@@ -24,7 +23,7 @@ impl BuildArgs {
         if !build_output.stdout.is_empty() {
             let json_output = self.parse_forge_output(&build_output.stdout)?;
             let contracts = self.extract_contracts(&json_output)?;
-            let assertion_builds = self.process_contracts(&contracts)?;
+            let _assertion_builds = self.process_contracts(&contracts)?;
         }
 
         if !build_output.stderr.is_empty() {
@@ -47,7 +46,7 @@ impl BuildArgs {
             .map_err(|_| PhoundryError::InvalidForgeOutput("invalid json output"))
     }
 
-    fn extract_contracts<'a>(&'a self, json_output: &'a serde_json::Value) -> Result<&serde_json::Map<String, serde_json::Value>, PhoundryError> {
+    fn extract_contracts<'a>(&'a self, json_output: &'a serde_json::Value) -> Result<&'a serde_json::Map<String, serde_json::Value>, PhoundryError> {
         json_output.get("contracts")
             .and_then(|c| c.as_object())
             .ok_or(PhoundryError::InvalidForgeOutput("invalid contracts field"))
