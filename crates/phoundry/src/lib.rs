@@ -16,11 +16,11 @@ fn get_forge_binary_path() -> PathBuf {
 }
 
 #[derive(clap::Parser)]
-pub struct Phoundry {
+pub struct Phorge {
     pub args: Vec<String>,
 }
 
-impl Phoundry {
+impl Phorge {
     /// Run the forge command with the given arguments.
     /// Phoundry should be installed as part of the pcl workspace, meaning that we 
     /// can assume that forge is available in the PATH.
@@ -84,6 +84,6 @@ mod tests {
 
     #[test]
     fn test_forge_must_be_installed() {
-        assert!(Phoundry::forge_must_be_installed().is_ok());
+        assert!(Phorge::forge_must_be_installed().is_ok());
     }
 }

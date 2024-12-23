@@ -1,7 +1,7 @@
 use clap::Parser;
 use pcl_common::args::CliArgs;
 
-use crate::{Phoundry, PhoundryError};
+use crate::{Phorge, PhoundryError};
 
 #[derive(Parser)]
 pub struct BuildArgs {
@@ -37,7 +37,7 @@ impl BuildArgs {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let phoundry = Phoundry { args };
+        let phoundry = Phorge{ args };
         phoundry.run(cli_args.clone(), false)
     }
 
@@ -123,7 +123,7 @@ impl BuildArgs {
 
     fn get_flattened_source(&self, path: &str) -> Result<String, PhoundryError> {
         let flatten_args = vec!["flatten".to_string(), path.to_string()];
-        let phoundry = Phoundry { args: flatten_args };
+        let phoundry = Phorge{ args: flatten_args };
         let flatten_output = phoundry.run(CliArgs::default(), false)?;
         Ok(String::from_utf8_lossy(&flatten_output.stdout).to_string())
     }

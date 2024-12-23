@@ -1,6 +1,6 @@
 use clap::{command, Parser};
 use eyre::Result;
-use pcl_phoundry::{build::BuildArgs, Phoundry, PhoundryError};
+use pcl_phoundry::{build::BuildArgs, Phorge, PhoundryError};
 use pcl_common::args::CliArgs;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -26,19 +26,19 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Commands {
-    Phoundry(Phoundry),
+    Phorge(Phorge),
     Build(BuildArgs),
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Check if forge is installed
-    Phoundry::forge_must_be_installed()?;
+    Phorge::forge_must_be_installed()?;
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Phoundry(phoundry) => {
-            let _ = phoundry.run(cli.args.clone(), true)?;
+        Commands::Phorge(phorge) => {
+            let _ = phorge.run(cli.args.clone(), true)?;
             Ok::<(), PhoundryError>(())
         }
         Commands::Build(build) => {
