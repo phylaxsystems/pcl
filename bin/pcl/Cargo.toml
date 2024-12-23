@@ -7,6 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+build = "build.rs"
+
 [dependencies]
 pcl-phoundry = { workspace = true }
 pcl-common = { workspace = true }
