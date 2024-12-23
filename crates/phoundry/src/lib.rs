@@ -1,11 +1,19 @@
-use std::{env, process::{Command, Output}};
+use std::{env, path::PathBuf, process::{Command, Output}};
 
 use pcl_common::args::CliArgs;
 use thiserror::Error;
 
 pub mod build;
 
-const FORGE_BINARY_PATH: &str = "phorge";
+const FORGE_BINARY_NAME: &str = "phorge";
+
+// Remove the const and add a function to get the forge binary path
+fn get_forge_binary_path() -> PathBuf {
+    let exe_path = env::current_exe().expect("Failed to get current executable path");
+    exe_path.parent()
+        .expect("Failed to get executable directory")
+        .join(FORGE_BINARY_NAME)
+}
 
 #[derive(clap::Parser)]
 pub struct Phoundry {
@@ -21,7 +29,7 @@ impl Phoundry {
     /// as a crate.
     pub fn run(&self, cli_args: CliArgs, print_output: bool) -> Result<Output, PhoundryError> {
         // Execute forge and pass through all output exactly as-is
-        let mut command = Command::new(FORGE_BINARY_PATH);
+        let mut command = Command::new(get_forge_binary_path());
 
         command.args(self.args.clone());
 
@@ -43,7 +51,7 @@ impl Phoundry {
 
     /// Check if forge is installed and available in the PATH.
     pub fn forge_must_be_installed() -> Result<(), PhoundryError> {
-        if !Command::new(FORGE_BINARY_PATH)
+        if !Command::new(get_forge_binary_path())
             .arg("--version")
             .output()
             .is_ok()

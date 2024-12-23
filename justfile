@@ -1,21 +1,24 @@
 phoundry-repo := "https://github.com/phylaxsystems/phoundry"
 phoundry-dir := "phoundry"
 
+cargo-mode mode="release":
+    if [ {{mode}} == "release" ]; then echo "--release"; else echo ""; fi
+
 setup-phoundry mode="release":
     #!/usr/bin/env sh
-    cd {{phoundry-dir}} && cargo build --bin forge --{{mode}}
+    cd {{phoundry-dir}} && cargo build --bin forge `just cargo-mode {{mode}}`
 
 build-all mode="release":
-    cargo build --{{mode}}
+    cargo build `just cargo-mode {{mode}}`
     just update-phoundry
-    just setup-phoundry mode={{mode}}
+    just setup-phoundry {{mode}}
+    just place-phoundry-bin {{mode}}
 
 update-phoundry:
     git submodule update --init --recursive --remote
     cd {{phoundry-dir}} && git checkout master && git pull
 
 place-phoundry-bin mode="release":
-    mkdir -p target/{{mode}}
     cp {{phoundry-dir}}/target/{{mode}}/forge target/{{mode}}/phorge
 
     
