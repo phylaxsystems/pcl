@@ -3,18 +3,25 @@ use pcl_common::args::CliArgs;
 
 use crate::{Phorge, PhoundryError};
 
-#[derive(Parser)]
-pub struct BuildArgs {
-    pub assertions: Vec<String>,
-}
 
-#[derive(Debug, Default)]
-struct AssertionBuildOutput {
+pub struct AssertionBuildOutput {
     pub contract_name: String,
     pub bytecode: String,
     pub source: String,
     pub compiler_metadata: String,
 }
+
+impl AssertionBuildOutput {
+    pub fn new(contract_name: String, bytecode: String, source: String, compiler_metadata: String) -> Self {
+        Self { contract_name, bytecode, source, compiler_metadata }
+    }
+}
+
+#[derive(Parser)]
+pub struct BuildArgs {
+    pub assertions: Vec<String>,
+}
+
 
 impl BuildArgs {
     pub fn run(&self, cli_args: CliArgs) -> Result<(), PhoundryError> {
@@ -111,12 +118,12 @@ impl BuildArgs {
             let bytecode = self.extract_bytecode(impl_data)?;
             let source = self.get_flattened_source(path)?;
 
-            builds.push(AssertionBuildOutput {
-                contract_name: contract_name.to_string(),
+            builds.push(AssertionBuildOutput::new(
+                contract_name.to_string(),
                 bytecode,
                 source,
                 compiler_metadata,
-            });
+            ));
         }
 
         Ok(builds)
