@@ -1,8 +1,8 @@
-use clap::{Parser};
+use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Parser, Clone)]
-pub struct CliArgs{
+pub struct CliArgs {
     #[arg(short = 'd', long, env = "PCL_ROOT")]
     pub assertions_dir: Option<PathBuf>,
 }
@@ -18,11 +18,13 @@ impl CliArgs {
 
     pub fn assertions_test(&self) -> PathBuf {
         self.assertions_dir().join("test")
-    }   
+    }
 }
 
 impl Default for CliArgs {
     fn default() -> Self {
-        Self { assertions_dir: Some(PathBuf::from("assertions")) }
+        Self {
+            assertions_dir: Some(PathBuf::from("assertions")),
+        }
     }
 }

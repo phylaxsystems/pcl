@@ -1,7 +1,5 @@
 use anyhow::Result;
-use vergen_gix::{
-    BuildBuilder, CargoBuilder, Emitter, GixBuilder, RustcBuilder, SysinfoBuilder,
-};
+use vergen_gix::{BuildBuilder, CargoBuilder, Emitter, GixBuilder, RustcBuilder, SysinfoBuilder};
 
 pub fn main() -> Result<()> {
     println!("cargo:rerun-if-changed=build.rs");

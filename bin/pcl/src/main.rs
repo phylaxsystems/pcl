@@ -1,7 +1,7 @@
 use clap::{command, Parser};
 use eyre::Result;
-use pcl_phoundry::{build::BuildArgs, Phorge, PhoundryError};
 use pcl_common::args::CliArgs;
+use pcl_phoundry::{build::BuildArgs, Phorge, PhoundryError};
 
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
