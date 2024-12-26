@@ -23,7 +23,7 @@ impl BuildArgs {
         if !build_output.stdout.is_empty() {
             let json_output = self.parse_forge_output(&build_output.stdout)?;
             let contracts = self.extract_contracts(&json_output)?;
-            let _assertion_builds = self.process_contracts(&contracts)?;
+            let _assertion_builds = self.process_contracts(contracts)?;
         }
 
         if !build_output.stderr.is_empty() {
@@ -36,7 +36,7 @@ impl BuildArgs {
         &self,
         cli_args: &CliArgs,
     ) -> Result<std::process::Output, PhoundryError> {
-        let args = vec![
+        let args = [
             "build",
             "--force",
             "-C",
