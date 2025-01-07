@@ -15,8 +15,8 @@ It requires the following:
 After you have installed the above, you can build the CLI by running the following:
 
 ```bash
-cd pcl
 git clone git@github.com:phylaxsystems/pcl.git
+cd pcl
 just build-all
 ```
 
