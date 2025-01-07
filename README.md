@@ -9,7 +9,7 @@ The Credible CLI is a command-line interface for the Credible Layer.
 It requires the following:
 
 - `just`
-- `Rust nightly`
+- `Rust >= 1.86 nightly`
 - `git`
 
 After you have installed the above, you can build the CLI by running the following:
