@@ -1,0 +1,7 @@
+[submodule "credible-std"]
+	path = testdata/mock-protocol/lib/credible-std
+	url = https://github.com/phylaxsystems/credible-std
+[submodule "phoundry"]
+	path = phoundry
+	url = https://github.com/phylaxsystems/phoundry
+	branch = pcl

@@ -1,9 +1,9 @@
 use anyhow::Result;
-use vergen_gix::{
-    BuildBuilder, CargoBuilder, Emitter, GixBuilder, RustcBuilder, SysinfoBuilder,
-};
+use vergen_gix::{BuildBuilder, CargoBuilder, Emitter, GixBuilder, RustcBuilder, SysinfoBuilder};
 
 pub fn main() -> Result<()> {
+    println!("cargo:rerun-if-changed=build.rs");
+
     Emitter::default()
         .add_instructions(&BuildBuilder::all_build()?)?
         .add_instructions(&CargoBuilder::all_cargo()?)?
