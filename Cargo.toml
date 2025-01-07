@@ -6,6 +6,7 @@ members = [
 ]
 default-members = ["bin/pcl"]
 resolver = '2'
+exclude = [".github", "phoundry/"]
 
 
 [workspace.package]
@@ -15,7 +16,6 @@ edition = "2021"
 rust-version = "1.80"
 license = "GPL-3.0-only"
 repository = "https://github.com/phylaxsystems/pcl"
-exclude = [".github/"]
 
 
 [workspace.dependencies]

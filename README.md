@@ -24,7 +24,7 @@ This will build the CLI and install it in the `target/release` directory.
 
 ### Usage
 
-```
+```bash
 The Credible CLI for the Credible Layer
 
 Usage: pcl [OPTIONS] <COMMAND>
@@ -54,7 +54,7 @@ pcl --assertions-dir mock-protocol/assertions phorge
 
 Phorge expects the following directory structure:
 
-```
+```text
   assertions/
     src/
     test/

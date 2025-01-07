@@ -4,16 +4,16 @@ use pcl_common::args::CliArgs;
 use crate::{Phorge, PhoundryError};
 
 
+#[derive(Debug)]
 pub struct AssertionBuildOutput {
     pub contract_name: String,
     pub bytecode: String,
-    pub source: String,
     pub compiler_metadata: String,
 }
 
 impl AssertionBuildOutput {
-    pub fn new(contract_name: String, bytecode: String, source: String, compiler_metadata: String) -> Self {
-        Self { contract_name, bytecode, source, compiler_metadata }
+    pub fn new(contract_name: String, bytecode: String, compiler_metadata: String) -> Self {
+        Self { contract_name, bytecode, compiler_metadata }
     }
 }
 
@@ -91,7 +91,7 @@ impl BuildArgs {
                     continue;
                 }
 
-                let builds = self.process_implementations(implementations, path, contract_name)?;
+                let builds = self.process_implementations(implementations, contract_name)?;
                 assertion_builds.extend(builds);
             }
         }
@@ -102,7 +102,6 @@ impl BuildArgs {
     fn process_implementations(
         &self,
         implementations: &serde_json::Value,
-        path: &str,
         contract_name: &str,
     ) -> Result<Vec<AssertionBuildOutput>, PhoundryError> {
         let mut builds = Vec::new();
@@ -116,12 +115,9 @@ impl BuildArgs {
         for impl_data in implementations {
             let compiler_metadata = self.extract_metadata(impl_data)?;
             let bytecode = self.extract_bytecode(impl_data)?;
-            let source = self.get_flattened_source(path)?;
-
             builds.push(AssertionBuildOutput::new(
                 contract_name.to_string(),
                 bytecode,
-                source,
                 compiler_metadata,
             ));
         }

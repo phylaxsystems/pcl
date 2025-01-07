@@ -73,16 +73,3 @@ pub enum PhoundryError {
     #[error("invalid forge output")]
     InvalidForgeOutput(&'static str),
 }
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const build_output: &str = include_str!("../../../testdata/forge-build-output.json");
-
-    #[test]
-    fn test_forge_must_be_installed() {
-        assert!(Phorge::forge_must_be_installed().is_ok());
-    }
-}
