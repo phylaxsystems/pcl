@@ -16,7 +16,7 @@ build-all mode="release":
 
 update-phoundry:
     git submodule update --init --recursive --remote
-    cd {{phoundry-dir}} && git pull
+    cd {{phoundry-dir}}
 
 place-phoundry-bin mode="release":
     cp {{phoundry-dir}}/target/{{mode}}/forge target/{{mode}}/phorge
