@@ -3,7 +3,6 @@ use pcl_common::args::CliArgs;
 
 use crate::{Phorge, PhoundryError};
 
-
 #[derive(Debug)]
 pub struct AssertionBuildOutput {
     pub contract_name: String,
@@ -13,7 +12,11 @@ pub struct AssertionBuildOutput {
 
 impl AssertionBuildOutput {
     pub fn new(contract_name: String, bytecode: String, compiler_metadata: String) -> Self {
-        Self { contract_name, bytecode, compiler_metadata }
+        Self {
+            contract_name,
+            bytecode,
+            compiler_metadata,
+        }
     }
 }
 
@@ -21,7 +24,6 @@ impl AssertionBuildOutput {
 pub struct BuildArgs {
     pub assertions: Vec<String>,
 }
-
 
 impl BuildArgs {
     pub fn run(&self, cli_args: CliArgs) -> Result<(), PhoundryError> {
