@@ -4,7 +4,13 @@ pragma solidity 0.8.28;
 import {Assertion} from "credible-std/Assertion.sol";
 import {MockProtocol} from "../../src/protocol.sol";
 
-contract MockAssertion is Assertion, MockProtocol {
+contract MockAssertion is Assertion {
+    MockProtocol immutable protocol;
+
+    constructor(MockProtocol protocol_) {
+        protocol = protocol_;
+    }
+
     function fnSelectors()
         external
         pure
@@ -15,7 +21,7 @@ contract MockAssertion is Assertion, MockProtocol {
         assertions[0] = this.assertionCheckBool.selector;
     }
 
-    function assertionCheckBool() external returns (bool) {
-        return checkBool();
+    function assertionCheckBool() external view returns (bool) {
+        return protocol.checkBool();
     }
 }
