@@ -7,8 +7,8 @@ import {MockProtocol} from "../../src/protocol.sol";
 contract MockAssertion is Assertion {
     MockProtocol immutable protocol;
 
-    constructor(address protocol_) {
-        protocol = MockProtocol(protocol_);
+    constructor(MockProtocol protocol_) {
+        protocol = protocol_;
     }
 
     function fnSelectors()

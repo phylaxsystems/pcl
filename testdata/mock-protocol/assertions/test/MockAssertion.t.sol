@@ -7,10 +7,10 @@ import {MockAssertion} from "../src/MockAssertion.sol";
 import {MockProtocol} from "../../src/protocol.sol";
 
 contract TestMockAssertion is Test, Credible {
-    address public protocol;
+    MockProtocol public protocol;
 
     function setUp() public {
-        protocol = address(new MockProtocol());
+        protocol = new MockProtocol();
     }
 
     function test_assertionCheckBool() public {
