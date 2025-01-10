@@ -2,13 +2,20 @@
 pragma solidity 0.8.28;
 
 import {Assertion} from "credible-std/Assertion.sol";
+import {MockProtocol} from "../../src/protocol.sol";
 
-contract MockAssertion is Assertion {
-
-    function fnSelectors() public pure override returns (Trigger[] memory) {
-        return new Trigger[](1);
+contract MockAssertion is Assertion, MockProtocol {
+    function fnSelectors()
+        external
+        pure
+        override
+        returns (bytes4[] memory assertions)
+    {
+        assertions = new bytes4[](1);
+        assertions[0] = this.assertionCheckBool.selector;
     }
 
-    function assertion_example_mock() public {
+    function assertionCheckBool() external returns (bool) {
+        return checkBool();
     }
 }
