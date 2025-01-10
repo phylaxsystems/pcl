@@ -2,14 +2,13 @@
 pragma solidity 0.8.28;
 
 contract MockProtocol {
-
-    uint example;
+    bool public example;
 
     constructor() {
-        example = 1;
+        example = true;
     }
 
-  function increment() public {
-    example++;
-  }
+    function checkBool() public view returns (bool) {
+        return example;
+    }
 }
