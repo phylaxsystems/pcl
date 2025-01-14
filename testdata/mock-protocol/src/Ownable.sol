@@ -4,7 +4,10 @@ pragma solidity 0.8.28;
 contract Ownable {
     address private _owner;
 
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferred(
+        address indexed previousOwner,
+        address indexed newOwner
+    );
 
     constructor() {
         _owner = address(0xdead);
@@ -21,12 +24,13 @@ contract Ownable {
         return _owner;
     }
 
-    // It's very unlikely that the owner should change
-    // Governance updates like owner change should be planned well ahead of time
-    // and the assertions can be paused with a cooldown period when this is planned
-    // We can define an assertion that checks if the owner changes
+    // Transfer ownership to a new address
+    // Can only be called by the current owner
     function transferOwnership(address newOwner) public onlyOwner {
-        require(newOwner != address(0), "Ownable: new owner is the zero address");
+        require(
+            newOwner != address(0),
+            "Ownable: new owner is the zero address"
+        );
         emit OwnershipTransferred(_owner, newOwner);
         _owner = newOwner;
     }
