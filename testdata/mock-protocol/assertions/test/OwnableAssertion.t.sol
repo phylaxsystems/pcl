@@ -5,38 +5,39 @@ import {Credible} from "../../lib/credible-std/src/Credible.sol";
 import {OwnableAssertion} from "../src/OwnableAssertion.sol";
 import {Ownable} from "../../src/Ownable.sol";
 import {console} from "../../lib/credible-std/lib/forge-std/src/console.sol";
-import {AssertionTest} from "../../lib/credible-std/src/AssertionTest.sol";
+import {CredibleTest} from "../../lib/credible-std/src/CredibleTest.sol";
 
-contract TestOwnableAssertion is AssertionTest, Credible {
+contract TestOwnableAssertion is CredibleTest {
     address public newOwner = address(0xdeadbeef);
     bytes[] public assertions;
-    address public assertionAdopter;
+    Ownable public assertionAdopter;
 
     function setUp() public {
-        assertionAdopter = address(new Ownable());
-        vm.deal(Ownable(assertionAdopter).owner(), 1 ether);
+        assertionAdopter = new Ownable();
+        vm.deal(assertionAdopter.owner(), 1 ether);
     }
 
     function test_assertionOwnershipChanged() public {
-        vm.prank(address(0xdead));
+        address aaAddress = address(assertionAdopter);
 
-        bytes memory transaction = createTransaction(
-            Ownable(assertionAdopter).owner(),
-            address(assertionAdopter),
-            0,
-            abi.encodeWithSelector(Ownable.transferOwnership.selector, newOwner)
+        // Associate the assertion with the protocol
+        // cl will manage the correct assertion execution under the hood when the protocol is being called
+        cl.addAssertion(aaAddress, type(OwnableAssertion).creationCode, abi.encode(assertionAdopter));
+
+        vm.prank(assertionAdopter.owner());
+        bool result = cl.transact(
+            aaAddress, 0, abi.encodePacked(assertionAdopter.transferOwnership.selector, abi.encode(newOwner))
         );
-
-        assertions.push(abi.encodePacked(type(OwnableAssertion).creationCode, abi.encode(assertionAdopter)));
-
-        assertEq(phvm.assertionEx(transaction, assertionAdopter, assertions), false); // assert that the ownership has changed
+        assertFalse(result);
     }
 
     function test_assertionOwnershipNotChanged() public {
-        bytes memory emptyTransaction = createEmptyTransaction();
+        address aaAddress = address(assertionAdopter);
 
-        assertions.push(abi.encodePacked(type(OwnableAssertion).creationCode, abi.encode(assertionAdopter)));
+        cl.addAssertion(aaAddress, type(OwnableAssertion).creationCode, abi.encode(assertionAdopter));
 
-        assertEq(phvm.assertionEx(emptyTransaction, assertionAdopter, assertions), true); // assert that the ownership has not changed
+        vm.prank(assertionAdopter.owner());
+        bool result = cl.transact(aaAddress, 0, new bytes(0)); // no transaction
+        assertTrue(result); // assert that the ownership has not changed
     }
 }
