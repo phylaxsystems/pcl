@@ -21,10 +21,6 @@ contract Ownable {
         return _owner;
     }
 
-    // It's very unlikely that the owner should change
-    // Governance updates like owner change should be planned well ahead of time
-    // and the assertions can be paused with a cooldown period when this is planned
-    // We can define an assertion that checks if the owner changes
     function transferOwnership(address newOwner) public onlyOwner {
         require(newOwner != address(0), "Ownable: new owner is the zero address");
         emit OwnershipTransferred(_owner, newOwner);
