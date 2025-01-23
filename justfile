@@ -21,4 +21,5 @@ update-phoundry:
 place-phoundry-bin mode="release":
     cp {{phoundry-dir}}/target/{{mode}}/forge target/{{mode}}/phorge
 
-    
+test:
+    cargo test --workspace
