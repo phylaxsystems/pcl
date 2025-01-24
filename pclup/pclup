@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
+PCL_DIR=${PCL_DIR:-"$BASE_DIR/.pcl"}
+PCL_VERSIONS_DIR="$PCL_DIR/versions"
+PCL_BIN_DIR="$PCL_DIR/bin"
+PCL_MAN_DIR="$PCL_DIR/share/man/man1"
+
+PCLUP_JOBS=""
+
+BINS=(pcl)
+
+export RUSTFLAGS="${RUSTFLAGS:--C target-cpu=native}"
+
+main() {
+  need_cmd git
+  need_cmd curl
+
+  while [[ -n $1 ]]; do
+    case $1 in
+      --)               shift; break;;
+      -r|--repo)        shift; PCLUP_REPO=$1;;
+      -b|--branch)      shift; PCLUP_BRANCH=$1;;
+      -i|--install)     shift; PCLUP_VERSION=$1;;
+      -l|--list)        shift; list;;
+      -u|--use)         shift; PCLUP_VERSION=$1; use;;
+      -p|--path)        shift; PCLUP_LOCAL_REPO=$1;;
+      -P|--pr)          shift; PCLUP_PR=$1;;
+      -C|--commit)      shift; PCLUP_COMMIT=$1;;
+      -j|--jobs)        shift; PCLUP_JOBS=$1;;
+      --arch)           shift; PCLUP_ARCH=$1;;
+      --platform)       shift; PCLUP_PLATFORM=$1;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        warn "unknown option: $1"
+        usage
+        exit 1
+    esac; shift
+  done
+
+  CARGO_BUILD_ARGS=(--release)
+
+  if [ -n "$PCLUP_JOBS" ]; then
+    CARGO_BUILD_ARGS+=(--jobs "$PCLUP_JOBS")
+  fi
+
+  # Print the banner after successfully parsing args
+  banner
+
+  if [ -n "$PCLUP_PR" ]; then
+    if [ -z "$PCLUP_BRANCH" ]; then
+      PCLUP_BRANCH="refs/pull/$PCLUP_PR/head"
+    else
+      err "can't use --pr and --branch at the same time"
+    fi
+  fi
+
+  # Installs pcl from a local repository if --path parameter is provided
+  if [[ -n "$PCLUP_LOCAL_REPO" ]]; then
+    need_cmd cargo
+
+    # Ignore branches/versions as we do not want to modify local git state
+    if [ -n "$PCLUP_REPO" ] || [ -n "$PCLUP_BRANCH" ] || [ -n "$PCLUP_VERSION" ]; then
+      warn "--branch, --version, and --repo arguments are ignored during local install"
+    fi
+
+    # Enter local repo and build
+    say "installing from $PCLUP_LOCAL_REPO"
+    cd "$PCLUP_LOCAL_REPO"
+    ensure cargo build --bins "${CARGO_BUILD_ARGS[@]}"
+
+    for bin in "${BINS[@]}"; do
+      # Remove prior installations if they exist
+      rm -f "$PCL_BIN_DIR/$bin"
+      # Symlink from local repo binaries to bin dir
+      ensure ln -s "$PWD/target/release/$bin" "$PCL_BIN_DIR/$bin"
+    done
+
+    say "done"
+    exit 0
+  fi
+
+  # Install by cloning the repo with the provided branch/tag
+  need_cmd cargo
+  PCLUP_BRANCH=${PCLUP_BRANCH:-master}
+  REPO_PATH="$PCL_DIR/$PCLUP_REPO"
+
+  # If repo path does not exist, grab the author from the repo, make a directory in .pcl, cd to it and clone.
+  if [ ! -d "$REPO_PATH" ]; then
+    AUTHOR="$(echo "$PCLUP_REPO" | cut -d'/' -f1 -)"
+    ensure mkdir -p "$PCL_DIR/$AUTHOR"
+    cd "$PCL_DIR/$AUTHOR"
+    ensure git clone "https://github.com/$PCLUP_REPO"
+  fi
+
+  # Force checkout, discarding any local changes
+  cd "$REPO_PATH"
+  ensure git fetch origin "${PCLUP_BRANCH}:remotes/origin/${PCLUP_BRANCH}"
+  ensure git checkout "origin/${PCLUP_BRANCH}"
+
+  # If set, checkout specific commit from branch
+  if [ -n "$PCLUP_COMMIT" ]; then
+    say "installing at commit $PCLUP_COMMIT"
+    ensure git checkout "$PCLUP_COMMIT"
+  fi
+
+  # Build the repo and install the binaries locally to the .pcl bin directory
+  ensure cargo build --bins "${CARGO_BUILD_ARGS[@]}"
+  for bin in "${BINS[@]}"; do
+    for try_path in target/release/$bin target/release/$bin.exe; do
+      if [ -f "$try_path" ]; then
+        [ -e "$PCL_BIN_DIR/$bin" ] && warn "overwriting existing $bin in $PCL_BIN_DIR"
+        mv -f "$try_path" "$PCL_BIN_DIR"
+      fi
+    done
+  done
+
+  say "done"
+}
+
+# Helper functions
+say() {
+  printf "pclup: %s\n" "$1"
+}
+
+warn() {
+  say "warning: ${1}" >&2
+}
+
+err() {
+  say "$1" >&2
+  exit 1
+}
+
+need_cmd() {
+  if ! check_cmd "$1"; then
+    err "need '$1' (command not found)"
+  fi
+}
+
+check_cmd() {
+  command -v "$1" &>/dev/null
+}
+
+ensure() {
+  if ! "$@"; then err "command failed: $*"; fi
+}
+
+banner() {
+  printf '
+
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
+
+ ╔═╗ ╔═╗ ╦      Phylax Credibility Layer
+ ╠═╝ ║   ║                 CLI
+ ╩   ╚═╝ ╩═╝         written in Rust.
+
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
+
+'
+}
+
+main "$@" 
