@@ -22,6 +22,9 @@ struct JsonRpcRequest {
 
 #[derive(clap::Parser)]
 pub struct DASubmitArgs {
+    /// URL of the assertion-DA
+    #[clap(long, env = "PCL_DA_URL")]
+    url: String,
     /// Name of the assertion contract to submit
     assertion: String,
 }
@@ -35,12 +38,12 @@ impl DASubmitArgs {
         build_args.run(cli_args)?;
 
         let client = Client::new();
-        let endpoint = "https://da.credible.xyz"; // Fixed endpoint
 
         let artifact_path = format!("{}.sol:{}", self.assertion, self.assertion);
         let bytecode = bytecode(&artifact_path);
 
         // Calculate keccak256 hash of bytecode
+        // TODO: Need to align with the correct calculation of the id
         let id = keccak256(bytecode.as_bytes());
 
         // Create JSON-RPC request
@@ -55,7 +58,7 @@ impl DASubmitArgs {
         };
 
         // Submit to assertion-DA
-        let response = client.post(endpoint).json(&request).send()?;
+        let response = client.post(&self.url).json(&request).send()?;
 
         if !response.status().is_success() {
             return Err(SubmitError::SubmissionFailed(response.status().to_string()));
@@ -92,13 +95,6 @@ mod tests {
     fn test_submit_assertion() {
         let mut server = Server::new();
 
-        // Print current directory before and after change
-        println!("Current dir before: {:?}", std::env::current_dir().unwrap());
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir("testdata/mock-protocol").unwrap();
-        println!("Current dir after: {:?}", std::env::current_dir().unwrap());
-        println!("Assertions dir: {:?}", PathBuf::from("assertions"));
-
         let mock = server
             .mock("POST", "/")
             .match_body(r#"{"jsonrpc":"2.0","method":"da_submit_assertion","params":["0x1234","0x5678"],"id":1}"#)
@@ -108,6 +104,7 @@ mod tests {
             .create();
 
         let args = DASubmitArgs {
+            url: server.url(),
             assertion: "OwnableAssertion.sol".to_string(),
         };
 
@@ -115,7 +112,6 @@ mod tests {
             assertions_dir: Some(PathBuf::from("assertions")),
         });
 
-        std::env::set_current_dir(original_dir).unwrap();
         println!("Result: {:?}", result);
         assert!(result.is_ok());
         mock.assert();
@@ -135,6 +131,7 @@ mod tests {
 
         let args = DASubmitArgs {
             assertion: "TestAssertion".to_string(),
+            url: server.url(),
         };
 
         let result = args.run(CliArgs::default());
