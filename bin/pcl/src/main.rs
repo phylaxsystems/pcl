@@ -1,8 +1,8 @@
 use clap::{command, Parser};
 use eyre::Result;
 use pcl_common::args::CliArgs;
+use pcl_da::submit::DASubmitArgs;
 use pcl_phoundry::{build::BuildArgs, Phorge, PhoundryError};
-
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     "\nCommit: ",
@@ -28,6 +28,7 @@ struct Cli {
 enum Commands {
     Phorge(Phorge),
     Build(BuildArgs),
+    DASubmit(DASubmitArgs),
 }
 
 #[tokio::main]
@@ -43,6 +44,10 @@ async fn main() -> Result<()> {
         }
         Commands::Build(build) => {
             build.run(cli.args.clone())?;
+            Ok::<(), PhoundryError>(())
+        }
+        Commands::DASubmit(submit) => {
+            submit.run(cli.args.clone())?;
             Ok::<(), PhoundryError>(())
         }
     }?;

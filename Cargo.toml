@@ -2,7 +2,8 @@
 members = [
   "bin/pcl", 
   "crates/phoundry",
-  "crates/common"
+  "crates/common",
+  "crates/da",
 ]
 default-members = ["bin/pcl"]
 resolver = '2'
@@ -21,7 +22,7 @@ repository = "https://github.com/phylaxsystems/pcl"
 [workspace.dependencies]
 pcl-phoundry = { path = "crates/phoundry" }
 pcl-common = { path = "crates/common" }
-
+pcl-da = { path = "crates/da" }
 tokio = { version = "1.39.0", features = ["full"] }
 clap = { version = "4.5.23", features = ["derive", "env"] }
 eyre = "0.6.12"

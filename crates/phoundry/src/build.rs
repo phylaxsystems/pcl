@@ -80,7 +80,7 @@ impl BuildArgs {
     ) -> Result<Vec<AssertionBuildOutput>, PhoundryError> {
         let mut assertion_builds = Vec::new();
 
-        for (path, contract_data) in contracts {
+        for (_, contract_data) in contracts {
             let contracts_obj =
                 contract_data
                     .as_object()
@@ -151,7 +151,7 @@ impl BuildArgs {
             ))
     }
 
-    fn get_flattened_source(&self, path: &str) -> Result<String, PhoundryError> {
+    pub fn get_flattened_source(&self, path: &str) -> Result<String, PhoundryError> {
         let flatten_args = vec!["flatten".to_string(), path.to_string()];
         let phoundry = Phorge { args: flatten_args };
         let flatten_output = phoundry.run(CliArgs::default(), false)?;
