@@ -10,6 +10,7 @@ repository.workspace = true
 build = "build.rs"
 
 [dependencies]
+indicatif = "0.17.0"
 pcl-phoundry = { workspace = true }
 pcl-da = { workspace = true }
 pcl-common = { workspace = true }

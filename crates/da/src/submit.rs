@@ -27,13 +27,12 @@ struct JsonRpcRequest {
     id: u64,
 }
 
+static DA_URL: &str = "https://da.phylax.systems";
+
 #[derive(clap::Parser)]
 pub struct DASubmitArgs {
-    /// URL of the assertion-DA
-    #[clap(long, env = "PCL_DA_URL")]
-    url: String,
     /// Name of the assertion contract to submit
-    assertion: String,
+    pub assertion: String,
 }
 
 impl DASubmitArgs {
@@ -78,7 +77,7 @@ impl DASubmitArgs {
 
     fn submit_request(&self, request: &JsonRpcRequest) -> Result<(), SubmitError> {
         let client = Client::new();
-        let response = client.post(&self.url).json(request).send()?;
+        let response = client.post(DA_URL).json(request).send()?;
 
         if !response.status().is_success() {
             return Err(SubmitError::SubmissionFailed(response.status().to_string()));
@@ -112,7 +111,6 @@ mod tests {
     #[test]
     fn test_calculate_id() {
         let args = DASubmitArgs {
-            url: "http://test".to_string(),
             assertion: "TestAssertion.sol".to_string(),
         };
         let result = args.calculate_id("sample_bytecode");
@@ -123,7 +121,6 @@ mod tests {
     #[test]
     fn test_create_jsonrpc_request() {
         let args = DASubmitArgs {
-            url: "http://test".to_string(),
             assertion: "TestAssertion.sol".to_string(),
         };
         let request = args
@@ -148,7 +145,6 @@ mod tests {
             .create();
 
         let args = DASubmitArgs {
-            url: server.url(),
             assertion: "TestAssertion.sol".to_string(),
         };
 
@@ -172,7 +168,6 @@ mod tests {
             .create();
 
         let args = DASubmitArgs {
-            url: server.url(),
             assertion: "TestAssertion.sol".to_string(),
         };
 
