@@ -20,6 +20,9 @@ update-phoundry:
 
 place-phoundry-bin mode="release":
     cp {{phoundry-dir}}/target/{{mode}}/forge target/{{mode}}/phorge
+    mkdir -p $HOME/.local/bin
+    cp target/{{mode}}/phorge $HOME/.local/bin/
+    cp target/{{mode}}/pcl $HOME/.local/bin/
 
 test:
     cargo test --workspace
