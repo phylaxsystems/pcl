@@ -61,3 +61,12 @@ async fn main() -> Result<()> {
     config.write_to_file()?;
     Ok(())
 }
+
+async fn handle_auth_command(cmd: AuthCommand) -> Result<()> {
+    match cmd.command {
+        AuthSubcommands::Login => auth::login().await?,
+        AuthSubcommands::Logout => auth::logout()?,
+        AuthSubcommands::Status => auth::status()?,
+    }
+    Ok(())
+}

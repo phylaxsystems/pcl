@@ -17,6 +17,11 @@ pcl-common = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 eyre = { workspace = true }
+reqwest = { workspace = true }
+dirs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
 
 [build-dependencies]
 vergen-gix = { version = "1.0.3", features = ["build", "cargo", "rustc", "si"] }
