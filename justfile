@@ -8,9 +8,9 @@ setup-phoundry mode="release":
     #!/usr/bin/env sh
     cd {{phoundry-dir}} && cargo build --bin forge `just cargo-mode {{mode}}`
 
-build-all mode="release":
+build-all skip_update="false" mode="release":
     cargo build `just cargo-mode {{mode}}`
-    just update-phoundry
+    if [ "{{skip_update}}" = "false" ]; then just update-phoundry; fi
     just setup-phoundry {{mode}}
     just place-phoundry-bin {{mode}}
 
