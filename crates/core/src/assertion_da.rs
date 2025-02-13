@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 struct JsonRpcResponse {
-    jsonrpc: String,
+    _json_rpc: String,
     result: SubmissionResponse,
-    id: u64,
+    _id: u64,
 }
 
 #[derive(Deserialize)]
@@ -37,7 +37,11 @@ pub struct DASubmitArgs {
 }
 
 impl DASubmitArgs {
-    pub async fn run(&self, cli_args: CliArgs, _config: &mut CliConfig) -> Result<(), DaSubmitError> {
+    pub async fn run(
+        &self,
+        cli_args: CliArgs,
+        _config: &mut CliConfig,
+    ) -> Result<(), DaSubmitError> {
         let build_args = BuildArgs {
             assertions: vec![self.assertion.clone()],
         };

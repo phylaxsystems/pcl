@@ -16,7 +16,7 @@ impl CliConfig {
         let config_dir = home_dir().unwrap().join(CONFIG_DIR);
         let config_file = config_dir.join(CONFIG_FILE);
         let config_str = toml::to_string(self).unwrap();
-        std::fs::write(config_file, config_str).map_err(|e| ConfigError::WriteError(e))?;
+        std::fs::write(config_file, config_str).map_err(ConfigError::WriteError)?;
         Ok(())
     }
 
@@ -27,8 +27,7 @@ impl CliConfig {
     pub fn read_from_file() -> Result<Self, ConfigError> {
         let config_dir = home_dir().unwrap().join(CONFIG_DIR);
         let config_file = config_dir.join(CONFIG_FILE);
-        let config_str =
-            std::fs::read_to_string(config_file).map_err(|e| ConfigError::ReadError(e))?;
+        let config_str = std::fs::read_to_string(config_file).map_err(ConfigError::ReadError)?;
         Ok(toml::from_str(&config_str).unwrap())
     }
 

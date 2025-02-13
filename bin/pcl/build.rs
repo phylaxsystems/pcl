@@ -12,7 +12,6 @@ pub fn main() -> Result<()> {
         .add_instructions(&SysinfoBuilder::all_sysinfo()?)?
         .emit()?;
 
-    let out_dir = env::var("OUT_DIR").unwrap();
     let profile = env::var("PROFILE").unwrap();
     println!("cargo:warning=Building in {} mode", profile);
 
@@ -23,7 +22,7 @@ pub fn main() -> Result<()> {
         .unwrap()
         .parent() // up to workspace root
         .unwrap();
-    
+
     // Update phoundry submodule
     update_phoundry(workspace_root).expect("Failed to update phoundry submodule");
 
@@ -36,15 +35,16 @@ pub fn main() -> Result<()> {
         .join("target")
         .join(&profile)
         .join("forge");
-    
-    let dest = workspace_root
-        .join("target")
-        .join(&profile)
-        .join("phorge");
-    
-    println!("cargo:warning=Copying {} to {}", source.display(), dest.display());
+
+    let dest = workspace_root.join("target").join(&profile).join("phorge");
+
+    println!(
+        "cargo:warning=Copying {} to {}",
+        source.display(),
+        dest.display()
+    );
     fs::copy(&source, &dest).expect("Failed to copy forge binary");
-    
+
     println!("cargo:rerun-if-changed={}", source.display());
     println!("cargo:rerun-if-changed=phoundry");
     Ok(())

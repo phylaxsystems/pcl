@@ -33,26 +33,26 @@ pub struct DappSubmitArgs {
 impl DappSubmitArgs {
     pub async fn run(
         &self,
-        cli_args: CliArgs,
+        _cli_args: CliArgs,
         config: &mut CliConfig,
     ) -> Result<(), DappSubmitError> {
         let projects = self.get_projects(config).await?;
-        let project = self.select_project(projects)?;
+        let _project = self.select_project(projects)?;
 
         Ok(())
     }
 
-    fn select_assertion(){}
+    fn _select_assertion(&self) {
+        todo!()
+    }
 
-    fn submit_assertion(){}
+    fn _submit_assertion(&self) {}
 
     fn select_project(&self, projects: Vec<Project>) -> Result<String, DappSubmitError> {
         match &self.project_name {
             None => {
-                let project_options: Vec<String> = projects
-                    .iter()
-                    .map(|p| p.project_name.clone())
-                    .collect();
+                let project_options: Vec<String> =
+                    projects.iter().map(|p| p.project_name.clone()).collect();
 
                 Select::new(
                     "Select a project to submit the assertion to:",
@@ -62,9 +62,9 @@ impl DappSubmitArgs {
                 .map_err(|_| DappSubmitError::ProjectSelectionCancelled)
             }
             Some(name) => {
-                let exists = projects.iter().any(|p| {
-                    p.project_name.to_lowercase() == name.to_lowercase()
-                });
+                let exists = projects
+                    .iter()
+                    .any(|p| p.project_name.to_lowercase() == name.to_lowercase());
 
                 if !exists {
                     println!(
@@ -81,7 +81,8 @@ impl DappSubmitArgs {
         let projects: Vec<Project> = client
             .get(format!(
                 "{}/projects?user={}",
-                self.dapp_url, config.auth.as_ref().unwrap().user_address
+                self.dapp_url,
+                config.auth.as_ref().unwrap().user_address
             ))
             .send()
             .await?
@@ -89,5 +90,4 @@ impl DappSubmitArgs {
             .await?;
         Ok(projects)
     }
-    
 }
