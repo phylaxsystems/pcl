@@ -5,6 +5,7 @@ use pcl_core::{
     assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, config::CliConfig,
 };
 use pcl_phoundry::{build::BuildArgs, phorge::Phorge};
+
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     "\nCommit: ",
@@ -49,7 +50,8 @@ async fn main() -> Result<()> {
             build.run(cli.args.clone())?;
         }
         Commands::DASubmit(submit) => {
-            submit.run(cli.args.clone()).await?;
+            config.must_be_authenticated().wrap_err("Authentication required for DA submission. Please authenticate first using 'pcl auth'")?;
+            submit.run(cli.args.clone(), &mut config).await?;
         }
         Commands::DappSubmit(submit) => {
             config.must_be_authenticated().wrap_err("Authentication required for dapp submission. Please authenticate first using 'pcl auth'")?;

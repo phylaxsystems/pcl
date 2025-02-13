@@ -1,4 +1,4 @@
-use crate::error::DaSubmitError;
+use crate::{config::CliConfig, error::DaSubmitError};
 use alloy_primitives::keccak256;
 use pcl_common::{args::CliArgs, utils::bytecode};
 use pcl_phoundry::build::BuildArgs;
@@ -37,7 +37,7 @@ pub struct DASubmitArgs {
 }
 
 impl DASubmitArgs {
-    pub async fn run(&self, cli_args: CliArgs) -> Result<(), DaSubmitError> {
+    pub async fn run(&self, cli_args: CliArgs, _config: &mut CliConfig) -> Result<(), DaSubmitError> {
         let build_args = BuildArgs {
             assertions: vec![self.assertion.clone()],
         };
