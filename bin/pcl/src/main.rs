@@ -1,7 +1,7 @@
 use clap::{command, Parser};
 use eyre::Result;
 use pcl_common::args::CliArgs;
-use pcl_core::assertion_da::DASubmitArgs;
+use pcl_core::{assertion_da::DASubmitArgs, error::DappSubmitError};
 use pcl_phoundry::{build::BuildArgs, Phorge, PhoundryError};
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -29,6 +29,7 @@ enum Commands {
     Phorge(Phorge),
     Build(BuildArgs),
     DASubmit(DASubmitArgs),
+    DappSubmit(DappSubmitArgs),
 }
 
 #[tokio::main]
@@ -39,17 +40,17 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Phorge(phorge) => {
-            let _ = phorge.run(cli.args.clone(), true)?;
-            Ok::<(), PhoundryError>(())
+            phorge.run(cli.args.clone(), true)?;
         }
         Commands::Build(build) => {
             build.run(cli.args.clone())?;
-            Ok::<(), PhoundryError>(())
         }
         Commands::DASubmit(submit) => {
             submit.run(cli.args.clone()).await?;
-            Ok::<(), PhoundryError>(())
         }
-    }?;
+        Commands::DappSubmit(submit) => {
+            submit.run(cli.args.clone()).await?;
+        }
+    };
     Ok(())
 }

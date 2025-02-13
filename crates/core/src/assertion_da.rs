@@ -3,7 +3,7 @@ use pcl_common::{args::CliArgs, utils::bytecode};
 use pcl_phoundry::build::BuildArgs;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use crate::error::SubmitError;
+use crate::error::DaSubmitError;
 
 #[derive(Deserialize)]
 struct JsonRpcResponse {
@@ -37,7 +37,7 @@ pub struct DASubmitArgs {
 }
 
 impl DASubmitArgs {
-    pub async fn run(&self, cli_args: CliArgs) -> Result<(), SubmitError> {
+    pub async fn run(&self, cli_args: CliArgs) -> Result<(), DaSubmitError> {
         let build_args = BuildArgs {
             assertions: vec![self.assertion.clone()],
         };
@@ -49,12 +49,12 @@ impl DASubmitArgs {
         self.submit_request(&request).await
     }
 
-    fn get_bytecode(&self, assertion: &str) -> Result<String, SubmitError> {
+    fn get_bytecode(&self, assertion: &str) -> Result<String, DaSubmitError> {
         let artifact_path = format!("{}.sol:{}", assertion, assertion);
         Ok(bytecode(&artifact_path))
     }
 
-    fn calculate_id(&self, bytecode: &str) -> Result<String, SubmitError> {
+    fn calculate_id(&self, bytecode: &str) -> Result<String, DaSubmitError> {
         // TODO: Need to align with the correct calculation of the id
         let id = keccak256(bytecode.as_bytes());
         Ok(id.to_string())
@@ -64,7 +64,7 @@ impl DASubmitArgs {
         &self,
         id: &str,
         bytecode: &str,
-    ) -> Result<JsonRpcRequest, SubmitError> {
+    ) -> Result<JsonRpcRequest, DaSubmitError> {
         Ok(JsonRpcRequest {
             json_rpc: "2.0".to_string(),
             method: "da_submit_assertion".to_string(),
@@ -76,12 +76,12 @@ impl DASubmitArgs {
         })
     }
 
-    async fn submit_request(&self, request: &JsonRpcRequest) -> Result<(), SubmitError> {
+    async fn submit_request(&self, request: &JsonRpcRequest) -> Result<(), DaSubmitError> {
         let client = Client::new();
         let response = client.post(&self.url).json(request).send().await?;
 
         if !response.status().is_success() {
-            return Err(SubmitError::SubmissionFailed(response.status().to_string()));
+            return Err(DaSubmitError::SubmissionFailed(response.status().to_string()));
         }
 
         let result: JsonRpcResponse = response.json().await?;
@@ -172,7 +172,7 @@ mod tests {
             .create_jsonrpc_request("test_id", "test_bytecode")
             .unwrap();
         let result = args.submit_request(&request).await;
-        assert!(matches!(result, Err(SubmitError::SubmissionFailed(_))));
+        assert!(matches!(result, Err(DaSubmitError::SubmissionFailed(_))));
         mock.assert();
     }
 }
