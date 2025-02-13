@@ -1,5 +1,5 @@
 [package]
-name = "pcl-da"
+name = "pcl-core"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -24,3 +24,4 @@ alloy-primitives = "0.6"
 
 [dev-dependencies]
 mockito = "1.2"
+tokio = { workspace = true }

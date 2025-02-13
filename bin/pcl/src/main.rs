@@ -1,7 +1,7 @@
 use clap::{command, Parser};
 use eyre::Result;
 use pcl_common::args::CliArgs;
-use pcl_da::submit::DASubmitArgs;
+use pcl_core::assertion_da::DASubmitArgs;
 use pcl_phoundry::{build::BuildArgs, Phorge, PhoundryError};
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
             Ok::<(), PhoundryError>(())
         }
         Commands::DASubmit(submit) => {
-            submit.run(cli.args.clone())?;
+            submit.run(cli.args.clone()).await?;
             Ok::<(), PhoundryError>(())
         }
     }?;

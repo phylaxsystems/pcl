@@ -1,10 +1,9 @@
 use alloy_primitives::keccak256;
 use pcl_common::{args::CliArgs, utils::bytecode};
 use pcl_phoundry::build::BuildArgs;
-use pcl_phoundry::PhoundryError;
-use reqwest::{blocking::Client, Error as ReqwestError};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
+use crate::error::SubmitError;
 
 #[derive(Deserialize)]
 struct JsonRpcResponse {
@@ -21,7 +20,7 @@ struct SubmissionResponse {
 
 #[derive(Serialize)]
 struct JsonRpcRequest {
-    jsonrpc: String,
+    json_rpc: String,
     method: String,
     params: Vec<String>,
     id: u64,
@@ -37,7 +36,7 @@ pub struct DASubmitArgs {
 }
 
 impl DASubmitArgs {
-    pub fn run(&self, cli_args: CliArgs) -> Result<(), SubmitError> {
+    pub async fn run(&self, cli_args: CliArgs) -> Result<(), SubmitError> {
         let build_args = BuildArgs {
             assertions: vec![self.assertion.clone()],
         };
@@ -46,7 +45,7 @@ impl DASubmitArgs {
         let bytecode = self.get_bytecode(&self.assertion)?;
         let id = self.calculate_id(&bytecode)?;
         let request = self.create_jsonrpc_request(&id, &bytecode)?;
-        self.submit_request(&request)
+        self.submit_request(&request).await
     }
 
     fn get_bytecode(&self, assertion: &str) -> Result<String, SubmitError> {
@@ -66,7 +65,7 @@ impl DASubmitArgs {
         bytecode: &str,
     ) -> Result<JsonRpcRequest, SubmitError> {
         Ok(JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
+            json_rpc: "2.0".to_string(),
             method: "da_submit_assertion".to_string(),
             params: vec![
                 format!("0x{}", id),       // keccak256 hash as id
@@ -76,15 +75,15 @@ impl DASubmitArgs {
         })
     }
 
-    fn submit_request(&self, request: &JsonRpcRequest) -> Result<(), SubmitError> {
+    async fn submit_request(&self, request: &JsonRpcRequest) -> Result<(), SubmitError> {
         let client = Client::new();
-        let response = client.post(&self.url).json(request).send()?;
+        let response = client.post(&self.url).json(request).send().await?;
 
         if !response.status().is_success() {
             return Err(SubmitError::SubmissionFailed(response.status().to_string()));
         }
 
-        let result: JsonRpcResponse = response.json()?;
+        let result: JsonRpcResponse = response.json().await?;
         println!(
             "Submitted assertion '{}': ID {}: Status {}",
             self.assertion, result.result.id, result.result.status
@@ -94,15 +93,7 @@ impl DASubmitArgs {
     }
 }
 
-#[derive(Error, Debug)]
-pub enum SubmitError {
-    #[error("HTTP request failed: {0}")]
-    RequestFailed(#[from] ReqwestError),
-    #[error("Submission failed: {0}")]
-    SubmissionFailed(String),
-    #[error("Build failed: {0}")]
-    BuildError(#[from] PhoundryError),
-}
+
 
 #[cfg(test)]
 mod tests {
@@ -129,15 +120,15 @@ mod tests {
         let request = args
             .create_jsonrpc_request("test_id", "test_bytecode")
             .unwrap();
-        assert_eq!(request.jsonrpc, "2.0");
+        assert_eq!(request.json_rpc, "2.0");
         assert_eq!(request.method, "da_submit_assertion");
         assert_eq!(request.params.len(), 2);
         assert_eq!(request.params[0], "0xtest_id");
         assert_eq!(request.params[1], "0xtest_bytecode");
     }
 
-    #[test]
-    fn test_submit_request() {
+    #[tokio::test]
+    async fn test_submit_request() {
         let mut server = Server::new();
         let mock = server
             .mock("POST", "/")
@@ -155,13 +146,13 @@ mod tests {
         let request = args
             .create_jsonrpc_request("test_id", "test_bytecode")
             .unwrap();
-        let result = args.submit_request(&request);
+        let result = args.submit_request(&request).await;
         assert!(result.is_ok());
         mock.assert();
     }
 
-    #[test]
-    fn test_submit_request_failure() {
+    #[tokio::test]
+    async fn test_submit_request_failure() {
         let mut server = Server::new();
         let mock = server
             .mock("POST", "/")
@@ -179,7 +170,7 @@ mod tests {
         let request = args
             .create_jsonrpc_request("test_id", "test_bytecode")
             .unwrap();
-        let result = args.submit_request(&request);
+        let result = args.submit_request(&request).await;
         assert!(matches!(result, Err(SubmitError::SubmissionFailed(_))));
         mock.assert();
     }
