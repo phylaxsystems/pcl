@@ -28,4 +28,6 @@ pub enum ConfigError {
     ReadError(std::io::Error),
     #[error("Failed to write config file: {0}")]
     WriteError(std::io::Error),
+    #[error("No Authentication Token Found")]
+    NotAuthenticated,
 }

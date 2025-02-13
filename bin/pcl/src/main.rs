@@ -1,7 +1,7 @@
 use clap::{command, Parser};
-use eyre::Result;
+use eyre::{Context, Result};
 use pcl_common::args::CliArgs;
-use pcl_core::{assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, error::DappSubmitError};
+use pcl_core::{assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, config::CliConfig, error::DappSubmitError};
 use pcl_phoundry::{build::BuildArgs, phorge::Phorge};
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -37,6 +37,7 @@ enum Commands {
 async fn main() -> Result<()> {
     // Check if forge is installed
     Phorge::forge_must_be_installed()?;
+    let mut config = CliConfig::read_or_default();
 
     let cli = Cli::parse();
     match cli.command {
@@ -50,8 +51,10 @@ async fn main() -> Result<()> {
             submit.run(cli.args.clone()).await?;
         }
         Commands::DappSubmit(submit) => {
-            submit.run(cli.args.clone(), Default::default()).await?;
+            config.must_be_authenticated().wrap_err("Authentication required for dapp submission. Please authenticate first using 'pcl auth'")?;
+            submit.run(cli.args.clone(), &mut config).await?;
         }
     };
+    config.write_to_file()?;
     Ok(())
 }

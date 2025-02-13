@@ -24,7 +24,7 @@ pub struct DappSubmitArgs {
 
 
 impl DappSubmitArgs {
-    pub async fn run(&self, cli_args: CliArgs, config: CliConfig) -> Result<(), DappSubmitError> {
+    pub async fn run(&self, cli_args: CliArgs, config: &mut CliConfig) -> Result<(), DappSubmitError> {
         let client = reqwest::Client::new();
         let projects: Vec<Project> = client
             .get(format!("{}/projects?user={}", self.dapp_url, "0x702352bc4fc5a3C1e7ef8D96C6d51d5352998c2B"))
