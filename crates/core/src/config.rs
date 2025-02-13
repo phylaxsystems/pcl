@@ -1,6 +1,7 @@
 use crate::error::ConfigError;
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
+
 pub const CONFIG_DIR: &str = ".pcl";
 pub const CONFIG_FILE: &str = "config.toml";
 
@@ -48,6 +49,6 @@ pub struct UserAuth {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AssertionForSubmission {
-    assertion: String,
-    id: String,
+    assertion_id: String,
+    signature: String,
 }

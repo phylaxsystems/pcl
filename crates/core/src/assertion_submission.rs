@@ -24,6 +24,10 @@ pub struct DappSubmitArgs {
         default_value = "https://credible-layer-dapp.pages.dev/api/v1"
     )]
     dapp_url: String,
+    #[clap(short, long)]
+    project_name: Option<String>,
+    #[clap(short, long)]
+    assertion_name: Option<String>,
 }
 
 impl DappSubmitArgs {
@@ -32,34 +36,58 @@ impl DappSubmitArgs {
         cli_args: CliArgs,
         config: &mut CliConfig,
     ) -> Result<(), DappSubmitError> {
+        let projects = self.get_projects(config).await?;
+        let project = self.select_project(projects)?;
+
+        Ok(())
+    }
+
+    fn select_assertion(){}
+
+    fn submit_assertion(){}
+
+    fn select_project(&self, projects: Vec<Project>) -> Result<String, DappSubmitError> {
+        match &self.project_name {
+            None => {
+                let project_options: Vec<String> = projects
+                    .iter()
+                    .map(|p| p.project_name.clone())
+                    .collect();
+
+                Select::new(
+                    "Select a project to submit the assertion to:",
+                    project_options,
+                )
+                .prompt()
+                .map_err(|_| DappSubmitError::ProjectSelectionCancelled)
+            }
+            Some(name) => {
+                let exists = projects.iter().any(|p| {
+                    p.project_name.to_lowercase() == name.to_lowercase()
+                });
+
+                if !exists {
+                    println!(
+                        "The project {} does not exist. Please create it or choose from the list of existing projects.",
+                        name
+                    );
+                }
+                Ok(name.clone())
+            }
+        }
+    }
+    async fn get_projects(&self, config: &mut CliConfig) -> Result<Vec<Project>, DappSubmitError> {
         let client = reqwest::Client::new();
         let projects: Vec<Project> = client
             .get(format!(
                 "{}/projects?user={}",
-                self.dapp_url, "0x702352bc4fc5a3C1e7ef8D96C6d51d5352998c2B"
+                self.dapp_url, config.auth.as_ref().unwrap().user_address
             ))
             .send()
             .await?
             .json()
             .await?;
-
-        // Create selection options
-        let project_options: Vec<String> =
-            projects.iter().map(|p| p.project_name.clone()).collect();
-
-        // Show interactive selection
-        let selection = Select::new(
-            "Select a project to submit the assertion to:",
-            project_options,
-        )
-        .prompt()
-        .map_err(|_| DappSubmitError::ProjectSelectionCancelled)?;
-
-        let project = projects
-            .iter()
-            .find(|p| p.project_name == selection)
-            .unwrap();
-
-        Ok(())
+        Ok(projects)
     }
+    
 }
