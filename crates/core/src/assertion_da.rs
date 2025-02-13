@@ -28,8 +28,9 @@ struct JsonRpcRequest {
 
 #[derive(clap::Parser)]
 pub struct DASubmitArgs {
+    // FIXME(Odysseas): Replace localhost with the actual DA URL from our infrastructure
     /// URL of the assertion-DA
-    #[clap(long, env = "PCL_DA_URL")]
+    #[clap(long, env = "PCL_DA_URL", default_value = "http://localhost:3000")]
     url: String,
     /// Name of the assertion contract to submit
     assertion: String,
