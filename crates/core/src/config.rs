@@ -1,24 +1,42 @@
 use crate::error::ConfigError;
+use dirs::home_dir;
+use serde::{Deserialize, Serialize};
+pub const CONFIG_DIR: &str = ".pcl";
+pub const CONFIG_FILE: &str = "config.toml";
 
 
-#[derive(Debug, Default)]
-pub struct CliConfig {
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct CliConfig{
     pub auth: Option<UserAuth>,
     pub assertions_for_submission: Vec<AssertionForSubmission>
 }
 
-impl CliConfig {
+impl CliConfig{ 
+    pub fn write_to_file(&self) -> Result<(), ConfigError> {
+        let config_dir = home_dir().unwrap().join(CONFIG_DIR);
+        let config_file = config_dir.join(CONFIG_FILE);
+        let config_str = toml::to_string(self).unwrap();
+        std::fs::write(config_file, config_str).unwrap();
+        Ok(())
+    }
+
+    pub fn read_from_file() -> Result<Self, ConfigError> {
+        let config_dir = home_dir().unwrap().join(CONFIG_DIR);
+        let config_file = config_dir.join(CONFIG_FILE);
+        let config_str = std::fs::read_to_string(config_file).unwrap();
+        Ok(toml::from_str(&config_str).unwrap())
+    }
 }
 
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UserAuth {
     pub access_token: String,
     pub refresh_token: String,
     pub user_address: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AssertionForSubmission {
     assertion: String,
     id: String,

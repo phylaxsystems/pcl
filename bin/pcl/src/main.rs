@@ -1,8 +1,8 @@
 use clap::{command, Parser};
 use eyre::Result;
 use pcl_common::args::CliArgs;
-use pcl_core::{assertion_da::DASubmitArgs, error::DappSubmitError};
-use pcl_phoundry::{build::BuildArgs, Phorge, PhoundryError};
+use pcl_core::{assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, error::DappSubmitError};
+use pcl_phoundry::{build::BuildArgs, phorge::Phorge};
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     "\nCommit: ",
@@ -22,6 +22,7 @@ struct Cli {
     command: Commands,
     #[command(flatten)]
     args: CliArgs,
+
 }
 
 #[derive(clap::Subcommand)]
@@ -49,7 +50,7 @@ async fn main() -> Result<()> {
             submit.run(cli.args.clone()).await?;
         }
         Commands::DappSubmit(submit) => {
-            submit.run(cli.args.clone()).await?;
+            submit.run(cli.args.clone(), Default::default()).await?;
         }
     };
     Ok(())

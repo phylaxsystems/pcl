@@ -1,7 +1,7 @@
 use clap::Parser;
 use pcl_common::args::CliArgs;
 
-use crate::{Phorge, PhoundryError};
+use crate::{phorge::Phorge, error::PhoundryError};
 
 #[derive(Debug)]
 pub struct AssertionBuildOutput {
