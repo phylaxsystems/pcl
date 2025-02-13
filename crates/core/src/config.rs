@@ -4,14 +4,13 @@ use serde::{Deserialize, Serialize};
 pub const CONFIG_DIR: &str = ".pcl";
 pub const CONFIG_FILE: &str = "config.toml";
 
-
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct CliConfig{
+pub struct CliConfig {
     pub auth: Option<UserAuth>,
-    pub assertions_for_submission: Vec<AssertionForSubmission>
+    pub assertions_for_submission: Vec<AssertionForSubmission>,
 }
 
-impl CliConfig{ 
+impl CliConfig {
     pub fn write_to_file(&self) -> Result<(), ConfigError> {
         let config_dir = home_dir().unwrap().join(CONFIG_DIR);
         let config_file = config_dir.join(CONFIG_FILE);
@@ -27,7 +26,8 @@ impl CliConfig{
     pub fn read_from_file() -> Result<Self, ConfigError> {
         let config_dir = home_dir().unwrap().join(CONFIG_DIR);
         let config_file = config_dir.join(CONFIG_FILE);
-        let config_str = std::fs::read_to_string(config_file).map_err(|e| ConfigError::ReadError(e))?;
+        let config_str =
+            std::fs::read_to_string(config_file).map_err(|e| ConfigError::ReadError(e))?;
         Ok(toml::from_str(&config_str).unwrap())
     }
 
@@ -38,7 +38,6 @@ impl CliConfig{
         Ok(())
     }
 }
-
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UserAuth {

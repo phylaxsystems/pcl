@@ -1,9 +1,9 @@
+use crate::error::DaSubmitError;
 use alloy_primitives::keccak256;
 use pcl_common::{args::CliArgs, utils::bytecode};
 use pcl_phoundry::build::BuildArgs;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use crate::error::DaSubmitError;
 
 #[derive(Deserialize)]
 struct JsonRpcResponse {
@@ -81,7 +81,9 @@ impl DASubmitArgs {
         let response = client.post(&self.url).json(request).send().await?;
 
         if !response.status().is_success() {
-            return Err(DaSubmitError::SubmissionFailed(response.status().to_string()));
+            return Err(DaSubmitError::SubmissionFailed(
+                response.status().to_string(),
+            ));
         }
 
         let result: JsonRpcResponse = response.json().await?;
@@ -93,8 +95,6 @@ impl DASubmitArgs {
         Ok(())
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {

@@ -1,5 +1,5 @@
-use thiserror::Error;
 use std::fmt::Debug;
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum PhoundryError {

@@ -1,5 +1,5 @@
-use reqwest::Error as ReqwestError;
 use pcl_phoundry::error::PhoundryError;
+use reqwest::Error as ReqwestError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]

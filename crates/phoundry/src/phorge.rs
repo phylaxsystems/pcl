@@ -1,9 +1,9 @@
+use pcl_common::args::CliArgs;
 use std::{
     env,
     path::PathBuf,
     process::{Command, Output},
 };
-use pcl_common::args::CliArgs;
 
 use crate::error::PhoundryError;
 
