@@ -3,7 +3,6 @@ use eyre::{Context, Result};
 use pcl_common::args::CliArgs;
 use pcl_core::{
     assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, config::CliConfig,
-    error::DappSubmitError,
 };
 use pcl_phoundry::{build::BuildArgs, phorge::Phorge};
 const VERSION_MESSAGE: &str = concat!(
