@@ -54,3 +54,23 @@ pub enum ConfigError {
     #[error("No Authentication Token Found")]
     NotAuthenticated,
 }
+
+/// Errors that can occur during authentication operations
+#[derive(Error, Debug)]
+pub enum AuthError {
+    /// Error when HTTP request to the auth service fails
+    #[error("HTTP request failed: {0}")]
+    RequestFailed(#[from] ReqwestError),
+
+    /// Error when authentication times out
+    #[error("Authentication timed out after {0} attempts")]
+    Timeout(u32),
+
+    /// Error when authentication verification fails
+    #[error("Authentication verification failed: {0}")]
+    VerificationFailed(String),
+
+    /// Error when config operations fail during auth
+    #[error("Config error: {0}")]
+    ConfigError(#[from] ConfigError),
+}

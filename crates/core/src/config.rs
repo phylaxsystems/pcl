@@ -45,6 +45,7 @@ pub struct UserAuth {
     pub access_token: String,
     pub refresh_token: String,
     pub user_address: String,
+    pub expires_at: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -76,6 +77,7 @@ mod tests {
                 access_token: "test_access".to_string(),
                 refresh_token: "test_refresh".to_string(),
                 user_address: "test_address".to_string(),
+                expires_at: "test_expires_at".to_string(),
             }),
             assertions_for_submission: vec![AssertionForSubmission {
                 assertion_contract: "contract1".to_string(),
@@ -144,6 +146,7 @@ mod tests {
                 access_token: "test".to_string(),
                 refresh_token: "test".to_string(),
                 user_address: "test".to_string(),
+                expires_at: "test".to_string(),
             }),
             assertions_for_submission: vec![],
         };

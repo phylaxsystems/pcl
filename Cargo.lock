@@ -2594,6 +2594,7 @@ dependencies = [
  "alloy-primitives",
  "clap",
  "dirs 6.0.0",
+ "eyre",
  "inquire",
  "mockito",
  "pcl-common",

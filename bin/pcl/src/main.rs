@@ -2,7 +2,7 @@ use clap::{command, Parser};
 use eyre::{Context, Result};
 use pcl_common::args::CliArgs;
 use pcl_core::{
-    assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, config::CliConfig,
+    assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, config::CliConfig, auth::AuthCommand,
 };
 use pcl_phoundry::{build::BuildArgs, phorge::Phorge};
 
@@ -33,6 +33,7 @@ enum Commands {
     Build(BuildArgs),
     DASubmit(DASubmitArgs),
     DappSubmit(DappSubmitArgs),
+    Auth(AuthCommand),
 }
 
 #[tokio::main]
@@ -57,16 +58,10 @@ async fn main() -> Result<()> {
             config.must_be_authenticated().wrap_err("Authentication required for dapp submission. Please authenticate first using 'pcl auth'")?;
             submit.run(cli.args.clone(), &mut config).await?;
         }
+        Commands::Auth(auth_cmd) => {
+            auth_cmd.run(&mut config).await?;
+        }
     };
     config.write_to_file()?;
-    Ok(())
-}
-
-async fn handle_auth_command(cmd: AuthCommand) -> Result<()> {
-    match cmd.command {
-        AuthSubcommands::Login => auth::login().await?,
-        AuthSubcommands::Logout => auth::logout()?,
-        AuthSubcommands::Status => auth::status()?,
-    }
     Ok(())
 }
