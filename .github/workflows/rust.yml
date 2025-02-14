@@ -9,8 +9,7 @@ on:
 jobs:
   unit-test:
     name: Unit Tests
-    runs-on:
-      group: big-bois
+    runs-on: ubuntu-latest
     steps:      
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -77,8 +76,7 @@ jobs:
 
   build:
     name: Test Build
-    runs-on:
-      group: big-bois
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
