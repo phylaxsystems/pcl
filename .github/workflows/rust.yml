@@ -9,8 +9,7 @@ on:
 jobs:
   unit-test:
     name: Unit Tests
-    runs-on:
-      group: ubuntu-latest
+    runs-on: ubuntu-latest
     steps:      
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,8 +18,6 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - uses: Swatinem/rust-cache@v2
-
-      - uses: taiki-e/install-action@nextest
 
       - name: Run Unit Tests
         run: make test
@@ -39,7 +36,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
-        run: make format
+        run: make format-check
 
   lint:
     name: Lint
@@ -51,12 +48,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
         with:
-          components: rustfmt
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install clippy
-        run: rustup component add clippy
-
       - name: Lint
-        run: make lint
+        run: make lint-check
