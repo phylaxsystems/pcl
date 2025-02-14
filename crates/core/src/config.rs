@@ -14,6 +14,7 @@ pub struct CliConfig {
 impl CliConfig {
     pub fn write_to_file(&self) -> Result<(), ConfigError> {
         let config_dir = home_dir().unwrap().join(CONFIG_DIR);
+        std::fs::create_dir_all(&config_dir).map_err(ConfigError::WriteError)?;
         let config_file = config_dir.join(CONFIG_FILE);
         let config_str = toml::to_string(self).unwrap();
         std::fs::write(config_file, config_str).map_err(ConfigError::WriteError)?;
@@ -56,7 +57,6 @@ pub struct AssertionForSubmission {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use tempfile::TempDir;
     use std::env;
 
@@ -64,9 +64,6 @@ mod tests {
     fn setup_temp_config() -> TempDir {
         let temp_dir = TempDir::new().unwrap();
         env::set_var("HOME", temp_dir.path());
-        
-        // Create config directory
-        fs::create_dir_all(temp_dir.path().join(CONFIG_DIR)).unwrap();
         temp_dir
     }
 
