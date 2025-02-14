@@ -20,6 +20,8 @@ pub enum DappSubmitError {
     ProjectSelectionCancelled,
     #[error("Failed to connect to the dApp API")]
     ApiConnectionError(#[from] ReqwestError),
+    #[error("Submission failed: {0}")]
+    SubmissionFailed(String),
 }
 
 #[derive(Error, Debug)]

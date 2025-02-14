@@ -48,6 +48,7 @@ pub struct UserAuth {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AssertionForSubmission {
-    assertion_id: String,
-    signature: String,
+    pub assertion_contract: String,
+    pub assertion_id: String,
+    pub signature: String,
 }
