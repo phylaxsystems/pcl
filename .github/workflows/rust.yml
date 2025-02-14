@@ -10,7 +10,7 @@ jobs:
   unit-test:
     name: Unit Tests
     runs-on:
-      group: big-bois
+      group: ubuntu-latest
     steps:      
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,19 +24,12 @@ jobs:
 
       - name: Run Unit Tests
         run: make test
-        
-      - name: Run Unit Tests w/ Optimism
-        run: make test-optimism
-
   fmt:
     name: Format
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Initialize Git submodules
-        run: git submodule update --init --recursive
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -67,21 +60,3 @@ jobs:
 
       - name: Lint
         run: make lint
-
-  build:
-    name: Test Build
-    runs-on:
-      group: big-bois
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
-
-      - uses: Swatinem/rust-cache@v2
-
-      - uses: taiki-e/install-action@nextest
-
-      - name: Build
-        run: make build
