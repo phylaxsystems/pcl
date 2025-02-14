@@ -81,7 +81,7 @@ impl DappSubmitArgs {
             "Select an assertion to submit:".to_string(),
         )?;
 
-        let assertions = assertion_names
+        let assertions: Vec<&AssertionForSubmission> = assertion_names
             .iter()
             .map(|n| {
                 config
@@ -92,7 +92,7 @@ impl DappSubmitArgs {
             })
             .collect();
 
-        self.submit_assertion(project, assertions).await?;
+        self.submit_assertion(project, &assertions).await?;
         // TOOD: remove assertion from config
 
         Ok(())
@@ -109,7 +109,7 @@ impl DappSubmitArgs {
     async fn submit_assertion(
         &self,
         project: &Project,
-        assertions: Vec<&AssertionForSubmission>,
+        assertions: &[&AssertionForSubmission],
     ) -> Result<(), DappSubmitError> {
         let client = reqwest::Client::new();
         // TODO: Update payload structure once API spec is finalized
