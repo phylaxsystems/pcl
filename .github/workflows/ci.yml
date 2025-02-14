@@ -44,12 +44,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup ssh-agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: |
-            ${{ secrets.SSH_PRIVATE_KEY }}
-
       - name: Initialize Git submodules
         run: git submodule update --init --recursive
 
@@ -69,15 +63,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Setup ssh-agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: |
-            ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: Initialize Git submodules
-        run: git submodule update --init --recursive
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -99,15 +84,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Setup ssh-agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: |
-            ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: Initialize Git submodules
-        run: git submodule update --init --recursive
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
