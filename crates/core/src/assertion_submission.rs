@@ -93,6 +93,7 @@ impl DappSubmitArgs {
             .collect();
 
         self.submit_assertion(project, assertions).await?;
+        // TOOD: remove assertion from config
 
         Ok(())
     }
