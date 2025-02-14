@@ -25,4 +25,5 @@ dirs = "6.0.0"
 
 [dev-dependencies]
 mockito = "1.2"
+tempfile = "3.6.0"
 tokio = { workspace = true }

@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 struct JsonRpcResponse {
+    #[serde(rename = "jsonrpc")]
     _json_rpc: String,
     result: SubmissionResponse,
+    #[serde(rename = "id")]
     _id: u64,
 }
 
@@ -20,6 +22,7 @@ struct SubmissionResponse {
 
 #[derive(Serialize)]
 struct JsonRpcRequest {
+    #[serde(rename = "jsonrpc")]
     json_rpc: String,
     method: String,
     params: Vec<String>,
@@ -134,7 +137,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_submit_request() {
-        let mut server = Server::new();
+        let mut server = Server::new_async().await;
         let mock = server
             .mock("POST", "/")
             .match_body(r#"{"jsonrpc":"2.0","method":"da_submit_assertion","params":["0xtest_id","0xtest_bytecode"],"id":1}"#)
@@ -158,7 +161,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_submit_request_failure() {
-        let mut server = Server::new();
+        let mut server = Server::new_async().await;
         let mock = server
             .mock("POST", "/")
             .with_status(400)

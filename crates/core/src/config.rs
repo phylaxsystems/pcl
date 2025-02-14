@@ -52,3 +52,96 @@ pub struct AssertionForSubmission {
     pub assertion_id: String,
     pub signature: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+    use std::env;
+
+    // Helper function to set up a temporary config directory
+    fn setup_temp_config() -> TempDir {
+        let temp_dir = TempDir::new().unwrap();
+        env::set_var("HOME", temp_dir.path());
+        
+        // Create config directory
+        fs::create_dir_all(temp_dir.path().join(CONFIG_DIR)).unwrap();
+        temp_dir
+    }
+
+    #[test]
+    fn test_write_and_read_config() {
+        let temp_dir = setup_temp_config();
+        
+        let config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "test_access".to_string(),
+                refresh_token: "test_refresh".to_string(),
+                user_address: "test_address".to_string(),
+            }),
+            assertions_for_submission: vec![
+                AssertionForSubmission {
+                    assertion_contract: "contract1".to_string(),
+                    assertion_id: "id1".to_string(),
+                    signature: "sig1".to_string(),
+                }
+            ],
+        };
+
+        // Test writing
+        assert!(config.write_to_file().is_ok());
+
+        // Test reading
+        let read_config = CliConfig::read_from_file().unwrap();
+        assert_eq!(read_config.auth.as_ref().unwrap().access_token, "test_access");
+        assert_eq!(read_config.auth.as_ref().unwrap().refresh_token, "test_refresh");
+        assert_eq!(read_config.auth.as_ref().unwrap().user_address, "test_address");
+        assert_eq!(read_config.assertions_for_submission.len(), 1);
+        assert_eq!(read_config.assertions_for_submission[0].assertion_contract, "contract1");
+
+        temp_dir.close().unwrap();
+    }
+
+    #[test]
+    fn test_read_nonexistent_config() {
+        let temp_dir = setup_temp_config();
+        
+        // Try reading without creating a file
+        let result = CliConfig::read_from_file();
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ConfigError::ReadError(_)));
+
+        temp_dir.close().unwrap();
+    }
+
+    #[test]
+    fn test_read_or_default() {
+        let temp_dir = setup_temp_config();
+        
+        // Should return default when no file exists
+        let config = CliConfig::read_or_default();
+        assert!(config.auth.is_none());
+        assert!(config.assertions_for_submission.is_empty());
+
+        temp_dir.close().unwrap();
+    }
+
+    #[test]
+    fn test_authentication_check() {
+        let config = CliConfig::default();
+        assert!(config.must_be_authenticated().is_err());
+
+        let config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "test".to_string(),
+                refresh_token: "test".to_string(),
+                user_address: "test".to_string(),
+            }),
+            assertions_for_submission: vec![],
+        };
+        assert!(config.must_be_authenticated().is_ok());
+    }
+}
+
+
