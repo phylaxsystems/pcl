@@ -1,8 +1,11 @@
 use clap::{command, Parser};
-use eyre::Result;
+use eyre::{Context, Result};
 use pcl_common::args::CliArgs;
-use pcl_da::submit::DASubmitArgs;
-use pcl_phoundry::{build::BuildArgs, Phorge, PhoundryError};
+use pcl_core::{
+    assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, config::CliConfig,
+};
+use pcl_phoundry::{build::BuildArgs, phorge::Phorge};
+
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     "\nCommit: ",
@@ -29,27 +32,32 @@ enum Commands {
     Phorge(Phorge),
     Build(BuildArgs),
     DASubmit(DASubmitArgs),
+    DappSubmit(DappSubmitArgs),
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Check if forge is installed
     Phorge::forge_must_be_installed()?;
+    let mut config = CliConfig::read_or_default();
 
     let cli = Cli::parse();
     match cli.command {
         Commands::Phorge(phorge) => {
-            let _ = phorge.run(cli.args.clone(), true)?;
-            Ok::<(), PhoundryError>(())
+            phorge.run(cli.args.clone(), true)?;
         }
         Commands::Build(build) => {
             build.run(cli.args.clone())?;
-            Ok::<(), PhoundryError>(())
         }
         Commands::DASubmit(submit) => {
-            submit.run(cli.args.clone())?;
-            Ok::<(), PhoundryError>(())
+            config.must_be_authenticated().wrap_err("Authentication required for DA submission. Please authenticate first using 'pcl auth'")?;
+            submit.run(cli.args.clone(), &mut config).await?;
         }
-    }?;
+        Commands::DappSubmit(submit) => {
+            config.must_be_authenticated().wrap_err("Authentication required for dapp submission. Please authenticate first using 'pcl auth'")?;
+            submit.run(cli.args.clone(), &mut config).await?;
+        }
+    };
+    config.write_to_file()?;
     Ok(())
 }

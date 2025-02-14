@@ -1,16 +1,17 @@
+use crate::{config::CliConfig, error::DaSubmitError};
 use alloy_primitives::keccak256;
 use pcl_common::{args::CliArgs, utils::bytecode};
 use pcl_phoundry::build::BuildArgs;
-use pcl_phoundry::PhoundryError;
-use reqwest::{blocking::Client, Error as ReqwestError};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 #[derive(Deserialize)]
 struct JsonRpcResponse {
-    jsonrpc: String,
+    #[serde(rename = "jsonrpc")]
+    _json_rpc: String,
     result: SubmissionResponse,
-    id: u64,
+    #[serde(rename = "id")]
+    _id: u64,
 }
 
 #[derive(Deserialize)]
@@ -21,7 +22,8 @@ struct SubmissionResponse {
 
 #[derive(Serialize)]
 struct JsonRpcRequest {
-    jsonrpc: String,
+    #[serde(rename = "jsonrpc")]
+    json_rpc: String,
     method: String,
     params: Vec<String>,
     id: u64,
@@ -29,15 +31,20 @@ struct JsonRpcRequest {
 
 #[derive(clap::Parser)]
 pub struct DASubmitArgs {
+    // FIXME(Odysseas): Replace localhost with the actual DA URL from our infrastructure
     /// URL of the assertion-DA
-    #[clap(long, env = "PCL_DA_URL")]
+    #[clap(long, env = "PCL_DA_URL", default_value = "http://localhost:3000")]
     url: String,
     /// Name of the assertion contract to submit
     assertion: String,
 }
 
 impl DASubmitArgs {
-    pub fn run(&self, cli_args: CliArgs) -> Result<(), SubmitError> {
+    pub async fn run(
+        &self,
+        cli_args: CliArgs,
+        _config: &mut CliConfig,
+    ) -> Result<(), DaSubmitError> {
         let build_args = BuildArgs {
             assertions: vec![self.assertion.clone()],
         };
@@ -46,15 +53,15 @@ impl DASubmitArgs {
         let bytecode = self.get_bytecode(&self.assertion)?;
         let id = self.calculate_id(&bytecode)?;
         let request = self.create_jsonrpc_request(&id, &bytecode)?;
-        self.submit_request(&request)
+        self.submit_request(&request).await
     }
 
-    fn get_bytecode(&self, assertion: &str) -> Result<String, SubmitError> {
+    fn get_bytecode(&self, assertion: &str) -> Result<String, DaSubmitError> {
         let artifact_path = format!("{}.sol:{}", assertion, assertion);
         Ok(bytecode(&artifact_path))
     }
 
-    fn calculate_id(&self, bytecode: &str) -> Result<String, SubmitError> {
+    fn calculate_id(&self, bytecode: &str) -> Result<String, DaSubmitError> {
         // TODO: Need to align with the correct calculation of the id
         let id = keccak256(bytecode.as_bytes());
         Ok(id.to_string())
@@ -64,9 +71,9 @@ impl DASubmitArgs {
         &self,
         id: &str,
         bytecode: &str,
-    ) -> Result<JsonRpcRequest, SubmitError> {
+    ) -> Result<JsonRpcRequest, DaSubmitError> {
         Ok(JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
+            json_rpc: "2.0".to_string(),
             method: "da_submit_assertion".to_string(),
             params: vec![
                 format!("0x{}", id),       // keccak256 hash as id
@@ -76,15 +83,17 @@ impl DASubmitArgs {
         })
     }
 
-    fn submit_request(&self, request: &JsonRpcRequest) -> Result<(), SubmitError> {
+    async fn submit_request(&self, request: &JsonRpcRequest) -> Result<(), DaSubmitError> {
         let client = Client::new();
-        let response = client.post(&self.url).json(request).send()?;
+        let response = client.post(&self.url).json(request).send().await?;
 
         if !response.status().is_success() {
-            return Err(SubmitError::SubmissionFailed(response.status().to_string()));
+            return Err(DaSubmitError::SubmissionFailed(
+                response.status().to_string(),
+            ));
         }
 
-        let result: JsonRpcResponse = response.json()?;
+        let result: JsonRpcResponse = response.json().await?;
         println!(
             "Submitted assertion '{}': ID {}: Status {}",
             self.assertion, result.result.id, result.result.status
@@ -92,16 +101,6 @@ impl DASubmitArgs {
 
         Ok(())
     }
-}
-
-#[derive(Error, Debug)]
-pub enum SubmitError {
-    #[error("HTTP request failed: {0}")]
-    RequestFailed(#[from] ReqwestError),
-    #[error("Submission failed: {0}")]
-    SubmissionFailed(String),
-    #[error("Build failed: {0}")]
-    BuildError(#[from] PhoundryError),
 }
 
 #[cfg(test)]
@@ -129,16 +128,16 @@ mod tests {
         let request = args
             .create_jsonrpc_request("test_id", "test_bytecode")
             .unwrap();
-        assert_eq!(request.jsonrpc, "2.0");
+        assert_eq!(request.json_rpc, "2.0");
         assert_eq!(request.method, "da_submit_assertion");
         assert_eq!(request.params.len(), 2);
         assert_eq!(request.params[0], "0xtest_id");
         assert_eq!(request.params[1], "0xtest_bytecode");
     }
 
-    #[test]
-    fn test_submit_request() {
-        let mut server = Server::new();
+    #[tokio::test]
+    async fn test_submit_request() {
+        let mut server = Server::new_async().await;
         let mock = server
             .mock("POST", "/")
             .match_body(r#"{"jsonrpc":"2.0","method":"da_submit_assertion","params":["0xtest_id","0xtest_bytecode"],"id":1}"#)
@@ -155,14 +154,14 @@ mod tests {
         let request = args
             .create_jsonrpc_request("test_id", "test_bytecode")
             .unwrap();
-        let result = args.submit_request(&request);
+        let result = args.submit_request(&request).await;
         assert!(result.is_ok());
         mock.assert();
     }
 
-    #[test]
-    fn test_submit_request_failure() {
-        let mut server = Server::new();
+    #[tokio::test]
+    async fn test_submit_request_failure() {
+        let mut server = Server::new_async().await;
         let mock = server
             .mock("POST", "/")
             .with_status(400)
@@ -179,8 +178,8 @@ mod tests {
         let request = args
             .create_jsonrpc_request("test_id", "test_bytecode")
             .unwrap();
-        let result = args.submit_request(&request);
-        assert!(matches!(result, Err(SubmitError::SubmissionFailed(_))));
+        let result = args.submit_request(&request).await;
+        assert!(matches!(result, Err(DaSubmitError::SubmissionFailed(_))));
         mock.assert();
     }
 }

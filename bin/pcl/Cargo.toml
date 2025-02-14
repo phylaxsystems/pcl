@@ -11,7 +11,7 @@ build = "build.rs"
 
 [dependencies]
 pcl-phoundry = { workspace = true }
-pcl-da = { workspace = true }
+pcl-core = { workspace = true }
 pcl-common = { workspace = true }
 
 clap = { workspace = true }

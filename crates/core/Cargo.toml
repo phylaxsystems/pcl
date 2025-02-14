@@ -1,5 +1,5 @@
 [package]
-name = "pcl-da"
+name = "pcl-core"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -14,13 +14,16 @@ pcl-common = { workspace = true }
 pcl-phoundry = { workspace = true }
 clap = { workspace = true }
 thiserror = { workspace = true }
-
 serde = { workspace = true }
 serde_json = { workspace = true }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+alloy-primitives = "0.8.21"
+inquire = "0.7.5"
+toml = "0.8.2"
+dirs = "6.0.0"
 
-reqwest = { version = "0.11", features = ["json", "blocking"] }
-
-alloy-primitives = "0.6"
 
 [dev-dependencies]
 mockito = "1.2"
+tempfile = "3.6.0"
+tokio = { workspace = true }
