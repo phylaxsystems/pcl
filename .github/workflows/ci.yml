@@ -1,4 +1,5 @@
-name: Rust CI
+# blatantly lifted from https://github.com/init4tech/actions/blob/main/.github/workflows/rust-base.yml
+name: Rust
 
 on:
   push:
@@ -6,5 +7,114 @@ on:
   pull_request:
 
 jobs:
-  rust-base:
-    uses: init4tech/actions/.github/workflows/rust-base.yml@main
+  unit-test:
+    name: Unit Tests
+    runs-on:
+      group: big-bois
+    steps:      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup ssh-agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: |
+            ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Initialize Git submodules
+        run: git submodule update --init --recursive
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@nextest
+
+      - name: Run Unit Tests
+        run: make test
+        
+      - name: Run Unit Tests w/ Optimism
+        run: make test-optimism
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup ssh-agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: |
+            ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Initialize Git submodules
+        run: git submodule update --init --recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: make format
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup ssh-agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: |
+            ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Initialize Git submodules
+        run: git submodule update --init --recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install clippy
+        run: rustup component add clippy
+
+      - name: Lint
+        run: make lint
+
+  build:
+    name: Test Build
+    runs-on:
+      group: big-bois
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup ssh-agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: |
+            ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Initialize Git submodules
+        run: git submodule update --init --recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@nextest
+
+      - name: Build
+        run: make build
