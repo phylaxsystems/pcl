@@ -2,7 +2,8 @@ use clap::{command, Parser};
 use eyre::{Context, Result};
 use pcl_common::args::CliArgs;
 use pcl_core::{
-    assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, config::CliConfig, auth::AuthCommand,
+    assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, auth::AuthCommand,
+    config::CliConfig,
 };
 use pcl_phoundry::{build::BuildArgs, phorge::Phorge};
 
