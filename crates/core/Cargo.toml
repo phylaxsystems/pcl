@@ -17,13 +17,16 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { version = "0.12", features = ["json", "blocking"] }
-alloy-primitives = "0.8.21"
+alloy-primitives = { version = "0.8.21", features = ["serde"] }
 inquire = "0.7.5"
 toml = "0.8.2"
 dirs = "6.0.0"
-
+eyre = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+colored = "2.0"
+indicatif = "0.17"
 
 [dev-dependencies]
 mockito = "1.2"
 tempfile = "3.6.0"
-tokio = { workspace = true }

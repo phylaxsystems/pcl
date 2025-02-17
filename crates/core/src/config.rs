@@ -1,4 +1,6 @@
 use crate::error::ConfigError;
+use alloy_primitives::Address;
+use chrono::{DateTime, Utc};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 
@@ -44,7 +46,9 @@ impl CliConfig {
 pub struct UserAuth {
     pub access_token: String,
     pub refresh_token: String,
-    pub user_address: String,
+    pub user_address: Address,
+    #[serde(with = "chrono::serde::ts_seconds")]
+    pub expires_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -75,7 +79,8 @@ mod tests {
             auth: Some(UserAuth {
                 access_token: "test_access".to_string(),
                 refresh_token: "test_refresh".to_string(),
-                user_address: "test_address".to_string(),
+                user_address: Address::from_slice(&[0; 20]),
+                expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
             }),
             assertions_for_submission: vec![AssertionForSubmission {
                 assertion_contract: "contract1".to_string(),
@@ -99,7 +104,7 @@ mod tests {
         );
         assert_eq!(
             read_config.auth.as_ref().unwrap().user_address,
-            "test_address"
+            Address::from_slice(&[0; 20])
         );
         assert_eq!(read_config.assertions_for_submission.len(), 1);
         assert_eq!(
@@ -143,7 +148,8 @@ mod tests {
             auth: Some(UserAuth {
                 access_token: "test".to_string(),
                 refresh_token: "test".to_string(),
-                user_address: "test".to_string(),
+                user_address: Address::from_slice(&[0; 20]),
+                expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
             }),
             assertions_for_submission: vec![],
         };

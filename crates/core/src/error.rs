@@ -54,3 +54,35 @@ pub enum ConfigError {
     #[error("No Authentication Token Found")]
     NotAuthenticated,
 }
+
+/// Errors that can occur during authentication operations
+#[derive(Error, Debug)]
+pub enum AuthError {
+    /// Error when HTTP request to the auth service fails
+    #[error(
+        "Authentication request failed. Please check your connection and try again.\nError: {0}"
+    )]
+    RequestFailed(#[from] reqwest::Error),
+
+    /// Error when authentication times out
+    #[error("Authentication timed out after {0} attempts. Please try again and approve the wallet connection promptly.")]
+    Timeout(u32),
+
+    /// Error when authentication verification fails
+    #[error("Authentication failed: {0}")]
+    InvalidAuthData(String),
+
+    /// Error when config operations fail during auth
+    #[error("Config error: {0}")]
+    ConfigError(#[from] ConfigError),
+
+    /// Error when an invalid Ethereum address is received
+    #[error(
+        "Invalid Ethereum address received. Please ensure you're connecting with a valid wallet."
+    )]
+    InvalidAddress,
+
+    /// Error when an invalid timestamp format is received
+    #[error("Invalid timestamp received from server. Please try again.")]
+    InvalidTimestamp,
+}
