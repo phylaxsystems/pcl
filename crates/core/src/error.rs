@@ -73,4 +73,16 @@ pub enum AuthError {
     /// Error when config operations fail during auth
     #[error("Config error: {0}")]
     ConfigError(#[from] ConfigError),
+
+    /// Error when an invalid Ethereum address is received
+    #[error("Invalid Ethereum address received")]
+    InvalidAddress,
+
+    /// Error when an invalid timestamp format is received
+    #[error("Invalid timestamp format")]
+    InvalidTimestamp,
+
+    /// Error when missing or invalid authentication data is received
+    #[error("Missing or invalid authentication data: {0}")]
+    InvalidAuthData(String),
 }

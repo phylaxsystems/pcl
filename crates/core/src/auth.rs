@@ -1,5 +1,7 @@
-use crate::config::CliConfig;
+use crate::config::{CliConfig, UserAuth};
 use crate::error::AuthError;
+use alloy_primitives::Address;
+use chrono::{DateTime, Utc};
 use eyre::Result;
 use reqwest::Client;
 use serde::Deserialize;
@@ -123,9 +125,8 @@ impl AuthCommand {
         auth_response: &AuthResponse,
     ) -> Result<(), AuthError> {
         let client = Client::new();
-        let mut attempts = 0;
 
-        while attempts < MAX_RETRIES {
+        for _ in 0..MAX_RETRIES {
             let status = self.check_auth_status(&client, auth_response).await?;
 
             if status.verified {
@@ -134,7 +135,6 @@ impl AuthCommand {
                 return Ok(());
             }
 
-            attempts += 1;
             sleep(POLL_INTERVAL).await;
         }
 
@@ -167,11 +167,21 @@ impl AuthCommand {
         status: StatusResponse,
         auth_response: &AuthResponse,
     ) -> Result<(), AuthError> {
-        config.auth = Some(crate::config::UserAuth {
-            access_token: status.token.unwrap(),
-            refresh_token: status.refresh_token.unwrap(),
-            user_address: status.address.unwrap(),
-            expires_at: auth_response.expires_at.clone(),
+        config.auth = Some(UserAuth {
+            access_token: status
+                .token
+                .ok_or(AuthError::InvalidAuthData("Missing token".to_string()))?,
+            refresh_token: status.refresh_token.ok_or(AuthError::InvalidAuthData(
+                "Missing refresh token".to_string(),
+            ))?,
+            user_address: status
+                .address
+                .ok_or(AuthError::InvalidAuthData("Missing address".to_string()))?
+                .parse::<Address>()
+                .map_err(|_| AuthError::InvalidAddress)?,
+            expires_at: DateTime::parse_from_rfc3339(&auth_response.expires_at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .map_err(|_| AuthError::InvalidTimestamp)?,
         });
         Ok(())
     }
@@ -218,15 +228,18 @@ fn get_base_url() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{CliConfig, UserAuth};
+    use chrono::TimeZone;
     use mockito::Server;
+
     fn create_test_config() -> CliConfig {
         CliConfig {
             auth: Some(UserAuth {
                 access_token: "test_token".to_string(),
                 refresh_token: "test_refresh".to_string(),
-                user_address: "0xtest".to_string(),
-                expires_at: "2024-12-31".to_string(),
+                user_address: "0x1234567890123456789012345678901234567890"
+                    .parse()
+                    .unwrap(),
+                expires_at: Utc.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap(),
             }),
             ..Default::default()
         }
@@ -237,14 +250,14 @@ mod tests {
             code: "123456".to_string(),
             session_id: "test_session".to_string(),
             device_secret: "test_secret".to_string(),
-            expires_at: "2024-12-31".to_string(),
+            expires_at: "2024-12-31T00:00:00Z".to_string(),
         }
     }
 
     fn create_test_status_response() -> StatusResponse {
         StatusResponse {
             verified: true,
-            address: Some("0xtest".to_string()),
+            address: Some("0x1234567890123456789012345678901234567890".to_string()),
             token: Some("test_token".to_string()),
             refresh_token: Some("test_refresh".to_string()),
         }
@@ -272,13 +285,24 @@ mod tests {
 
         let result = cmd.update_config(&mut config, status, &auth_response);
 
+        if let Err(e) = &result {
+            println!("Error: {:?}", e);
+        }
         assert!(result.is_ok());
         assert!(config.auth.is_some());
         let auth = config.auth.as_ref().unwrap();
-        assert_eq!(auth.user_address, "0xtest");
+        assert_eq!(
+            auth.user_address,
+            "0x1234567890123456789012345678901234567890"
+                .parse::<Address>()
+                .unwrap()
+        );
         assert_eq!(auth.access_token, "test_token");
         assert_eq!(auth.refresh_token, "test_refresh");
-        assert_eq!(auth.expires_at, "2024-12-31");
+        assert_eq!(
+            auth.expires_at,
+            Utc.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap()
+        );
     }
 
     #[test]
@@ -306,7 +330,7 @@ mod tests {
         let cmd = AuthCommand {
             command: AuthSubcommands::Login,
         };
-        std::env::set_var("AUTH_BASE_URL", &server.url());
+        std::env::set_var("AUTH_BASE_URL", server.url());
         let result = cmd.request_auth_code().await;
 
         assert!(result.is_ok());
@@ -336,7 +360,7 @@ mod tests {
         };
         let client = Client::new();
         let auth_response = create_test_auth_response();
-        std::env::set_var("AUTH_BASE_URL", &server.url());
+        std::env::set_var("AUTH_BASE_URL", server.url());
 
         let result = cmd.check_auth_status(&client, &auth_response).await;
 
