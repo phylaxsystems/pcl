@@ -62,8 +62,9 @@ struct StatusResponse {
     refresh_token: Option<String>,
 }
 
-/// Command-line interface for authentication operations
+/// Authentication commands for the PCL CLI
 #[derive(clap::Parser)]
+#[command(about = "Manage authentication for PCL")]
 pub struct AuthCommand {
     #[command(subcommand)]
     pub command: AuthSubcommands,
@@ -71,12 +72,22 @@ pub struct AuthCommand {
 
 /// Available authentication subcommands
 #[derive(clap::Subcommand)]
+#[command(about = "Authentication operations")]
 pub enum AuthSubcommands {
-    /// Login to the CLI
+    /// Login to PCL using your wallet
+    #[command(
+        long_about = "Initiates the login process. Opens a browser window for wallet authentication."
+    )]
     Login,
-    /// Logout from the CLI
+
+    /// Logout from PCL
+    #[command(long_about = "Removes stored authentication credentials.")]
     Logout,
-    /// Check current auth status
+
+    /// Check current authentication status
+    #[command(
+        long_about = "Displays whether you're currently logged in and shows the connected wallet address if authenticated."
+    )]
     Status,
 }
 
