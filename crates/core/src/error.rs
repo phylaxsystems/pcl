@@ -59,30 +59,30 @@ pub enum ConfigError {
 #[derive(Error, Debug)]
 pub enum AuthError {
     /// Error when HTTP request to the auth service fails
-    #[error("HTTP request failed: {0}")]
-    RequestFailed(#[from] ReqwestError),
+    #[error(
+        "Authentication request failed. Please check your connection and try again.\nError: {0}"
+    )]
+    RequestFailed(#[from] reqwest::Error),
 
     /// Error when authentication times out
-    #[error("Authentication timed out after {0} attempts")]
+    #[error("Authentication timed out after {0} attempts. Please try again and approve the wallet connection promptly.")]
     Timeout(u32),
 
     /// Error when authentication verification fails
-    #[error("Authentication verification failed: {0}")]
-    VerificationFailed(String),
+    #[error("Authentication failed: {0}")]
+    InvalidAuthData(String),
 
     /// Error when config operations fail during auth
     #[error("Config error: {0}")]
     ConfigError(#[from] ConfigError),
 
     /// Error when an invalid Ethereum address is received
-    #[error("Invalid Ethereum address received")]
+    #[error(
+        "Invalid Ethereum address received. Please ensure you're connecting with a valid wallet."
+    )]
     InvalidAddress,
 
     /// Error when an invalid timestamp format is received
-    #[error("Invalid timestamp format")]
+    #[error("Invalid timestamp received from server. Please try again.")]
     InvalidTimestamp,
-
-    /// Error when missing or invalid authentication data is received
-    #[error("Missing or invalid authentication data: {0}")]
-    InvalidAuthData(String),
 }

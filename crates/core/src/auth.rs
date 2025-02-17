@@ -2,7 +2,9 @@ use crate::config::{CliConfig, UserAuth};
 use crate::error::AuthError;
 use alloy_primitives::Address;
 use chrono::{DateTime, Utc};
+use colored::*;
 use eyre::Result;
+use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use serde::Deserialize;
 use tokio::time::{sleep, Duration};
@@ -76,17 +78,22 @@ pub struct AuthCommand {
 pub enum AuthSubcommands {
     /// Login to PCL using your wallet
     #[command(
-        long_about = "Initiates the login process. Opens a browser window for wallet authentication."
+        long_about = "Initiates the login process. Opens a browser window for wallet authentication.",
+        after_help = "Example: pcl auth login"
     )]
     Login,
 
     /// Logout from PCL
-    #[command(long_about = "Removes stored authentication credentials.")]
+    #[command(
+        long_about = "Removes stored authentication credentials.",
+        after_help = "Example: pcl auth logout"
+    )]
     Logout,
 
     /// Check current authentication status
     #[command(
-        long_about = "Displays whether you're currently logged in and shows the connected wallet address if authenticated."
+        long_about = "Displays whether you're currently logged in and shows the connected wallet address if authenticated.",
+        after_help = "Example: pcl auth status"
     )]
     Status,
 }
@@ -123,32 +130,46 @@ impl AuthCommand {
             auth_response.session_id
         );
         println!(
-            "\nTo authenticate, please visit:\n\n🔗 {url}\n📝 Code: {code}\n\nWaiting for authentication...",
-            url = url,
-            code = auth_response.code
+            "\nTo authenticate, please visit:\n\n🔗 {}\n📝 {}\n",
+            url.white(),
+            format!("Code: {}", auth_response.code).green().bold()
         );
     }
 
     /// Poll for authentication verification
+    #[allow(clippy::literal_string_with_formatting_args)]
     async fn wait_for_verification(
         &self,
         config: &mut CliConfig,
         auth_response: &AuthResponse,
     ) -> Result<(), AuthError> {
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_style(
+            ProgressStyle::default_spinner()
+                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+                .template("{spinner} {msg}")
+                .expect("Failed to set spinner style"),
+        );
+        spinner.enable_steady_tick(Duration::from_millis(80));
+        spinner.set_message("Waiting for wallet authentication...");
+
         let client = Client::new();
 
         for _ in 0..MAX_RETRIES {
             let status = self.check_auth_status(&client, auth_response).await?;
 
             if status.verified {
+                spinner.finish_with_message("✅ Authentication successful!");
                 self.update_config(config, status, auth_response)?;
                 self.display_success_message(config);
                 return Ok(());
             }
 
+            spinner.tick();
             sleep(POLL_INTERVAL).await;
         }
 
+        spinner.finish_with_message("❌ Authentication timed out");
         Err(AuthError::Timeout(MAX_RETRIES))
     }
 
@@ -200,33 +221,40 @@ impl AuthCommand {
     /// Display success message after authentication
     fn display_success_message(&self, config: &CliConfig) {
         println!(
-            "\n{ascii}\n\n🎉 Authentication successful!\n🔗 Connected wallet: {address}\n",
-            ascii = PHYLAX_ASCII,
-            address = config.auth.as_ref().unwrap().user_address
+            "\n{}\n\n{} {}\n{} {}\n",
+            PHYLAX_ASCII.white(),
+            "🎉".green(),
+            "Authentication successful!".green().bold(),
+            "🔗",
+            format!(
+                "Connected wallet: {}",
+                config.auth.as_ref().unwrap().user_address
+            )
+            .white()
         );
     }
 
     /// Remove authentication data from configuration
     fn logout(&self, config: &mut CliConfig) -> Result<(), AuthError> {
         config.auth = None;
-        println!("👋 Logged out successfully");
+        println!("{} Logged out successfully", "👋".green());
         Ok(())
     }
 
     /// Display current authentication status
     fn status(&self, config: &CliConfig) -> Result<(), AuthError> {
-        let (icon, message) = if config.auth.is_some() {
+        let (icon, message) = if let Some(auth) = &config.auth {
             (
-                "✅",
+                "✅".green(),
                 format!(
                     "Logged in as: {}",
-                    config.auth.as_ref().unwrap().user_address
+                    auth.user_address.to_string().green().bold()
                 ),
             )
         } else {
-            ("❌", "Not logged in".to_string())
+            ("❌".red(), "Not logged in".to_string())
         };
-        println!("{icon} {message}");
+        println!("{} {}", icon, message);
         Ok(())
     }
 }

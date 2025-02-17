@@ -24,6 +24,8 @@ dirs = "6.0.0"
 eyre = { workspace = true }
 tokio = { workspace = true }
 chrono = { workspace = true }
+colored = "2.0"
+indicatif = "0.17"
 
 [dev-dependencies]
 mockito = "1.2"
