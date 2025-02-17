@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn test_env_var() {
         env::set_var("PCL_ROOT", "/env/path");
-        let args = CliArgs::try_parse_from(&["program"]).unwrap();
+        let args = CliArgs::try_parse_from(["program"]).unwrap();
         assert_eq!(args.assertions_dir(), PathBuf::from("/env/path"));
         env::remove_var("PCL_ROOT");
     }
@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn test_cli_override() {
         env::set_var("PCL_ROOT", "/env/path");
-        let args = CliArgs::try_parse_from(&["program", "-d", "/cli/path"]).unwrap();
+        let args = CliArgs::try_parse_from(["program", "-d", "/cli/path"]).unwrap();
         assert_eq!(args.assertions_dir(), PathBuf::from("/cli/path"));
         env::remove_var("PCL_ROOT");
     }
