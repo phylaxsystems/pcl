@@ -23,6 +23,11 @@ pub fn main() -> Result<()> {
         .parent() // up to workspace root
         .unwrap();
 
+    if env::var("PCL_BUILD_PHOUNDRY").is_err() {
+        println!("cargo:warning=Skipping phoundry build - PCL_BUILD_PHOUNDRY not set");
+        return Ok(());
+    }
+
     // Update phoundry submodule
     update_phoundry(workspace_root).expect("Failed to update phoundry submodule");
 

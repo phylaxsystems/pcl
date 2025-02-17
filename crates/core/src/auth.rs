@@ -114,7 +114,7 @@ impl AuthCommand {
             println!(
                 "{} Already logged in as: {}",
                 "ℹ️".blue(),
-                config.auth.as_ref().unwrap().user_address.to_string()
+                config.auth.as_ref().unwrap().user_address
             );
             println!(
                 "Please use {} first to login with a different wallet",
@@ -150,7 +150,7 @@ impl AuthCommand {
     }
 
     /// Poll for authentication verification
-    #[allow(clippy::literal_string_with_formatting_args)]
+    #[allow(clippy::to_string_in_format_args)]
     async fn wait_for_verification(
         &self,
         config: &mut CliConfig,
@@ -234,11 +234,10 @@ impl AuthCommand {
     /// Display success message after authentication
     fn display_success_message(&self, config: &CliConfig) {
         println!(
-            "\n{}\n\n{} {}\n{} {}\n",
+            "\n{}\n\n{} {}\n🔗 {}\n",
             PHYLAX_ASCII.white(),
             "🎉".green(),
             "Authentication successful!".green().bold(),
-            "🔗",
             format!(
                 "Connected wallet: {}",
                 config.auth.as_ref().unwrap().user_address

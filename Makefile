@@ -1,10 +1,10 @@
 # Build the binary
 build:
-	cargo build --verbose --release
+	PCL_BUILD_PHOUNDRY=1 cargo build --verbose --release
 
 # Build the contract mocks and run the rust tests
 test:
-	cargo test --verbose
+	cargo test --verbose --workspace
 
 # Validate formatting
 format-check:
@@ -12,7 +12,11 @@ format-check:
 
 # Format
 format:
-	cargo fmt --check
+	cargo fmt
+
+# Lint
+lint:
+	cargo clippy --workspace
 
 # Errors if there is a warning with clippy
 lint-check:
