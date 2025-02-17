@@ -110,6 +110,19 @@ impl AuthCommand {
 
     /// Initiate the login process and wait for user authentication
     async fn login(&self, config: &mut CliConfig) -> Result<(), AuthError> {
+        if config.auth.is_some() {
+            println!(
+                "{} Already logged in as: {}",
+                "ℹ️".blue(),
+                config.auth.as_ref().unwrap().user_address.to_string()
+            );
+            println!(
+                "Please use {} first to login with a different wallet",
+                "pcl auth logout".yellow()
+            );
+            return Ok(());
+        }
+
         let auth_response = self.request_auth_code().await?;
         self.display_login_instructions(&auth_response);
         self.wait_for_verification(config, &auth_response).await
@@ -445,5 +458,24 @@ mod tests {
         let result = cmd.status(&config);
 
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_login_when_already_authenticated() {
+        let mut config = create_test_config(); // Already has auth data
+        let cmd = AuthCommand {
+            command: AuthSubcommands::Login,
+        };
+
+        let result = cmd.login(&mut config).await;
+
+        assert!(result.is_ok());
+        // Verify auth data wasn't changed
+        assert_eq!(
+            config.auth.as_ref().unwrap().user_address,
+            "0x1234567890123456789012345678901234567890"
+                .parse::<Address>()
+                .unwrap()
+        );
     }
 }
