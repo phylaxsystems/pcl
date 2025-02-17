@@ -4,7 +4,7 @@ build:
 
 # Build the contract mocks and run the rust tests
 test:
-	cargo test --verbose
+	cargo test --verbose --workspace
 
 # Validate formatting
 format-check:
