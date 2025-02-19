@@ -14,6 +14,7 @@ pub fn main() -> Result<()> {
 
     let profile = env::var("PROFILE").unwrap();
     println!("cargo:warning=Building in {} mode", profile);
+    println!("cargo:rerun-if-env-changed=PCL_BUILD_PHOUNDRY");
 
     // Get the workspace root directory (where Cargo.toml is located)
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
