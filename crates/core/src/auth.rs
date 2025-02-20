@@ -70,6 +70,14 @@ struct StatusResponse {
 pub struct AuthCommand {
     #[command(subcommand)]
     pub command: AuthSubcommands,
+
+    #[arg(
+        long = "base-url",
+        env = "AUTH_BASE_URL",
+        default_value = "https://credible-layer-dapp.pages.dev",
+        help = "Base URL for authentication service"
+    )]
+    pub base_url: String,
 }
 
 /// Available authentication subcommands
@@ -131,7 +139,7 @@ impl AuthCommand {
     /// Request an authentication code from the server
     async fn request_auth_code(&self) -> Result<AuthResponse, AuthError> {
         let client = Client::new();
-        let url = format!("{}/api/v1/cli/auth/code", get_base_url());
+        let url = format!("{}/api/v1/cli/auth/code", self.base_url);
         Ok(client.get(url).send().await?.json().await?)
     }
 
@@ -139,8 +147,7 @@ impl AuthCommand {
     fn display_login_instructions(&self, auth_response: &AuthResponse) {
         let url = format!(
             "{}/device?session_id={}",
-            get_base_url(),
-            auth_response.session_id
+            self.base_url, auth_response.session_id
         );
         println!(
             "\nTo authenticate, please visit:\n\n🔗 {}\n📝 {}\n",
@@ -192,7 +199,7 @@ impl AuthCommand {
         client: &Client,
         auth_response: &AuthResponse,
     ) -> Result<StatusResponse, AuthError> {
-        let url = format!("{}/api/v1/cli/auth/status", get_base_url());
+        let url = format!("{}/api/v1/cli/auth/status", self.base_url);
         Ok(client
             .get(url)
             .query(&[
@@ -271,15 +278,11 @@ impl AuthCommand {
     }
 }
 
-fn get_base_url() -> String {
-    std::env::var("AUTH_BASE_URL")
-        .unwrap_or_else(|_| "https://credible-layer-dapp.pages.dev".to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use clap::Parser;
     use mockito::Server;
 
     fn create_test_config() -> CliConfig {
@@ -318,6 +321,7 @@ mod tests {
     fn test_display_login_instructions() {
         let cmd = AuthCommand {
             command: AuthSubcommands::Login,
+            base_url: "https://credible-layer-dapp.pages.dev".to_string(),
         };
         let auth_response = create_test_auth_response();
 
@@ -330,6 +334,7 @@ mod tests {
         let mut config = CliConfig::default();
         let cmd = AuthCommand {
             command: AuthSubcommands::Login,
+            base_url: "https://credible-layer-dapp.pages.dev".to_string(),
         };
         let auth_response = create_test_auth_response();
         let status = create_test_status_response();
@@ -361,6 +366,7 @@ mod tests {
         let config = create_test_config();
         let cmd = AuthCommand {
             command: AuthSubcommands::Login,
+            base_url: "https://credible-layer-dapp.pages.dev".to_string(),
         };
 
         // Can't easily test stdout, but we can verify it doesn't panic
@@ -378,10 +384,9 @@ mod tests {
             .with_body(r#"{"code":"123456","sessionId":"test_session","deviceSecret":"test_secret","expiresAt":"2024-12-31"}"#)
             .create();
 
-        let cmd = AuthCommand {
-            command: AuthSubcommands::Login,
-        };
-        std::env::set_var("AUTH_BASE_URL", server.url());
+        let cmd = AuthCommand::try_parse_from(vec!["auth", "--base-url", &server.url(), "login"])
+            .unwrap();
+
         let result = cmd.request_auth_code().await;
 
         assert!(result.is_ok());
@@ -406,12 +411,11 @@ mod tests {
             .with_body(r#"{"verified":true,"address":"0xtest","token":"test_token","refresh_token":"test_refresh"}"#)
             .create();
 
-        let cmd = AuthCommand {
-            command: AuthSubcommands::Login,
-        };
+        let cmd = AuthCommand::try_parse_from(vec!["auth", "--base-url", &server.url(), "login"])
+            .unwrap();
+
         let client = Client::new();
         let auth_response = create_test_auth_response();
-        std::env::set_var("AUTH_BASE_URL", server.url());
 
         let result = cmd.check_auth_status(&client, &auth_response).await;
 
@@ -425,9 +429,13 @@ mod tests {
     #[test]
     fn test_logout() {
         let mut config = create_test_config();
-        let cmd = AuthCommand {
-            command: AuthSubcommands::Logout,
-        };
+        let cmd = AuthCommand::try_parse_from(vec![
+            "auth",
+            "--base-url",
+            "https://credible-layer-dapp.pages.dev",
+            "logout",
+        ])
+        .unwrap();
 
         let result = cmd.logout(&mut config);
 
@@ -438,12 +446,15 @@ mod tests {
     #[test]
     fn test_status() {
         let config = create_test_config();
-        let cmd = AuthCommand {
-            command: AuthSubcommands::Status,
-        };
+        let cmd = AuthCommand::try_parse_from(vec![
+            "auth",
+            "--base-url",
+            "https://credible-layer-dapp.pages.dev",
+            "status",
+        ])
+        .unwrap();
 
         let result = cmd.status(&config);
-
         assert!(result.is_ok());
     }
 
@@ -452,6 +463,7 @@ mod tests {
         let config = CliConfig::default();
         let cmd = AuthCommand {
             command: AuthSubcommands::Status,
+            base_url: "https://credible-layer-dapp.pages.dev".to_string(),
         };
 
         let result = cmd.status(&config);
@@ -461,15 +473,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_login_when_already_authenticated() {
-        let mut config = create_test_config(); // Already has auth data
-        let cmd = AuthCommand {
-            command: AuthSubcommands::Login,
-        };
+        let mut config = create_test_config();
+        let cmd = AuthCommand::try_parse_from(vec![
+            "auth",
+            "--base-url",
+            "https://credible-layer-dapp.pages.dev",
+            "login",
+        ])
+        .unwrap();
 
         let result = cmd.login(&mut config).await;
-
         assert!(result.is_ok());
-        // Verify auth data wasn't changed
         assert_eq!(
             config.auth.as_ref().unwrap().user_address,
             "0x1234567890123456789012345678901234567890"
