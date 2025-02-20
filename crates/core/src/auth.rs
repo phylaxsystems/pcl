@@ -2,7 +2,6 @@ use crate::config::{CliConfig, UserAuth};
 use crate::error::AuthError;
 use alloy_primitives::Address;
 use chrono::{DateTime, Utc};
-
 use colored::*;
 use eyre::Result;
 use indicatif::{ProgressBar, ProgressStyle};
