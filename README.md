@@ -26,9 +26,17 @@ This will build the CLI in `target/release` directory.
 Before using most commands, you need to authenticate:
 
 ```bash
-pcl auth login    # Start the authentication process
-pcl auth logout   # Remove stored credentials
-pcl auth status   # Check current authentication status
+Usage: pcl auth [OPTIONS] <COMMAND>
+
+Commands:
+  login   Login to PCL using your wallet
+  logout  Logout from PCL
+  status  Check current authentication status
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --base-url <BASE_URL>  Base URL for authentication service [env: AUTH_BASE_URL=] [default: https://credible-layer-dapp.pages.dev]
+  -h, --help                 Print help
 ```
 
 When logging in:
@@ -129,7 +137,7 @@ These options work with most commands:
 ```bash
 --help              # Show help for any command
 --version           # Show CLI version
---verbose          # Enable verbose output
+--verbose           # Enable verbose output
 ```
 
 ### Examples
