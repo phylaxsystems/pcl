@@ -16,11 +16,11 @@ format:
 
 # Lint
 lint:
-	cargo clippy --workspace
+	PCL_SKIP_BUILD_PHOUNDRY=true cargo clippy --workspace
 
 # Errors if there is a warning with clippy
 lint-check:
-	cargo clippy  -- -D warnings
+	PCL_SKIP_BUILD_PHOUNDRY=true cargo clippy -- -D warnings
 
 # Can be used as a manual pre-commit check
 pre-commit:
