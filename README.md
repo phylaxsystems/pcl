@@ -14,12 +14,10 @@ It requires the following:
 After you have installed the above, you can build the CLI by running the following:
 
 ```bash
-git clone git@github.com:phylaxsystems/pcl.git
-cd pcl
-cargo build --release
+cargo install --git https://github.com/phylaxsystems/pcl.git
 ```
 
-This will build the CLI and install it in the `target/release` directory.
+This will build the CLI and install it.
 
 ### Usage
 
