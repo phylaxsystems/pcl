@@ -19,31 +19,93 @@ cargo install --git https://github.com/phylaxsystems/pcl.git
 
 This will build the CLI and install it.
 
-### Usage
+## Usage Guide
+
+### Authentication
+
+Before using most commands, you need to authenticate:
 
 ```bash
-The Credible CLI for the Credible Layer
-
-Usage: pcl [OPTIONS] <COMMAND>
+Usage: pcl auth [OPTIONS] <COMMAND>
 
 Commands:
-  phorge  
-  build   
+  login   Login to PCL using your wallet
+  logout  Logout from PCL
+  status  Check current authentication status
   help    Print this message or the help of the given subcommand(s)
 
 Options:
-  -d, --assertions-dir <ASSERTIONS_DIR>  [env: PCL_ROOT=]
-  -h, --help                             Print help
-  -V, --version                          Print version
+      --base-url <BASE_URL>  Base URL for authentication service [env: AUTH_BASE_URL=] [default: https://credible-layer-dapp.pages.dev]
+  -h, --help                 Print help
 ```
 
-To execute `phorge`, a minimal fork of Forge which includes a cheatcode for assertion execution, you can run:
+When logging in:
+
+1. A URL and authentication code will be displayed
+2. Visit the URL in your browser
+3. Connect your wallet and approve the authentication
+4. CLI will automatically detect successful authentication
+
+### Assertion Commands
+
+#### DA Submit
+
+Submit assertions to the Data Availability Layer:
 
 ```bash
-pcl phorge --help
+pcl da-submit [OPTIONS] <CONTRACT_ADDRESS> <ASSERTION_ID>
 ```
 
-You need to specify the assertions directory, which is the directory containing the assertions source and tests you want to test or build.
+Options:
+
+- `--chain`: Specify the target chain
+- `--rpc-url`: Custom RPC endpoint
+
+#### Dapp Submit
+
+Submit assertions to dapps:
+
+```bash
+pcl dapp-submit [OPTIONS] <CONTRACT_ADDRESS> <ASSERTION_ID>
+```
+
+Options:
+
+- `--chain`: Target chain for submission
+- `--rpc-url`: Custom RPC endpoint
+
+### Development Commands
+
+#### Build
+
+Build your project:
+
+```bash
+pcl build [OPTIONS]
+```
+
+Options:
+
+- `--optimize`: Enable optimization
+- `--debug`: Include debug information
+
+#### Phorge
+
+Foundry-compatible development commands:
+
+```bash
+pcl phorge test      # Run tests
+pcl phorge script    # Run scripts
+pcl phorge deploy    # Deploy contracts
+```
+
+To specify the assertions directory:
+
+```bash
+pcl --assertions-dir <PATH> phorge
+```
+
+Example:
 
 ```bash
 pcl --assertions-dir mock-protocol/assertions phorge
@@ -52,11 +114,73 @@ pcl --assertions-dir mock-protocol/assertions phorge
 Phorge expects the following directory structure:
 
 ```text
-  assertions/
-    src/
-    test/
+assertions/
+  src/     # Source files
+  test/    # Test files with .t.sol extension
 ```
 
-Assertion source files should be in the `src` directory, and test files should be in the `test` directory. Test files should have the `.t.sol` extension, and test functions should start with `test_`. As a minimal fork of Forge, it behaves identically to Forge.
+By defining the assertions directory, the CLI will automatically:
 
-By definining the assertions directory, the CLI will automatically add the `src` and `test` directories to the phorge command. That way, you can share a `foundry.toml` and `lib` directory between the sources and tests of the smart contracts and the assertions.
+- Add the `src` and `test` directories to the phorge command
+- Allow sharing of `foundry.toml` and `lib` directory between contracts and assertions
+
+### Configuration
+
+- Config file location: `~/.pcl/config.toml`
+- Stores authentication and submission history
+- Automatically created on first use
+
+### Common Options
+
+These options work with most commands:
+
+```bash
+--help              # Show help for any command
+--version           # Show CLI version
+--verbose           # Enable verbose output
+```
+
+### Examples
+
+#### Complete Authentication Flow
+
+```bash
+# Login
+pcl auth login
+
+# Verify status
+pcl auth status
+
+# Submit assertion
+pcl da-submit 0x123... 456
+
+# Logout when done
+pcl auth logout
+```
+
+#### Development Workflow
+
+```bash
+# Build project
+pcl build
+
+# Run tests
+pcl phorge test
+
+# Deploy and submit
+pcl phorge deploy
+pcl dapp-submit <deployed-address> <assertion-id>
+```
+
+### Error Handling
+
+- Authentication errors: Re-run `pcl auth login`
+- Network errors: Check connection and RPC URL
+- Build errors: Check contract syntax and dependencies
+
+### Best Practices
+
+1. Always check auth status before submitting
+2. Use appropriate chain parameters
+3. Keep credentials secure
+4. Regular logout when done
