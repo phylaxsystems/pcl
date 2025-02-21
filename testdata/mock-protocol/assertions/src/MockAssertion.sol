@@ -11,7 +11,7 @@ contract MockAssertion is Assertion {
         protocol = protocol_;
     }
 
-    function triggers() external view virtual override {
+    function triggers() external view override {
         registerCallTrigger(this.assertionCheckBool.selector);
     }
 

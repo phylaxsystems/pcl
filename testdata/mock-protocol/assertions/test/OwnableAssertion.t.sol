@@ -23,11 +23,15 @@ contract TestOwnableAssertion is CredibleTest, Test {
 
         // Associate the assertion with the protocol
         // cl will manage the correct assertion execution under the hood when the protocol is being called
-        cl.addAssertion(label, aaAddress, type(OwnableAssertion).creationCode, abi.encode(assertionAdopter));
+        cl.addAssertion("ownerChanged", aaAddress, type(OwnableAssertion).creationCode, abi.encode(assertionAdopter));
 
         vm.prank(assertionAdopter.owner());
+        vm.expectRevert();
         cl.validate(
-            label, aaAddress, 0, abi.encodePacked(assertionAdopter.transferOwnership.selector, abi.encode(newOwner))
+            "ownerChanged",
+            aaAddress,
+            0,
+            abi.encodePacked(assertionAdopter.transferOwnership.selector, abi.encode(newOwner))
         );
     }
 
