@@ -2,11 +2,11 @@
 pragma solidity 0.8.28;
 
 import {Test} from "../../lib/credible-std/lib/forge-std/src/Test.sol";
-import {Credible} from "../../lib/credible-std/src/Credible.sol";
+import {CredibleTest} from "../../lib/credible-std/src/CredibleTest.sol";
 import {MockAssertion} from "../src/MockAssertion.sol";
 import {MockProtocol} from "../../src/protocol.sol";
 
-contract TestMockAssertion is Test, Credible {
+contract TestMockAssertion is Test, CredibleTest {
     MockProtocol public protocol;
 
     function setUp() public {
@@ -15,6 +15,9 @@ contract TestMockAssertion is Test, Credible {
 
     function test_assertionCheckBool() public {
         MockAssertion assertion = new MockAssertion(protocol);
-        assertEq(assertion.assertionCheckBool(), true);
+        cl.addAssertion(
+            "assertionCheckBool", address(assertion), type(MockAssertion).creationCode, abi.encode(protocol)
+        );
+        cl.validate("assertionCheckBool", address(assertion), 0, new bytes(0));
     }
 }

@@ -11,17 +11,11 @@ contract MockAssertion is Assertion {
         protocol = protocol_;
     }
 
-    function fnSelectors()
-        external
-        pure
-        override
-        returns (bytes4[] memory assertions)
-    {
-        assertions = new bytes4[](1);
-        assertions[0] = this.assertionCheckBool.selector;
+    function triggers() external view override {
+        registerCallTrigger(this.assertionCheckBool.selector);
     }
 
-    function assertionCheckBool() external view returns (bool) {
-        return protocol.checkBool();
+    function assertionCheckBool() external {
+        require(protocol.checkBool(), "Assertion failed");
     }
 }

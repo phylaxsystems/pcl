@@ -11,11 +11,8 @@ contract OwnableAssertion is Assertion {
         ownable = Ownable(ownable_); // Define address of Ownable contract
     }
 
-    // Define selectors for the assertions, several assertions can be defined here
-    // This function is required by the Assertion interface
-    function fnSelectors() external pure override returns (bytes4[] memory assertions) {
-        assertions = new bytes4[](1); // Define an array of selectors
-        assertions[0] = this.assertionOwnershipChange.selector; // Define the selector for the assertionOwnershipChange function
+    function triggers() external view override {
+        registerCallTrigger(this.assertionOwnershipChange.selector);
     }
 
     // This function is used to check if the ownership has changed
@@ -26,6 +23,6 @@ contract OwnableAssertion is Assertion {
         address preOwner = ownable.owner(); // Get the owner of the contract before the transaction
         ph.forkPostState(); // Fork the post-state of the transaction
         address postOwner = ownable.owner(); // Get the owner of the contract after the transaction
-        require(postOwner == preOwner, "Ownership has changed"); // Return true if the owner has not changed, false if it has
+        require(postOwner == preOwner, "Ownership has changed"); // Revert if the owner has changed
     }
 }
