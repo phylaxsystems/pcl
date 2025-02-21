@@ -42,6 +42,11 @@ contract TestOwnableAssertion is CredibleTest, Test {
         cl.addAssertion(label, aaAddress, type(OwnableAssertion).creationCode, abi.encode(assertionAdopter));
 
         vm.prank(assertionAdopter.owner());
-        cl.validate(label, aaAddress, 0, new bytes(0)); // no transaction
+        cl.validate(
+            "ownerNotChanged",
+            aaAddress,
+            0,
+            abi.encodePacked(assertionAdopter.transferOwnership.selector, abi.encode(assertionAdopter.owner()))
+        ); // assert that the ownership has not changed
     }
 }
