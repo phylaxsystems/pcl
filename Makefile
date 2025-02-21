@@ -1,6 +1,6 @@
 # Build the binary
 build:
-	PCL_BUILD_PHOUNDRY=1 cargo build --verbose --release
+	cargo build --verbose --release
 
 # Build the contract mocks and run the rust tests
 test:
