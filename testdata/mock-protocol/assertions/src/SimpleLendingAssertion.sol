@@ -18,6 +18,7 @@ contract SimpleLendingAssertion is Assertion {
         registerCallTrigger(this.assertionCollateralBalance.selector);
         registerCallTrigger(this.assertionBorrowedInvariant.selector);
         registerCallTrigger(this.assertionPriceDeviation.selector);
+        registerCallTrigger(this.assertionEthDrain.selector);
     }
 
     function assertionCollateralBalance() external {

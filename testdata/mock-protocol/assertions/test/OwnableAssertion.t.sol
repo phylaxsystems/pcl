@@ -9,7 +9,6 @@ import {Test} from "../../lib/credible-std/lib/forge-std/src/Test.sol";
 
 contract TestOwnableAssertion is CredibleTest, Test {
     address public newOwner = address(0xdeadbeef);
-    bytes[] public assertions;
     Ownable public assertionAdopter;
 
     function setUp() public {
@@ -44,7 +43,7 @@ contract TestOwnableAssertion is CredibleTest, Test {
             "ownerNotChanged",
             aaAddress,
             0,
-            new bytes(0) // no transaction
+            abi.encodePacked(assertionAdopter.transferOwnership.selector, abi.encode(assertionAdopter.owner()))
         ); // assert that the ownership has not changed
     }
 }

@@ -112,18 +112,31 @@ interface IPriceFeed {
     /// @notice Gets the current price of an asset
     /// @return The price with 18 decimals of precision
     function getPrice() external view returns (uint256);
+    function setPrice(uint256 price) external;
 }
 
 /// @notice Mock price feed for ETH/USD
 contract MockPriceFeed is IPriceFeed {
-    function getPrice() external pure returns (uint256) {
-        return 2000 * 1e18; // ETH price: $2000
+    uint256 public price;
+
+    function getPrice() public view returns (uint256) {
+        return price;
+    }
+
+    function setPrice(uint256 _price) external {
+        price = _price;
     }
 }
 
 /// @notice Mock price feed for Token/USD
 contract MockTokenPriceFeed is IPriceFeed {
-    function getPrice() external pure returns (uint256) {
-        return 1 * 1e18; // Token price: $1
+    uint256 public price;
+
+    function getPrice() public view returns (uint256) {
+        return price;
+    }
+
+    function setPrice(uint256 _price) external {
+        price = _price;
     }
 }

@@ -16,6 +16,7 @@ contract MockAssertion is Assertion {
     }
 
     function assertionCheckBool() external {
+        ph.forkPostState();
         require(protocol.checkBool(), "Assertion failed");
     }
 }

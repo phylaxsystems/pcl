@@ -7,7 +7,7 @@ contract Ownable {
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     constructor() {
-        _owner = address(0xdead);
+        _owner = address(0xdeadb999f);
         emit OwnershipTransferred(address(0), _owner);
     }
 
