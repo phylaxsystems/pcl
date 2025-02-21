@@ -14,9 +14,20 @@ pub fn main() -> Result<()> {
 
     let profile = env::var("PROFILE").unwrap();
     println!("cargo:warning=Building in {} mode", profile);
-    println!("cargo:rerun-if-env-changed=PCL_BUILD_PHOUNDRY");
 
-    // Get the workspace root directory (where Cargo.toml is located)
+    // Environment flags
+    println!("cargo:rerun-if-env-changed=PCL_SKIP_UPDATE_PHOUNDRY");
+    println!("cargo:rerun-if-env-changed=PCL_SKIP_BUILD_PHOUNDRY");
+
+    let skip_build_phoundry = env::var("PCL_SKIP_BUILD_PHOUNDRY")
+        .map(|val| val.to_lowercase() == "true")
+        .unwrap_or(false);
+
+    let skip_update_phoundry = env::var("PCL_SKIP_UPDATE_PHOUNDRY")
+        .map(|val| val.to_lowercase() == "true")
+        .unwrap_or(false);
+
+    // Get the workspace root directory
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let workspace_root = Path::new(&manifest_dir)
         .parent() // up from bin/pcl
@@ -24,13 +35,17 @@ pub fn main() -> Result<()> {
         .parent() // up to workspace root
         .unwrap();
 
-    if env::var("PCL_BUILD_PHOUNDRY").is_err() {
-        println!("cargo:warning=Skipping phoundry build - PCL_BUILD_PHOUNDRY not set");
+    if skip_build_phoundry {
+        println!("cargo:warning=Skipping building phoundry - PCL_SKIP_BUILD_PHOUNDRY is set");
         return Ok(());
     }
 
-    // Update phoundry submodule
-    update_phoundry(workspace_root).expect("Failed to update phoundry submodule");
+    if skip_update_phoundry {
+        println!("cargo:warning=Skipping updating phoundry - PCL_SKIP_UPDATE_PHOUNDRY is set");
+    } else {
+        // Update phoundry submodule
+        update_phoundry(workspace_root).expect("Failed to update phoundry submodule");
+    }
 
     // Build phoundry/forge
     build_phoundry(workspace_root, &profile).expect("Failed to build phoundry");
