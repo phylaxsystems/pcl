@@ -14,10 +14,10 @@ It requires the following:
 After you have installed the above, you can build the CLI by running the following:
 
 ```bash
-cargo install --git https://github.com/phylaxsystems/pcl.git
+make build
 ```
 
-This will build the CLI and install it.
+This will build the CLI in `target/release` directory.
 
 ### Usage
 
@@ -27,8 +27,8 @@ The Credible CLI for the Credible Layer
 Usage: pcl [OPTIONS] <COMMAND>
 
 Commands:
-  phorge  
-  build   
+  phorge
+  build
   help    Print this message or the help of the given subcommand(s)
 
 Options:

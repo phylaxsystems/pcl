@@ -18,20 +18,38 @@ impl CliArgs {
         self.root_dir.clone().unwrap_or_default()
     }
 
+    pub fn out_dir(&self) -> PathBuf {
+        PathBuf::from("out")
+    }
+
+    pub fn out_dir_joined(&self) -> PathBuf {
+        self.root_dir().join(self.out_dir())
+    }
+
     pub fn assertions_dir(&self) -> PathBuf {
-        self.root_dir().join(
-            self.assertions_dir
-                .clone()
-                .unwrap_or(PathBuf::from("assertions")),
-        )
+        self.assertions_dir
+            .clone()
+            .unwrap_or(PathBuf::from("assertions"))
+    }
+
+    pub fn assertions_dir_joined(&self) -> PathBuf {
+        self.root_dir().join(self.assertions_dir())
+    }
+
+    pub fn assertions_src_joined(&self) -> PathBuf {
+        self.assertions_dir_joined().join(self.assertions_src())
     }
 
     pub fn assertions_src(&self) -> PathBuf {
-        self.assertions_dir().join("src")
+        PathBuf::from("src")
+    }
+
+    pub fn assertions_test_joined(&self) -> PathBuf {
+        self.assertions_dir_joined().join(self.assertions_test())
     }
 
     pub fn assertions_test(&self) -> PathBuf {
-        self.assertions_dir().join("test")
+        PathBuf::from("test")
     }
 }
 

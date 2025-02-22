@@ -2,7 +2,7 @@ use pcl_common::args::CliArgs;
 use std::{
     env,
     path::PathBuf,
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 
 use crate::error::PhoundryError;
@@ -36,6 +36,13 @@ impl Phorge {
 
         command.args(self.args.clone());
 
+        if print_output {
+            command
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+        }
+
         // Only valid for the context of this binary execution
         env::set_var(
             "FOUNDRY_SRC",
@@ -46,17 +53,7 @@ impl Phorge {
             cli_args.assertions_test().as_os_str().to_str().unwrap(),
         );
 
-        let output = command.output()?;
-
-        // Pass through stdout/stderr exactly as forge produced them
-        if print_output && !output.stdout.is_empty() {
-            print!("{}", String::from_utf8_lossy(&output.stdout));
-        }
-        if !output.stderr.is_empty() {
-            eprint!("{}", String::from_utf8_lossy(&output.stderr));
-        }
-
-        Ok(output)
+        Ok(command.output()?)
     }
 
     /// Check if forge is installed and available in the PATH.

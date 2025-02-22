@@ -2,7 +2,7 @@ use crate::{
     config::CliConfig,
     error::{DaClientError, DaSubmitError},
 };
-use alloy_primitives::{keccak256, Bytes, B256, hex};
+use alloy_primitives::{Bytes, B256, hex};
 use pcl_common::{args::CliArgs, utils::bytecode};
 use pcl_phoundry::build::BuildArgs;
 
@@ -32,12 +32,16 @@ impl DASubmitArgs {
             assertions: vec![self.assertion.clone()],
         };
 
-        let root_dir = cli_args.root_dir();
-        build_args.run(cli_args)?;
+        let out_dir = cli_args.out_dir_joined();
+        let result = build_args.run(cli_args)?;
 
-        let bytecode : Bytes = hex::decode(bytecode(&self.assertion, root_dir))?.into();
-        let da_client = DaClient::new(&self.url)?;
-        let result = da_client.submit_assertion(bytecode).await?;
+        if !result.status.success() {
+            eprintln!("Failed to build assertion contracts.");
+            std::process::exit(1);
+        }
+
+        let bytecode : Bytes = hex::decode(bytecode(&self.assertion, out_dir))?.into();
+        let result = DaClient::new(&self.url)?.submit_assertion(bytecode).await?;
 
         println!("Submitted assertion with id: {}", result.id);
         println!("Signature: {}", result.signature);
@@ -47,6 +51,8 @@ impl DASubmitArgs {
 
 }
 
+// FIXME: Move this to a crate in the assertion-da repo, leverage here and in the
+// assertion-executor
 #[derive(Debug)]
 pub struct DaClient {
     client: HttpClient,
