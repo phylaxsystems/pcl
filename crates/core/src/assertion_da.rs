@@ -1,33 +1,16 @@
-use crate::{config::CliConfig, error::DaSubmitError};
-use alloy_primitives::keccak256;
+use crate::{
+    config::CliConfig,
+    error::{DaClientError, DaSubmitError},
+};
+use alloy_primitives::{keccak256, Bytes, B256, hex};
 use pcl_common::{args::CliArgs, utils::bytecode};
 use pcl_phoundry::build::BuildArgs;
-use reqwest::Client;
+
+use jsonrpsee::{http_client::{HttpClient, HttpClientBuilder}, core::client::ClientT};
+
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize)]
-struct JsonRpcResponse {
-    #[serde(rename = "jsonrpc")]
-    _json_rpc: String,
-    result: SubmissionResponse,
-    #[serde(rename = "id")]
-    _id: u64,
-}
 
-#[derive(Deserialize)]
-struct SubmissionResponse {
-    status: String,
-    id: String,
-}
-
-#[derive(Serialize)]
-struct JsonRpcRequest {
-    #[serde(rename = "jsonrpc")]
-    json_rpc: String,
-    method: String,
-    params: Vec<String>,
-    id: u64,
-}
 
 #[derive(clap::Parser)]
 pub struct DASubmitArgs {
@@ -49,57 +32,71 @@ impl DASubmitArgs {
             assertions: vec![self.assertion.clone()],
         };
 
+        let root_dir = cli_args.root_dir();
         build_args.run(cli_args)?;
-        let bytecode = self.get_bytecode(&self.assertion)?;
-        let id = self.calculate_id(&bytecode)?;
-        let request = self.create_jsonrpc_request(&id, &bytecode)?;
-        self.submit_request(&request).await
-    }
 
-    fn get_bytecode(&self, assertion: &str) -> Result<String, DaSubmitError> {
-        let artifact_path = format!("{}.sol:{}", assertion, assertion);
-        Ok(bytecode(&artifact_path))
-    }
+        let bytecode : Bytes = hex::decode(bytecode(&self.assertion, root_dir))?.into();
+        let da_client = DaClient::new(&self.url)?;
+        let result = da_client.submit_assertion(bytecode).await?;
 
-    fn calculate_id(&self, bytecode: &str) -> Result<String, DaSubmitError> {
-        // TODO: Need to align with the correct calculation of the id
-        let id = keccak256(bytecode.as_bytes());
-        Ok(id.to_string())
-    }
-
-    fn create_jsonrpc_request(
-        &self,
-        id: &str,
-        bytecode: &str,
-    ) -> Result<JsonRpcRequest, DaSubmitError> {
-        Ok(JsonRpcRequest {
-            json_rpc: "2.0".to_string(),
-            method: "da_submit_assertion".to_string(),
-            params: vec![
-                format!("0x{}", id),       // keccak256 hash as id
-                format!("0x{}", bytecode), // code
-            ],
-            id: 1,
-        })
-    }
-
-    async fn submit_request(&self, request: &JsonRpcRequest) -> Result<(), DaSubmitError> {
-        let client = Client::new();
-        let response = client.post(&self.url).json(request).send().await?;
-
-        if !response.status().is_success() {
-            return Err(DaSubmitError::SubmissionFailed(
-                response.status().to_string(),
-            ));
-        }
-
-        let result: JsonRpcResponse = response.json().await?;
-        println!(
-            "Submitted assertion '{}': ID {}: Status {}",
-            self.assertion, result.result.id, result.result.status
-        );
-
+        println!("Submitted assertion with id: {}", result.id);
+        println!("Signature: {}", result.signature);
         Ok(())
+
+    }
+
+}
+
+#[derive(Debug)]
+pub struct DaClient {
+    client: HttpClient,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct DaSubmissionResponse {
+    id: B256,
+    signature: Bytes,
+
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct DaFetchResponse {
+    bytecode: Bytes,
+    signature: Bytes,
+}
+
+impl DaClient {
+    /// Create a new DA client
+    pub fn new(da_url: &str) -> Result<Self, DaClientError> {
+        let client = HttpClientBuilder::default().build(da_url)?;
+
+        Ok(Self { client })
+    }
+
+    /// Fetch the bytecode for the given assertion id from the DA layer
+    pub async fn fetch_assertion_bytecode(
+        &self,
+        assertion_id: B256,
+    ) -> Result<Bytes, DaClientError> {
+        let response = self
+            .client
+            .request::<DaFetchResponse, &[String]>("da_get_assertion", &[assertion_id.to_string()])
+            .await?;
+
+        Ok(response.bytecode)
+    }
+
+    /// Submit the assertion bytecode to the DA layer
+    pub async fn submit_assertion(
+        &self,
+        code: Bytes,
+    ) -> Result<DaSubmissionResponse, DaClientError> {
+       Ok(self.client
+            .request::<DaSubmissionResponse, &[String]>(
+                "da_submit_assertion",
+                &[code.to_string()],
+            )
+            .await?)
     }
 }
 

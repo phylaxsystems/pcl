@@ -7,6 +7,6 @@ pub enum PhoundryError {
     ForgeNotInstalled,
     #[error("forge command failed")]
     ForgeCommandFailed(#[from] std::io::Error),
-    #[error("invalid forge output")]
+    #[error("invalid forge output: {0}")]
     InvalidForgeOutput(&'static str),
 }

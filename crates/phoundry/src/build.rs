@@ -29,6 +29,8 @@ impl BuildArgs {
     pub fn run(&self, cli_args: CliArgs) -> Result<(), PhoundryError> {
         let build_output = self.execute_forge_build(&cli_args)?;
 
+        println!("forge output: {:?}", build_output);
+
         if !build_output.stdout.is_empty() {
             let json_output = self.parse_forge_output(&build_output.stdout)?;
             let contracts = self.extract_contracts(&json_output)?;
@@ -56,7 +58,7 @@ impl BuildArgs {
         .map(|s| s.to_string())
         .collect();
         let phoundry = Phorge { args };
-        phoundry.run(cli_args.clone(), false)
+        phoundry.run(cli_args.clone(), true)
     }
 
     fn parse_forge_output(&self, stdout: &[u8]) -> Result<serde_json::Value, PhoundryError> {

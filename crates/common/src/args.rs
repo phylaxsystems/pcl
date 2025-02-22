@@ -1,15 +1,29 @@
 use clap::Parser;
 use std::path::PathBuf;
 
-#[derive(Parser, Clone)]
+#[derive(Debug, Parser, Clone, Default)]
 pub struct CliArgs {
-    #[arg(short = 'd', long, env = "PCL_ROOT")]
-    pub assertions_dir: Option<PathBuf>,
+    /// The root directory for the project.
+    /// Defaults to the current directory.
+    #[arg(long = "root", env = "PCL_ROOT_DIR")]
+    root_dir: Option<PathBuf>,
+    /// The directory containing assertions 'src' and 'test' directories.
+    /// Defaults to '/assertions' in the root directory.
+    #[arg(long = "assertions", env = "PCL_ASSERTIONS_DIR")]
+    assertions_dir: Option<PathBuf>,
 }
 
 impl CliArgs {
+    pub fn root_dir(&self) -> PathBuf {
+        self.root_dir.clone().unwrap_or_default()
+    }
+
     pub fn assertions_dir(&self) -> PathBuf {
-        self.assertions_dir.clone().unwrap_or_default()
+        self.root_dir().join(
+            self.assertions_dir
+                .clone()
+                .unwrap_or(PathBuf::from("assertions")),
+        )
     }
 
     pub fn assertions_src(&self) -> PathBuf {
@@ -18,14 +32,6 @@ impl CliArgs {
 
     pub fn assertions_test(&self) -> PathBuf {
         self.assertions_dir().join("test")
-    }
-}
-
-impl Default for CliArgs {
-    fn default() -> Self {
-        Self {
-            assertions_dir: Some(PathBuf::from("assertions")),
-        }
     }
 }
 
@@ -46,6 +52,7 @@ mod tests {
     fn test_custom_dir() {
         let args = CliArgs {
             assertions_dir: Some(PathBuf::from("/custom/path")),
+            ..CliArgs::default()
         };
         assert_eq!(args.assertions_dir(), PathBuf::from("/custom/path"));
         assert_eq!(args.assertions_src(), PathBuf::from("/custom/path/src"));
