@@ -55,7 +55,7 @@ impl DASubmitArgs {
     }
 }
 
-// FIXME: Move this to a crate in the assertion-da repo, leverage here and in the
+// TODO(Greg): Move this to a crate in the assertion-da repo, leverage here and in the
 // assertion-executor
 #[derive(Debug)]
 pub struct DaClient {
