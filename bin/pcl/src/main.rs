@@ -32,7 +32,9 @@ struct Cli {
 enum Commands {
     Phorge(Phorge),
     Build(BuildArgs),
+    #[command(name = "store")]
     DASubmit(DASubmitArgs),
+    #[command(name = "submit")]
     DappSubmit(DappSubmitArgs),
     Auth(AuthCommand),
 }
