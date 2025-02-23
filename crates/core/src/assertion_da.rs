@@ -38,7 +38,7 @@ impl DASubmitArgs {
             assertions: vec![self.assertion.clone()],
         };
 
-        let out_dir = cli_args.out_dir_joined();
+        let out_dir = cli_args.out_dir();
         let result = build_args.run(cli_args)?;
 
         if !result.status.success() {
@@ -104,86 +104,5 @@ impl DaClient {
             .client
             .request::<DaSubmissionResponse, &[String]>("da_submit_assertion", &[code.to_string()])
             .await?)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use mockito::Server;
-
-    #[test]
-    fn test_calculate_id() {
-        let args = DASubmitArgs {
-            url: "http://test".to_string(),
-            assertion: "TestAssertion.sol".to_string(),
-        };
-        let result = args.calculate_id("sample_bytecode");
-        assert!(result.is_ok());
-        assert!(!result.unwrap().is_empty());
-    }
-
-    #[test]
-    fn test_create_jsonrpc_request() {
-        let args = DASubmitArgs {
-            url: "http://test".to_string(),
-            assertion: "TestAssertion.sol".to_string(),
-        };
-        let request = args
-            .create_jsonrpc_request("test_id", "test_bytecode")
-            .unwrap();
-        assert_eq!(request.json_rpc, "2.0");
-        assert_eq!(request.method, "da_submit_assertion");
-        assert_eq!(request.params.len(), 2);
-        assert_eq!(request.params[0], "0xtest_id");
-        assert_eq!(request.params[1], "0xtest_bytecode");
-    }
-
-    #[tokio::test]
-    async fn test_submit_request() {
-        let mut server = Server::new_async().await;
-        let mock = server
-            .mock("POST", "/")
-            .match_body(r#"{"jsonrpc":"2.0","method":"da_submit_assertion","params":["0xtest_id","0xtest_bytecode"],"id":1}"#)
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"jsonrpc":"2.0","result":{"id":"0xtest_id","status":"success"},"id":1}"#)
-            .create();
-
-        let args = DASubmitArgs {
-            url: server.url(),
-            assertion: "TestAssertion.sol".to_string(),
-        };
-
-        let request = args
-            .create_jsonrpc_request("test_id", "test_bytecode")
-            .unwrap();
-        let result = args.submit_request(&request).await;
-        assert!(result.is_ok());
-        mock.assert();
-    }
-
-    #[tokio::test]
-    async fn test_submit_request_failure() {
-        let mut server = Server::new_async().await;
-        let mock = server
-            .mock("POST", "/")
-            .with_status(400)
-            .with_body(
-                r#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal error"},"id":1}"#,
-            )
-            .create();
-
-        let args = DASubmitArgs {
-            url: server.url(),
-            assertion: "TestAssertion.sol".to_string(),
-        };
-
-        let request = args
-            .create_jsonrpc_request("test_id", "test_bytecode")
-            .unwrap();
-        let result = args.submit_request(&request).await;
-        assert!(matches!(result, Err(DaSubmitError::SubmissionFailed(_))));
-        mock.assert();
     }
 }

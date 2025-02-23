@@ -22,4 +22,3 @@ impl BuildArgs {
         Ok(String::from_utf8_lossy(&flatten_output.stdout).to_string())
     }
 }
-

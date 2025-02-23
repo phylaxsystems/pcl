@@ -37,8 +37,8 @@ pub struct DappSubmitArgs {
         default_value = "https://credible-layer-dapp.pages.dev/api/v1"
     )]
     dapp_url: String,
-    /// Optional project name to skip interactive selection
 
+    /// Optional project name to skip interactive selection
     #[clap(short, long)]
     project_name: Option<String>,
 

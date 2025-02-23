@@ -61,20 +61,12 @@ impl Phorge {
         // Only valid for the context of this binary execution
         env::set_var(
             "FOUNDRY_SRC",
-            cli_args
-                .assertions_src_joined()
-                .as_os_str()
-                .to_str()
-                .unwrap(),
+            cli_args.assertions_src().as_os_str().to_str().unwrap(),
         );
 
         env::set_var(
             "FOUNDRY_TEST",
-            cli_args
-                .assertions_test_joined()
-                .as_os_str()
-                .to_str()
-                .unwrap(),
+            cli_args.assertions_test().as_os_str().to_str().unwrap(),
         );
 
         Ok(command.output()?)
@@ -96,7 +88,6 @@ impl Phorge {
 #[cfg(test)]
 mod test {
     use super::*;
-    use clap::{arg, command, value_parser};
     use std::path::PathBuf;
 
     fn set_current_dir(path: &str) {

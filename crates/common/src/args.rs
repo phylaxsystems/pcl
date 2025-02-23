@@ -5,12 +5,12 @@ use std::path::PathBuf;
 pub struct CliArgs {
     /// The root directory for the project.
     /// Defaults to the current directory.
-    #[arg(short = "r", long = "root", env = "PCL_ROOT_DIR", global = true)]
+    #[arg(short = 'r', long = "root", env = "PCL_ROOT_DIR", global = true)]
     pub root_dir: Option<PathBuf>,
     /// The directory containing assertions 'src' and 'test' directories.
     /// Defaults to '/assertions' in the root directory.
     #[arg(
-        short = "a",
+        short = 'a',
         long = "assertions",
         env = "PCL_ASSERTIONS_DIR",
         global = true
@@ -23,8 +23,8 @@ impl CliArgs {
         self.root_dir.clone().unwrap_or_default()
     }
 
-    pub fn out_dir_joined(&self) -> PathBuf {
-        self.root_dir().join(self.out_dir())
+    pub fn out_dir(&self) -> PathBuf {
+        self.root_dir().join("out")
     }
 
     pub fn assertions_dir(&self) -> PathBuf {
@@ -33,23 +33,12 @@ impl CliArgs {
             .unwrap_or(PathBuf::from("assertions"))
     }
 
-    pub fn assertions_src_joined(&self) -> PathBuf {
-        self.assertions_dir().join(self.assertions_src())
-    }
-
-    pub fn assertions_test_joined(&self) -> PathBuf {
-        self.assertions_dir().join(self.assertions_test())
-    }
-
-    pub fn out_dir(&self) -> PathBuf {
-        PathBuf::from("out")
-    }
-
     pub fn assertions_src(&self) -> PathBuf {
-        PathBuf::from("src")
+        self.assertions_dir().join("src")
     }
+
     pub fn assertions_test(&self) -> PathBuf {
-        PathBuf::from("test")
+        self.assertions_dir().join("test")
     }
 }
 
@@ -79,17 +68,17 @@ mod tests {
 
     #[test]
     fn test_env_var() {
-        env::set_var("PCL_ROOT", "/env/path");
+        env::set_var("PCL_ASSERTIONS_DIR", "/env/path");
         let args = CliArgs::try_parse_from(["program"]).unwrap();
         assert_eq!(args.assertions_dir(), PathBuf::from("/env/path"));
-        env::remove_var("PCL_ROOT");
+        env::remove_var("PCL_ASSERTIONS_DIR");
     }
 
     #[test]
     fn test_cli_override() {
-        env::set_var("PCL_ROOT", "/env/path");
-        let args = CliArgs::try_parse_from(["program", "-d", "/cli/path"]).unwrap();
+        env::set_var("PCL_ASSERTIONS_DIR", "/env/path");
+        let args = CliArgs::try_parse_from(["program", "-a", "/cli/path"]).unwrap();
         assert_eq!(args.assertions_dir(), PathBuf::from("/cli/path"));
-        env::remove_var("PCL_ROOT");
+        env::remove_var("PCL_ASSERTIONS_DIR");
     }
 }

@@ -3,6 +3,7 @@ use alloy_primitives::Address;
 use chrono::{DateTime, Utc};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 pub const CONFIG_DIR: &str = ".pcl";
 pub const CONFIG_FILE: &str = "config.toml";
@@ -15,7 +16,10 @@ pub struct CliConfig {
 
 impl CliConfig {
     pub fn write_to_file(&self) -> Result<(), ConfigError> {
-        let config_dir = home_dir().unwrap().join(CONFIG_DIR);
+        self.write_to_file_at_dir(Self::get_config_dir())
+    }
+
+    fn write_to_file_at_dir(&self, config_dir: PathBuf) -> Result<(), ConfigError> {
         std::fs::create_dir_all(&config_dir).map_err(ConfigError::WriteError)?;
         let config_file = config_dir.join(CONFIG_FILE);
         let config_str = toml::to_string(self).unwrap();
@@ -23,15 +27,18 @@ impl CliConfig {
         Ok(())
     }
 
-    pub fn read_or_default() -> Self {
-        Self::read_from_file().unwrap_or_default()
+    fn get_config_dir() -> PathBuf {
+        home_dir().unwrap().join(CONFIG_DIR)
     }
 
-    pub fn read_from_file() -> Result<Self, ConfigError> {
-        let config_dir = home_dir().unwrap().join(CONFIG_DIR);
+    fn read_from_file_at_dir(config_dir: PathBuf) -> Result<Self, ConfigError> {
         let config_file = config_dir.join(CONFIG_FILE);
         let config_str = std::fs::read_to_string(config_file).map_err(ConfigError::ReadError)?;
         Ok(toml::from_str(&config_str).unwrap())
+    }
+
+    pub fn read_from_file() -> Result<Self, ConfigError> {
+        Self::read_from_file_at_dir(Self::get_config_dir())
     }
 
     pub fn must_be_authenticated(&self) -> Result<(), ConfigError> {
@@ -65,15 +72,15 @@ mod tests {
     use tempfile::TempDir;
 
     // Helper function to set up a temporary config directory
-    fn setup_temp_config() -> TempDir {
+    fn setup_config_dir() -> (PathBuf, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         env::set_var("HOME", temp_dir.path());
-        temp_dir
+        (temp_dir.path().join(CONFIG_DIR), temp_dir)
     }
 
     #[test]
     fn test_write_and_read_config() {
-        let temp_dir = setup_temp_config();
+        let (config_dir, _temp_dir) = setup_config_dir();
 
         let config = CliConfig {
             auth: Some(UserAuth {
@@ -90,7 +97,7 @@ mod tests {
         };
 
         // Test writing
-        assert!(config.write_to_file().is_ok());
+        assert!(config.write_to_file_at_dir(config_dir).is_ok());
 
         // Test reading
         let read_config = CliConfig::read_from_file().unwrap();
@@ -111,32 +118,16 @@ mod tests {
             read_config.assertions_for_submission[0].assertion_contract,
             "contract1"
         );
-
-        temp_dir.close().unwrap();
     }
 
     #[test]
     fn test_read_nonexistent_config() {
-        let temp_dir = setup_temp_config();
+        let (config_dir, _temp_dir) = setup_config_dir();
 
         // Try reading without creating a file
-        let result = CliConfig::read_from_file();
+        let result = CliConfig::read_from_file_at_dir(config_dir);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ConfigError::ReadError(_)));
-
-        temp_dir.close().unwrap();
-    }
-
-    #[test]
-    fn test_read_or_default() {
-        let temp_dir = setup_temp_config();
-
-        // Should return default when no file exists
-        let config = CliConfig::read_or_default();
-        assert!(config.auth.is_none());
-        assert!(config.assertions_for_submission.is_empty());
-
-        temp_dir.close().unwrap();
     }
 
     #[test]
