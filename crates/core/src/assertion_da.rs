@@ -2,17 +2,23 @@ use crate::{
     config::CliConfig,
     error::{DaClientError, DaSubmitError},
 };
-use alloy_primitives::{Bytes, B256, hex};
+use alloy_primitives::{hex, Bytes, B256};
+use clap::Parser;
 use pcl_common::{args::CliArgs, utils::bytecode};
 use pcl_phoundry::build::BuildArgs;
 
-use jsonrpsee::{http_client::{HttpClient, HttpClientBuilder}, core::client::ClientT};
+use jsonrpsee::{
+    core::client::ClientT,
+    http_client::{HttpClient, HttpClientBuilder},
+};
 
 use serde::{Deserialize, Serialize};
 
-
-
-#[derive(clap::Parser)]
+#[derive(Parser)]
+#[clap(
+    name = "store",
+    about = "Submit the Assertion bytecode and source code to be stored by the Assertion DA of the Credible Layer"
+)]
 pub struct DASubmitArgs {
     // FIXME(Odysseas): Replace localhost with the actual DA URL from our infrastructure
     /// URL of the assertion-DA
@@ -40,15 +46,13 @@ impl DASubmitArgs {
             std::process::exit(1);
         }
 
-        let bytecode : Bytes = hex::decode(bytecode(&self.assertion, out_dir))?.into();
+        let bytecode: Bytes = hex::decode(bytecode(&self.assertion, out_dir))?.into();
         let result = DaClient::new(&self.url)?.submit_assertion(bytecode).await?;
 
         println!("Submitted assertion with id: {}", result.id);
         println!("Signature: {}", result.signature);
         Ok(())
-
     }
-
 }
 
 // FIXME: Move this to a crate in the assertion-da repo, leverage here and in the
@@ -62,7 +66,6 @@ pub struct DaClient {
 pub struct DaSubmissionResponse {
     id: B256,
     signature: Bytes,
-
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -97,11 +100,9 @@ impl DaClient {
         &self,
         code: Bytes,
     ) -> Result<DaSubmissionResponse, DaClientError> {
-       Ok(self.client
-            .request::<DaSubmissionResponse, &[String]>(
-                "da_submit_assertion",
-                &[code.to_string()],
-            )
+        Ok(self
+            .client
+            .request::<DaSubmissionResponse, &[String]>("da_submit_assertion", &[code.to_string()])
             .await?)
     }
 }

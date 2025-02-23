@@ -1,11 +1,11 @@
+use crate::error::PhoundryError;
+use clap::Parser;
 use pcl_common::args::CliArgs;
 use std::{
     env,
     path::PathBuf,
     process::{Command, Output, Stdio},
 };
-
-use crate::error::PhoundryError;
 
 const FORGE_BINARY_NAME: &str = "phorge";
 
@@ -18,7 +18,11 @@ fn get_forge_binary_path() -> PathBuf {
         .join(FORGE_BINARY_NAME)
 }
 
-#[derive(clap::Parser)]
+#[derive(Parser)]
+#[clap(
+    name = "phorge",
+    about = "Our forked version of Foundry which supports new cheatcodes to execute assertions from inside a test file"
+)]
 pub struct Phorge {
     pub args: Vec<String>,
 }
