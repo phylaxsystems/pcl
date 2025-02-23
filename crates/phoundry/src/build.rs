@@ -10,22 +10,7 @@ pub struct BuildArgs {
 
 impl BuildArgs {
     pub fn run(&self, cli_args: CliArgs) -> Result<std::process::Output, PhoundryError> {
-        let args = [
-            "build",
-            "-C",
-            cli_args
-                .assertions_dir()
-                .as_path()
-                .to_str()
-                .unwrap(),
-            "--root",
-            cli_args.root_dir().as_path().to_str().unwrap(),
-        ].iter().map(|s| s.to_string()).collect();
-
-        // args.push("--out");
-        // args.push(cli_args.out_dir_joined().as_path().to_str().unwrap());
-
-        println!("Running phorge with args: {:?}", args);
+        let args = vec!["build".to_owned()];
 
         Phorge { args }.run(cli_args.clone(), true)
     }
@@ -37,3 +22,4 @@ impl BuildArgs {
         Ok(String::from_utf8_lossy(&flatten_output.stdout).to_string())
     }
 }
+

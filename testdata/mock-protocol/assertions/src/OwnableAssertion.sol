@@ -13,9 +13,8 @@ contract OwnableAssertion is Assertion {
 
     // Define selectors for the assertions, several assertions can be defined here
     // This function is required by the Assertion interface
-    function fnSelectors() external pure override returns (bytes4[] memory assertions) {
-        assertions = new bytes4[](1); // Define an array of selectors
-        assertions[0] = this.assertionOwnershipChange.selector; // Define the selector for the assertionOwnershipChange function
+    function triggers() external view override {
+        registerCallTrigger(this.assertionOwnershipChange.selector); // Register the selector for the assertionOwnershipChange function
     }
 
     // This function is used to check if the ownership has changed

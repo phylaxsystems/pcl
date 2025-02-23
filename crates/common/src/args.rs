@@ -5,21 +5,22 @@ use std::path::PathBuf;
 pub struct CliArgs {
     /// The root directory for the project.
     /// Defaults to the current directory.
-    #[arg(long = "root", env = "PCL_ROOT_DIR")]
-    root_dir: Option<PathBuf>,
+    #[arg(short = "r", long = "root", env = "PCL_ROOT_DIR", global = true)]
+    pub root_dir: Option<PathBuf>,
     /// The directory containing assertions 'src' and 'test' directories.
     /// Defaults to '/assertions' in the root directory.
-    #[arg(long = "assertions", env = "PCL_ASSERTIONS_DIR")]
-    assertions_dir: Option<PathBuf>,
+    #[arg(
+        short = "a",
+        long = "assertions",
+        env = "PCL_ASSERTIONS_DIR",
+        global = true
+    )]
+    pub assertions_dir: Option<PathBuf>,
 }
 
 impl CliArgs {
     pub fn root_dir(&self) -> PathBuf {
         self.root_dir.clone().unwrap_or_default()
-    }
-
-    pub fn out_dir(&self) -> PathBuf {
-        PathBuf::from("out")
     }
 
     pub fn out_dir_joined(&self) -> PathBuf {
@@ -32,22 +33,21 @@ impl CliArgs {
             .unwrap_or(PathBuf::from("assertions"))
     }
 
-    pub fn assertions_dir_joined(&self) -> PathBuf {
-        self.root_dir().join(self.assertions_dir())
+    pub fn assertions_src_joined(&self) -> PathBuf {
+        self.assertions_dir().join(self.assertions_src())
     }
 
-    pub fn assertions_src_joined(&self) -> PathBuf {
-        self.assertions_dir_joined().join(self.assertions_src())
+    pub fn assertions_test_joined(&self) -> PathBuf {
+        self.assertions_dir().join(self.assertions_test())
+    }
+
+    pub fn out_dir(&self) -> PathBuf {
+        PathBuf::from("out")
     }
 
     pub fn assertions_src(&self) -> PathBuf {
         PathBuf::from("src")
     }
-
-    pub fn assertions_test_joined(&self) -> PathBuf {
-        self.assertions_dir_joined().join(self.assertions_test())
-    }
-
     pub fn assertions_test(&self) -> PathBuf {
         PathBuf::from("test")
     }
