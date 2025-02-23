@@ -97,10 +97,10 @@ mod tests {
         };
 
         // Test writing
-        assert!(config.write_to_file_at_dir(config_dir).is_ok());
+        assert!(config.write_to_file_at_dir(config_dir.clone()).is_ok());
 
         // Test reading
-        let read_config = CliConfig::read_from_file().unwrap();
+        let read_config = CliConfig::read_from_file_at_dir(config_dir).unwrap();
         assert_eq!(
             read_config.auth.as_ref().unwrap().access_token,
             "test_access"
