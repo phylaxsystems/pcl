@@ -115,7 +115,7 @@ mod test {
                 root_dir: Some(PathBuf::from("mock-protocol")),
                 ..CliArgs::default()
             },
-            "../target/release/phorge",
+            "../target/debug/phorge",
         );
 
         set_current_dir("mock-protocol");
@@ -124,7 +124,7 @@ mod test {
             CliArgs {
                 ..CliArgs::default()
             },
-            "../../target/release/phorge",
+            "../../target/debug/phorge",
         );
     }
 }
