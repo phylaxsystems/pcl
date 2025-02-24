@@ -1,4 +1,4 @@
-use jsonrpsee::core::client::Error as HttpClientError;
+use assertion_da_client::DaClientError;
 use pcl_phoundry::error::PhoundryError;
 use reqwest::Error as ReqwestError;
 use thiserror::Error;
@@ -18,17 +18,6 @@ pub enum DaSubmitError {
     /// From Hex Error
     #[error("From Hex Error: {0}")]
     FromHexError(#[from] alloy_primitives::hex::FromHexError),
-}
-
-/// Errors that can occur during HTTP client operations with the DA layer
-#[derive(Debug, thiserror::Error)]
-pub enum DaClientError {
-    /// Error when the HTTP client encounters an error
-    #[error("Client error: {0}")]
-    ClientError(#[from] HttpClientError),
-    /// Error when an invalid response is received from the DA layer
-    #[error("Invalid response: {0}")]
-    InvalidResponse(String),
 }
 
 /// Errors that can occur during assertion submission to the Credible Layer dApp
