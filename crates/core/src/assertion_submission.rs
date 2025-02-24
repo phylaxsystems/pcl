@@ -25,7 +25,10 @@ struct Project {
 /// This struct handles CLI arguments for the assertion submission process,
 /// including the dApp URL, project name, and assertion names.
 #[derive(clap::Parser)]
-#[clap(about = "Submit assertions to the Credible Layer dApp")]
+#[clap(
+    name = "submit",
+    about = "Submit assertions to the Credible Layer dApp"
+)]
 pub struct DappSubmitArgs {
     /// Base URL for the Credible Layer dApp API
     #[clap(

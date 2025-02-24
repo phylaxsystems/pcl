@@ -11,8 +11,10 @@ contract OwnableAssertion is Assertion {
         ownable = Ownable(ownable_); // Define address of Ownable contract
     }
 
+    // Define selectors for the assertions, several assertions can be defined here
+    // This function is required by the Assertion interface
     function triggers() external view override {
-        registerCallTrigger(this.assertionOwnershipChange.selector);
+        registerCallTrigger(this.assertionOwnershipChange.selector); // Register the selector for the assertionOwnershipChange function
     }
 
     // This function is used to check if the ownership has changed

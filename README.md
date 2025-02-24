@@ -14,10 +14,10 @@ It requires the following:
 After you have installed the above, you can build the CLI by running the following:
 
 ```bash
-cargo install --git https://github.com/phylaxsystems/pcl.git
+make build
 ```
 
-This will build the CLI and install it.
+This will build the CLI in `target/release` directory.
 
 ### Usage
 
@@ -27,14 +27,18 @@ The Credible CLI for the Credible Layer
 Usage: pcl [OPTIONS] <COMMAND>
 
 Commands:
-  phorge  
-  build   
+  phorge
+  build
+  store   Submit the Assertion bytecode and source code to be stored by the Assertion DA of the Credible Layer
+  submit  Submit assertions to the Credible Layer dApp
+  auth    Authenticate the CLI with your Credible Layer dApp account
   help    Print this message or the help of the given subcommand(s)
 
 Options:
-  -d, --assertions-dir <ASSERTIONS_DIR>  [env: PCL_ROOT=]
-  -h, --help                             Print help
-  -V, --version                          Print version
+  --root <ROOT_DIR>              The root directory for the project. Defaults to the current directory [env: PCL_ROOT_DIR=]
+  --assertions <ASSERTIONS_DIR>  The directory containing assertions 'src' and 'test' directories. Defaults to '/assertions' in the root directory [env: PCL_ASSERTIONS_DIR=]
+  -h, --help                         Print help
+  -V, --version                      Print version
 ```
 
 To execute `phorge`, a minimal fork of Forge which includes a cheatcode for assertion execution, you can run:
@@ -43,16 +47,11 @@ To execute `phorge`, a minimal fork of Forge which includes a cheatcode for asse
 pcl phorge --help
 ```
 
-You need to specify the assertions directory, which is the directory containing the assertions source and tests you want to test or build.
-
-```bash
-pcl --assertions-dir mock-protocol/assertions phorge
-```
-
-Phorge expects the following directory structure:
+Phorge expects to be ran from the root directory, with the following directory structure:
 
 ```text
-  assertions/
+root-dir/
+  assertions-dir/
     src/
     test/
 ```

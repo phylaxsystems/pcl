@@ -66,7 +66,7 @@ struct StatusResponse {
 
 /// Authentication commands for the PCL CLI
 #[derive(clap::Parser)]
-#[command(about = "Manage authentication for PCL")]
+#[command(about = "Authenticate the CLI with your Credible Layer dApp account")]
 pub struct AuthCommand {
     #[command(subcommand)]
     pub command: AuthSubcommands,

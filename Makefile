@@ -2,6 +2,11 @@
 build:
 	cargo build --verbose --release
 
+# Install the binary
+install:
+	cargo install --verbose --bin pcl
+
+
 # Build the contract mocks and run the rust tests
 test:
 	cargo test --verbose --workspace
