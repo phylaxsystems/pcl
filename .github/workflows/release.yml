@@ -6,14 +6,13 @@ on:
     workflows: ["Rust"]
     types:
       - completed
-  push:
-    tags:
-      - "[0-9]+.[0-9]+.[0-9]+$"
 
 jobs:
   create-release:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: |
+      github.event.workflow_run.conclusion == 'success' && 
+      startsWith(github.event.workflow_run.head_branch, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
       - name: Setup ssh-agent
