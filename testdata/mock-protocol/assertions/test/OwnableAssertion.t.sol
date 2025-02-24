@@ -23,15 +23,12 @@ contract TestOwnableAssertion is CredibleTest, Test {
 
         // Associate the assertion with the protocol
         // cl will manage the correct assertion execution under the hood when the protocol is being called
-        cl.addAssertion("ownerChanged", aaAddress, type(OwnableAssertion).creationCode, abi.encode(assertionAdopter));
+        cl.addAssertion(label, aaAddress, type(OwnableAssertion).creationCode, abi.encode(assertionAdopter));
 
         vm.prank(initialOwner);
         vm.expectRevert("Assertions Reverted");
         cl.validate(
-            "ownerChanged",
-            aaAddress,
-            0,
-            abi.encodePacked(assertionAdopter.transferOwnership.selector, abi.encode(newOwner))
+            label, aaAddress, 0, abi.encodePacked(assertionAdopter.transferOwnership.selector, abi.encode(newOwner))
         );
     }
 
@@ -43,10 +40,7 @@ contract TestOwnableAssertion is CredibleTest, Test {
 
         vm.prank(initialOwner);
         cl.validate(
-            "ownerNotChanged",
-            aaAddress,
-            0,
-            abi.encodePacked(assertionAdopter.transferOwnership.selector, abi.encode(initialOwner))
+            label, aaAddress, 0, abi.encodePacked(assertionAdopter.transferOwnership.selector, abi.encode(initialOwner))
         ); // assert that the ownership has not changed
     }
 }
