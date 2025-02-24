@@ -23,8 +23,7 @@ git checkout assertions-workshop
 
 3. Download the required binaries:
 
-- For Linux: [LINK_PLACEHOLDER]
-- For MacOS: [LINK_PLACEHOLDER]
+- Find the binaries for your platform: <https://github.com/phylaxsystems/pcl/releases>
 
 4. Make the binary executable and move it to your PATH:
 
@@ -32,8 +31,6 @@ git checkout assertions-workshop
 # For Linux/MacOS:
 chmod +x pcl-<your-platform>
 sudo mv pcl-<your-platform> /usr/local/bin/pcl
-
-
 ```
 
 5. Verify the installation:
