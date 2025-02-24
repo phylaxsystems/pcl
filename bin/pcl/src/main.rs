@@ -32,7 +32,9 @@ struct Cli {
 enum Commands {
     Phorge(Phorge),
     Build(BuildArgs),
+    #[command(name = "store")]
     DASubmit(DASubmitArgs),
+    #[command(name = "submit")]
     DappSubmit(DappSubmitArgs),
     Auth(AuthCommand),
 }
@@ -41,7 +43,7 @@ enum Commands {
 async fn main() -> Result<()> {
     // Check if forge is installed
     Phorge::forge_must_be_installed()?;
-    let mut config = CliConfig::read_or_default();
+    let mut config = CliConfig::read_from_file().unwrap_or_default();
 
     let cli = Cli::parse();
     match cli.command {
