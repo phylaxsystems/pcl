@@ -60,7 +60,7 @@ pub struct UserAuth {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AssertionForSubmission {
-    pub assertion_contract: String,
+    pub contract_name: String,
     pub assertion_id: String,
     pub signature: String,
 }
@@ -90,7 +90,7 @@ mod tests {
                 expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
             }),
             assertions_for_submission: vec![AssertionForSubmission {
-                assertion_contract: "contract1".to_string(),
+                contract_name: "contract1".to_string(),
                 assertion_id: "id1".to_string(),
                 signature: "sig1".to_string(),
             }],
@@ -115,7 +115,7 @@ mod tests {
         );
         assert_eq!(read_config.assertions_for_submission.len(), 1);
         assert_eq!(
-            read_config.assertions_for_submission[0].assertion_contract,
+            read_config.assertions_for_submission[0].contract_name,
             "contract1"
         );
     }

@@ -9,7 +9,7 @@ use serde_json::json;
 
 #[derive(Deserialize)]
 struct Project {
-    _project_id: String,
+    project_id: String,
     project_name: String,
     _project_description: Option<String>,
     _profile_image_url: Option<String>,
@@ -65,7 +65,7 @@ impl DappSubmitArgs {
         let assertions_for_submission = config
             .assertions_for_submission
             .iter()
-            .map(|a| a.assertion_contract.clone())
+            .map(|a| a.contract_name.clone())
             .collect();
 
         let project_name = self.provide_or_select(
@@ -90,7 +90,7 @@ impl DappSubmitArgs {
                 config
                     .assertions_for_submission
                     .iter()
-                    .find(|a| a.assertion_contract == *n)
+                    .find(|a| a.contract_name == *n)
                     .unwrap()
             })
             .collect();
@@ -100,6 +100,7 @@ impl DappSubmitArgs {
 
         Ok(())
     }
+
 
     /// Submits selected assertions to the specified project
     ///
@@ -115,15 +116,10 @@ impl DappSubmitArgs {
         assertions: &[&AssertionForSubmission],
     ) -> Result<(), DappSubmitError> {
         let client = reqwest::Client::new();
-        // TODO: Update payload structure once API spec is finalized
-        let body = json!({
-            "project_id": project._project_id,
-            "assertions": assertions.iter().map(|a| &a.assertion_contract).collect::<Vec<_>>()
-        });
 
         let response = client
-            .post(format!("{}/assertions", self.dapp_url))
-            .json(&body)
+            .post(format!("{}/{}/submitted_assertions", project.project_id, self.dapp_url))
+            .json(&assertions)
             .send()
             .await?;
 
