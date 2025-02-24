@@ -16,12 +16,11 @@ contract TestMockAssertion is Test, CredibleTest {
     }
 
     function test_assertionCheckBool() public {
-        MockAssertion assertion = new MockAssertion(protocol);
+        // Register the assertion
+        cl.addAssertion("assertionCheckBool", address(protocol), type(MockAssertion).creationCode, abi.encode(protocol));
 
-        cl.addAssertion(
-            "assertionCheckBool", address(assertion), type(MockAssertion).creationCode, abi.encode(protocol)
-        );
+        // Validate should pass since checkBool() returns true by default
         vm.prank(testAddress);
-        cl.validate("assertionCheckBool", address(assertion), 0, new bytes(0));
+        cl.validate("assertionCheckBool", address(protocol), 0, abi.encodeWithSelector(protocol.checkBool.selector));
     }
 }

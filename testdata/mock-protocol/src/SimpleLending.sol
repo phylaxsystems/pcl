@@ -89,6 +89,10 @@ contract SimpleLending {
         totalBorrowed -= amount;
     }
 
+    /*//////////////////////////////////////////////////////////////
+                   THIS PART HAS BUGS, LET'S FIX THEM
+    //////////////////////////////////////////////////////////////*/
+
     /// @notice Allows users to withdraw their ETH collateral
     /// @param amount The amount of ETH to withdraw (in wei)
     /// @dev WARNING: Missing check for maintaining sufficient collateral ratio after withdrawal
@@ -104,6 +108,25 @@ contract SimpleLending {
         (bool success,) = msg.sender.call{value: amount}("");
         require(success, "ETH transfer failed");
     }
+
+    /// @notice A deliberately vulnerable withdrawal function used for testing assertions
+    /// @dev WARNING: This function is intentionally unsafe and should not be used in production
+    /// @dev It allows any caller to withdraw any amount of ETH without checks
+    /// @dev Known vulnerabilities:
+    ///      - No validation of caller's collateral balance
+    ///      - No validation of borrowed token ratio
+    ///      - Allows draining protocol's entire ETH balance
+    /// @param amount The amount of ETH to withdraw (in wei)
+    function buggyWithdraw(uint256 amount) external {
+        // No checks, just transfer ETH
+        payable(msg.sender).transfer(amount);
+        // Update state to simulate proper withdrawal
+        totalCollateral -= amount;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                   BUGGY PART OVER
+    //////////////////////////////////////////////////////////////*/
 }
 
 /// @title IPriceFeed
