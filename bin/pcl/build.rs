@@ -88,14 +88,21 @@ fn update_phoundry(workspace_root: &Path) -> std::io::Result<()> {
 }
 
 fn build_phoundry(workspace_root: &Path, mode: &str) -> std::io::Result<()> {
-    let mut args = vec!["build", "--bin", "forge"];
+    let mut command = Command::new("cargo");
+    command
+        .current_dir(workspace_root.join("phoundry"))
+        .arg("build")
+        .arg("--bin")
+        .arg("forge");
+
     if mode == "release" {
-        args.push("--release");
+        command.arg("--release");
     }
 
-    Command::new("cargo")
-        .current_dir(workspace_root.join("phoundry"))
-        .args(&args)
-        .status()?;
+    if let Ok(target_value) = env::var("TARGET") {
+        command.arg("--target").arg(target_value);
+    }
+
+    command.status()?;
     Ok(())
 }
