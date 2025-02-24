@@ -99,14 +99,28 @@ jobs:
 
       - name: Build
         run: make build
+
   # TODO: eventually move this to a separate workflow
   release:
-    name: Create Release
+    timeout-minutes: 60 # 60 minutes
+    name: Create Release for ${{ matrix.target }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+    permissions:
+      contents: write
     needs: [unit-test, fmt, lint, build]
     if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write 
     steps:
       - uses: actions/checkout@v4
       - name: Setup ssh-agent
@@ -118,16 +132,41 @@ jobs:
         run: git submodule update --init --recursive
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
+        with:
+          target: ${{ matrix.target }}
+          override: true
       - uses: Swatinem/rust-cache@v2
-      - name: Build Release Binary
-        run: make build
+
+      - name: Build for macOS ARM
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          rustup target add aarch64-apple-darwin
+          cargo build --release --target aarch64-apple-darwin
+
+          # Copy binaries with appropriate names
+          cp target/aarch64-apple-darwin/release/pcl pcl-aarch64-apple
+          cp target/aarch64-apple-darwin/release/phorge phorge-aarch64-apple || true
+
+      - name: Build for other targets
+        if: matrix.target != 'aarch64-apple-darwin' && matrix.target != 'aarch64-unknown-linux-gnu'
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+
+          # Extract architecture and OS from target
+          arch=$(echo ${{ matrix.target }} | cut -d'-' -f1)
+          os=$(echo ${{ matrix.target }} | cut -d'-' -f2)
+
+          # Copy binaries with appropriate names
+          cp target/${{ matrix.target }}/release/pcl pcl-$arch-$os
+          cp target/${{ matrix.target }}/release/phorge phorge-$arch-$os || true
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            target/release/pcl
-            target/release/phorge
+            pcl-*
+            phorge-*
           draft: false
           prerelease: false
           generate_release_notes: true
