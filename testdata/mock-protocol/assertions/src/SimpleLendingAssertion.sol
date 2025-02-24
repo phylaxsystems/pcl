@@ -17,34 +17,7 @@ contract SimpleLendingAssertion is Assertion {
     function triggers() external view override {
         registerCallTrigger(this.assertionIndividualPosition.selector);
         registerCallTrigger(this.assertionBorrowedInvariant.selector);
-        registerCallTrigger(this.assertionPriceDeviation.selector);
         registerCallTrigger(this.assertionEthDrain.selector);
-    }
-
-    function assertionCollateralBalance() external {
-        ph.forkPreState();
-        (uint256 collateralAmount, uint256 borrowedAmount) = simpleLending.positions(msg.sender);
-        uint256 preCollateralBalance = collateralAmount;
-        uint256 ethPrice = ethPriceFeed.getPrice();
-        uint256 tokenPrice = tokenPriceFeed.getPrice();
-
-        ph.forkPostState();
-        uint256 postCollateralBalance = collateralAmount;
-        uint256 collateralChange;
-        if (postCollateralBalance > preCollateralBalance) {
-            collateralChange = postCollateralBalance - preCollateralBalance; // Added collateral
-        } else {
-            collateralChange = preCollateralBalance - postCollateralBalance; // Removed collateral
-        }
-
-        uint256 newCollateralValue = (collateralAmount - collateralChange) * ethPrice;
-        uint256 borrowedValue = borrowedAmount * tokenPrice;
-
-        // Check if remaining collateral would be sufficient
-        require(
-            newCollateralValue * simpleLending.COLLATERAL_RATIO() >= borrowedValue * 100,
-            "Withdrawal would exceed collateral ratio"
-        );
     }
 
     // Verify that total borrowed tokens never exceed total collateral value
