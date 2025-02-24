@@ -102,6 +102,8 @@ jobs:
 
   # TODO: eventually move this to a separate workflow
   release:
+    needs: [unit-test, fmt, lint, build]
+    if: startsWith(github.ref, 'refs/tags/')
     timeout-minutes: 60 # 60 minutes
     name: Create Release for ${{ matrix.target }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -119,8 +121,6 @@ jobs:
             os: ubuntu-latest
     permissions:
       contents: write
-    needs: [unit-test, fmt, lint, build]
-    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
       - name: Setup ssh-agent

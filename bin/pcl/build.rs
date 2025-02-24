@@ -18,6 +18,7 @@ pub fn main() -> Result<()> {
     // Environment flags
     println!("cargo:rerun-if-env-changed=PCL_SKIP_UPDATE_PHOUNDRY");
     println!("cargo:rerun-if-env-changed=PCL_SKIP_BUILD_PHOUNDRY");
+    println!("cargo:rerun-if-env-changed=TARGET");
 
     let skip_build_phoundry = env::var("PCL_SKIP_BUILD_PHOUNDRY")
         .map(|val| val.to_lowercase() == "true")
@@ -57,7 +58,14 @@ pub fn main() -> Result<()> {
         .join(&profile)
         .join("forge");
 
-    let dest = workspace_root.join("target").join(&profile).join("phorge");
+    // Determine the correct target directory
+    let target_dir = if let Ok(target) = env::var("TARGET") {
+        workspace_root.join("target").join(target).join(&profile)
+    } else {
+        workspace_root.join("target").join(&profile)
+    };
+
+    let dest = target_dir.join("phorge");
 
     println!(
         "cargo:warning=Copying {} to {}",
