@@ -37,6 +37,8 @@ enum Commands {
     #[command(name = "submit")]
     DappSubmit(DappSubmitArgs),
     Auth(AuthCommand),
+    /// Cleans the local cache.
+    Clean,
 }
 
 #[tokio::main]
@@ -60,6 +62,9 @@ async fn main() -> Result<()> {
         Commands::DappSubmit(submit) => {
             config.must_be_authenticated().wrap_err("Authentication required for dapp submission. Please authenticate first using 'pcl auth'")?;
             submit.run(cli.args.clone(), &mut config).await?;
+        }
+        Commands::Clean => {
+            CliConfig::clean()?;
         }
         Commands::Auth(auth_cmd) => {
             auth_cmd.run(&mut config).await?;

@@ -27,6 +27,14 @@ pub enum DappSubmitError {
     #[error("No auth token found")]
     NoAuthToken,
 
+    /// Error when no assertions are found in the config
+    #[error("No assertions found in config")]
+    NoAssertionsInConfig,
+
+    /// Error when no projects are found for the user
+    #[error("No projects found for the user")]
+    NoProjectsFound,
+
     /// Error when user cancels the project selection process
     #[error("Project selection cancelled")]
     ProjectSelectionCancelled,
@@ -38,6 +46,10 @@ pub enum DappSubmitError {
     /// Error when the submission is rejected by the dApp
     #[error("Submission failed: {0}")]
     SubmissionFailed(String),
+
+    /// Error when interacting with the config file
+    #[error("Failed to interact with config file: {0}")]
+    ConfigError(#[from] ConfigError),
 }
 
 /// Errors that can occur during configuration operations
@@ -55,6 +67,14 @@ pub enum ConfigError {
     /// but no authentication token is present in the config
     #[error("No Authentication Token Found")]
     NotAuthenticated,
+
+    ///Error when parsing the config file fails
+    #[error("Failed to parse config file: {0}")]
+    TomlParseError(#[from] toml::de::Error),
+
+    ///Error when serializing the config file fails
+    #[error("Failed to serialize config file: {0}")]
+    TomlSerializeError(#[from] toml::ser::Error),
 }
 
 /// Errors that can occur during authentication operations
