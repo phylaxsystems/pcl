@@ -9,13 +9,14 @@ import {CredibleTest} from "../../lib/credible-std/src/CredibleTest.sol";
 import {Test} from "../../lib/credible-std/lib/forge-std/src/Test.sol";
 
 contract TestOwnableAssertion is CredibleTest, Test {
-    address public newOwner = address(0xdeadbeef);
-    bytes[] public assertions;
+    // Contract state variables
     Ownable public assertionAdopter;
+    address public initialOwner = address(0xdead);
+    address public newOwner = address(0xdeadbeef);
 
     function setUp() public {
         assertionAdopter = new Ownable();
-        vm.deal(assertionAdopter.owner(), 1 ether);
+        vm.deal(initialOwner, 1 ether);
     }
 
     function test_assertionOwnershipChanged() public {
@@ -26,7 +27,8 @@ contract TestOwnableAssertion is CredibleTest, Test {
         // cl will manage the correct assertion execution under the hood when the protocol is being called
         cl.addAssertion(label, aaAddress, type(OwnableAssertion).creationCode, abi.encode(assertionAdopter));
 
-        vm.prank(assertionAdopter.owner());
+        vm.prank(initialOwner);
+        vm.expectRevert("Assertions Reverted");
         cl.validate(
             label, aaAddress, 0, abi.encodePacked(assertionAdopter.transferOwnership.selector, abi.encode(newOwner))
         );
@@ -38,7 +40,9 @@ contract TestOwnableAssertion is CredibleTest, Test {
 
         cl.addAssertion(label, aaAddress, type(OwnableAssertion).creationCode, abi.encode(assertionAdopter));
 
-        vm.prank(assertionAdopter.owner());
-        cl.validate(label, aaAddress, 0, new bytes(0)); // no transaction
+        vm.prank(initialOwner);
+        cl.validate(
+            label, aaAddress, 0, abi.encodePacked(assertionAdopter.transferOwnership.selector, abi.encode(initialOwner))
+        ); // assert that the ownership has not changed
     }
 }

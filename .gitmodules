@@ -5,3 +5,6 @@
 	path = phoundry
 	url = https://github.com/phylaxsystems/phoundry
 	branch = pcl
+[submodule "testdata/mock-protocol/lib/openzeppelin-contracts"]
+	path = testdata/mock-protocol/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
