@@ -1,61 +1,226 @@
-# Credible CLI
+# Phylax Credible Layer (PCL) CLI
 
-The Credible CLI is a command-line interface for the Credible Layer.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+The Phylax Credible CLI (PCL) is a command-line interface for interacting with the Credible Layer. It allows developers to authenticate, build, test, and submit assertions to the Credible Layer dApp.
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Usage Guide](#usage-guide)
+  - [Authentication](#authentication)
+  - [Building Projects](#building-projects)
+  - [Phorge Commands](#phorge-commands)
+  - [Assertion Submission](#assertion-submission)
+- [Examples](#examples)
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
 
 ## Installation
 
-### Build from Source
-
-It requires the following:
+### Prerequisites
 
 - `Rust >= 1.86 nightly`
 - `git`
 
-After you have installed the above, you can build the CLI by running the following:
+### Build from Source
+
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/phylax-systems/pcl.git
+   cd pcl
+   ```
+
+2. Build the CLI:
+
+   ```bash
+   make build
+   ```
+
+3. The compiled binary will be available in the `target/release` directory.
+
+4. (Optional) Add to your PATH:
+
+   ```bash
+   export PATH="$PATH:$(pwd)/target/release"
+   ```
+
+## Usage Guide
+
+### Authentication
+
+Before using most commands, you need to authenticate:
 
 ```bash
-make build
-```
-
-This will build the CLI in `target/release` directory.
-
-### Usage
-
-```bash
-The Credible CLI for the Credible Layer
-
-Usage: pcl [OPTIONS] <COMMAND>
+pcl auth [OPTIONS] <COMMAND>
 
 Commands:
-  phorge
-  build
-  store   Submit the Assertion bytecode and source code to be stored by the Assertion DA of the Credible Layer
-  submit  Submit assertions to the Credible Layer dApp
-  auth    Authenticate the CLI with your Credible Layer dApp account
+  login   Login to PCL using your wallet
+  logout  Logout from PCL
+  status  Check current authentication status
   help    Print this message or the help of the given subcommand(s)
 
 Options:
-  --root <ROOT_DIR>              The root directory for the project. Defaults to the current directory [env: PCL_ROOT_DIR=]
-  --assertions <ASSERTIONS_DIR>  The directory containing assertions 'src' and 'test' directories. Defaults to '/assertions' in the root directory [env: PCL_ASSERTIONS_DIR=]
-  -h, --help                         Print help
-  -V, --version                      Print version
+      --base-url <BASE_URL>  Base URL for authentication service [env: AUTH_BASE_URL=] [default: https://credible-layer-dapp.pages.dev]
+  -h, --help                 Print help
 ```
 
-To execute `phorge`, a minimal fork of Forge which includes a cheatcode for assertion execution, you can run:
+When logging in:
+
+1. A URL and authentication code will be displayed
+2. Visit the URL in your browser
+3. Connect your wallet and approve the authentication
+4. CLI will automatically detect successful authentication
+
+### Building Projects
+
+Build your assertion contracts:
 
 ```bash
-pcl phorge --help
+pcl build [OPTIONS] [ASSERTIONS]...
+
+Arguments:
+  [ASSERTIONS]...  Names of assertion contracts to build
+
+Options:
+  -h, --help  Print help
 ```
 
-Phorge expects to be ran from the root directory, with the following directory structure:
+### Phorge Commands
+
+Phorge is a Foundry-compatible development environment for assertions:
+
+```bash
+pcl phorge [OPTIONS] [ARGS]...
+
+Arguments:
+  [ARGS]...  Arguments to pass to the phorge command
+
+Options:
+  -r, --root <ROOT_DIR>              The root directory for the project.
+  -a, --assertions <ASSERTIONS_DIR>  The directory containing assertions 'src' and 'test' directories.
+  -h, --help  Print help
+```
+
+Common phorge subcommands:
+
+```bash
+pcl phorge test      # Run tests
+pcl phorge script    # Run scripts
+```
+
+### Assertion Submission
+
+#### Store Assertions in Data Availability Layer
+
+```bash
+pcl store [OPTIONS] <ASSERTION>
+
+Arguments:
+  <ASSERTION>  Name of the assertion contract to submit
+
+Options:
+      --url <URL>  URL of the assertion-DA [env: PCL_DA_URL=] [default: http://localhost:3000]
+  -h, --help       Print help
+```
+
+#### Submit Assertions to dApps
+
+```bash
+pcl submit [OPTIONS]
+
+Options:
+  -d, --dapp-url <DAPP_URL>                 Base URL for the Credible Layer dApp API [default: https://credible-layer-dapp.pages.dev/api/v1]
+  -p, --project-name <PROJECT_NAME>         Optional project name to skip interactive selection
+  -a, --assertion-name <ASSERTION_NAME>...  Optional list of assertion names to skip interactive selection
+  -h, --help                                Print help
+```
+
+## Examples
+
+### Complete Authentication Flow
+
+```bash
+# Login
+pcl auth login
+
+# Verify status
+pcl auth status
+
+# Submit assertion
+pcl store my_assertion
+
+# Logout when done
+pcl auth logout
+```
+
+### Development Workflow
+
+```bash
+# Build project
+pcl build my_assertion
+
+# Run tests
+pcl phorge test
+
+# Submit
+pcl submit
+```
+
+### Working with Assertion Directories
+
+To specify the assertions directory:
+
+```bash
+pcl --assertions-dir <PATH> phorge
+```
+
+Example:
+
+```bash
+pcl --assertions-dir mock-protocol/assertions phorge
+```
+
+Phorge expects the following directory structure:
 
 ```text
-root-dir/
-  assertions-dir/
-    src/
-    test/
+assertions/
+  src/     # Source files
+  test/    # Test files with .t.sol extension
 ```
 
-Assertion source files should be in the `src` directory, and test files should be in the `test` directory. Test files should have the `.t.sol` extension, and test functions should start with `test_`. As a minimal fork of Forge, it behaves identically to Forge.
+## Configuration
 
-By definining the assertions directory, the CLI will automatically add the `src` and `test` directories to the phorge command. That way, you can share a `foundry.toml` and `lib` directory between the sources and tests of the smart contracts and the assertions.
+- Config file location: `~/.pcl/config.toml`
+- Stores authentication and submission history
+- Automatically created on first use
+
+## Troubleshooting
+
+### Authentication Issues
+
+- **Error: Not authenticated**: Run `pcl auth login` to authenticate
+- **Error: Authentication expired**: Run `pcl auth login` to refresh your authentication
+- **Browser doesn't open**: Manually visit the URL displayed in the terminal
+
+### Build Issues
+
+- **Error: Assertion not found**: Ensure the assertion name is correct and exists in your project
+- **Compilation errors**: Check your assertion code for syntax errors
+
+### Submission Issues
+
+- **Error: Failed to submit**: Ensure you're authenticated and have network connectivity
+- **Error: Project not found**: Create a project in the Credible Layer dApp first
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
