@@ -99,6 +99,8 @@ Arguments:
   [ARGS]...  Arguments to pass to the phorge command
 
 Options:
+  -r, --root <ROOT_DIR>              The root directory for the project.
+  -a, --assertions <ASSERTIONS_DIR>  The directory containing assertions 'src' and 'test' directories.
   -h, --help  Print help
 ```
 
@@ -107,7 +109,6 @@ Common phorge subcommands:
 ```bash
 pcl phorge test      # Run tests
 pcl phorge script    # Run scripts
-pcl phorge deploy    # Deploy contracts
 ```
 
 ### Assertion Submission
@@ -164,8 +165,7 @@ pcl build my_assertion
 # Run tests
 pcl phorge test
 
-# Deploy and submit
-pcl phorge deploy
+# Submit
 pcl submit
 ```
 
