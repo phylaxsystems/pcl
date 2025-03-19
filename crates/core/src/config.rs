@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::fmt;
 
 pub const CONFIG_DIR: &str = ".pcl";
 pub const CONFIG_FILE: &str = "config.toml";
@@ -49,6 +50,33 @@ impl CliConfig {
     }
 }
 
+impl fmt::Display for CliConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let config_path = Self::get_config_dir().join(CONFIG_FILE);
+        
+        writeln!(f, "PCL Configuration")?;
+        writeln!(f, "==================")?;
+        writeln!(f, "Config path: {}", config_path.display())?;
+        
+        match &self.auth {
+            Some(auth) => writeln!(f, "{}", auth)?,
+            None => writeln!(f, "Authentication: Not authenticated")?,
+        }
+        
+        if !self.assertions_for_submission.is_empty() {
+            writeln!(f, "\nPending Assertions for Submission")?;
+            writeln!(f, "--------------------------------")?;
+            for (i, assertion) in self.assertions_for_submission.iter().enumerate() {
+                writeln!(f, "Assertion #{}: {}", i + 1, assertion)?;
+            }
+        } else {
+            writeln!(f, "\nNo pending assertions for submission")?;
+        }
+        
+        Ok(())
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UserAuth {
     pub access_token: String,
@@ -58,11 +86,31 @@ pub struct UserAuth {
     pub expires_at: DateTime<Utc>,
 }
 
+impl fmt::Display for UserAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Authentication:")?;
+        writeln!(f, "  User Address: {}", self.user_address)?;
+        writeln!(f, "  Token Expires: {}", self.expires_at.format("%Y-%m-%d %H:%M:%S UTC"))?;
+        
+        // Don't display actual tokens for security reasons
+        writeln!(f, "  Access Token: [Set]")?;
+        writeln!(f, "  Refresh Token: [Set]")
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AssertionForSubmission {
     pub assertion_contract: String,
     pub assertion_id: String,
     pub signature: String,
+}
+
+impl fmt::Display for AssertionForSubmission {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Contract: {}", self.assertion_contract)?;
+        writeln!(f, "  ID: {}", self.assertion_id)?;
+        write!(f, "  Signature: {}...", &self.signature.chars().take(10).collect::<String>())
+    }
 }
 
 #[cfg(test)]

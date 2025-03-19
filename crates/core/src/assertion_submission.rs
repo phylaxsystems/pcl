@@ -115,7 +115,6 @@ impl DappSubmitArgs {
         assertions: &[&AssertionForSubmission],
     ) -> Result<(), DappSubmitError> {
         let client = reqwest::Client::new();
-        // TODO: Update payload structure once API spec is finalized
         let body = json!({
             "project_id": project._project_id,
             "assertions": assertions.iter().map(|a| &a.assertion_contract).collect::<Vec<_>>()

@@ -1,7 +1,9 @@
+use std::{path::PathBuf, str::FromStr};
+
 use crate::{config::CliConfig, error::DaSubmitError};
 use alloy_primitives::{hex, Bytes};
 use clap::Parser;
-use pcl_common::{args::CliArgs, utils::bytecode};
+use pcl_common::{args::CliArgs, utils::{bytecode, compilation_target, compiler_version}};
 use pcl_phoundry::build::BuildArgs;
 
 use assertion_da_client::DaClient;
@@ -14,7 +16,7 @@ use assertion_da_client::DaClient;
 pub struct DASubmitArgs {
     // FIXME(Odysseas): Replace localhost with the actual DA URL from our infrastructure
     /// URL of the assertion-DA
-    #[clap(long, env = "PCL_DA_URL", default_value = "http://localhost:3000")]
+    #[clap(long, env = "PCL_DA_URL", default_value = "http://localhost:5001")]
     url: String,
     /// Name of the assertion contract to submit
     assertion: String,
@@ -31,18 +33,25 @@ impl DASubmitArgs {
         };
 
         let out_dir = cli_args.out_dir();
-        let result = build_args.run(cli_args)?;
+        let relative_path= compilation_target(&self.assertion, &out_dir);
+        let mut full_path= cli_args.root_dir();
+        full_path.push(relative_path);
 
-        if !result.status.success() {
-            eprintln!("Failed to build assertion contracts.");
-            std::process::exit(1);
-        }
+        let _result = build_args.run(cli_args)?;
 
-        let bytecode: Bytes = hex::decode(bytecode(&self.assertion, out_dir))?.into();
-        let result = DaClient::new(&self.url)?.submit_assertion(bytecode).await?;
+        let flatten_contract = build_args.get_flattened_source(&full_path)?;
+        let compiler_version = compiler_version(&self.assertion, &out_dir)
+            .split('+')
+            .next()
+            .unwrap_or_default()
+            .to_string();
+
+        let result = DaClient::new(&self.url)?.submit_assertion(self.assertion.clone(), flatten_contract, compiler_version).await?;
 
         println!("Submitted assertion with id: {}", result.id);
         println!("Signature: {}", result.signature);
         Ok(())
     }
+
+
 }

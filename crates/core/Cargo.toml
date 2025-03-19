@@ -26,7 +26,7 @@ tokio = { workspace = true }
 chrono = { workspace = true }
 colored = "2.0"
 indicatif = "0.17"
-assertion-da-client = { git = "ssh://git@github.com/phylaxsystems/assertion-da.git" }
+assertion-da-client = { git = "ssh://git@github.com/phylaxsystems/assertion-da.git", branch = "feat/source-code"}
 
 [dev-dependencies]
 mockito = "1.2"

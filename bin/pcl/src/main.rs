@@ -31,12 +31,13 @@ struct Cli {
 #[derive(clap::Subcommand)]
 enum Commands {
     Phorge(Phorge),
-    Build(BuildArgs),
     #[command(name = "store")]
     DASubmit(DASubmitArgs),
     #[command(name = "submit")]
     DappSubmit(DappSubmitArgs),
     Auth(AuthCommand),
+    #[command(about = "Display the current configuration")]
+    Config
 }
 
 #[tokio::main]
@@ -50,9 +51,6 @@ async fn main() -> Result<()> {
         Commands::Phorge(phorge) => {
             phorge.run(cli.args.clone(), true)?;
         }
-        Commands::Build(build) => {
-            build.run(cli.args.clone())?;
-        }
         Commands::DASubmit(submit) => {
             config.must_be_authenticated().wrap_err("Authentication required for DA submission. Please authenticate first using 'pcl auth'")?;
             submit.run(cli.args.clone(), &mut config).await?;
@@ -64,7 +62,9 @@ async fn main() -> Result<()> {
         Commands::Auth(auth_cmd) => {
             auth_cmd.run(&mut config).await?;
         }
+        Commands::Config => {
+            println!("{}", config);
+        }
     };
-    config.write_to_file()?;
     Ok(())
 }
