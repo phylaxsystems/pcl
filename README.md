@@ -29,7 +29,7 @@ The Phylax Credible CLI (PCL) is a command-line interface for interacting with t
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/phylax-systems/pcl.git
+   git clone https://github.com/phylaxsystems/pcl.git
    cd pcl
    ```
 
