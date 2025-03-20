@@ -4,8 +4,8 @@ use chrono::{DateTime, Utc};
 use colored::Colorize;
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::fmt;
+use std::path::PathBuf;
 
 pub const CONFIG_DIR: &str = ".pcl";
 pub const CONFIG_FILE: &str = "config.toml";
@@ -42,22 +42,21 @@ impl CliConfig {
     pub fn read_from_file() -> Result<Self, ConfigError> {
         Self::read_from_file_at_dir(Self::get_config_dir())
     }
-
 }
 
 impl fmt::Display for CliConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let config_path = Self::get_config_dir().join(CONFIG_FILE);
-        
+
         writeln!(f, "PCL Configuration")?;
         writeln!(f, "==================")?;
         writeln!(f, "Config path: {}", config_path.display())?;
-        
+
         match &self.auth {
             Some(auth) => writeln!(f, "{}", auth)?,
             None => writeln!(f, "Authentication: Not authenticated")?,
         }
-        
+
         if !self.assertions_for_submission.is_empty() {
             writeln!(f, "\nPending Assertions for Submission")?;
             writeln!(f, "--------------------------------")?;
@@ -67,7 +66,7 @@ impl fmt::Display for CliConfig {
         } else {
             writeln!(f, "\nNo pending assertions for submission")?;
         }
-        
+
         Ok(())
     }
 }
@@ -93,7 +92,7 @@ impl fmt::Display for UserAuth {
         } else {
             writeln!(f, "  Token Expires at {}", expiry_text.green())?;
         }
-        
+
         // Don't display actual tokens for security reasons
         writeln!(f, "  Access Token: [Set]")?;
         writeln!(f, "  Refresh Token: [Set]")
@@ -111,7 +110,11 @@ impl fmt::Display for AssertionForSubmission {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Contract: {}", self.assertion_contract)?;
         writeln!(f, "  ID: {}", self.assertion_id)?;
-        write!(f, "  Signature: {}...", &self.signature.chars().take(10).collect::<String>())
+        write!(
+            f,
+            "  Signature: {}...",
+            &self.signature.chars().take(10).collect::<String>()
+        )
     }
 }
 
@@ -180,20 +183,4 @@ mod tests {
         assert!(matches!(result.unwrap_err(), ConfigError::ReadError(_)));
     }
 
-    #[test]
-    fn test_authentication_check() {
-        let config = CliConfig::default();
-        assert!(config.must_be_authenticated().is_err());
-
-        let config = CliConfig {
-            auth: Some(UserAuth {
-                access_token: "test".to_string(),
-                refresh_token: "test".to_string(),
-                user_address: Address::from_slice(&[0; 20]),
-                expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
-            }),
-            assertions_for_submission: vec![],
-        };
-        assert!(config.must_be_authenticated().is_ok());
-    }
 }

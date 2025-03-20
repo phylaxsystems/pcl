@@ -37,7 +37,7 @@ enum Commands {
     DappSubmit(DappSubmitArgs),
     Auth(AuthCommand),
     #[command(about = "Display the current configuration")]
-    Config
+    Config,
 }
 
 #[tokio::main]

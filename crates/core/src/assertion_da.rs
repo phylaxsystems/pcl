@@ -3,7 +3,10 @@ use std::{path::PathBuf, str::FromStr};
 use crate::{config::CliConfig, error::DaSubmitError};
 use alloy_primitives::{hex, Bytes};
 use clap::Parser;
-use pcl_common::{args::CliArgs, utils::{bytecode, compilation_target, compiler_version}};
+use pcl_common::{
+    args::CliArgs,
+    utils::{bytecode, compilation_target, compiler_version},
+};
 use pcl_phoundry::build::BuildArgs;
 
 use assertion_da_client::DaClient;
@@ -33,8 +36,8 @@ impl DASubmitArgs {
         };
 
         let out_dir = cli_args.out_dir();
-        let relative_path= compilation_target(&self.assertion, &out_dir);
-        let mut full_path= cli_args.root_dir();
+        let relative_path = compilation_target(&self.assertion, &out_dir);
+        let mut full_path = cli_args.root_dir();
         full_path.push(relative_path);
 
         let _result = build_args.run(cli_args)?;
@@ -46,12 +49,12 @@ impl DASubmitArgs {
             .unwrap_or_default()
             .to_string();
 
-        let result = DaClient::new(&self.url)?.submit_assertion(self.assertion.clone(), flatten_contract, compiler_version).await?;
+        let result = DaClient::new(&self.url)?
+            .submit_assertion(self.assertion.clone(), flatten_contract, compiler_version)
+            .await?;
 
         println!("Submitted assertion with id: {}", result.id);
         println!("Signature: {}", result.signature);
         Ok(())
     }
-
-
 }

@@ -61,9 +61,10 @@ pub fn compilation_target(input: &str, out_dir: &PathBuf) -> String {
         .expect("Failed to find contract in compilation target")
 }
 
-
 pub fn compiler_version(input: &str, out_dir: &PathBuf) -> String {
     let value = read_artifact(input, out_dir);
-    let compiler_version = value["metadata"]["compiler"]["version"].as_str().expect("failed to read compiler version");
+    let compiler_version = value["metadata"]["compiler"]["version"]
+        .as_str()
+        .expect("failed to read compiler version");
     compiler_version.to_string()
 }
