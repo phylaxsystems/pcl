@@ -1,5 +1,5 @@
-use crate::{config::CliConfig, error::DaSubmitError};
 use clap::Parser;
+use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use pcl_common::{
     args::CliArgs,
@@ -9,6 +9,8 @@ use pcl_phoundry::build::BuildArgs;
 use tokio::time::Duration;
 
 use assertion_da_client::DaClient;
+
+use crate::{config::CliConfig, error::DaSubmitError};
 
 #[derive(Parser)]
 #[clap(
@@ -28,7 +30,7 @@ impl DASubmitArgs {
     pub async fn run(
         &self,
         cli_args: &CliArgs,
-        _config: &mut CliConfig,
+        config: &mut CliConfig,
     ) -> Result<(), DaSubmitError> {
         let build_args = BuildArgs {
             assertions: vec![self.assertion.clone()],
@@ -64,11 +66,25 @@ impl DASubmitArgs {
             .submit_assertion(self.assertion.clone(), flatten_contract, compiler_version)
             .await?;
 
+        config.add_assertion_for_submission(
+            self.assertion.clone(),
+            result.id.to_string(),
+            result.signature.to_string()
+        );
         // Finish spinner with success message
         spinner.finish_with_message("✅ Assertion successfully submitted!");
 
-        println!("Submitted assertion with id: {}", result.id);
-        println!("Signature: {}", result.signature);
+        // Display formatted assertion information
+        println!("\n\n{}", "Assertion Information".bold().green());
+        println!("{}", "===================".green());
+        println!("{}", config.assertions_for_submission.last().unwrap());
+        
+        // Display next steps with highlighted command
+        println!("\n{}", "Next Steps:".bold());
+        println!("Submit this assertion to a project with:");
+        println!("  {} submit -a {} -p <project_name>", "pcl".cyan().bold(), self.assertion.cyan());
+        println!("Visit the Credible Layer DApp to link the assertion on-chain and enforce it:");
+        println!("  {}", "https://dapp.credible.layer".cyan().bold());
         Ok(())
     }
 }

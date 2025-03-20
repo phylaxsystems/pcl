@@ -42,6 +42,15 @@ impl CliConfig {
     pub fn read_from_file() -> Result<Self, ConfigError> {
         Self::read_from_file_at_dir(Self::get_config_dir())
     }
+
+    pub fn add_assertion_for_submission(&mut self, assertion_contract: String, assertion_id: String, signature: String)
+    {
+        self.assertions_for_submission.push(AssertionForSubmission {
+            assertion_contract,
+            assertion_id,
+            signature,
+        });
+    }
 }
 
 impl fmt::Display for CliConfig {
@@ -56,7 +65,6 @@ impl fmt::Display for CliConfig {
             Some(auth) => writeln!(f, "{}", auth)?,
             None => writeln!(f, "Authentication: Not authenticated")?,
         }
-
         if !self.assertions_for_submission.is_empty() {
             writeln!(f, "\nPending Assertions for Submission")?;
             writeln!(f, "--------------------------------")?;
