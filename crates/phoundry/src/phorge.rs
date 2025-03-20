@@ -30,14 +30,14 @@ impl Phorge {
     /// We do this so that we don't have to re-write the forge command in the CLI, as
     /// a lot of the functionality is implemented as part of the forge binary, which we can't import
     /// as a crate.
-    pub fn run(&self, cli_args: CliArgs, print_output: bool) -> Result<Output, PhoundryError> {
+    pub fn run(&self, cli_args: &CliArgs, print_output: bool) -> Result<Output, PhoundryError> {
         self.run_args(get_forge_binary_path(), cli_args, print_output)
     }
 
     fn run_args(
         &self,
         forge_bin_path: PathBuf,
-        cli_args: CliArgs,
+        cli_args: &CliArgs,
         print_output: bool,
     ) -> Result<Output, PhoundryError> {
         let mut args = self.args.clone();
@@ -94,13 +94,13 @@ mod test {
         std::env::set_current_dir(path).unwrap();
     }
 
-    fn run_build_test(cli_args: CliArgs, phorge_bin_path: &str) {
+    fn run_build_test(cli_args: &CliArgs, phorge_bin_path: &str) {
         let phorge = Phorge {
             args: vec!["build".to_owned(), "--force".to_owned()],
         };
 
         let res = phorge
-            .run_args(phorge_bin_path.into(), cli_args, true)
+            .run_args(phorge_bin_path.into(), &cli_args, true)
             .unwrap();
 
         assert!(res.status.success());
@@ -111,7 +111,7 @@ mod test {
         set_current_dir("../../testdata");
 
         run_build_test(
-            CliArgs {
+            &CliArgs {
                 root_dir: Some(PathBuf::from("mock-protocol")),
                 ..CliArgs::default()
             },
@@ -121,7 +121,7 @@ mod test {
         set_current_dir("mock-protocol");
 
         run_build_test(
-            CliArgs {
+            &CliArgs {
                 ..CliArgs::default()
             },
             "../../target/debug/phorge",

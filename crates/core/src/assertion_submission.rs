@@ -58,7 +58,7 @@ impl DappSubmitArgs {
     /// * `Result<(), DappSubmitError>` - Success or specific error
     pub async fn run(
         &self,
-        _cli_args: CliArgs,
+        _cli_args: &CliArgs,
         config: &mut CliConfig,
     ) -> Result<(), DappSubmitError> {
         let projects = self.get_projects(config).await?;

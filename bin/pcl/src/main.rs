@@ -1,11 +1,11 @@
 use clap::{command, Parser};
-use eyre::Result;
+use eyre::{Context, Result};
 use pcl_common::args::CliArgs;
 use pcl_core::{
     assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, auth::AuthCommand,
     config::CliConfig,
 };
-use pcl_phoundry::phorge::Phorge;
+use pcl_phoundry::{build::BuildArgs, phorge::Phorge};
 
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -37,7 +37,7 @@ enum Commands {
     DappSubmit(DappSubmitArgs),
     Auth(AuthCommand),
     #[command(about = "Display the current configuration")]
-    Config,
+    Config
 }
 
 #[tokio::main]
@@ -49,13 +49,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Phorge(phorge) => {
-            phorge.run(cli.args.clone(), true)?;
+            phorge.run(&cli.args, true)?;
         }
         Commands::DASubmit(submit) => {
-            submit.run(cli.args.clone(), &mut config).await?;
+            submit.run(&cli.args, &mut config).await?;
         }
         Commands::DappSubmit(submit) => {
-            submit.run(cli.args.clone(), &mut config).await?;
+            submit.run(&cli.args, &mut config).await?;
         }
         Commands::Auth(auth_cmd) => {
             auth_cmd.run(&mut config).await?;

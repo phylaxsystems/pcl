@@ -12,10 +12,14 @@ pub fn read_artifact(input: &str, out_dir: &PathBuf) -> serde_json::Value {
     let contract_name;
     let file_name;
     if parts.clone().count() > 1 {
+        // Extract file name from the first part of the input
         file_name = parts.next().expect("Failed to read file name").to_string();
+        // Extract contract name from the second part of the input
         contract_name = parts.next().expect("Failed to read contract name");
     } else {
+        // If no colon separator, assume contract name is the same as file name
         contract_name = parts.next().expect("Failed to read contract name");
+        // Create a path with .sol extension for the file name
         let mut path = PathBuf::from(contract_name);
         path.set_extension("sol");
         file_name = path.to_string_lossy().to_string();
