@@ -52,11 +52,9 @@ async fn main() -> Result<()> {
             phorge.run(cli.args.clone(), true)?;
         }
         Commands::DASubmit(submit) => {
-            config.must_be_authenticated().wrap_err("Authentication required for DA submission. Please authenticate first using 'pcl auth'")?;
             submit.run(cli.args.clone(), &mut config).await?;
         }
         Commands::DappSubmit(submit) => {
-            config.must_be_authenticated().wrap_err("Authentication required for dapp submission. Please authenticate first using 'pcl auth'")?;
             submit.run(cli.args.clone(), &mut config).await?;
         }
         Commands::Auth(auth_cmd) => {

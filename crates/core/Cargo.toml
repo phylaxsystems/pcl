@@ -24,7 +24,7 @@ dirs = "6.0.0"
 eyre = { workspace = true }
 tokio = { workspace = true }
 chrono = { workspace = true }
-colored = "2.0"
+colored = {workspace = true }
 indicatif = "0.17"
 assertion-da-client = { git = "ssh://git@github.com/phylaxsystems/assertion-da.git", branch = "feat/source-code"}
 

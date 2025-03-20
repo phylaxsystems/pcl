@@ -1,6 +1,7 @@
 use crate::error::ConfigError;
 use alloy_primitives::Address;
 use chrono::{DateTime, Utc};
+use colored::Colorize;
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -42,12 +43,6 @@ impl CliConfig {
         Self::read_from_file_at_dir(Self::get_config_dir())
     }
 
-    pub fn must_be_authenticated(&self) -> Result<(), ConfigError> {
-        if self.auth.is_none() {
-            return Err(ConfigError::NotAuthenticated);
-        }
-        Ok(())
-    }
 }
 
 impl fmt::Display for CliConfig {
@@ -90,7 +85,14 @@ impl fmt::Display for UserAuth {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Authentication:")?;
         writeln!(f, "  User Address: {}", self.user_address)?;
-        writeln!(f, "  Token Expires: {}", self.expires_at.format("%Y-%m-%d %H:%M:%S UTC"))?;
+        let now = Utc::now();
+        let expired = self.expires_at < now;
+        let expiry_text = self.expires_at.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+        if expired {
+            writeln!(f, "  Token Expired at {}", expiry_text.red())?;
+        } else {
+            writeln!(f, "  Token Expires at {}", expiry_text.green())?;
+        }
         
         // Don't display actual tokens for security reasons
         writeln!(f, "  Access Token: [Set]")?;
