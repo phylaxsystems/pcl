@@ -39,9 +39,9 @@ impl DASubmitArgs {
         let mut full_path = cli_args.root_dir();
         full_path.push(relative_path);
 
-        let _result = build_args.run(&cli_args)?;
+        let _result = build_args.run(cli_args)?;
 
-        let flatten_contract = build_args.get_flattened_source(&full_path, &cli_args)?;
+        let flatten_contract = build_args.get_flattened_source(&full_path, cli_args)?;
         let compiler_version = compiler_version(&self.assertion, &out_dir)
             .split('+')
             .next()

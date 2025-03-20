@@ -100,7 +100,7 @@ mod test {
         };
 
         let res = phorge
-            .run_args(phorge_bin_path.into(), &cli_args, true)
+            .run_args(phorge_bin_path.into(), cli_args, true)
             .unwrap();
 
         assert!(res.status.success());
