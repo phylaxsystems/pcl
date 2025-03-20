@@ -1,12 +1,9 @@
-use std::{path::PathBuf, str::FromStr};
-
 use crate::{config::CliConfig, error::DaSubmitError};
-use alloy_primitives::{hex, Bytes};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use pcl_common::{
     args::CliArgs,
-    utils::{bytecode, compilation_target, compiler_version},
+    utils::{compilation_target, compiler_version},
 };
 use pcl_phoundry::build::BuildArgs;
 use tokio::time::Duration;

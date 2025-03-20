@@ -1,11 +1,11 @@
 use clap::{command, Parser};
-use eyre::{Context, Result};
+use eyre::Result;
 use pcl_common::args::CliArgs;
 use pcl_core::{
     assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, auth::AuthCommand,
     config::CliConfig,
 };
-use pcl_phoundry::{build::BuildArgs, phorge::Phorge};
+use pcl_phoundry::phorge::Phorge;
 
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -37,7 +37,7 @@ enum Commands {
     DappSubmit(DappSubmitArgs),
     Auth(AuthCommand),
     #[command(about = "Display the current configuration")]
-    Config
+    Config,
 }
 
 #[tokio::main]
