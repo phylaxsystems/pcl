@@ -64,5 +64,6 @@ async fn main() -> Result<()> {
             println!("{}", config);
         }
     };
+    config.write_to_file()?;
     Ok(())
 }
