@@ -58,7 +58,7 @@ impl DappSubmitArgs {
     /// * `Result<(), DappSubmitError>` - Success or specific error
     pub async fn run(
         &self,
-        _cli_args: CliArgs,
+        _cli_args: &CliArgs,
         config: &mut CliConfig,
     ) -> Result<(), DappSubmitError> {
         let projects = self.get_projects(config).await?;
@@ -115,7 +115,6 @@ impl DappSubmitArgs {
         assertions: &[&AssertionForSubmission],
     ) -> Result<(), DappSubmitError> {
         let client = reqwest::Client::new();
-        // TODO: Update payload structure once API spec is finalized
         let body = json!({
             "project_id": project._project_id,
             "assertions": assertions.iter().map(|a| &a.assertion_contract).collect::<Vec<_>>()
