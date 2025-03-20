@@ -995,7 +995,7 @@ dependencies = [
 [[package]]
 name = "assertion-da-client"
 version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?branch=feat/source-code#739966ce6bf33b10f9c7fd2f3ff028dbf811934e"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?branch=main#d03f01f4f74f31e4c025c965d0e204943a106b13"
 dependencies = [
  "alloy",
  "assertion-da-core",
@@ -1008,7 +1008,7 @@ dependencies = [
 [[package]]
 name = "assertion-da-core"
 version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?branch=feat/source-code#739966ce6bf33b10f9c7fd2f3ff028dbf811934e"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?branch=main#d03f01f4f74f31e4c025c965d0e204943a106b13"
 dependencies = [
  "alloy",
  "serde",
