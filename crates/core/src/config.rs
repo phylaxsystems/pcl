@@ -43,8 +43,12 @@ impl CliConfig {
         Self::read_from_file_at_dir(Self::get_config_dir())
     }
 
-    pub fn add_assertion_for_submission(&mut self, assertion_contract: String, assertion_id: String, signature: String)
-    {
+    pub fn add_assertion_for_submission(
+        &mut self,
+        assertion_contract: String,
+        assertion_id: String,
+        signature: String,
+    ) {
         self.assertions_for_submission.push(AssertionForSubmission {
             assertion_contract,
             assertion_id,
