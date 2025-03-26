@@ -1,8 +1,10 @@
 use crate::error::ConfigError;
 use alloy_primitives::Address;
 use chrono::{DateTime, Utc};
+use colored::Colorize;
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::path::PathBuf;
 
 pub const CONFIG_DIR: &str = ".pcl";
@@ -41,10 +43,42 @@ impl CliConfig {
         Self::read_from_file_at_dir(Self::get_config_dir())
     }
 
-    pub fn must_be_authenticated(&self) -> Result<(), ConfigError> {
-        if self.auth.is_none() {
-            return Err(ConfigError::NotAuthenticated);
+    pub fn add_assertion_for_submission(
+        &mut self,
+        assertion_contract: String,
+        assertion_id: String,
+        signature: String,
+    ) {
+        self.assertions_for_submission.push(AssertionForSubmission {
+            assertion_contract,
+            assertion_id,
+            signature,
+        });
+    }
+}
+
+impl fmt::Display for CliConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let config_path = Self::get_config_dir().join(CONFIG_FILE);
+
+        writeln!(f, "PCL Configuration")?;
+        writeln!(f, "==================")?;
+        writeln!(f, "Config path: {}", config_path.display())?;
+
+        match &self.auth {
+            Some(auth) => writeln!(f, "{}", auth)?,
+            None => writeln!(f, "Authentication: Not authenticated")?,
         }
+        if !self.assertions_for_submission.is_empty() {
+            writeln!(f, "\nPending Assertions for Submission")?;
+            writeln!(f, "--------------------------------")?;
+            for (i, assertion) in self.assertions_for_submission.iter().enumerate() {
+                writeln!(f, "Assertion #{}: {}", i + 1, assertion)?;
+            }
+        } else {
+            writeln!(f, "\nNo pending assertions for submission")?;
+        }
+
         Ok(())
     }
 }
@@ -58,11 +92,42 @@ pub struct UserAuth {
     pub expires_at: DateTime<Utc>,
 }
 
+impl fmt::Display for UserAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Authentication:")?;
+        writeln!(f, "  User Address: {}", self.user_address)?;
+        let now = Utc::now();
+        let expired = self.expires_at < now;
+        let expiry_text = self.expires_at.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+        if expired {
+            writeln!(f, "  Token Expired at {}", expiry_text.red())?;
+        } else {
+            writeln!(f, "  Token Expires at {}", expiry_text.green())?;
+        }
+
+        // Don't display actual tokens for security reasons
+        writeln!(f, "  Access Token: [Set]")?;
+        writeln!(f, "  Refresh Token: [Set]")
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AssertionForSubmission {
     pub assertion_contract: String,
     pub assertion_id: String,
     pub signature: String,
+}
+
+impl fmt::Display for AssertionForSubmission {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Contract: {}", self.assertion_contract)?;
+        writeln!(f, "  ID: {}", self.assertion_id)?;
+        write!(
+            f,
+            "  Signature: {}...",
+            &self.signature.chars().take(10).collect::<String>()
+        )
+    }
 }
 
 #[cfg(test)]
@@ -128,22 +193,5 @@ mod tests {
         let result = CliConfig::read_from_file_at_dir(config_dir);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ConfigError::ReadError(_)));
-    }
-
-    #[test]
-    fn test_authentication_check() {
-        let config = CliConfig::default();
-        assert!(config.must_be_authenticated().is_err());
-
-        let config = CliConfig {
-            auth: Some(UserAuth {
-                access_token: "test".to_string(),
-                refresh_token: "test".to_string(),
-                user_address: Address::from_slice(&[0; 20]),
-                expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
-            }),
-            assertions_for_submission: vec![],
-        };
-        assert!(config.must_be_authenticated().is_ok());
     }
 }

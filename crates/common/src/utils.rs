@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Reads a contract artifact
 /// Input can be specified in two patterns
@@ -6,16 +6,20 @@ use std::path::PathBuf;
 /// 2. ${contract_name} (file_name is assumed to be the same as contract_name, with .sol extension)
 ///
 /// out_dir is the output directory of the build artifact
-pub fn read_artifact(input: &str, out_dir: PathBuf) -> serde_json::Value {
+pub fn read_artifact(input: &str, out_dir: &Path) -> serde_json::Value {
     let mut parts = input.split(':');
 
     let contract_name;
     let file_name;
     if parts.clone().count() > 1 {
+        // Extract file name from the first part of the input
         file_name = parts.next().expect("Failed to read file name").to_string();
+        // Extract contract name from the second part of the input
         contract_name = parts.next().expect("Failed to read contract name");
     } else {
+        // If no colon separator, assume contract name is the same as file name
         contract_name = parts.next().expect("Failed to read contract name");
+        // Create a path with .sol extension for the file name
         let mut path = PathBuf::from(contract_name);
         path.set_extension("sol");
         file_name = path.to_string_lossy().to_string();
@@ -33,10 +37,38 @@ pub fn read_artifact(input: &str, out_dir: PathBuf) -> serde_json::Value {
 /// 2. ${contract_name} (file_name is assumed to be the same as contract_name, with .sol extension)
 ///
 /// out_dir is the output directory of the build artifact
-pub fn bytecode(input: &str, out_dir: PathBuf) -> String {
+pub fn bytecode(input: &str, out_dir: &Path) -> String {
     let value = read_artifact(input, out_dir);
     let bytecode = value["bytecode"]["object"]
         .as_str()
         .expect("Failed to read bytecode");
     bytecode.to_string()
+}
+
+pub fn compilation_target(input: &str, out_dir: &Path) -> String {
+    let value = read_artifact(input, out_dir);
+    // The compilationTarget is a map with a single key-value pair where the key is the file path
+    // and the value is the contract name. We need to extract the file path (key).
+    let compilation_target = value["metadata"]["settings"]["compilationTarget"]
+        .as_object()
+        .expect("Failed to read compilation target as object");
+    // Get the compilation target of the contract with name contract_name
+    compilation_target
+        .iter()
+        .find_map(|(key, value)| {
+            if value.as_str() == Some(input) {
+                Some(key.to_string())
+            } else {
+                None
+            }
+        })
+        .expect("Failed to find contract in compilation target")
+}
+
+pub fn compiler_version(input: &str, out_dir: &Path) -> String {
+    let value = read_artifact(input, out_dir);
+    let compiler_version = value["metadata"]["compiler"]["version"]
+        .as_str()
+        .expect("failed to read compiler version");
+    compiler_version.to_string()
 }

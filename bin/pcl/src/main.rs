@@ -1,11 +1,11 @@
 use clap::{command, Parser};
-use eyre::{Context, Result};
+use eyre::Result;
 use pcl_common::args::CliArgs;
 use pcl_core::{
     assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, auth::AuthCommand,
     config::CliConfig,
 };
-use pcl_phoundry::{build::BuildArgs, phorge::Phorge};
+use pcl_phoundry::phorge::Phorge;
 
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -31,12 +31,13 @@ struct Cli {
 #[derive(clap::Subcommand)]
 enum Commands {
     Phorge(Phorge),
-    Build(BuildArgs),
     #[command(name = "store")]
     DASubmit(DASubmitArgs),
     #[command(name = "submit")]
     DappSubmit(DappSubmitArgs),
     Auth(AuthCommand),
+    #[command(about = "Display the current configuration")]
+    Config,
 }
 
 #[tokio::main]
@@ -48,21 +49,19 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Phorge(phorge) => {
-            phorge.run(cli.args.clone(), true)?;
-        }
-        Commands::Build(build) => {
-            build.run(cli.args.clone())?;
+            phorge.run(&cli.args, true)?;
         }
         Commands::DASubmit(submit) => {
-            config.must_be_authenticated().wrap_err("Authentication required for DA submission. Please authenticate first using 'pcl auth'")?;
-            submit.run(cli.args.clone(), &mut config).await?;
+            submit.run(&cli.args, &mut config).await?;
         }
         Commands::DappSubmit(submit) => {
-            config.must_be_authenticated().wrap_err("Authentication required for dapp submission. Please authenticate first using 'pcl auth'")?;
-            submit.run(cli.args.clone(), &mut config).await?;
+            submit.run(&cli.args, &mut config).await?;
         }
         Commands::Auth(auth_cmd) => {
             auth_cmd.run(&mut config).await?;
+        }
+        Commands::Config => {
+            println!("{}", config);
         }
     };
     config.write_to_file()?;

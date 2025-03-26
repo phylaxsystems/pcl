@@ -156,9 +156,6 @@ impl AuthCommand {
         );
     }
 
-    /// Poll for authentication verification
-    #[allow(clippy::to_string_in_format_args)]
-    #[allow(clippy::literal_string_with_formatting_args)]
     async fn wait_for_verification(
         &self,
         config: &mut CliConfig,
