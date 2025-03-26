@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use clap::Parser;
 use pcl_common::args::CliArgs;
@@ -18,7 +18,7 @@ impl BuildArgs {
 
     pub fn get_flattened_source(
         &self,
-        path: &PathBuf,
+        path: &Path,
         cli_args: &CliArgs,
     ) -> Result<String, PhoundryError> {
         let flatten_args = vec!["flatten".to_string(), path.to_string_lossy().to_string()];

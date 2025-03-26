@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Reads a contract artifact
 /// Input can be specified in two patterns
@@ -6,7 +6,7 @@ use std::path::PathBuf;
 /// 2. ${contract_name} (file_name is assumed to be the same as contract_name, with .sol extension)
 ///
 /// out_dir is the output directory of the build artifact
-pub fn read_artifact(input: &str, out_dir: &PathBuf) -> serde_json::Value {
+pub fn read_artifact(input: &str, out_dir: &Path) -> serde_json::Value {
     let mut parts = input.split(':');
 
     let contract_name;
@@ -37,7 +37,7 @@ pub fn read_artifact(input: &str, out_dir: &PathBuf) -> serde_json::Value {
 /// 2. ${contract_name} (file_name is assumed to be the same as contract_name, with .sol extension)
 ///
 /// out_dir is the output directory of the build artifact
-pub fn bytecode(input: &str, out_dir: &PathBuf) -> String {
+pub fn bytecode(input: &str, out_dir: &Path) -> String {
     let value = read_artifact(input, out_dir);
     let bytecode = value["bytecode"]["object"]
         .as_str()
@@ -45,7 +45,7 @@ pub fn bytecode(input: &str, out_dir: &PathBuf) -> String {
     bytecode.to_string()
 }
 
-pub fn compilation_target(input: &str, out_dir: &PathBuf) -> String {
+pub fn compilation_target(input: &str, out_dir: &Path) -> String {
     let value = read_artifact(input, out_dir);
     // The compilationTarget is a map with a single key-value pair where the key is the file path
     // and the value is the contract name. We need to extract the file path (key).
@@ -65,7 +65,7 @@ pub fn compilation_target(input: &str, out_dir: &PathBuf) -> String {
         .expect("Failed to find contract in compilation target")
 }
 
-pub fn compiler_version(input: &str, out_dir: &PathBuf) -> String {
+pub fn compiler_version(input: &str, out_dir: &Path) -> String {
     let value = read_artifact(input, out_dir);
     let compiler_version = value["metadata"]["compiler"]["version"]
         .as_str()
