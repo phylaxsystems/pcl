@@ -8,16 +8,16 @@ use serde::Deserialize;
 use serde_json::json;
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct Project {
-    _project_id: String,
+    project_id: String,
     project_name: String,
-    _project_description: Option<String>,
-    _profile_image_url: Option<String>,
-    _project_networks: Vec<String>,
-    _project_manager: String,
-    _assertion_adopters: Vec<String>,
-    _created_at: String,
-    _updated_at: String,
+    project_description: Option<String>,
+    profile_image_url: Option<String>,
+    project_networks: Vec<String>,
+    project_manager: String,
+    created_at: String,
+    updated_at: String,
 }
 
 /// Arguments for submitting assertions to the Credible Layer dApp
@@ -95,7 +95,7 @@ impl DappSubmitArgs {
             })
             .collect();
 
-        self.submit_assertion(project, &assertions).await?;
+        self.submit_assertion(project, &assertions, config).await?;
         // TOOD: remove assertion from config
 
         Ok(())
@@ -113,15 +113,27 @@ impl DappSubmitArgs {
         &self,
         project: &Project,
         assertions: &[&AssertionForSubmission],
+        config: &CliConfig,
     ) -> Result<(), DappSubmitError> {
         let client = reqwest::Client::new();
         let body = json!({
-            "project_id": project._project_id,
-            "assertions": assertions.iter().map(|a| &a.assertion_contract).collect::<Vec<_>>()
+            "assertions": assertions.iter().map(|a| json!({
+                "contract_name": &a.assertion_contract,
+                "assertion_id": &a.assertion_id,
+                "signature": &a.signature
+            })).collect::<Vec<_>>()
         });
 
         let response = client
-            .post(format!("{}/assertions", self.dapp_url))
+            .post(format!(
+                "{}/projects/{}/submitted-assertions",
+                self.dapp_url, project.project_id
+            ))
+            .header(
+                "Authorization",
+                format!("Bearer {}", config.auth.as_ref().unwrap().access_token),
+            )
+            .header("Content-Type", "application/json")
             .json(&body)
             .send()
             .await?;
