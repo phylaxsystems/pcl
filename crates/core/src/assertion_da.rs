@@ -36,12 +36,12 @@ impl DASubmitArgs {
             assertions: vec![self.assertion.clone()],
         };
 
+        let _result = build_args.run(cli_args)?;
+
         let out_dir = cli_args.out_dir();
         let relative_path = compilation_target(&self.assertion, &out_dir);
         let mut full_path = cli_args.root_dir();
         full_path.push(relative_path);
-
-        let _result = build_args.run(cli_args)?;
 
         let flatten_contract = build_args.get_flattened_source(&full_path, cli_args)?;
         let compiler_version = compiler_version(&self.assertion, &out_dir)
