@@ -1,0 +1,25 @@
+name: Rust Build, Test, Lint
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  call-rust-base-ci:
+    name: Run phylax CI
+    uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@fix/use-correct-channel
+    with:
+      rust-channel: "nightly"
+      require-lockfile: true
+      install-foundry: true
+      dind: true
+      submodules: "true"
+      requires-private-deps: true
+      compile-foundry-contracts: true
+
+      # [""] means default features
+      # Feature matrices are supported as follows: ["", "--features=foo", "--features=bar", "--features=foo,bar"]
+      test-feature-sets: '[""]'
+    secrets:
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
