@@ -64,7 +64,7 @@ impl DappSubmitArgs {
         let projects = self.get_projects(config).await?;
         let assertions_for_submission = config
             .assertions_for_submission
-            .iter()
+            .values()
             .map(|a| a.assertion_contract.clone())
             .collect();
 
@@ -86,13 +86,7 @@ impl DappSubmitArgs {
 
         let assertions: Vec<&AssertionForSubmission> = assertion_names
             .iter()
-            .map(|n| {
-                config
-                    .assertions_for_submission
-                    .iter()
-                    .find(|a| a.assertion_contract == *n)
-                    .unwrap()
-            })
+            .map(|n| config.assertions_for_submission.get(n).unwrap())
             .collect();
 
         self.submit_assertion(project, &assertions, config).await?;

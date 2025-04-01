@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use colored::Colorize;
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -13,7 +14,7 @@ pub const CONFIG_FILE: &str = "config.toml";
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CliConfig {
     pub auth: Option<UserAuth>,
-    pub assertions_for_submission: Vec<AssertionForSubmission>,
+    pub assertions_for_submission: HashMap<String, AssertionForSubmission>,
 }
 
 impl CliConfig {
@@ -45,15 +46,12 @@ impl CliConfig {
 
     pub fn add_assertion_for_submission(
         &mut self,
-        assertion_contract: String,
-        assertion_id: String,
-        signature: String,
+        assertion_for_submission: AssertionForSubmission,
     ) {
-        self.assertions_for_submission.push(AssertionForSubmission {
-            assertion_contract,
-            assertion_id,
-            signature,
-        });
+        self.assertions_for_submission.insert(
+            assertion_for_submission.assertion_contract.clone(),
+            assertion_for_submission,
+        );
     }
 }
 
@@ -72,7 +70,7 @@ impl fmt::Display for CliConfig {
         if !self.assertions_for_submission.is_empty() {
             writeln!(f, "\nPending Assertions for Submission")?;
             writeln!(f, "--------------------------------")?;
-            for (i, assertion) in self.assertions_for_submission.iter().enumerate() {
+            for (i, assertion) in self.assertions_for_submission.values().enumerate() {
                 writeln!(f, "Assertion #{}: {}", i + 1, assertion)?;
             }
         } else {
@@ -111,7 +109,7 @@ impl fmt::Display for UserAuth {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, Hash, Eq, PartialEq, Clone)]
 pub struct AssertionForSubmission {
     pub assertion_contract: String,
     pub assertion_id: String,
