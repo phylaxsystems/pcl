@@ -111,7 +111,7 @@ impl DASubmitArgs {
                         return Ok(());
                     }
                 };
-                return Err(err);
+                return Err(err.into());
             }
         };
 
