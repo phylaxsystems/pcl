@@ -152,11 +152,16 @@ mod tests {
                 user_address: Address::from_slice(&[0; 20]),
                 expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
             }),
-            assertions_for_submission: vec![AssertionForSubmission {
-                assertion_contract: "contract1".to_string(),
-                assertion_id: "id1".to_string(),
-                signature: "sig1".to_string(),
-            }],
+            assertions_for_submission: vec![(
+                "contract1".to_string(),
+                AssertionForSubmission {
+                    assertion_contract: "contract1".to_string(),
+                    assertion_id: "id1".to_string(),
+                    signature: "sig1".to_string(),
+                },
+            )]
+            .into_iter()
+            .collect(),
         };
 
         // Test writing
@@ -178,7 +183,11 @@ mod tests {
         );
         assert_eq!(read_config.assertions_for_submission.len(), 1);
         assert_eq!(
-            read_config.assertions_for_submission[0].assertion_contract,
+            read_config
+                .assertions_for_submission
+                .get("contract1")
+                .unwrap()
+                .assertion_contract,
             "contract1"
         );
     }
