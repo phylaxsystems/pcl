@@ -141,6 +141,10 @@ impl DappSubmitArgs {
         if response.status().is_success() {
             Ok(())
         } else {
+            // If the response is unauthorized, return a specific error
+            if response.status().as_u16() == 401 {
+                return Err(DappSubmitError::NoAuthToken);
+            }
             Err(DappSubmitError::SubmissionFailed(response.text().await?))
         }
     }

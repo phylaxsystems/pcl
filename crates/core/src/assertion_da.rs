@@ -5,7 +5,9 @@ use pcl_common::{args::CliArgs, utils::get_build_info, Assertion};
 use pcl_phoundry::build::BuildArgs;
 use tokio::time::Duration;
 
-use assertion_da_client::DaClient;
+use assertion_da_client::{DaClient, DaClientError};
+use jsonrpsee_core::client::Error as ClientError;
+use jsonrpsee_http_client::transport::Error as TransportError;
 
 use crate::{config::CliConfig, error::DaSubmitError};
 
@@ -81,13 +83,37 @@ impl DASubmitArgs {
         spinner.set_message("Submitting assertion to DA...");
 
         // Submit the assertion
-        let result = DaClient::new(&self.url)?
+        let result = match DaClient::new(&self.url)?
             .submit_assertion(
                 self.assertion.contract_name().to_string(),
                 flatten_contract,
                 compiler_version,
             )
-            .await?;
+            .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                match err {
+                    DaClientError::ClientError(ClientError::Transport(
+                        TransportError::Rejected { status_code },
+                    )) => {
+                        match status_code {
+                            401 => {
+                                spinner.finish_with_message("❌ Assertion submission failed! Unauthorized. Please run pcl run.");
+                            }
+                            status_code => {
+                                spinner.finish_with_message(format!(
+                                    "❌ Assertion submission failed! Status code: {}",
+                                    status_code
+                                ));
+                            }
+                        };
+                        return Ok(());
+                    }
+                };
+                return Err(err));
+            }
+        };
 
         config.add_assertion_for_submission(
             self.assertion.contract_name().to_string(),
