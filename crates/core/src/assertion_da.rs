@@ -94,24 +94,28 @@ impl DASubmitArgs {
             Ok(result) => result,
             Err(err) => {
                 match err {
-                    DaClientError::ClientError(ClientError::Transport(
-                        TransportError::Rejected { status_code },
-                    )) => {
-                        match status_code {
-                            401 => {
-                                spinner.finish_with_message("❌ Assertion submission failed! Unauthorized. Please run pcl run.");
+                    DaClientError::ClientError(ClientError::Transport(ref boxed_err)) => {
+                        match boxed_err.downcast_ref::<TransportError>().unwrap() {
+                            TransportError::Rejected { status_code } => {
+                                match status_code {
+                                    401 => {
+                                        spinner.finish_with_message("❌ Assertion submission failed! Unauthorized. Please run pcl run.");
+                                    }
+                                    status_code => {
+                                        spinner.finish_with_message(format!(
+                                            "❌ Assertion submission failed! Status code: {}",
+                                            status_code
+                                        ));
+                                    }
+                                };
+
+                                return Ok(());
                             }
-                            status_code => {
-                                spinner.finish_with_message(format!(
-                                    "❌ Assertion submission failed! Status code: {}",
-                                    status_code
-                                ));
-                            }
-                        };
-                        return Ok(());
+                            _ => return Err(err.into()),
+                        }
                     }
+                    _ => return Err(err.into()),
                 };
-                return Err(err.into());
             }
         };
 
