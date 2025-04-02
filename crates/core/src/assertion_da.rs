@@ -9,7 +9,10 @@ use assertion_da_client::{DaClient, DaClientError};
 use jsonrpsee_core::client::Error as ClientError;
 use jsonrpsee_http_client::transport::Error as TransportError;
 
-use crate::{config::CliConfig, error::DaSubmitError};
+use crate::{
+    config::{AssertionForSubmission, CliConfig},
+    error::DaSubmitError,
+};
 
 #[derive(Parser)]
 #[clap(
@@ -119,18 +122,19 @@ impl DASubmitArgs {
             }
         };
 
-        config.add_assertion_for_submission(
-            self.assertion.contract_name().to_string(),
-            result.id.to_string(),
-            result.signature.to_string(),
-        );
+        let assertion_for_submission = AssertionForSubmission {
+            assertion_contract: self.assertion.contract_name().to_string(),
+            assertion_id: result.id.to_string(),
+            signature: result.signature.to_string(),
+        };
+        config.add_assertion_for_submission(assertion_for_submission.clone());
         // Finish spinner with success message
         spinner.finish_with_message("✅ Assertion successfully submitted!");
 
         // Display formatted assertion information
         println!("\n\n{}", "Assertion Information".bold().green());
         println!("{}", "===================".green());
-        println!("{}", config.assertions_for_submission.last().unwrap());
+        println!("{}", assertion_for_submission);
 
         // Display next steps with highlighted command
         println!("\n{}", "Next Steps:".bold());
