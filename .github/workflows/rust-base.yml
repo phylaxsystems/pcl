@@ -1,18 +1,15 @@
-name: Rust Build, Test, Lint
+name: Rust CI
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 jobs:
-  call-rust-base-ci:
-    name: Run phylax CI
-    uses: phylaxsystems/actions/.github/workflows/rust-base.yaml#main
+  rust-base:
+    uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@main
     with:
       rust-channel: "nightly"
       require-lockfile: true
-      install-foundry: true
       submodules: "recursive"
       requires-private-deps: true
     secrets:
