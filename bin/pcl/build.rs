@@ -16,16 +16,16 @@ pub fn main() -> Result<()> {
     println!("cargo:warning=Building in {} mode", profile);
 
     // Environment flags
-    println!("cargo:rerun-if-env-changed=PCL_SKIP_UPDATE_PHOUNDRY");
-    println!("cargo:rerun-if-env-changed=PCL_SKIP_BUILD_PHOUNDRY");
+    println!("cargo:rerun-if-env-changed=PCL_UPDATE_PHOUNDRY");
+    println!("cargo:rerun-if-env-changed=PCL_BUILD_PHOUNDRY");
     println!("cargo:rerun-if-env-changed=TARGET");
     println!("cargo:rerun-if-env-changed=OUT_DIR");
 
-    let skip_build_phoundry = env::var("PCL_SKIP_BUILD_PHOUNDRY")
+    let should_build_phoundry = env::var("PCL_BUILD_PHOUNDRY")
         .map(|val| val.to_lowercase() == "true")
         .unwrap_or(false);
 
-    let skip_update_phoundry = env::var("PCL_SKIP_UPDATE_PHOUNDRY")
+    let should_update_phoundry = env::var("PCL_UPDATE_PHOUNDRY")
         .map(|val| val.to_lowercase() == "true")
         .unwrap_or(false);
 
@@ -37,13 +37,13 @@ pub fn main() -> Result<()> {
         .parent() // up to workspace root
         .unwrap();
 
-    if skip_build_phoundry {
-        println!("cargo:warning=Skipping building phoundry - PCL_SKIP_BUILD_PHOUNDRY is set");
+    if !should_build_phoundry {
+        println!("cargo:warning=Skipping building phoundry - PCL_BUILD_PHOUNDRY is not set to true");
         return Ok(());
     }
 
-    if skip_update_phoundry {
-        println!("cargo:warning=Skipping updating phoundry - PCL_SKIP_UPDATE_PHOUNDRY is set");
+    if !should_update_phoundry {
+        println!("cargo:warning=Skipping updating phoundry - PCL_UPDATE_PHOUNDRY is not set to true");
     } else {
         // Update phoundry submodule
         update_phoundry(workspace_root).expect("Failed to update phoundry submodule");
