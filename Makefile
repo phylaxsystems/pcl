@@ -17,15 +17,15 @@ format-check:
 
 # Format
 format:
-	cargo fmt
+	cargo +nightly fmt
 
 # Lint
 lint:
-	PCL_SKIP_BUILD_PHOUNDRY=true cargo clippy --workspace
+	PCL_SKIP_BUILD_PHOUNDRY=true cargo +nightly clippy --workspace
 
 # Errors if there is a warning with clippy
 lint-check:
-	PCL_SKIP_BUILD_PHOUNDRY=true cargo clippy -- -D warnings
+	PCL_SKIP_BUILD_PHOUNDRY=true cargo +nightly clippy -- -D warnings
 
 # Can be used as a manual pre-commit check
 pre-commit:
