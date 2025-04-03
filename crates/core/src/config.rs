@@ -71,7 +71,7 @@ impl fmt::Display for CliConfig {
             writeln!(f, "\nPending Assertions for Submission")?;
             writeln!(f, "--------------------------------")?;
             for (i, assertion) in self.assertions_for_submission.values().enumerate() {
-                writeln!(f, "Assertion #{}: {}", i + 1, assertion)?;
+                writeln!(f, "Assertion #{}:\n{}", i + 1, assertion)?;
             }
         } else {
             writeln!(f, "\nNo pending assertions for submission")?;
@@ -105,7 +105,8 @@ impl fmt::Display for UserAuth {
 
         // Don't display actual tokens for security reasons
         writeln!(f, "  Access Token: [Set]")?;
-        writeln!(f, "  Refresh Token: [Set]")
+        writeln!(f, "  Refresh Token: [Set]")?;
+        Ok(())
     }
 }
 
@@ -168,7 +169,7 @@ mod tests {
         assert!(config.write_to_file_at_dir(config_dir.clone()).is_ok());
 
         // Test reading
-        let read_config = CliConfig::read_from_file_at_dir(config_dir).unwrap();
+        let read_config = CliConfig::read_from_file_at_dir(config_dir.clone()).unwrap();
         assert_eq!(
             read_config.auth.as_ref().unwrap().access_token,
             "test_access"
@@ -190,6 +191,29 @@ mod tests {
                 .assertion_contract,
             "contract1"
         );
+        let formatted_cfg = format!("{}", read_config);
+        let expected_cfg = format!(
+            r"PCL Configuration
+==================
+Config path: {0}
+Authentication:
+  User Address: 0x0000000000000000000000000000000000000000
+  Token Expired at {1}[31m2022-12-31 16:00:00 UTC{1}[0m
+  Access Token: [Set]
+  Refresh Token: [Set]
+
+
+Pending Assertions for Submission
+--------------------------------
+Assertion #1:
+Contract: contract1
+  ID: id1
+  Signature: sig1...
+",
+            config_dir.join(CONFIG_FILE).display(),
+            "\u{1b}",
+        );
+        assert_eq!(formatted_cfg, expected_cfg);
     }
 
     #[test]
