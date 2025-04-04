@@ -1,16 +1,16 @@
-name: Rust CI
-on:
-  push:
-    branches: [main]
-  pull_request:
+# name: Rust CI
+# on:
+#   push:
+#     branches: [main]
+#   pull_request:
 
-jobs:
-  rust-base:
-    uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@main
-    with:
-      rust-channel: "nightly"
-      require-lockfile: true
-      submodules: "recursive"
-      requires-private-deps: true
-    secrets:
-      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+# jobs:
+#   rust-base:
+#     uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@main
+#     with:
+#       rust-channel: "nightly"
+#       require-lockfile: true
+#       submodules: "recursive"
+#       requires-private-deps: true
+#     secrets:
+#       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
