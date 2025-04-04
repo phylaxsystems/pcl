@@ -133,9 +133,6 @@ impl fmt::Display for AssertionForSubmission {
 mod tests {
     use super::*;
 
-    //TODO(GREG): Add unit tests that run cli with assertion da and dapp and confirm outfit is as expected,
-
-    /// Helper function to set up a temporary config directory
     fn setup_config_dir() -> PathBuf {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let path = temp_dir.path().to_path_buf();
