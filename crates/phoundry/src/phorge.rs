@@ -1,11 +1,13 @@
+use forge::cmd::{build::BuildArgs, flatten::FlattenArgs, test::TestArgs};
 use pcl_common::args::CliArgs;
 use std::{
     env,
     path::PathBuf,
     process::{Command, Output, Stdio},
 };
+use clap::Parser;
 
-use crate::error::PhoundryError;
+use crate::{build::BuildArgs, error::PhoundryError};
 
 const FORGE_BINARY_NAME: &str = "phorge";
 
@@ -32,6 +34,27 @@ impl Phorge {
     /// as a crate.
     pub fn run(&self, cli_args: &CliArgs, print_output: bool) -> Result<Output, PhoundryError> {
         self.run_args(get_forge_binary_path(), cli_args, print_output)
+    }
+
+    pub async fn run_test(&self, cli_args: &CliArgs, print_output: bool) -> Result<(), PhoundryError> {
+        let args = vec!["test"];
+        let test_args: TestArgs = TestArgs::parse_from(args);
+        let res = test_args.run().await.unwrap();
+        Ok(())
+    }
+
+    pub async fn run_build(&self, cli_args: &CliArgs, print_output: bool) -> Result<(), PhoundryError> {
+        let args = vec!["build"];
+        let build_args: BuildArgs = BuildArgs::parse_from(args);
+        let res = build_args.run().unwrap();
+        Ok(())
+    }
+
+    pub async fn run_flatten(&self, cli_args: &CliArgs, print_output: bool) -> Result<(), PhoundryError> {
+        let args = vec!["flatten"];
+        let flatten_args: FlattenArgs = FlattenArgs::parse_from(args);
+        let res = flatten_args.run().unwrap();
+        Ok(())
     }
 
     fn run_args(
@@ -68,7 +91,6 @@ impl Phorge {
             "FOUNDRY_TEST",
             cli_args.assertions_test().as_os_str().to_str().unwrap(),
         );
-
         Ok(command.output()?)
     }
 

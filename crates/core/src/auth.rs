@@ -3,7 +3,7 @@ use crate::error::AuthError;
 use alloy_primitives::Address;
 use chrono::{DateTime, Utc};
 use colored::*;
-use eyre::Result;
+use color_eyre::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use serde::Deserialize;

@@ -21,7 +21,7 @@ alloy-primitives = { version = "0.8.21", features = ["serde"] }
 inquire = "0.7.5"
 toml = "0.8.2"
 dirs = "6.0.0"
-eyre = { workspace = true }
+color-eyre = { workspace = true }
 tokio = { workspace = true }
 chrono = { workspace = true }
 colored = {workspace = true }

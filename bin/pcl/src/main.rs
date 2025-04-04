@@ -1,5 +1,5 @@
 use clap::{command, Parser};
-use eyre::Result;
+use color_eyre::Result;
 use pcl_common::args::CliArgs;
 use pcl_core::{
     assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, auth::AuthCommand,

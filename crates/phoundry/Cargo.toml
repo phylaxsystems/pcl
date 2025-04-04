@@ -12,6 +12,9 @@ repository.workspace = true
 # PCL deps
 pcl-common = { workspace = true }
 
+# Foundry deps
+forge = { git = "https://github.com/foundry-rs/foundry", branch = "master" }
+
 clap = { workspace = true }
 thiserror = { workspace = true }
 
