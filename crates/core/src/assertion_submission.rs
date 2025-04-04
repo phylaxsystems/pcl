@@ -43,7 +43,7 @@ pub struct DappSubmitArgs {
     project_name: Option<String>,
 
     /// Optional list of assertion names to skip interactive selection
-    #[clap(short, long)]
+    #[clap(long)]
     assertion_name: Option<Vec<String>>,
 }
 
@@ -76,21 +76,24 @@ impl DappSubmitArgs {
         let project = projects
             .iter()
             .find(|p| p.project_name == project_name)
-            .unwrap();
+            .unwrap(); // Safe to unwrap since it should be selected from the list
 
         let assertion_names = self.provide_or_multi_select(
             self.assertion_name.clone(),
             assertions_for_submission,
             "Select an assertion to submit:".to_string(),
         )?;
+        let mut assertions = vec![];
+        for name in assertion_names {
+            let assertion = config
+                .assertions_for_submission
+                .remove(&name)
+                .ok_or(DappSubmitError::CouldNotFindStoredAssertion(name.clone()))?;
 
-        let assertions: Vec<&AssertionForSubmission> = assertion_names
-            .iter()
-            .map(|n| config.assertions_for_submission.get(n).unwrap())
-            .collect();
+            assertions.push(assertion);
+        }
 
         self.submit_assertion(project, &assertions, config).await?;
-        // TOOD: remove assertion from config
 
         Ok(())
     }
@@ -106,7 +109,7 @@ impl DappSubmitArgs {
     async fn submit_assertion(
         &self,
         project: &Project,
-        assertions: &[&AssertionForSubmission],
+        assertions: &Vec<AssertionForSubmission>,
         config: &CliConfig,
     ) -> Result<(), DappSubmitError> {
         let client = reqwest::Client::new();
@@ -250,4 +253,5 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Project1");
     }
+
 }

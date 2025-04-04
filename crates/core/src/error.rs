@@ -38,6 +38,10 @@ pub enum DappSubmitError {
     /// Error when the submission is rejected by the dApp
     #[error("Submission failed: {0}")]
     SubmissionFailed(String),
+
+    /// Error
+    #[error("Could not find stored assertion {0} in the config. Please run `pcl store` first.")]
+    CouldNotFindStoredAssertion(String),
 }
 
 /// Errors that can occur during configuration operations
