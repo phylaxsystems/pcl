@@ -255,5 +255,5 @@ mod tests {
         assert_eq!(result.unwrap(), "Project1");
     }
 
-    //TODO: Add integration tests that run cli and confirm outfit is as expected.
+    //TODO(GREG): Add integration tests that run cli with assertion da and dapp and confirm outfit is as expected.
 }
