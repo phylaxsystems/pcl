@@ -102,7 +102,7 @@ impl DASubmitArgs {
                             TransportError::Rejected { status_code } => {
                                 match status_code {
                                     401 => {
-                                        spinner.finish_with_message("❌ Assertion submission failed! Unauthorized. Please run `pcl run`.");
+                                        spinner.finish_with_message("❌ Assertion submission failed! Unauthorized. Please run `pcl auth login`.");
                                     }
                                     status_code => {
                                         spinner.finish_with_message(format!(
