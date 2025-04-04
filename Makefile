@@ -5,14 +5,15 @@ build:
 # Install the binary
 install:
 	PCL_BUILD_PHOUNDRY=true PCL_UPDATE_PHOUNDRY=true cargo install --verbose --path bin/pcl
-
+	cp phoundry/target/release/forge ~/.cargo/bin/phorge
+ 
 # Build the contract mocks and run the rust tests
 test:
 	cargo nextest run --all-features --workspace --locked --no-tests=warn
 
 # Validate formatting
 format-check:
-	cargo fmt --check
+	cargo +nightly fmt --check
 
 # Format
 format:
@@ -28,4 +29,4 @@ lint-check:
 
 # Can be used as a manual pre-commit check
 pre-commit:
-	cargo fmt && make lint
+	make format && make lint

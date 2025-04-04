@@ -38,12 +38,16 @@ pub fn main() -> Result<()> {
         .unwrap();
 
     if !should_build_phoundry {
-        println!("cargo:warning=Skipping building phoundry - PCL_BUILD_PHOUNDRY is not set to true");
+        println!(
+            "cargo:warning=Skipping building phoundry - PCL_BUILD_PHOUNDRY is not set to true"
+        );
         return Ok(());
     }
 
     if !should_update_phoundry {
-        println!("cargo:warning=Skipping updating phoundry - PCL_UPDATE_PHOUNDRY is not set to true");
+        println!(
+            "cargo:warning=Skipping updating phoundry - PCL_UPDATE_PHOUNDRY is not set to true"
+        );
     } else {
         // Update phoundry submodule
         update_phoundry(workspace_root).expect("Failed to update phoundry submodule");
@@ -61,17 +65,16 @@ pub fn main() -> Result<()> {
         .join(&profile)
         .join("forge");
 
+    // Copy to build output directory for development builds
     let target_dir = get_profile_dir(&std::env::var("OUT_DIR").unwrap());
-    println!("cargo:warning=Target directory: {}", target_dir);
-
     let dest = Path::new(&target_dir).join("phorge");
 
     println!(
-        "cargo:warning=Copying {} to {}",
+        "cargo:warning=Copying {} to {} (development build)",
         source.display(),
         dest.display()
     );
-    fs::copy(&source, &dest).expect("Failed to copy forge binary");
+    fs::copy(&source, &dest).expect("Failed to copy forge binary for development build");
 
     println!("cargo:rerun-if-changed={}", source.display());
     println!("cargo:rerun-if-changed=phoundry");
