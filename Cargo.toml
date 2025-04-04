@@ -5,10 +5,10 @@ members = [
   "crates/common",
   "crates/core"
 ]
+
 default-members = ["bin/pcl"]
 resolver = '2'
 exclude = [".github", "phoundry/"]
-
 
 [workspace.package]
 version = "0.0.1"
