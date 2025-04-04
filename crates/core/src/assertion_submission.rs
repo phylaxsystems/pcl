@@ -87,14 +87,13 @@ impl DappSubmitArgs {
         for name in assertion_names {
             let assertion = config
                 .assertions_for_submission
-                .get(&name)
+                .remove(&name)
                 .ok_or(DappSubmitError::CouldNotFindStoredAssertion(name.clone()))?;
 
             assertions.push(assertion);
         }
 
         self.submit_assertion(project, &assertions, config).await?;
-        // TOOD: remove assertion from config
 
         Ok(())
     }
@@ -110,7 +109,7 @@ impl DappSubmitArgs {
     async fn submit_assertion(
         &self,
         project: &Project,
-        assertions: &[&AssertionForSubmission],
+        assertions: &Vec<AssertionForSubmission>,
         config: &CliConfig,
     ) -> Result<(), DappSubmitError> {
         let client = reqwest::Client::new();
@@ -255,5 +254,4 @@ mod tests {
         assert_eq!(result.unwrap(), "Project1");
     }
 
-    //TODO(GREG): Add integration tests that run cli with assertion da and dapp and confirm outfit is as expected.
 }

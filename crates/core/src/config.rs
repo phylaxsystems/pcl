@@ -132,19 +132,21 @@ impl fmt::Display for AssertionForSubmission {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
-    use tempfile::TempDir;
 
-    // Helper function to set up a temporary config directory
-    fn setup_config_dir() -> (PathBuf, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        env::set_var("HOME", temp_dir.path());
-        (temp_dir.path().join(CONFIG_DIR), temp_dir)
+    //TODO(GREG): Add unit tests that run cli with assertion da and dapp and confirm outfit is as expected,
+
+    /// Helper function to set up a temporary config directory
+    fn setup_config_dir() -> PathBuf {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().to_path_buf();
+
+        std::env::set_var("HOME", &path);
+        path.join(CONFIG_DIR)
     }
 
     #[test]
     fn test_write_and_read_config() {
-        let (config_dir, _temp_dir) = setup_config_dir();
+        let config_dir = setup_config_dir();
 
         let config = CliConfig {
             auth: Some(UserAuth {
@@ -218,7 +220,7 @@ Contract: contract1
 
     #[test]
     fn test_read_nonexistent_config() {
-        let (config_dir, _temp_dir) = setup_config_dir();
+        let config_dir = setup_config_dir();
 
         // Try reading without creating a file
         let result = CliConfig::read_from_file_at_dir(config_dir);
