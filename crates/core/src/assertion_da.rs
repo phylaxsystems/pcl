@@ -2,7 +2,6 @@ use clap::Parser;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use pcl_common::{args::CliArgs, utils::get_build_info, Assertion};
-use pcl_phoundry::build::BuildArgs;
 use tokio::time::Duration;
 
 use assertion_da_client::{DaClient, DaClientError};

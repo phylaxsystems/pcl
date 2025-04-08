@@ -8,7 +8,7 @@ on:
 jobs:
   call-rust-base-ci:
     name: Run phylax CI
-    uses: phylaxsystems/actions/.github/workflows/rust-base.yaml#main
+    uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@main
     with:
       rust-channel: "nightly"
       require-lockfile: true

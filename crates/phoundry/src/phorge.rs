@@ -7,21 +7,19 @@ use std::{
 };
 use clap::Parser;
 
-use crate::{build::BuildArgs, error::PhoundryError};
+use crate::{error::PhoundryError};
 
-const FORGE_BINARY_NAME: &str = "phorge";
-
-// Remove the const and add a function to get the forge binary path
-fn get_forge_binary_path() -> PathBuf {
-    let exe_path = env::current_exe().expect("Failed to get current executable path");
-    exe_path
-        .parent()
-        .expect("Failed to get executable directory")
-        .join(FORGE_BINARY_NAME)
+#[derive(clap::Parser)]
+pub enum ForgeCmd {
+    Test,
+    Build,
+    Flatten
 }
 
 #[derive(clap::Parser)]
 pub struct Phorge {
+    #[command(subcommand)]
+    pub cmd: ForgeCmd,
     pub args: Vec<String>,
 }
 
@@ -33,20 +31,20 @@ impl Phorge {
     /// a lot of the functionality is implemented as part of the forge binary, which we can't import
     /// as a crate.
     pub fn run(&self, cli_args: &CliArgs, print_output: bool) -> Result<Output, PhoundryError> {
-        self.run_args(get_forge_binary_path(), cli_args, print_output)
+        todo!()
     }
 
     pub async fn run_test(&self, cli_args: &CliArgs, print_output: bool) -> Result<(), PhoundryError> {
         let args = vec!["test"];
         let test_args: TestArgs = TestArgs::parse_from(args);
-        let res = test_args.run().await.unwrap();
+        test_args.run().await?;
         Ok(())
     }
 
     pub async fn run_build(&self, cli_args: &CliArgs, print_output: bool) -> Result<(), PhoundryError> {
         let args = vec!["build"];
         let build_args: BuildArgs = BuildArgs::parse_from(args);
-        let res = build_args.run().unwrap();
+        build_args.run().unwrap();
         Ok(())
     }
 
@@ -57,9 +55,8 @@ impl Phorge {
         Ok(())
     }
 
-    fn run_args(
+    fn build_args(
         &self,
-        forge_bin_path: PathBuf,
         cli_args: &CliArgs,
         print_output: bool,
     ) -> Result<Output, PhoundryError> {
@@ -68,17 +65,6 @@ impl Phorge {
         if let Some(ref root_dir) = cli_args.root_dir {
             args.push("--root".to_string());
             args.push(root_dir.to_str().unwrap().to_string());
-        }
-
-        let mut command = Command::new(forge_bin_path);
-
-        command.args(args);
-
-        if print_output {
-            command
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit());
         }
 
         // Only valid for the context of this binary execution
@@ -91,20 +77,9 @@ impl Phorge {
             "FOUNDRY_TEST",
             cli_args.assertions_test().as_os_str().to_str().unwrap(),
         );
-        Ok(command.output()?)
+        todo!()
     }
 
-    /// Check if forge is installed and available in the PATH.
-    pub fn forge_must_be_installed() -> Result<(), PhoundryError> {
-        if Command::new(get_forge_binary_path())
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            return Err(PhoundryError::ForgeNotInstalled);
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]

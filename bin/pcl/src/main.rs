@@ -30,7 +30,8 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Commands {
-    Phorge(Phorge),
+    #[command(name = "test")]
+    Test(Phorge),
     #[command(name = "store")]
     DASubmit(DASubmitArgs),
     #[command(name = "submit")]
@@ -42,13 +43,10 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Check if forge is installed
-    Phorge::forge_must_be_installed()?;
     let mut config = CliConfig::read_from_file().unwrap_or_default();
-
     let cli = Cli::parse();
     match cli.command {
-        Commands::Phorge(phorge) => {
+        Commands::Test(phorge) => {
             phorge.run(&cli.args, true)?;
         }
         Commands::DASubmit(submit) => {
