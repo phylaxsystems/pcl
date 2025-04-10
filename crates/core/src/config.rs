@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
+use clap::Parser;
 
 pub const CONFIG_DIR: &str = ".pcl";
 pub const CONFIG_FILE: &str = "config.toml";
@@ -15,6 +16,48 @@ pub const CONFIG_FILE: &str = "config.toml";
 pub struct CliConfig {
     pub auth: Option<UserAuth>,
     pub assertions_for_submission: HashMap<String, AssertionForSubmission>,
+}
+
+#[derive(Parser)]
+pub struct ConfigArgs {
+    #[command(subcommand)]
+    command: ConfigCommand,
+}
+
+#[derive(clap::Subcommand)]
+enum ConfigCommand {
+    #[command(about = "Display the current configuration")]
+    Show,
+    #[command(about = "Delete the current configuration")]
+    Delete,
+}
+
+impl From<std::io::Error> for ConfigError {
+    fn from(error: std::io::Error) -> Self {
+        ConfigError::WriteError(error)
+    }
+}
+
+impl ConfigArgs {
+    pub fn run(&self, config: &mut CliConfig) -> Result<(), ConfigError> {
+        match self.command {
+            ConfigCommand::Show => {
+                println!("{}", config);
+                Ok(())
+            }
+            ConfigCommand::Delete => {
+                let config_dir = CliConfig::get_config_dir();
+                let config_file = config_dir.join(CONFIG_FILE);
+                if config_file.exists() {
+                    std::fs::remove_file(&config_file)?;
+                    println!("✅ Configuration file deleted successfully");
+                } else {
+                    println!("ℹ️ No configuration file found");
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 impl CliConfig {
@@ -30,7 +73,7 @@ impl CliConfig {
         Ok(())
     }
 
-    fn get_config_dir() -> PathBuf {
+    pub fn get_config_dir() -> PathBuf {
         home_dir().unwrap().join(CONFIG_DIR)
     }
 

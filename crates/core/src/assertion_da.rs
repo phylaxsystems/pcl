@@ -21,7 +21,7 @@ use crate::{
     name = "store",
     about = "Submit the Assertion bytecode and source code to be stored by the Assertion DA of the Credible Layer"
 )]
-pub struct DASubmitArgs {
+pub struct DaStoreArgs {
     // FIXME (Odysseas): Replace localhost with the actual DA URL from our infrastructure
     /// URL of the assertion-DA
     #[clap(long, env = "PCL_DA_URL", default_value = "http://localhost:5001")]
@@ -30,7 +30,7 @@ pub struct DASubmitArgs {
     args: BuildAndFlattenArgs
 }
 
-impl DASubmitArgs {
+impl DaStoreArgs{
     pub async fn run(
         &self,
         cli_args: &CliArgs,
