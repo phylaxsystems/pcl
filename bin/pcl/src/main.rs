@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
             phorge.run().await?;
         }
         Commands::DASubmit(submit) => {
-            todo!()
+            submit.run(&cli.args, &mut config).await?;
         }
         Commands::DappSubmit(submit) => {
             todo!()
