@@ -5,7 +5,7 @@ use pcl_core::{
     assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, auth::AuthCommand,
     config::CliConfig,
 };
-use pcl_phoundry::phorge::Phorge;
+use pcl_phoundry::phorge::PhorgeTest;
 
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -31,7 +31,7 @@ struct Cli {
 #[derive(clap::Subcommand)]
 enum Commands {
     #[command(name = "test")]
-    Test(Phorge),
+    Test(PhorgeTest),
     #[command(name = "store")]
     DASubmit(DASubmitArgs),
     #[command(name = "submit")]
@@ -47,13 +47,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Test(phorge) => {
-            phorge.run(&cli.args, true)?;
+            phorge.run().await?;
         }
         Commands::DASubmit(submit) => {
-            submit.run(&cli.args, &mut config).await?;
+            todo!()
         }
         Commands::DappSubmit(submit) => {
-            submit.run(&cli.args, &mut config).await?;
+            todo!()
         }
         Commands::Auth(auth_cmd) => {
             auth_cmd.run(&mut config).await?;

@@ -54,97 +54,97 @@ impl DASubmitArgs {
         cli_args: &CliArgs,
         config: &mut CliConfig,
     ) -> Result<(), DaSubmitError> {
-        let build_args = BuildArgs {
-            assertions: vec![self.assertion.contract_name().clone()],
-        };
+        // let build_args = BuildArgs {
+        //     assertions: vec![self.assertion.contract_name().clone()],
+        // };
 
-        let _result = build_args.run(cli_args)?;
+        // let _result = build_args.run(cli_args)?;
 
-        let out_dir = cli_args.out_dir();
-        let build_info = get_build_info(&self.assertion, &out_dir);
-        let mut full_path = cli_args.root_dir();
-        full_path.push(build_info.compilation_target);
+        // let out_dir = cli_args.out_dir();
+        // let build_info = get_build_info(&self.assertion, &out_dir);
+        // let mut full_path = cli_args.root_dir();
+        // full_path.push(build_info.compilation_target);
 
-        let flatten_contract = build_args.get_flattened_source(&full_path, cli_args)?;
-        let compiler_version = build_info
-            .compiler_version
-            .split('+')
-            .next()
-            .unwrap_or_default()
-            .to_string();
+        // let flatten_contract = build_args.get_flattened_source(&full_path, cli_args)?;
+        // let compiler_version = build_info
+        //     .compiler_version
+        //     .split('+')
+        //     .next()
+        //     .unwrap_or_default()
+        //     .to_string();
 
-        // Create a spinner to show progress w  hile submitting
-        let spinner = ProgressBar::new_spinner();
-        spinner.set_style(
-            ProgressStyle::default_spinner()
-                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-                .template("{spinner} {msg}")
-                .expect("Failed to set spinner style"),
-        );
-        spinner.enable_steady_tick(Duration::from_millis(80));
-        spinner.set_message("Submitting assertion to DA...");
+        // // Create a spinner to show progress w  hile submitting
+        // let spinner = ProgressBar::new_spinner();
+        // spinner.set_style(
+        //     ProgressStyle::default_spinner()
+        //         .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+        //         .template("{spinner} {msg}")
+        //         .expect("Failed to set spinner style"),
+        // );
+        // spinner.enable_steady_tick(Duration::from_millis(80));
+        // spinner.set_message("Submitting assertion to DA...");
 
-        // Submit the assertion
-        let result = match DaClient::new(&self.url)?
-            .submit_assertion(
-                self.assertion.contract_name().to_string(),
-                flatten_contract,
-                compiler_version,
-            )
-            .await
-        {
-            Ok(result) => result,
-            Err(err) => {
-                match err {
-                    DaClientError::ClientError(ClientError::Transport(ref boxed_err)) => {
-                        match boxed_err.downcast_ref::<TransportError>().unwrap() {
-                            TransportError::Rejected { status_code } => {
-                                match status_code {
-                                    401 => {
-                                        spinner.finish_with_message("❌ Assertion submission failed! Unauthorized. Please run pcl run.");
-                                    }
-                                    status_code => {
-                                        spinner.finish_with_message(format!(
-                                            "❌ Assertion submission failed! Status code: {}",
-                                            status_code
-                                        ));
-                                    }
-                                };
+        // // Submit the assertion
+        // let result = match DaClient::new(&self.url)?
+        //     .submit_assertion(
+        //         self.assertion.contract_name().to_string(),
+        //         flatten_contract,
+        //         compiler_version,
+        //     )
+        //     .await
+        // {
+        //     Ok(result) => result,
+        //     Err(err) => {
+        //         match err {
+        //             DaClientError::ClientError(ClientError::Transport(ref boxed_err)) => {
+        //                 match boxed_err.downcast_ref::<TransportError>().unwrap() {
+        //                     TransportError::Rejected { status_code } => {
+        //                         match status_code {
+        //                             401 => {
+        //                                 spinner.finish_with_message("❌ Assertion submission failed! Unauthorized. Please run pcl run.");
+        //                             }
+        //                             status_code => {
+        //                                 spinner.finish_with_message(format!(
+        //                                     "❌ Assertion submission failed! Status code: {}",
+        //                                     status_code
+        //                                 ));
+        //                             }
+        //                         };
 
-                                return Ok(());
-                            }
-                            _ => return Err(err.into()),
-                        }
-                    }
-                    _ => return Err(err.into()),
-                };
-            }
-        };
+        //                         return Ok(());
+        //                     }
+        //                     _ => return Err(err.into()),
+        //                 }
+        //             }
+        //             _ => return Err(err.into()),
+        //         };
+        //     }
+        // };
 
-        let assertion_for_submission = AssertionForSubmission {
-            assertion_contract: self.assertion.contract_name().to_string(),
-            assertion_id: result.id.to_string(),
-            signature: result.signature.to_string(),
-        };
-        config.add_assertion_for_submission(assertion_for_submission.clone());
-        // Finish spinner with success message
-        spinner.finish_with_message("✅ Assertion successfully submitted!");
+        // let assertion_for_submission = AssertionForSubmission {
+        //     assertion_contract: self.assertion.contract_name().to_string(),
+        //     assertion_id: result.id.to_string(),
+        //     signature: result.signature.to_string(),
+        // };
+        // config.add_assertion_for_submission(assertion_for_submission.clone());
+        // // Finish spinner with success message
+        // spinner.finish_with_message("✅ Assertion successfully submitted!");
 
-        // Display formatted assertion information
-        println!("\n\n{}", "Assertion Information".bold().green());
-        println!("{}", "===================".green());
-        println!("{}", assertion_for_submission);
+        // // Display formatted assertion information
+        // println!("\n\n{}", "Assertion Information".bold().green());
+        // println!("{}", "===================".green());
+        // println!("{}", assertion_for_submission);
 
-        // Display next steps with highlighted command
-        println!("\n{}", "Next Steps:".bold());
-        println!("Submit this assertion to a project with:");
-        println!(
-            "  {} submit -a {} -p <project_name>",
-            "pcl".cyan().bold(),
-            self.assertion.contract_name().cyan()
-        );
-        println!("Visit the Credible Layer DApp to link the assertion on-chain and enforce it:");
-        println!("  {}", "https://dapp.credible.layer".cyan().bold());
+        // // Display next steps with highlighted command
+        // println!("\n{}", "Next Steps:".bold());
+        // println!("Submit this assertion to a project with:");
+        // println!(
+        //     "  {} submit -a {} -p <project_name>",
+        //     "pcl".cyan().bold(),
+        //     self.assertion.contract_name().cyan()
+        // );
+        // println!("Visit the Credible Layer DApp to link the assertion on-chain and enforce it:");
+        // println!("  {}", "https://dapp.credible.layer".cyan().bold());
         Ok(())
     }
 }

@@ -7230,9 +7230,12 @@ dependencies = [
  "clap",
  "color-eyre",
  "forge",
+ "foundry-config",
  "pcl-common",
  "serde",
  "serde_json",
+ "tempdir",
+ "tempfile",
  "thiserror 2.0.12",
 ]
 
