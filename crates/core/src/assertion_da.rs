@@ -61,7 +61,6 @@ impl DaStoreArgs {
         spinner.enable_steady_tick(Duration::from_millis(80));
         spinner
     }
-    }
 
     /// Handles HTTP error responses from the DA layer.
     ///
@@ -113,7 +112,7 @@ impl DaStoreArgs {
     ///
     /// # Returns
     /// * `Result<BuildAndFlatOutput, DaSubmitError>` - The build output or error
-    async fn build_assertion(&self) -> Result<BuildAndFlatOutput, DaSubmitError> {
+    async fn build_and_flatten_assertion(&self) -> Result<BuildAndFlatOutput, DaSubmitError> {
         self.args.run().map_err(DaSubmitError::PhoundryError)
     }
 
@@ -216,7 +215,7 @@ impl DaStoreArgs {
         let spinner = Self::create_spinner();
         spinner.set_message("Submitting assertion to DA...");
 
-        let build_output = self.build_assertion().await?;
+        let build_output = self.build_and_flatten_assertion().await?;
         let client = self.create_da_client(config)?;
         self.submit_to_da(&client, &build_output, &spinner).await?;
         self.update_config(config, &spinner);
@@ -230,9 +229,10 @@ mod tests {
     use super::*;
     use crate::config::UserAuth;
     use alloy_primitives::Address;
-    use chrono::{DateTime, Utc};
+    use chrono::DateTime;
     use mockito::Server;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use pcl_phoundry::phorge::BuildAndFlatOutput;
 
     /// Creates a test configuration with authentication
     fn create_test_config() -> CliConfig {
@@ -348,6 +348,108 @@ mod tests {
             url: server.url(),
             args: create_test_build_args(),
         };
+
+        let cli_args = CliArgs::default();
+        let result = args.run(&cli_args, &mut config).await;
+        assert!(result.is_err());
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_create_spinner() {
+        let spinner = DaStoreArgs::create_spinner();
+        assert_eq!(spinner.message(), "");
+        spinner.set_message("test");
+        assert_eq!(spinner.message(), "test");
+    }
+
+    #[tokio::test]
+    async fn test_create_da_client_with_auth() {
+        let args = DaStoreArgs {
+            url: "http://localhost:5001".to_string(),
+            args: BuildAndFlattenArgs::default(),
+        };
+
+        let mut config = CliConfig::default();
+        config.auth = Some(UserAuth {
+            access_token: "test_token".to_string(),
+            refresh_token: "test_refresh".to_string(),
+            user_address: Address::from_slice(&[0; 20]),
+            expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
+        });
+
+        let client = args.create_da_client(&config);
+        assert!(client.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_da_client_without_auth() {
+        let args = DaStoreArgs {
+            url: "http://localhost:5001".to_string(),
+            args: BuildAndFlattenArgs::default(),
+        };
+
+        let config = CliConfig::default();
+        let client = args.create_da_client(&config);
+        assert!(client.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_update_config() {
+        let args = DaStoreArgs {
+            url: "http://localhost:5001".to_string(),
+            args: BuildAndFlattenArgs {
+                assertion_contract: "test_assertion".to_string(),
+                ..BuildAndFlattenArgs::default()
+            },
+        };
+
+        let mut config = CliConfig::default();
+        let spinner = DaStoreArgs::create_spinner();
+
+        args.update_config(&mut config, &spinner);
+
+        assert_eq!(config.assertions_for_submission.len(), 1);
+        let assertion = config.assertions_for_submission.get("test_assertion").unwrap();
+        assert_eq!(assertion.assertion_contract, "test_assertion");
+        assert_eq!(assertion.assertion_id, "test_id");
+        assert_eq!(assertion.signature, "test_signature");
+    }
+
+    #[tokio::test]
+    async fn test_run_with_invalid_url() {
+        let args = DaStoreArgs {
+            url: "invalid-url".to_string(),
+            args: BuildAndFlattenArgs::default(),
+        };
+
+        let mut config = CliConfig::default();
+        let cli_args = CliArgs::default();
+
+        let result = args.run(&cli_args, &mut config).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_run_with_expired_auth() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/submit_assertion")
+            .with_status(401)
+            .create();
+
+        let args = DaStoreArgs {
+            url: server.url(),
+            args: BuildAndFlattenArgs::default(),
+        };
+
+        let mut config = CliConfig::default();
+        config.auth = Some(UserAuth {
+            access_token: "expired_token".to_string(),
+            refresh_token: "expired_refresh".to_string(),
+            user_address: Address::from_slice(&[0; 20]),
+            expires_at: DateTime::from_timestamp(0, 0).unwrap(), // Expired token
+        });
 
         let cli_args = CliArgs::default();
         let result = args.run(&cli_args, &mut config).await;
