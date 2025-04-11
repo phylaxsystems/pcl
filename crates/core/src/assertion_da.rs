@@ -409,7 +409,10 @@ mod tests {
         args.update_config(&mut config, &spinner);
 
         assert_eq!(config.assertions_for_submission.len(), 1);
-        let assertion = config.assertions_for_submission.get("test_assertion").unwrap();
+        let assertion = config
+            .assertions_for_submission
+            .get("test_assertion")
+            .unwrap();
         assert_eq!(assertion.assertion_contract, "test_assertion");
         assert_eq!(assertion.assertion_id, "test_id");
         assert_eq!(assertion.signature, "test_signature");

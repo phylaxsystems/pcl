@@ -139,7 +139,7 @@ impl CliConfig {
                     format!("Failed to check file permissions: {}", e),
                 ))
             })?;
-            
+
             if metadata.permissions().readonly() {
                 return Err(ConfigError::WriteError(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
@@ -167,7 +167,7 @@ impl CliConfig {
     /// * `Result<Self, ConfigError>` - Configuration or error
     fn read_from_file_at_dir(config_dir: PathBuf) -> Result<Self, ConfigError> {
         let config_file = config_dir.join(CONFIG_FILE);
-        
+
         // If file doesn't exist, return default config
         if !config_file.exists() {
             return Ok(Self::default());
@@ -305,8 +305,8 @@ impl fmt::Display for AssertionForSubmission {
 mod tests {
     use super::*;
     use std::env;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     /// Helper function to set up a temporary config directory
     fn setup_config_dir() -> (PathBuf, TempDir) {
@@ -500,7 +500,7 @@ Contract: contract1
     #[test]
     fn test_write_to_file_permission_error() {
         let temp_dir = tempfile::tempdir().unwrap();
-        
+
         // Create a read-only directory
         let mut perms = std::fs::metadata(&temp_dir).unwrap().permissions();
         perms.set_readonly(true);
@@ -508,9 +508,12 @@ Contract: contract1
 
         let config = CliConfig::default();
         let result = config.write_to_file_at_dir(temp_dir.path().to_path_buf());
-        
+
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Permission denied"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Permission denied"));
     }
 
     #[test]
@@ -519,7 +522,7 @@ Contract: contract1
         let config_file = config_dir.join(CONFIG_FILE);
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(config_file, "invalid toml content").unwrap();
-        
+
         let result = CliConfig::read_from_file_at_dir(config_dir);
         assert!(result.is_err());
     }
@@ -564,7 +567,7 @@ Contract: contract1
 
         let serialized = toml::to_string(&auth).unwrap();
         let deserialized: UserAuth = toml::from_str(&serialized).unwrap();
-        
+
         assert_eq!(auth.access_token, deserialized.access_token);
         assert_eq!(auth.refresh_token, deserialized.refresh_token);
         assert_eq!(auth.user_address, deserialized.user_address);
@@ -581,8 +584,11 @@ Contract: contract1
 
         let serialized = toml::to_string(&assertion).unwrap();
         let deserialized: AssertionForSubmission = toml::from_str(&serialized).unwrap();
-        
-        assert_eq!(assertion.assertion_contract, deserialized.assertion_contract);
+
+        assert_eq!(
+            assertion.assertion_contract,
+            deserialized.assertion_contract
+        );
         assert_eq!(assertion.assertion_id, deserialized.assertion_id);
         assert_eq!(assertion.signature, deserialized.signature);
     }
@@ -597,10 +603,13 @@ Contract: contract1
     fn test_ensure_writable_directory_readonly() {
         let (config_dir, _temp_dir) = setup_config_dir();
         create_readonly_dir(&config_dir).unwrap();
-        
+
         let result = CliConfig::ensure_writable_directory(&config_dir);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Permission denied"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Permission denied"));
     }
 
     #[test]
@@ -609,7 +618,7 @@ Contract: contract1
         let config_file = config_dir.join(CONFIG_FILE);
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(&config_file, "").unwrap();
-        
+
         assert!(CliConfig::ensure_writable_file(&config_file).is_ok());
     }
 
@@ -619,7 +628,7 @@ Contract: contract1
         let config_file = config_dir.join(CONFIG_FILE);
         fs::create_dir_all(&config_dir).unwrap();
         create_readonly_file(&config_file).unwrap();
-        
+
         let result = CliConfig::ensure_writable_file(&config_file);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("read-only"));
@@ -629,7 +638,7 @@ Contract: contract1
     fn test_ensure_writable_file_nonexistent() {
         let (config_dir, _temp_dir) = setup_config_dir();
         let config_file = config_dir.join(CONFIG_FILE);
-        
+
         assert!(CliConfig::ensure_writable_file(&config_file).is_ok());
     }
 
@@ -637,11 +646,14 @@ Contract: contract1
     fn test_write_to_file_at_dir_permission_denied() {
         let (config_dir, _temp_dir) = setup_config_dir();
         create_readonly_dir(&config_dir).unwrap();
-        
+
         let config = CliConfig::default();
         let result = config.write_to_file_at_dir(config_dir);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Permission denied"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Permission denied"));
     }
 
     #[test]
@@ -650,7 +662,7 @@ Contract: contract1
         let config_file = config_dir.join(CONFIG_FILE);
         fs::create_dir_all(&config_dir).unwrap();
         create_readonly_file(&config_file).unwrap();
-        
+
         let config = CliConfig::default();
         let result = config.write_to_file_at_dir(config_dir);
         assert!(result.is_err());
