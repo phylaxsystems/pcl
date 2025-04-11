@@ -7,7 +7,6 @@ use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 /// Directory name for storing PCL configuration
@@ -193,7 +192,7 @@ impl CliConfig {
         }
 
         let config_str = std::fs::read_to_string(config_file).map_err(ConfigError::ReadError)?;
-        Ok(toml::from_str(&config_str).map_err(ConfigError::ParseError)?)
+        toml::from_str(&config_str).map_err(ConfigError::ParseError)
     }
 
     /// Reads configuration from the default config file

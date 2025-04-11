@@ -226,7 +226,7 @@ impl DaStoreArgs {
         let submission_response = self.submit_to_da(&client, &build_output, &spinner).await?;
         self.update_config(
             config,
-            &submission_response.id,
+            submission_response.id,
             &submission_response.signature,
             &spinner,
         );
