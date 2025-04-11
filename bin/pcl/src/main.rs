@@ -76,3 +76,10 @@ async fn main() -> Result<()> {
     config.write_to_file()?;
     Ok(())
 }
+
+//TODO(GREG): Add integration tests that run cli with all the commands and confirm the output is as
+//expected. 
+//This serves the purpose of forced testing of cli args and output testing. For example
+//conflicting short args can fall through CI without tests like this. 
+//Consider adding unit tests with dapp and da mocks for a quicker 0-1 than running
+//the dapp in CI.

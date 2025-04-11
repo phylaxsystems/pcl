@@ -107,7 +107,7 @@ impl fmt::Display for CliConfig {
             writeln!(f, "\nPending Assertions for Submission")?;
             writeln!(f, "--------------------------------")?;
             for (i, assertion) in self.assertions_for_submission.values().enumerate() {
-                writeln!(f, "Assertion #{}: {}", i + 1, assertion)?;
+                writeln!(f, "Assertion #{}:\n{}", i + 1, assertion)?;
             }
         } else {
             writeln!(f, "\nNo pending assertions for submission")?;
@@ -141,7 +141,8 @@ impl fmt::Display for UserAuth {
 
         // Don't display actual tokens for security reasons
         writeln!(f, "  Access Token: [Set]")?;
-        writeln!(f, "  Refresh Token: [Set]")
+        writeln!(f, "  Refresh Token: [Set]")?;
+        Ok(())
     }
 }
 
@@ -167,19 +168,18 @@ impl fmt::Display for AssertionForSubmission {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
-    use tempfile::TempDir;
 
-    // Helper function to set up a temporary config directory
-    fn setup_config_dir() -> (PathBuf, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        env::set_var("HOME", temp_dir.path());
-        (temp_dir.path().join(CONFIG_DIR), temp_dir)
+    fn setup_config_dir() -> PathBuf {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().to_path_buf();
+
+        std::env::set_var("HOME", &path);
+        path.join(CONFIG_DIR)
     }
 
     #[test]
     fn test_write_and_read_config() {
-        let (config_dir, _temp_dir) = setup_config_dir();
+        let config_dir = setup_config_dir();
 
         let config = CliConfig {
             auth: Some(UserAuth {
@@ -204,7 +204,7 @@ mod tests {
         assert!(config.write_to_file_at_dir(config_dir.clone()).is_ok());
 
         // Test reading
-        let read_config = CliConfig::read_from_file_at_dir(config_dir).unwrap();
+        let read_config = CliConfig::read_from_file_at_dir(config_dir.clone()).unwrap();
         assert_eq!(
             read_config.auth.as_ref().unwrap().access_token,
             "test_access"
@@ -226,11 +226,34 @@ mod tests {
                 .assertion_contract,
             "contract1"
         );
+        let formatted_cfg = format!("{}", read_config);
+        let expected_cfg = format!(
+            r"PCL Configuration
+==================
+Config path: {0}
+Authentication:
+  User Address: 0x0000000000000000000000000000000000000000
+  Token Expired at {1}[31m2022-12-31 16:00:00 UTC{1}[0m
+  Access Token: [Set]
+  Refresh Token: [Set]
+
+
+Pending Assertions for Submission
+--------------------------------
+Assertion #1:
+Contract: contract1
+  ID: id1
+  Signature: sig1...
+",
+            config_dir.join(CONFIG_FILE).display(),
+            "\u{1b}",
+        );
+        assert_eq!(formatted_cfg, expected_cfg);
     }
 
     #[test]
     fn test_read_nonexistent_config() {
-        let (config_dir, _temp_dir) = setup_config_dir();
+        let config_dir = setup_config_dir();
 
         // Try reading without creating a file
         let result = CliConfig::read_from_file_at_dir(config_dir);

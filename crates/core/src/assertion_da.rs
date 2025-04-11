@@ -61,6 +61,7 @@ impl DaStoreArgs {
         spinner.enable_steady_tick(Duration::from_millis(80));
         spinner
     }
+    }
 
     /// Handles HTTP error responses from the DA layer.
     ///
@@ -75,7 +76,7 @@ impl DaStoreArgs {
         match status_code {
             401 => {
                 spinner.finish_with_message(
-                    "❌ Assertion submission failed! Unauthorized. Please run `pcl auth login`",
+                    "❌ Assertion submission failed! Unauthorized. Please run `pcl auth login`.",
                 );
                 Ok(())
             }
@@ -88,7 +89,6 @@ impl DaStoreArgs {
             }
         }
     }
-
     /// Displays the assertion information and next steps after successful submission.
     ///
     /// # Arguments
