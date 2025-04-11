@@ -55,6 +55,14 @@ pub enum ConfigError {
     #[error("Failed to write config file: {0}")]
     WriteError(std::io::Error),
 
+    /// Error when deserializing the config file fails
+    #[error("Failed to parse config file: {0}")]
+    ParseError(#[from] toml::de::Error),
+
+    /// Error when serializing the config file fails
+    #[error("Failed to serialize config file: {0}")]
+    SerializeError(#[from] toml::ser::Error),
+
     /// Error when attempting an operation that requires authentication
     /// but no authentication token is present in the config
     #[error("No Authentication Token Found")]

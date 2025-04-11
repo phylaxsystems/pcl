@@ -42,12 +42,6 @@ enum ConfigCommand {
     Delete,
 }
 
-impl From<std::io::Error> for ConfigError {
-    fn from(error: std::io::Error) -> Self {
-        ConfigError::WriteError(error)
-    }
-}
-
 impl ConfigArgs {
     /// Executes the configuration command
     ///
@@ -87,10 +81,72 @@ impl CliConfig {
     /// # Returns
     /// * `Result<(), ConfigError>` - Success or error
     fn write_to_file_at_dir(&self, config_dir: PathBuf) -> Result<(), ConfigError> {
-        std::fs::create_dir_all(&config_dir).map_err(ConfigError::WriteError)?;
+        // Ensure directory exists and is writable
+        Self::ensure_writable_directory(&config_dir)?;
+
+        // Get config file path and check permissions
         let config_file = config_dir.join(CONFIG_FILE);
-        let config_str = toml::to_string(self).unwrap();
+        Self::ensure_writable_file(&config_file)?;
+
+        // Serialize and write config
+        let config_str = toml::to_string(self).map_err(ConfigError::SerializeError)?;
         std::fs::write(config_file, config_str).map_err(ConfigError::WriteError)?;
+        Ok(())
+    }
+
+    /// Ensures a directory exists and is writable
+    ///
+    /// # Arguments
+    /// * `dir` - Directory to check
+    ///
+    /// # Returns
+    /// * `Result<(), ConfigError>` - Success or error
+    fn ensure_writable_directory(dir: &PathBuf) -> Result<(), ConfigError> {
+        if !dir.exists() {
+            std::fs::create_dir_all(dir).map_err(|e| {
+                ConfigError::WriteError(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("Failed to create config directory: {}", e),
+                ))
+            })?;
+        }
+
+        // Test write permissions by creating a temporary file
+        let temp_file = dir.join(".pcl_test_write");
+        std::fs::write(&temp_file, "").map_err(|e| {
+            ConfigError::WriteError(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("No write permissions in config directory: {}", e),
+            ))
+        })?;
+        std::fs::remove_file(&temp_file).ok(); // Clean up test file
+
+        Ok(())
+    }
+
+    /// Ensures a file is writable
+    ///
+    /// # Arguments
+    /// * `file` - File to check
+    ///
+    /// # Returns
+    /// * `Result<(), ConfigError>` - Success or error
+    fn ensure_writable_file(file: &PathBuf) -> Result<(), ConfigError> {
+        if file.exists() {
+            let metadata = std::fs::metadata(file).map_err(|e| {
+                ConfigError::WriteError(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("Failed to check file permissions: {}", e),
+                ))
+            })?;
+            
+            if metadata.permissions().readonly() {
+                return Err(ConfigError::WriteError(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "Config file is read-only",
+                )));
+            }
+        }
         Ok(())
     }
 
@@ -111,8 +167,32 @@ impl CliConfig {
     /// * `Result<Self, ConfigError>` - Configuration or error
     fn read_from_file_at_dir(config_dir: PathBuf) -> Result<Self, ConfigError> {
         let config_file = config_dir.join(CONFIG_FILE);
+        
+        // If file doesn't exist, return default config
+        if !config_file.exists() {
+            return Ok(Self::default());
+        }
+
+        // Check if we have read permissions
+        let metadata = std::fs::metadata(&config_file).map_err(|e| {
+            ConfigError::ReadError(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("Failed to check file permissions: {}", e),
+            ))
+        })?;
+
+        if !metadata.permissions().readonly() {
+            // Test read permissions
+            std::fs::read_to_string(&config_file).map_err(|e| {
+                ConfigError::ReadError(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("No read permissions for config file: {}", e),
+                ))
+            })?;
+        }
+
         let config_str = std::fs::read_to_string(config_file).map_err(ConfigError::ReadError)?;
-        Ok(toml::from_str(&config_str).unwrap())
+        Ok(toml::from_str(&config_str).map_err(ConfigError::ParseError)?)
     }
 
     /// Reads configuration from the default config file
@@ -225,7 +305,6 @@ impl fmt::Display for AssertionForSubmission {
 mod tests {
     use super::*;
     use std::env;
-    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
     use std::fs;
 
@@ -234,6 +313,22 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         env::set_var("HOME", temp_dir.path());
         (temp_dir.path().join(CONFIG_DIR), temp_dir)
+    }
+
+    /// Helper function to create a read-only directory
+    fn create_readonly_dir(path: &PathBuf) -> std::io::Result<()> {
+        fs::create_dir_all(path)?;
+        let mut perms = fs::metadata(path)?.permissions();
+        perms.set_mode(0o555); // Read and execute only
+        fs::set_permissions(path, perms)
+    }
+
+    /// Helper function to create a read-only file
+    fn create_readonly_file(path: &PathBuf) -> std::io::Result<()> {
+        fs::write(path, "")?;
+        let mut perms = fs::metadata(path)?.permissions();
+        perms.set_mode(0o444); // Read only
+        fs::set_permissions(path, perms)
     }
 
     #[test]
@@ -319,9 +414,9 @@ Contract: contract1
         let (config_dir, _temp_dir) = setup_config_dir();
 
         // Try reading without creating a file
-        let result = CliConfig::read_from_file_at_dir(config_dir);
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ConfigError::ReadError(_)));
+        let config = CliConfig::read_from_file_at_dir(config_dir).unwrap();
+        assert!(config.auth.is_none());
+        assert!(config.assertions_for_submission.is_empty());
     }
 
     #[test]
@@ -404,14 +499,18 @@ Contract: contract1
 
     #[test]
     fn test_write_to_file_permission_error() {
-        let (config_dir, _temp_dir) = setup_config_dir();
-        // Make the directory read-only
-        fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o444)).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         
+        // Create a read-only directory
+        let mut perms = std::fs::metadata(&temp_dir).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&temp_dir, perms).unwrap();
+
         let config = CliConfig::default();
-        let result = config.write_to_file_at_dir(config_dir);
+        let result = config.write_to_file_at_dir(temp_dir.path().to_path_buf());
+        
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ConfigError::WriteError(_)));
+        assert!(result.unwrap_err().to_string().contains("Permission denied"));
     }
 
     #[test]
@@ -486,5 +585,82 @@ Contract: contract1
         assert_eq!(assertion.assertion_contract, deserialized.assertion_contract);
         assert_eq!(assertion.assertion_id, deserialized.assertion_id);
         assert_eq!(assertion.signature, deserialized.signature);
+    }
+
+    #[test]
+    fn test_ensure_writable_directory_success() {
+        let (config_dir, _temp_dir) = setup_config_dir();
+        assert!(CliConfig::ensure_writable_directory(&config_dir).is_ok());
+    }
+
+    #[test]
+    fn test_ensure_writable_directory_readonly() {
+        let (config_dir, _temp_dir) = setup_config_dir();
+        create_readonly_dir(&config_dir).unwrap();
+        
+        let result = CliConfig::ensure_writable_directory(&config_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Permission denied"));
+    }
+
+    #[test]
+    fn test_ensure_writable_file_success() {
+        let (config_dir, _temp_dir) = setup_config_dir();
+        let config_file = config_dir.join(CONFIG_FILE);
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(&config_file, "").unwrap();
+        
+        assert!(CliConfig::ensure_writable_file(&config_file).is_ok());
+    }
+
+    #[test]
+    fn test_ensure_writable_file_readonly() {
+        let (config_dir, _temp_dir) = setup_config_dir();
+        let config_file = config_dir.join(CONFIG_FILE);
+        fs::create_dir_all(&config_dir).unwrap();
+        create_readonly_file(&config_file).unwrap();
+        
+        let result = CliConfig::ensure_writable_file(&config_file);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("read-only"));
+    }
+
+    #[test]
+    fn test_ensure_writable_file_nonexistent() {
+        let (config_dir, _temp_dir) = setup_config_dir();
+        let config_file = config_dir.join(CONFIG_FILE);
+        
+        assert!(CliConfig::ensure_writable_file(&config_file).is_ok());
+    }
+
+    #[test]
+    fn test_write_to_file_at_dir_permission_denied() {
+        let (config_dir, _temp_dir) = setup_config_dir();
+        create_readonly_dir(&config_dir).unwrap();
+        
+        let config = CliConfig::default();
+        let result = config.write_to_file_at_dir(config_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Permission denied"));
+    }
+
+    #[test]
+    fn test_write_to_file_at_dir_readonly_file() {
+        let (config_dir, _temp_dir) = setup_config_dir();
+        let config_file = config_dir.join(CONFIG_FILE);
+        fs::create_dir_all(&config_dir).unwrap();
+        create_readonly_file(&config_file).unwrap();
+        
+        let config = CliConfig::default();
+        let result = config.write_to_file_at_dir(config_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("read-only"));
+    }
+
+    #[test]
+    fn test_write_to_file_at_dir_success() {
+        let (config_dir, _temp_dir) = setup_config_dir();
+        let config = CliConfig::default();
+        assert!(config.write_to_file_at_dir(config_dir).is_ok());
     }
 }

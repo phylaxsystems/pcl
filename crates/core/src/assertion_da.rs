@@ -232,7 +232,6 @@ mod tests {
     use chrono::DateTime;
     use mockito::Server;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use pcl_phoundry::phorge::BuildAndFlatOutput;
 
     /// Creates a test configuration with authentication
     fn create_test_config() -> CliConfig {
