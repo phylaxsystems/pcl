@@ -1,9 +1,3 @@
-name: Rust Build, Test, Lint
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
 
 jobs:
   call-rust-base-ci:

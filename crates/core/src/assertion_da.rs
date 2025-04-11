@@ -89,8 +89,13 @@ impl DaStoreArgs {
         let spinner = Self::create_spinner();
         spinner.set_message("Submitting assertion to DA...");
 
+        let client = match &config.auth {
+            Some(auth) => DaClient::new_with_auth(&self.url, &auth.access_token)?,
+            None => DaClient::new(&self.url)?,
+        };
+
         // Submit the assertion
-        let result = match DaClient::new(&self.url)?
+        let result = match client
             .submit_assertion(
                 self.args.assertion_contract.clone(),
                 build_flatten_output.flattened_source,

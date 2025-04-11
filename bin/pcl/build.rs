@@ -9,6 +9,5 @@ pub fn main() -> Result<()> {
         .add_instructions(&RustcBuilder::all_rustc()?)?
         .add_instructions(&SysinfoBuilder::all_sysinfo()?)?
         .emit()?;
-
     Ok(())
 }
