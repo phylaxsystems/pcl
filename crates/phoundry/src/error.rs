@@ -1,7 +1,10 @@
-use std::{fmt::Debug, path::{Path, PathBuf}};
-use thiserror::Error;
 use color_eyre::Report;
 use foundry_compilers::error::SolcError;
+use std::{
+    fmt::Debug,
+    path::{Path, PathBuf},
+};
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum PhoundryError {

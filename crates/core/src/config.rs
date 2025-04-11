@@ -1,13 +1,13 @@
 use crate::error::ConfigError;
 use alloy_primitives::Address;
 use chrono::{DateTime, Utc};
+use clap::Parser;
 use colored::Colorize;
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
-use clap::Parser;
 
 pub const CONFIG_DIR: &str = ".pcl";
 pub const CONFIG_FILE: &str = "config.toml";

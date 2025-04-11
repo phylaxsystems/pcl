@@ -2,7 +2,9 @@ use clap::{command, Parser};
 use color_eyre::Result;
 use pcl_common::args::CliArgs;
 use pcl_core::{
-    assertion_da::DaStoreArgs, assertion_submission::DappSubmitArgs, auth::AuthCommand,
+    assertion_da::DaStoreArgs,
+    assertion_submission::DappSubmitArgs,
+    auth::AuthCommand,
     config::{CliConfig, ConfigArgs},
 };
 use pcl_phoundry::phorge::PhorgeTest;
@@ -38,7 +40,7 @@ enum Commands {
     Submit(DappSubmitArgs),
     Auth(AuthCommand),
     #[command(about = "Manage configuration")]
-    Config(ConfigArgs)
+    Config(ConfigArgs),
 }
 
 #[tokio::main]

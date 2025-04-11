@@ -1,15 +1,24 @@
+use clap::{Parser, ValueHint};
 use forge::cmd::{build::BuildArgs, flatten::FlattenArgs, test::TestArgs};
-use foundry_cli::{opts::{BuildOpts, ProjectPathOpts}, utils::LoadConfig};
-use foundry_compilers::{
-    artifacts::{ConfigurableContractArtifact, Metadata}, flatten::{Flattener, FlattenerError}, info::ContractInfo, solc::SolcLanguage, ProjectCompileOutput
+use foundry_cli::{
+    opts::{BuildOpts, ProjectPathOpts},
+    utils::LoadConfig,
 };
+use foundry_compilers::{
+    artifacts::{ConfigurableContractArtifact, Metadata},
+    flatten::{Flattener, FlattenerError},
+    info::ContractInfo,
+    solc::SolcLanguage,
+    ProjectCompileOutput,
+};
+use foundry_config::find_project_root;
 use pcl_common::args::CliArgs;
 use std::{
     env,
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio}, str::FromStr,
+    process::{Command, Output, Stdio},
+    str::FromStr,
 };
-use clap::{Parser, ValueHint};
 
 use crate::error::PhoundryError;
 
@@ -43,7 +52,8 @@ pub struct BuildAndFlatOutput {
 impl BuildAndFlatOutput {
     pub fn new(compiler_version: String, flattened_source: String) -> Self {
         Self {
-            compiler_version, flattened_source,
+            compiler_version,
+            flattened_source,
         }
     }
 }
@@ -59,7 +69,7 @@ pub struct BuildAndFlattenArgs {
         value_hint = ValueHint::DirPath,
         help = "Root directory of the project"
     )]
-    pub root: PathBuf,
+    pub root: Option<PathBuf>,
     /// Name of the assertion contract
     #[clap(
         short = 'a',
@@ -74,15 +84,34 @@ impl BuildAndFlattenArgs {
     pub fn run(&self) -> Result<BuildAndFlatOutput, PhoundryError> {
         let build = self.build()?;
         let info = ContractInfo::new(&self.assertion_contract);
-        let artifact = build.find_contract(info)
+        let artifact = build
+            .find_contract(info)
             .ok_or_else(|| PhoundryError::ContractNotFound(self.assertion_contract.clone()))?;
         let metadata = artifact.metadata.clone().unwrap();
-        let solc_version = metadata.compiler.version.split_once('+').expect("Failed to split solc version").0.to_string();
+        let solc_version = metadata
+            .compiler
+            .version
+            .split_once('+')
+            .expect("Failed to split solc version")
+            .0
+            .to_string();
         let contract_name = &self.assertion_contract;
-        let rel_source_path= metadata.settings.compilation_target.iter()
-            .find_map(|(path, name)| if name == contract_name { Some(path) } else { None })
+        let rel_source_path = metadata
+            .settings
+            .compilation_target
+            .iter()
+            .find_map(|(path, name)| {
+                if name == contract_name {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
             .ok_or_else(|| PhoundryError::ContractNotFound(contract_name.to_string()))?;
-        let path = self.root.join(rel_source_path);
+        let path = match &self.root {
+            Some(root) => root.join(rel_source_path),
+            None => find_project_root(None).unwrap().join(rel_source_path),
+        };
         let flattened = self.flatten(&path)?;
         Ok(BuildAndFlatOutput::new(solc_version, flattened))
     }
@@ -92,7 +121,7 @@ impl BuildAndFlattenArgs {
         let build_cmd = BuildArgs {
             build: BuildOpts {
                 project_paths: ProjectPathOpts {
-                    root: Some(self.root.clone()),
+                    root: self.root.clone(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -106,14 +135,15 @@ impl BuildAndFlattenArgs {
     fn flatten(&self, path: &PathBuf) -> Result<String, PhoundryError> {
         let build = BuildOpts {
             project_paths: ProjectPathOpts {
-                root: Some(self.root.clone()),
+                root: self.root.clone(),
                 ..Default::default()
             },
             ..Default::default()
         };
 
         let config = build.load_config()?;
-        let project = config.ephemeral_project()
+        let project = config
+            .ephemeral_project()
             .map_err(|e| PhoundryError::SolcError(e))?;
 
         let flattener = Flattener::new(project.clone(), path);
@@ -121,7 +151,8 @@ impl BuildAndFlattenArgs {
             Ok(flattener) => Ok(flattener.flatten()),
             Err(FlattenerError::Compilation(_)) => {
                 // Fallback to the old flattening implementation for invalid syntax
-                project.paths
+                project
+                    .paths
                     .with_language::<SolcLanguage>()
                     .flatten(path)
                     .map_err(PhoundryError::from)

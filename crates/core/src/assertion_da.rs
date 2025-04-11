@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use clap::{Parser, ValueHint};
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -16,28 +14,23 @@ use crate::{
     error::DaSubmitError,
 };
 
+/// Command-line arguments for storing assertions in the Data Availability layer
 #[derive(Parser)]
 #[clap(
     name = "store",
     about = "Submit the Assertion bytecode and source code to be stored by the Assertion DA of the Credible Layer"
 )]
 pub struct DaStoreArgs {
-    // FIXME (Odysseas): Replace localhost with the actual DA URL from our infrastructure
     /// URL of the assertion-DA
-    #[clap(long, env = "PCL_DA_URL", default_value = "http://localhost:5001")]
+    #[clap(long, short = 'u', env = "PCL_DA_URL", value_hint = ValueHint::Url, default_value = "http://localhost:5001")]
     url: String,
     #[clap(flatten)]
-    args: BuildAndFlattenArgs
+    args: BuildAndFlattenArgs,
 }
 
-impl DaStoreArgs{
-    pub async fn run(
-        &self,
-        cli_args: &CliArgs,
-        config: &mut CliConfig,
-    ) -> Result<(), DaSubmitError> {
-        let build_flatten_output= self.args.run()?;
-        // Create a spinner to show progress w  hile submitting
+impl DaStoreArgs {
+    /// Creates and configures a progress spinner
+    fn create_spinner() -> ProgressBar {
         let spinner = ProgressBar::new_spinner();
         spinner.set_style(
             ProgressStyle::default_spinner()
@@ -46,6 +39,53 @@ impl DaStoreArgs{
                 .expect("Failed to set spinner style"),
         );
         spinner.enable_steady_tick(Duration::from_millis(80));
+        spinner
+    }
+
+    /// Handles HTTP error responses from the DA layer
+    fn handle_http_error(status_code: u16, spinner: &ProgressBar) -> Result<(), DaSubmitError> {
+        match status_code {
+            401 => {
+                spinner.finish_with_message(
+                    "❌ Assertion submission failed! Unauthorized. Please run pcl run.",
+                );
+                Ok(())
+            }
+            _ => {
+                spinner.finish_with_message(format!(
+                    "❌ Assertion submission failed! Status code: {}",
+                    status_code
+                ));
+                Ok(())
+            }
+        }
+    }
+
+    /// Displays the assertion information and next steps
+    fn display_success_info(&self, assertion: &AssertionForSubmission) {
+        println!("\n\n{}", "Assertion Information".bold().green());
+        println!("{}", "===================".green());
+        println!("{}", assertion);
+
+        println!("\n{}", "Next Steps:".bold());
+        println!("Submit this assertion to a project with:");
+        println!(
+            "  {} submit -a {} -p <project_name>",
+            "pcl".cyan().bold(),
+            self.args.assertion_contract
+        );
+        println!("Visit the Credible Layer DApp to link the assertion on-chain and enforce it:");
+        println!("  {}", "https://dapp.credible.layer".cyan().bold());
+    }
+
+    /// Executes the assertion storage process
+    pub async fn run(
+        &self,
+        cli_args: &CliArgs,
+        config: &mut CliConfig,
+    ) -> Result<(), DaSubmitError> {
+        let build_flatten_output = self.args.run()?;
+        let spinner = Self::create_spinner();
         spinner.set_message("Submitting assertion to DA...");
 
         // Submit the assertion
@@ -58,31 +98,16 @@ impl DaStoreArgs{
             .await
         {
             Ok(result) => result,
-            Err(err) => {
-                match err {
-                    DaClientError::ClientError(ClientError::Transport(ref boxed_err)) => {
-                        match boxed_err.downcast_ref::<TransportError>().unwrap() {
-                            TransportError::Rejected { status_code } => {
-                                match status_code {
-                                    401 => {
-                                        spinner.finish_with_message("❌ Assertion submission failed! Unauthorized. Please run pcl run.");
-                                    }
-                                    status_code => {
-                                        spinner.finish_with_message(format!(
-                                            "❌ Assertion submission failed! Status code: {}",
-                                            status_code
-                                        ));
-                                    }
-                                };
-
-                                return Ok(());
-                            }
-                            _ => return Err(err.into()),
-                        }
+            Err(err) => match err {
+                DaClientError::ClientError(ClientError::Transport(ref boxed_err)) => {
+                    if let Some(TransportError::Rejected { status_code }) = boxed_err.downcast_ref()
+                    {
+                        return Self::handle_http_error(*status_code, &spinner);
                     }
-                    _ => return Err(err.into()),
-                };
-            }
+                    return Err(err.into());
+                }
+                _ => return Err(err.into()),
+            },
         };
 
         let assertion_for_submission = AssertionForSubmission {
@@ -90,25 +115,11 @@ impl DaStoreArgs{
             assertion_id: result.id.to_string(),
             signature: result.signature.to_string(),
         };
+
         config.add_assertion_for_submission(assertion_for_submission.clone());
-        // Finish spinner with success message
         spinner.finish_with_message("✅ Assertion successfully submitted!");
 
-        // Display formatted assertion information
-        println!("\n\n{}", "Assertion Information".bold().green());
-        println!("{}", "===================".green());
-        println!("{}", assertion_for_submission);
-
-        // Display next steps with highlighted command
-        println!("\n{}", "Next Steps:".bold());
-        println!("Submit this assertion to a project with:");
-        println!(
-            "  {} submit -a {} -p <project_name>",
-            "pcl".cyan().bold(),
-            self.args.assertion_contract
-        );
-        println!("Visit the Credible Layer DApp to link the assertion on-chain and enforce it:");
-        println!("  {}", "https://dapp.credible.layer".cyan().bold());
+        self.display_success_info(&assertion_for_submission);
         Ok(())
     }
 }
