@@ -8,10 +8,10 @@ use thiserror::Error;
 pub enum DaSubmitError {
     /// Error when HTTP request to the DA layer fails
     #[error("Da Submission Error: {0}")]
-    DaSubmissionError(#[from] DaClientError),
+    DaClientError(#[from] DaClientError),
     /// Error during the build process of the assertion
-    #[error("Build failed: {0}")]
-    BuildError(#[from] PhoundryError),
+    #[error("There was an error with the solidity file: {0}")]
+    PhoundryError(#[from] PhoundryError),
     /// Failed to parse bytecode as hex
     #[error("Failed to parse bytecode as hex")]
     ParseError,

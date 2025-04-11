@@ -50,7 +50,7 @@ impl BuildAndFlatOutput {
 
 /// Command-line arguments for building and flattening Solidity contracts.
 /// This is used to prepare contracts for submission to the assertion DA layer.
-#[derive(Debug, Parser)]
+#[derive(Debug, Default, Parser)]
 #[clap(about = "Build and flatten contracts using Phorge")]
 pub struct BuildAndFlattenArgs {
     /// Root directory of the project
