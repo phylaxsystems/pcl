@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
-use pcl_common::{args::CliArgs};
+use pcl_common::args::CliArgs;
 use pcl_phoundry::phorge::BuildAndFlattenArgs;
 use tokio::time::Duration;
 
@@ -43,6 +43,7 @@ impl DaStoreArgs {
     }
 
     /// Handles HTTP error responses from the DA layer
+    #[allow(clippy::result_large_err)]
     fn handle_http_error(status_code: u16, spinner: &ProgressBar) -> Result<(), DaSubmitError> {
         match status_code {
             401 => {

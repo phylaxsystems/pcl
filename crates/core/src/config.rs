@@ -46,14 +46,7 @@ impl ConfigArgs {
                 Ok(())
             }
             ConfigCommand::Delete => {
-                let config_dir = CliConfig::get_config_dir();
-                let config_file = config_dir.join(CONFIG_FILE);
-                if config_file.exists() {
-                    std::fs::remove_file(&config_file)?;
-                    println!("✅ Configuration file deleted successfully");
-                } else {
-                    println!("ℹ️ No configuration file found");
-                }
+                *config = CliConfig::default();
                 Ok(())
             }
         }

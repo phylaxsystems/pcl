@@ -1,8 +1,5 @@
 use foundry_compilers::error::SolcError;
-use std::{
-    fmt::Debug,
-    path::PathBuf,
-};
+use std::{fmt::Debug, path::PathBuf};
 use thiserror::Error;
 
 #[derive(Error, Debug)]

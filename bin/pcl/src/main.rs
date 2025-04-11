@@ -31,6 +31,7 @@ struct Cli {
 }
 
 #[derive(clap::Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     #[command(name = "test")]
     Test(PhorgeTest),
@@ -45,8 +46,15 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Configure color_eyre to hide location information and backtrace messages
+    color_eyre::config::HookBuilder::default()
+        .display_location_section(false)
+        .display_env_section(false)
+        .install()?;
+
     let mut config = CliConfig::read_from_file().unwrap_or_default();
     let cli = Cli::parse();
+
     match cli.command {
         Commands::Test(phorge) => {
             phorge.run().await?;
@@ -64,6 +72,7 @@ async fn main() -> Result<()> {
             config_cmd.run(&mut config)?;
         }
     };
+
     config.write_to_file()?;
     Ok(())
 }

@@ -1,4 +1,3 @@
-
 use anyhow::Result;
 use vergen_gix::{BuildBuilder, CargoBuilder, Emitter, GixBuilder, RustcBuilder, SysinfoBuilder};
 
