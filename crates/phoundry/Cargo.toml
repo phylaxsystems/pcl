@@ -13,12 +13,12 @@ repository.workspace = true
 pcl-common = { workspace = true }
 
 # Foundry deps
-# forge = { git = "https://github.com/phylaxsystems/phoundry.git", branch = "fix/new-assex" }
-# foundry-config= { git = "https://github.com/phylaxsystems/phoundry.git", branch = "fix/new-assex" }
-# foundry-cli = { git = "https://github.com/phylaxsystems/phoundry.git", branch = "fix/new-assex" }
-forge = { path = "../../../phoundry/crates/forge"}
-foundry-config= { path = "../../../phoundry/crates/config"}
-foundry-cli = { path = "../../../phoundry/crates/cli"}
+forge = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "54e1fb3" }
+foundry-config= { git = "https://github.com/phylaxsystems/phoundry.git", rev = "54e1fb3" }
+foundry-cli = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "54e1fb3" }
+# forge = { path = "../../../phoundry/crates/forge"}
+# foundry-config= { path = "../../../phoundry/crates/config"}
+# foundry-cli = { path = "../../../phoundry/crates/cli"}
 foundry-compilers = { version = "0.14.0", default-features = false }
 
 clap = { workspace = true }
