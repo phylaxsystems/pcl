@@ -45,7 +45,7 @@ pub struct DappSubmitArgs {
 
     /// Optional project name to skip interactive selection
     #[clap(
-        short = 'p', 
+        short = 'p',
         long,
         value_name = "PROJECT",
         value_hint = ValueHint::Other,

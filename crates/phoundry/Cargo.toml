@@ -16,9 +16,6 @@ pcl-common = { workspace = true }
 forge = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "ad405a9" }
 foundry-config= { git = "https://github.com/phylaxsystems/phoundry.git", rev = "ad405a9" }
 foundry-cli = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "ad405a9" }
-# forge = { path = "../../../phoundry/crates/forge"}
-# foundry-config= { path = "../../../phoundry/crates/config"}
-# foundry-cli = { path = "../../../phoundry/crates/cli"}
 foundry-compilers = { version = "0.14.0", default-features = false }
 
 clap = { workspace = true }

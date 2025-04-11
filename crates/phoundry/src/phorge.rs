@@ -134,7 +134,6 @@ impl BuildAndFlattenArgs {
 
         // Flatten the contract
         let flattened = self.flatten(&path)?;
-
         Ok(BuildAndFlatOutput::new(solc_version, flattened))
     }
 

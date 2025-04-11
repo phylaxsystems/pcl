@@ -1,6 +1,5 @@
 use crate::error::ConfigError;
 use alloy_primitives::Address;
-use std::os::unix::fs::PermissionsExt;
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use colored::Colorize;
@@ -8,6 +7,7 @@ use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 /// Directory name for storing PCL configuration
