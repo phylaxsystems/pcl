@@ -2,10 +2,13 @@ use crate::{
     config::{AssertionForSubmission, CliConfig},
     error::DappSubmitError,
 };
+use clap::ValueHint;
 use inquire::{MultiSelect, Select};
 use pcl_common::args::CliArgs;
 use serde::Deserialize;
 use serde_json::json;
+
+// TODO(Odysseas) Add tests for the Dapp submission + Rust bindings from the Dapp API
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
@@ -32,18 +35,31 @@ struct Project {
 pub struct DappSubmitArgs {
     /// Base URL for the Credible Layer dApp API
     #[clap(
-        short,
+        short = 'u',
         long,
-        default_value = "https://credible-layer-dapp.pages.dev/api/v1"
+        value_hint = ValueHint::Url,
+        value_name = "API Endpoint",
+        default_value = "http://localhost:3003/api/v1"
     )]
     dapp_url: String,
 
     /// Optional project name to skip interactive selection
-    #[clap(short, long)]
+    #[clap(
+        short = 'p', 
+        long,
+        value_name = "PROJECT",
+        value_hint = ValueHint::Other,
+
+    )]
     project_name: Option<String>,
 
     /// Optional list of assertion names to skip interactive selection
-    #[clap(long)]
+    #[clap(
+        long,
+        short = 'a',
+        value_name = "ASSERTION",
+        value_hint = ValueHint::Other,
+    )]
     assertion_name: Option<Vec<String>>,
 }
 
