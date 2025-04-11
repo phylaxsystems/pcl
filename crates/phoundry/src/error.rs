@@ -1,8 +1,7 @@
-use color_eyre::Report;
 use foundry_compilers::error::SolcError;
 use std::{
     fmt::Debug,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 use thiserror::Error;
 

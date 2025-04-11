@@ -1,24 +1,17 @@
 use clap::{Parser, ValueHint};
-use forge::cmd::{build::BuildArgs, flatten::FlattenArgs, test::TestArgs};
+use forge::cmd::{build::BuildArgs, test::TestArgs};
 use foundry_cli::{
     opts::{BuildOpts, ProjectPathOpts},
     utils::LoadConfig,
 };
 use foundry_compilers::{
-    artifacts::{ConfigurableContractArtifact, Metadata},
     flatten::{Flattener, FlattenerError},
     info::ContractInfo,
     solc::SolcLanguage,
     ProjectCompileOutput,
 };
 use foundry_config::find_project_root;
-use pcl_common::args::CliArgs;
-use std::{
-    env,
-    path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
-    str::FromStr,
-};
+use std::path::PathBuf;
 
 use crate::error::PhoundryError;
 
@@ -30,15 +23,6 @@ pub struct PhorgeTest {
     pub args: TestArgs,
 }
 
-/// Configuration for building contracts with Phorge
-#[derive(Debug)]
-pub struct PhorgeBuild {
-    /// Root directory of the project
-    pub root: PathBuf,
-    /// Path to the assertion file
-    pub assertion_file: PathBuf,
-}
-
 /// Output from building and flattening a contract
 #[derive(Debug, Default)]
 pub struct BuildAndFlatOutput {
@@ -46,7 +30,6 @@ pub struct BuildAndFlatOutput {
     pub compiler_version: String,
     /// Flattened source code
     pub flattened_source: String,
-    // TODO(Odysseas): Add constructor args and check they are correct
 }
 
 impl BuildAndFlatOutput {
@@ -77,6 +60,13 @@ pub struct BuildAndFlattenArgs {
         help = "Name of the assertion contract to build and flatten"
     )]
     pub assertion_contract: String,
+    /// Constructor arguments for the assertion contract
+    #[clap(
+        short = 'c',
+        long,
+        help = "Constructor arguments for the assertion contract"
+    )]
+    pub constructor_args: Vec<String>
 }
 
 impl BuildAndFlattenArgs {
@@ -113,6 +103,9 @@ impl BuildAndFlattenArgs {
             None => find_project_root(None).unwrap().join(rel_source_path),
         };
         let flattened = self.flatten(&path)?;
+        dbg!(&flattened);
+        dbg!(&solc_version);
+        dbg!(&path);
         Ok(BuildAndFlatOutput::new(solc_version, flattened))
     }
 
@@ -144,7 +137,7 @@ impl BuildAndFlattenArgs {
         let config = build.load_config()?;
         let project = config
             .ephemeral_project()
-            .map_err(|e| PhoundryError::SolcError(e))?;
+            .map_err(PhoundryError::SolcError)?;
 
         let flattener = Flattener::new(project.clone(), path);
         let flattened_source = match flattener {
@@ -167,28 +160,6 @@ impl PhorgeTest {
     /// Run the test command
     pub async fn run(self) -> Result<(), PhoundryError> {
         self.args.run().await?;
-        Ok(())
-    }
-}
-
-// Helper functions
-impl PhorgeBuild {
-    /// Create a new PhorgeBuild instance
-    pub fn new(root: impl Into<PathBuf>, assertion_file: impl Into<PathBuf>) -> Self {
-        Self {
-            root: root.into(),
-            assertion_file: assertion_file.into(),
-        }
-    }
-
-    /// Validate the build configuration
-    pub fn validate(&self) -> Result<(), PhoundryError> {
-        if !self.root.exists() {
-            return Err(PhoundryError::DirectoryNotFound(self.root.clone()));
-        }
-        if !self.assertion_file.exists() {
-            return Err(PhoundryError::FileNotFound(self.assertion_file.clone()));
-        }
         Ok(())
     }
 }

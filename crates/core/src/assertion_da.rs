@@ -1,8 +1,8 @@
 use clap::{Parser, ValueHint};
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
-use pcl_common::{args::CliArgs, utils::get_build_info, Assertion};
-use pcl_phoundry::phorge::{BuildAndFlattenArgs, PhorgeBuild};
+use pcl_common::{args::CliArgs};
+use pcl_phoundry::phorge::BuildAndFlattenArgs;
 use tokio::time::Duration;
 
 use assertion_da_client::{DaClient, DaClientError};
@@ -81,7 +81,7 @@ impl DaStoreArgs {
     /// Executes the assertion storage process
     pub async fn run(
         &self,
-        cli_args: &CliArgs,
+        _cli_args: &CliArgs,
         config: &mut CliConfig,
     ) -> Result<(), DaSubmitError> {
         let build_flatten_output = self.args.run()?;

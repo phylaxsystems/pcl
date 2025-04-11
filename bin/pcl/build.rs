@@ -1,4 +1,3 @@
-use std::{env, fs, path::Path, process::Command};
 
 use anyhow::Result;
 use vergen_gix::{BuildBuilder, CargoBuilder, Emitter, GixBuilder, RustcBuilder, SysinfoBuilder};
