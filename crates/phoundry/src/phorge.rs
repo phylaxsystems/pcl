@@ -138,8 +138,8 @@ impl BuildAndFlattenArgs {
         let project = config
             .ephemeral_project()
             .map_err(PhoundryError::SolcError)?;
-
-        let flattener = Flattener::new(project.clone(), path);
+        let can_path = std::fs::canonicalize(path).map_err(PhoundryError::from)?;
+        let flattener = Flattener::new(project.clone(), &can_path);
         let flattened_source = match flattener {
             Ok(flattener) => Ok(flattener.flatten()),
             Err(FlattenerError::Compilation(_)) => {

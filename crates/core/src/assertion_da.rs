@@ -47,7 +47,7 @@ impl DaStoreArgs {
         match status_code {
             401 => {
                 spinner.finish_with_message(
-                    "❌ Assertion submission failed! Unauthorized. Please run pcl run.",
+                    "❌ Assertion submission failed! Unauthorized. Please run `pcl auth login`",
                 );
                 Ok(())
             }

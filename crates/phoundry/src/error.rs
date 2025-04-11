@@ -29,4 +29,6 @@ pub enum PhoundryError {
     FileNotFound(PathBuf),
     #[error("Solc error: {0}")]
     SolcError(#[from] SolcError),
+    #[error("Failed to canonicalize path: {0:?}")]
+    CanonicalizePathError(#[from] std::io::Error),
 }
