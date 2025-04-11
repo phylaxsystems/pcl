@@ -1,5 +1,6 @@
 use crate::error::ConfigError;
 use alloy_primitives::Address;
+use std::os::unix::fs::PermissionsExt;
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use colored::Colorize;

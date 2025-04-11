@@ -12,7 +12,7 @@ use pcl_common::args::CliArgs;
 use pcl_phoundry::phorge::{BuildAndFlatOutput, BuildAndFlattenArgs};
 use tokio::time::Duration;
 
-use assertion_da_client::{DaClient, DaClientError};
+use assertion_da_client::{DaClient, DaClientError, DaSubmissionResponse};
 use jsonrpsee_core::client::Error as ClientError;
 use jsonrpsee_http_client::transport::Error as TransportError;
 
@@ -145,7 +145,7 @@ impl DaStoreArgs {
         client: &DaClient,
         build_output: &BuildAndFlatOutput,
         spinner: &ProgressBar,
-    ) -> Result<(), DaSubmitError> {
+    ) -> Result<DaSubmissionResponse, DaSubmitError> {
         match client
             .submit_assertion(
                 self.args.assertion_contract.clone(),
@@ -154,7 +154,7 @@ impl DaStoreArgs {
             )
             .await
         {
-            Ok(_) => Ok(()),
+            Ok(res) => Ok(res),
             Err(err) => match err {
                 DaClientError::ClientError(ClientError::Transport(ref boxed_err)) => {
                     if let Some(TransportError::Rejected { status_code }) = boxed_err.downcast_ref()
@@ -175,11 +175,17 @@ impl DaStoreArgs {
     /// # Arguments
     /// * `config` - The configuration to update
     /// * `spinner` - The progress spinner to update
-    fn update_config(&self, config: &mut CliConfig, spinner: &ProgressBar) {
+    fn update_config<A: ToString, S: ToString>(
+        &self,
+        config: &mut CliConfig,
+        assertion_id: A,
+        signature: S,
+        spinner: &ProgressBar,
+    ) {
         let assertion_for_submission = AssertionForSubmission {
             assertion_contract: self.args.assertion_contract.to_string(),
-            assertion_id: "test_id".to_string(), // This should come from the DA layer response
-            signature: "test_signature".to_string(), // This should come from the DA layer response
+            assertion_id: assertion_id.to_string(),
+            signature: signature.to_string(),
         };
 
         config.add_assertion_for_submission(assertion_for_submission.clone());
@@ -217,8 +223,13 @@ impl DaStoreArgs {
 
         let build_output = self.build_and_flatten_assertion().await?;
         let client = self.create_da_client(config)?;
-        self.submit_to_da(&client, &build_output, &spinner).await?;
-        self.update_config(config, &spinner);
+        let submission_response = self.submit_to_da(&client, &build_output, &spinner).await?;
+        self.update_config(
+            config,
+            &submission_response.id,
+            &submission_response.signature,
+            &spinner,
+        );
 
         Ok(())
     }
@@ -406,7 +417,7 @@ mod tests {
         let mut config = CliConfig::default();
         let spinner = DaStoreArgs::create_spinner();
 
-        args.update_config(&mut config, &spinner);
+        args.update_config(&mut config, "test_assertions", "test_id", &spinner);
 
         assert_eq!(config.assertions_for_submission.len(), 1);
         let assertion = config
