@@ -1,4 +1,5 @@
 use clap::{Parser, ValueHint};
+use color_eyre::Report;
 use forge::{
     cmd::{build::BuildArgs, test::TestArgs},
     opts::{Forge, ForgeSubcommand},
@@ -13,10 +14,9 @@ use foundry_compilers::{
     solc::SolcLanguage,
     ProjectCompileOutput,
 };
-use foundry_config::{find_project_root, error::ExtractConfigError};
+use foundry_config::{error::ExtractConfigError, find_project_root};
 use std::path::PathBuf;
 use tokio::task::spawn_blocking;
-use color_eyre::Report;
 
 use crate::error::PhoundryError;
 
@@ -149,7 +149,9 @@ impl BuildAndFlattenArgs {
             },
             ..Default::default()
         };
-        build_cmd.run().map_err(|e| Box::new(PhoundryError::from(e)))
+        build_cmd
+            .run()
+            .map_err(|e| Box::new(PhoundryError::from(e)))
     }
 
     /// Flattens the contract source code.

@@ -1,7 +1,4 @@
-use foundry_compilers::{
-    error::SolcError,
-    flatten::FlattenerError,
-};
+use foundry_compilers::{error::SolcError, flatten::FlattenerError};
 use std::{fmt::Debug, path::PathBuf};
 use thiserror::Error;
 

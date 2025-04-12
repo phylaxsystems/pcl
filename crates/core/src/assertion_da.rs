@@ -70,7 +70,10 @@ impl DaStoreArgs {
     ///
     /// # Returns
     /// * `Result<(), Box<DaSubmitError>>` - Ok if the error was handled, Err otherwise
-    fn handle_http_error(status_code: u16, spinner: &ProgressBar) -> Result<(), Box<DaSubmitError>> {
+    fn handle_http_error(
+        status_code: u16,
+        spinner: &ProgressBar,
+    ) -> Result<(), Box<DaSubmitError>> {
         match status_code {
             401 => {
                 spinner.finish_with_message(
@@ -107,7 +110,9 @@ impl DaStoreArgs {
     /// # Returns
     /// * `Result<BuildAndFlatOutput, DaSubmitError>` - The build output or error
     async fn build_and_flatten_assertion(&self) -> Result<BuildAndFlatOutput, DaSubmitError> {
-        self.args.run().map_err(|e| DaSubmitError::PhoundryError(*e))
+        self.args
+            .run()
+            .map_err(|e| DaSubmitError::PhoundryError(*e))
     }
 
     /// Creates a DA client with appropriate authentication.
@@ -215,7 +220,9 @@ impl DaStoreArgs {
         spinner.set_message("Submitting assertion to DA...");
 
         let build_output = self.build_and_flatten_assertion().await?;
-        let client = self.create_da_client(config).map_err(DaSubmitError::DaClientError)?;
+        let client = self
+            .create_da_client(config)
+            .map_err(DaSubmitError::DaClientError)?;
         let submission_response = self.submit_to_da(&client, &build_output, &spinner).await?;
         self.update_config(
             config,
@@ -413,7 +420,7 @@ mod tests {
         let mut config = CliConfig::default();
         let spinner = DaStoreArgs::create_spinner();
 
-        args.update_config(&mut config, "test_assertions", "test_id", &spinner);
+        args.update_config(&mut config, "test_id", "test_signature", &spinner);
 
         assert_eq!(config.assertions_for_submission.len(), 1);
         let assertion = config
