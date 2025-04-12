@@ -283,7 +283,7 @@ contract TestContract {
         assert_eq!(output.flattened_source, "contract Test { }");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_build_and_flatten_integration() {
         let (_temp_dir, project_root) = setup_test_project();
 
