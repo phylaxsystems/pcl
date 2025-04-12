@@ -13,9 +13,10 @@ use foundry_compilers::{
     solc::SolcLanguage,
     ProjectCompileOutput,
 };
-use foundry_config::find_project_root;
+use foundry_config::{find_project_root, error::ExtractConfigError};
 use std::path::PathBuf;
 use tokio::task::spawn_blocking;
+use color_eyre::Report;
 
 use crate::error::PhoundryError;
 
@@ -86,8 +87,7 @@ impl BuildAndFlattenArgs {
     ///
     /// - `Ok(BuildAndFlatOutput)` containing the compiler version and flattened source
     /// - `Err(PhoundryError)` if any step in the process fails
-    #[allow(clippy::result_large_err)]
-    pub fn run(&self) -> Result<BuildAndFlatOutput, PhoundryError> {
+    pub fn run(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
         let build = self.build()?;
         let info = ContractInfo::new(&self.assertion_contract);
 
@@ -138,8 +138,7 @@ impl BuildAndFlattenArgs {
     }
 
     /// Builds the project and returns the compilation output.
-    #[allow(clippy::result_large_err)]
-    fn build(&self) -> Result<ProjectCompileOutput, PhoundryError> {
+    fn build(&self) -> Result<ProjectCompileOutput, Box<PhoundryError>> {
         let build_cmd = BuildArgs {
             build: BuildOpts {
                 project_paths: ProjectPathOpts {
@@ -150,12 +149,11 @@ impl BuildAndFlattenArgs {
             },
             ..Default::default()
         };
-        build_cmd.run().map_err(PhoundryError::from)
+        build_cmd.run().map_err(|e| Box::new(PhoundryError::from(e)))
     }
 
     /// Flattens the contract source code.
-    #[allow(clippy::result_large_err)]
-    fn flatten(&self, path: &PathBuf) -> Result<String, PhoundryError> {
+    fn flatten(&self, path: &PathBuf) -> Result<String, Box<PhoundryError>> {
         let build = BuildOpts {
             project_paths: ProjectPathOpts {
                 root: self.root.clone(),
@@ -167,9 +165,9 @@ impl BuildAndFlattenArgs {
         let config = build.load_config()?;
         let project = config
             .ephemeral_project()
-            .map_err(PhoundryError::SolcError)?;
+            .map_err(|e| Box::new(PhoundryError::SolcError(e)))?;
 
-        let can_path = std::fs::canonicalize(path).map_err(PhoundryError::from)?;
+        let can_path = std::fs::canonicalize(path).map_err(|e| Box::new(PhoundryError::from(e)))?;
 
         // Try the new flattener first
         let flattener = Flattener::new(project.clone(), &can_path);
@@ -181,9 +179,9 @@ impl BuildAndFlattenArgs {
                     .paths
                     .with_language::<SolcLanguage>()
                     .flatten(path)
-                    .map_err(PhoundryError::from)
+                    .map_err(|e| Box::new(PhoundryError::from(e)))
             }
-            Err(FlattenerError::Other(err)) => Err(PhoundryError::from(err)),
+            Err(FlattenerError::Other(err)) => Err(Box::new(PhoundryError::from(err))),
         }?;
 
         Ok(flattened_source)
@@ -193,7 +191,7 @@ impl BuildAndFlattenArgs {
 impl PhorgeTest {
     /// Runs the test command in a separate blocking task.
     /// This prevents blocking the current runtime while executing the forge command.
-    pub async fn run(self) -> Result<(), PhoundryError> {
+    pub async fn run(self) -> Result<(), Box<PhoundryError>> {
         // Extract the Send-safe parts of the test args
         let test_args = self.test_args;
         let global_opts = test_args.global.clone();
@@ -208,8 +206,26 @@ impl PhorgeTest {
             forge::args::run_command(forge)
         })
         .await
-        .map_err(|e| PhoundryError::ForgeCommandFailed(e.into()))??;
+        .map_err(|e| Box::new(PhoundryError::ForgeCommandFailed(e.into())))??;
         Ok(())
+    }
+}
+
+impl From<ExtractConfigError> for Box<PhoundryError> {
+    fn from(error: ExtractConfigError) -> Self {
+        Box::new(PhoundryError::FoundryConfigError(error))
+    }
+}
+
+impl From<std::io::Error> for Box<PhoundryError> {
+    fn from(error: std::io::Error) -> Self {
+        Box::new(PhoundryError::from(error))
+    }
+}
+
+impl From<Report> for Box<PhoundryError> {
+    fn from(error: Report) -> Self {
+        Box::new(PhoundryError::ForgeCommandFailed(error))
     }
 }
 

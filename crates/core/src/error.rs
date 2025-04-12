@@ -18,6 +18,15 @@ pub enum DaSubmitError {
     /// From Hex Error
     #[error("From Hex Error: {0}")]
     FromHexError(#[from] alloy_primitives::hex::FromHexError),
+    /// HTTP Error with status code
+    #[error("HTTP Error: {0}")]
+    HttpError(u16),
+}
+
+impl From<Box<DaSubmitError>> for DaSubmitError {
+    fn from(error: Box<DaSubmitError>) -> Self {
+        *error
+    }
 }
 
 /// Errors that can occur during assertion submission to the Credible Layer dApp

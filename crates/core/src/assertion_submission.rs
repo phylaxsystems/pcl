@@ -125,7 +125,7 @@ impl DappSubmitArgs {
     async fn submit_assertion(
         &self,
         project: &Project,
-        assertions: &Vec<AssertionForSubmission>,
+        assertions: &[AssertionForSubmission],
         config: &CliConfig,
     ) -> Result<(), DappSubmitError> {
         let client = reqwest::Client::new();

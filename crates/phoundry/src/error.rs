@@ -1,4 +1,7 @@
-use foundry_compilers::error::SolcError;
+use foundry_compilers::{
+    error::SolcError,
+    flatten::FlattenerError,
+};
 use std::{fmt::Debug, path::PathBuf};
 use thiserror::Error;
 
@@ -28,4 +31,6 @@ pub enum PhoundryError {
     SolcError(#[from] SolcError),
     #[error("Failed to canonicalize path: {0:?}")]
     CanonicalizePathError(#[from] std::io::Error),
+    #[error("Flattener error: {0}")]
+    FlattenerError(#[from] FlattenerError),
 }

@@ -69,9 +69,8 @@ impl DaStoreArgs {
     /// * `spinner` - The progress spinner to update with error messages
     ///
     /// # Returns
-    /// * `Result<(), DaSubmitError>` - Ok if the error was handled, Err otherwise
-    #[allow(clippy::result_large_err)]
-    fn handle_http_error(status_code: u16, spinner: &ProgressBar) -> Result<(), DaSubmitError> {
+    /// * `Result<(), Box<DaSubmitError>>` - Ok if the error was handled, Err otherwise
+    fn handle_http_error(status_code: u16, spinner: &ProgressBar) -> Result<(), Box<DaSubmitError>> {
         match status_code {
             401 => {
                 spinner.finish_with_message(
@@ -79,15 +78,10 @@ impl DaStoreArgs {
                 );
                 Ok(())
             }
-            _ => {
-                spinner.finish_with_message(format!(
-                    "❌ Assertion submission failed! Status code: {}",
-                    status_code
-                ));
-                Ok(())
-            }
+            _ => Err(Box::new(DaSubmitError::HttpError(status_code))),
         }
     }
+
     /// Displays the assertion information and next steps after successful submission.
     ///
     /// # Arguments
@@ -113,7 +107,7 @@ impl DaStoreArgs {
     /// # Returns
     /// * `Result<BuildAndFlatOutput, DaSubmitError>` - The build output or error
     async fn build_and_flatten_assertion(&self) -> Result<BuildAndFlatOutput, DaSubmitError> {
-        self.args.run().map_err(DaSubmitError::PhoundryError)
+        self.args.run().map_err(|e| DaSubmitError::PhoundryError(*e))
     }
 
     /// Creates a DA client with appropriate authentication.
@@ -122,12 +116,11 @@ impl DaStoreArgs {
     /// * `config` - Configuration containing authentication details
     ///
     /// # Returns
-    /// * `Result<DaClient, DaSubmitError>` - The configured client or error
-    fn create_da_client(&self, config: &CliConfig) -> Result<DaClient, DaSubmitError> {
+    /// * `Result<DaClient, DaClientError>` - The configured client or error
+    fn create_da_client(&self, config: &CliConfig) -> Result<DaClient, DaClientError> {
         match &config.auth {
-            Some(auth) => DaClient::new_with_auth(&self.url, &auth.access_token)
-                .map_err(DaSubmitError::DaClientError),
-            None => DaClient::new(&self.url).map_err(DaSubmitError::DaClientError),
+            Some(auth) => DaClient::new_with_auth(&self.url, &auth.access_token),
+            None => DaClient::new(&self.url),
         }
     }
 
@@ -222,7 +215,7 @@ impl DaStoreArgs {
         spinner.set_message("Submitting assertion to DA...");
 
         let build_output = self.build_and_flatten_assertion().await?;
-        let client = self.create_da_client(config)?;
+        let client = self.create_da_client(config).map_err(DaSubmitError::DaClientError)?;
         let submission_response = self.submit_to_da(&client, &build_output, &spinner).await?;
         self.update_config(
             config,
@@ -246,21 +239,22 @@ mod tests {
 
     /// Creates a test configuration with authentication
     fn create_test_config() -> CliConfig {
-        let mut config = CliConfig::default();
-        config.auth = Some(UserAuth {
-            access_token: "test_token".to_string(),
-            refresh_token: "test_refresh".to_string(),
-            user_address: Address::from_slice(&[0; 20]),
-            expires_at: DateTime::from_timestamp(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64,
-                0,
-            )
-            .unwrap(),
-        });
-        config
+        CliConfig {
+            auth: Some(UserAuth {
+                access_token: "test_token".to_string(),
+                refresh_token: "test_refresh".to_string(),
+                user_address: Address::from_slice(&[0; 20]),
+                expires_at: DateTime::from_timestamp(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64,
+                    0,
+                )
+                .unwrap(),
+            }),
+            ..Default::default()
+        }
     }
 
     /// Creates test build and flatten arguments
@@ -283,7 +277,7 @@ mod tests {
     async fn test_handle_http_error_other() {
         let spinner = DaStoreArgs::create_spinner();
         let result = DaStoreArgs::handle_http_error(500, &spinner);
-        assert!(result.is_ok());
+        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -380,13 +374,15 @@ mod tests {
             args: BuildAndFlattenArgs::default(),
         };
 
-        let mut config = CliConfig::default();
-        config.auth = Some(UserAuth {
-            access_token: "test_token".to_string(),
-            refresh_token: "test_refresh".to_string(),
-            user_address: Address::from_slice(&[0; 20]),
-            expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
-        });
+        let config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "test_token".to_string(),
+                refresh_token: "test_refresh".to_string(),
+                user_address: Address::from_slice(&[0; 20]),
+                expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
+            }),
+            ..Default::default()
+        };
 
         let client = args.create_da_client(&config);
         assert!(client.is_ok());
@@ -456,15 +452,18 @@ mod tests {
             args: BuildAndFlattenArgs::default(),
         };
 
-        let mut config = CliConfig::default();
-        config.auth = Some(UserAuth {
-            access_token: "expired_token".to_string(),
-            refresh_token: "expired_refresh".to_string(),
-            user_address: Address::from_slice(&[0; 20]),
-            expires_at: DateTime::from_timestamp(0, 0).unwrap(), // Expired token
-        });
-
         let cli_args = CliArgs::default();
+
+        let mut config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "expired_token".to_string(),
+                refresh_token: "expired_refresh".to_string(),
+                user_address: Address::from_slice(&[0; 20]),
+                expires_at: DateTime::from_timestamp(0, 0).unwrap(), // Expired token
+            }),
+            ..Default::default()
+        };
+
         let result = args.run(&cli_args, &mut config).await;
         assert!(result.is_err());
         mock.assert();
