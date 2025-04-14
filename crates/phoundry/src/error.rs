@@ -1,3 +1,4 @@
+use color_eyre::eyre;
 use foundry_compilers::{error::SolcError, flatten::FlattenerError};
 use std::{fmt::Debug, path::PathBuf};
 use thiserror::Error;
@@ -30,4 +31,8 @@ pub enum PhoundryError {
     CanonicalizePathError(#[from] std::io::Error),
     #[error("Flattener error: {0}")]
     FlattenerError(#[from] FlattenerError),
+    #[error("No source files found in specified build paths.")]
+    NoSourceFilesFound,
+    #[error("Compilation failed:\n{0}")]
+    CompilationError(eyre::Report)
 }

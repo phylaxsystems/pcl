@@ -17,6 +17,7 @@ forge = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "ad405a9"
 foundry-config= { git = "https://github.com/phylaxsystems/phoundry.git", rev = "ad405a9" }
 foundry-cli = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "ad405a9" }
 foundry-compilers = { version = "0.14.0", default-features = false }
+foundry-common = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "ad405a9" }
 
 clap = { workspace = true }
 thiserror = { workspace = true }

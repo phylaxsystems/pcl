@@ -7600,6 +7600,7 @@ dependencies = [
  "color-eyre",
  "forge",
  "foundry-cli",
+ "foundry-common",
  "foundry-compilers",
  "foundry-config",
  "hex",

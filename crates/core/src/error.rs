@@ -10,7 +10,7 @@ pub enum DaSubmitError {
     #[error("Da Submission Error: {0}")]
     DaClientError(#[from] DaClientError),
     /// Error during the build process of the assertion
-    #[error("There was an error with the solidity file: {0}")]
+    #[error("There was an error with the solidity file")]
     PhoundryError(#[from] PhoundryError),
     /// Failed to parse bytecode as hex
     #[error("Failed to parse bytecode as hex")]
