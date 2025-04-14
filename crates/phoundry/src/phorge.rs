@@ -19,7 +19,7 @@ use foundry_compilers::{
 };
 use foundry_config::{
     error::ExtractConfigError,
-    find_project_root ,
+    find_project_root, Config ,
 };
 use std::path::PathBuf;
 use tokio::task::spawn_blocking;
@@ -143,6 +143,8 @@ impl BuildAndFlattenArgs {
             build: BuildOpts {
                 project_paths: ProjectPathOpts {
                     root: self.root.clone(),
+                    // FIXME(Odysseas): this essentially hard-codes the location of the assertions to live in
+                    // assertions/src
                     contracts: Some(PathBuf::from("assertions/src")),
                     ..Default::default()
                 },
@@ -152,6 +154,7 @@ impl BuildAndFlattenArgs {
         };
 
         let config = build_cmd.load_config()?;
+
         let project = config.project().map_err(PhoundryError::SolcError)?;
 
         // Collect sources to compile if build subdirectories specified.

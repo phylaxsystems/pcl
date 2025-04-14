@@ -1,0 +1,8 @@
+[profile.default]
+src="defaultdeafult"
+out = "out"
+libs = ["lib"]
+
+[profile.assertions]
+src="asdfsdfasfs"
+test="asdfasfasf"
