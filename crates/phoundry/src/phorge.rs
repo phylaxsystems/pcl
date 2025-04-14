@@ -8,13 +8,19 @@ use foundry_cli::{
     opts::{BuildOpts, ProjectPathOpts},
     utils::LoadConfig,
 };
+use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     flatten::{Flattener, FlattenerError},
     info::ContractInfo,
+    multi::MultiCompilerLanguage,
     solc::SolcLanguage,
-    ProjectCompileOutput,
+    utils::source_files_iter,
+    Language, ProjectCompileOutput,
 };
-use foundry_config::{error::ExtractConfigError, find_project_root};
+use foundry_config::{
+    error::ExtractConfigError,
+    find_project_root ,
+};
 use std::path::PathBuf;
 use tokio::task::spawn_blocking;
 
@@ -64,19 +70,11 @@ pub struct BuildAndFlattenArgs {
     pub root: Option<PathBuf>,
 
     /// Name of the assertion contract to build and flatten
-    #[clap(
-        short = 'a',
-        long,
-        help = "Name of the assertion contract to build and flatten"
-    )]
+    #[clap(help = "Name of the assertion contract to build and flatten")]
     pub assertion_contract: String,
 
     /// Constructor arguments for the assertion contract
-    #[clap(
-        short = 'c',
-        long,
-        help = "Constructor arguments for the assertion contract"
-    )]
+    #[clap(help = "Constructor arguments for the assertion contract")]
     pub constructor_args: Vec<String>,
 }
 
@@ -88,6 +86,8 @@ impl BuildAndFlattenArgs {
     /// - `Ok(BuildAndFlatOutput)` containing the compiler version and flattened source
     /// - `Err(PhoundryError)` if any step in the process fails
     pub fn run(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
+        foundry_cli::utils::load_dotenv();
+        foundry_cli::utils::subscriber();
         let build = self.build()?;
         let info = ContractInfo::new(&self.assertion_contract);
 
@@ -143,15 +143,44 @@ impl BuildAndFlattenArgs {
             build: BuildOpts {
                 project_paths: ProjectPathOpts {
                     root: self.root.clone(),
+                    contracts: Some(PathBuf::from("assertions/src")),
                     ..Default::default()
                 },
                 ..Default::default()
             },
             ..Default::default()
         };
-        build_cmd
-            .run()
-            .map_err(|e| Box::new(PhoundryError::from(e)))
+
+        let config = build_cmd.load_config()?;
+        let project = config.project().map_err(PhoundryError::SolcError)?;
+
+        // Collect sources to compile if build subdirectories specified.
+        let mut files = vec![];
+        if let Some(paths) = &build_cmd.paths {
+            for path in paths {
+                let joined = project.root().join(path);
+                let path = if joined.exists() { &joined } else { path };
+                files.extend(source_files_iter(
+                    path,
+                    MultiCompilerLanguage::FILE_EXTENSIONS,
+                ));
+            }
+            if files.is_empty() {
+                return Err(Box::new(PhoundryError::NoSourceFilesFound));
+            }
+        }
+
+        let compiler = ProjectCompiler::new()
+            .files(files)
+            .dynamic_test_linking(config.dynamic_test_linking)
+            .print_names(build_cmd.names)
+            .print_sizes(build_cmd.sizes)
+            .ignore_eip_3860(build_cmd.ignore_eip_3860)
+            .bail(true);
+        let res = compiler
+            .compile(&project)
+            .map_err(|e| PhoundryError::CompilationError(e))?;
+        Ok(res)
     }
 
     /// Flattens the contract source code.

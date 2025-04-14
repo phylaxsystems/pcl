@@ -34,5 +34,5 @@ pub enum PhoundryError {
     #[error("No source files found in specified build paths.")]
     NoSourceFilesFound,
     #[error("Compilation failed:\n{0}")]
-    CompilationError(eyre::Report)
+    CompilationError(eyre::Report),
 }
