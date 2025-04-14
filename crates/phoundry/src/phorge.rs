@@ -17,10 +17,7 @@ use foundry_compilers::{
     utils::source_files_iter,
     Language, ProjectCompileOutput,
 };
-use foundry_config::{
-    error::ExtractConfigError,
-    find_project_root, Config ,
-};
+use foundry_config::{error::ExtractConfigError, find_project_root};
 use std::path::PathBuf;
 use tokio::task::spawn_blocking;
 
@@ -182,7 +179,7 @@ impl BuildAndFlattenArgs {
             .bail(true);
         let res = compiler
             .compile(&project)
-            .map_err(|e| PhoundryError::CompilationError(e))?;
+            .map_err(PhoundryError::CompilationError)?;
         Ok(res)
     }
 
