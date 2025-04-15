@@ -226,7 +226,7 @@ impl PhorgeTest {
         // Extract the Send-safe parts of the test args
         let test_args = self.test_args;
         let global_opts = test_args.global.clone();
-
+        global_opts.init()?;
         // Spawn the blocking operation in a separate task
         spawn_blocking(move || {
             // Reconstruct the Forge struct inside the closure

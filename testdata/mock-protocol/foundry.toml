@@ -4,5 +4,5 @@ out = "out"
 libs = ["lib"]
 
 [profile.assertions]
-src="asdfsdfasfs"
-test="asdfasfasf"
+src="assertions/src"
+test="assertions/test"
