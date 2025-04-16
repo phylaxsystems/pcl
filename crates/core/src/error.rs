@@ -8,16 +8,25 @@ use thiserror::Error;
 pub enum DaSubmitError {
     /// Error when HTTP request to the DA layer fails
     #[error("Da Submission Error: {0}")]
-    DaSubmissionError(#[from] DaClientError),
+    DaClientError(#[from] DaClientError),
     /// Error during the build process of the assertion
-    #[error("Build failed: {0}")]
-    BuildError(#[from] PhoundryError),
+    #[error("There was an error with the solidity file")]
+    PhoundryError(#[from] PhoundryError),
     /// Failed to parse bytecode as hex
     #[error("Failed to parse bytecode as hex")]
     ParseError,
     /// From Hex Error
     #[error("From Hex Error: {0}")]
     FromHexError(#[from] alloy_primitives::hex::FromHexError),
+    /// HTTP Error with status code
+    #[error("HTTP Error: {0}")]
+    HttpError(u16),
+}
+
+impl From<Box<DaSubmitError>> for DaSubmitError {
+    fn from(error: Box<DaSubmitError>) -> Self {
+        *error
+    }
 }
 
 /// Errors that can occur during assertion submission to the Credible Layer dApp
@@ -38,6 +47,10 @@ pub enum DappSubmitError {
     /// Error when the submission is rejected by the dApp
     #[error("Submission failed: {0}")]
     SubmissionFailed(String),
+
+    /// Error
+    #[error("Could not find stored assertion {0} in the config. Please run `pcl store` first.")]
+    CouldNotFindStoredAssertion(String),
 }
 
 /// Errors that can occur during configuration operations
@@ -50,6 +63,14 @@ pub enum ConfigError {
     /// Error when writing to the config file at ~/.pcl/config.toml fails
     #[error("Failed to write config file: {0}")]
     WriteError(std::io::Error),
+
+    /// Error when deserializing the config file fails
+    #[error("Failed to parse config file: {0}")]
+    ParseError(#[from] toml::de::Error),
+
+    /// Error when serializing the config file fails
+    #[error("Failed to serialize config file: {0}")]
+    SerializeError(#[from] toml::ser::Error),
 
     /// Error when attempting an operation that requires authentication
     /// but no authentication token is present in the config

@@ -2,10 +2,13 @@ use crate::{
     config::{AssertionForSubmission, CliConfig},
     error::DappSubmitError,
 };
+use clap::ValueHint;
 use inquire::{MultiSelect, Select};
 use pcl_common::args::CliArgs;
 use serde::Deserialize;
 use serde_json::json;
+
+// TODO(Odysseas) Add tests for the Dapp submission + Rust bindings from the Dapp API
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
@@ -32,18 +35,31 @@ struct Project {
 pub struct DappSubmitArgs {
     /// Base URL for the Credible Layer dApp API
     #[clap(
-        short,
+        short = 'u',
         long,
-        default_value = "https://credible-layer-dapp.pages.dev/api/v1"
+        value_hint = ValueHint::Url,
+        value_name = "API Endpoint",
+        default_value = "http://localhost:3003/api/v1"
     )]
     dapp_url: String,
 
     /// Optional project name to skip interactive selection
-    #[clap(short, long)]
+    #[clap(
+        short = 'p',
+        long,
+        value_name = "PROJECT",
+        value_hint = ValueHint::Other,
+
+    )]
     project_name: Option<String>,
 
     /// Optional list of assertion names to skip interactive selection
-    #[clap(short, long)]
+    #[clap(
+        long,
+        short = 'a',
+        value_name = "ASSERTION",
+        value_hint = ValueHint::Other,
+    )]
     assertion_name: Option<Vec<String>>,
 }
 
@@ -76,21 +92,24 @@ impl DappSubmitArgs {
         let project = projects
             .iter()
             .find(|p| p.project_name == project_name)
-            .unwrap();
+            .unwrap(); // Safe to unwrap since it should be selected from the list
 
         let assertion_names = self.provide_or_multi_select(
             self.assertion_name.clone(),
             assertions_for_submission,
             "Select an assertion to submit:".to_string(),
         )?;
+        let mut assertions = vec![];
+        for name in assertion_names {
+            let assertion = config
+                .assertions_for_submission
+                .remove(&name)
+                .ok_or(DappSubmitError::CouldNotFindStoredAssertion(name.clone()))?;
 
-        let assertions: Vec<&AssertionForSubmission> = assertion_names
-            .iter()
-            .map(|n| config.assertions_for_submission.get(n).unwrap())
-            .collect();
+            assertions.push(assertion);
+        }
 
         self.submit_assertion(project, &assertions, config).await?;
-        // TOOD: remove assertion from config
 
         Ok(())
     }
@@ -106,7 +125,7 @@ impl DappSubmitArgs {
     async fn submit_assertion(
         &self,
         project: &Project,
-        assertions: &[&AssertionForSubmission],
+        assertions: &[AssertionForSubmission],
         config: &CliConfig,
     ) -> Result<(), DappSubmitError> {
         let client = reqwest::Client::new();

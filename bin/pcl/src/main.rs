@@ -1,11 +1,13 @@
 use clap::{command, Parser};
-use eyre::Result;
+use color_eyre::Result;
 use pcl_common::args::CliArgs;
 use pcl_core::{
-    assertion_da::DASubmitArgs, assertion_submission::DappSubmitArgs, auth::AuthCommand,
-    config::CliConfig,
+    assertion_da::DaStoreArgs,
+    assertion_submission::DappSubmitArgs,
+    auth::AuthCommand,
+    config::{CliConfig, ConfigArgs},
 };
-use pcl_phoundry::phorge::Phorge;
+use pcl_phoundry::phorge::PhorgeTest;
 
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -29,41 +31,55 @@ struct Cli {
 }
 
 #[derive(clap::Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
-    Phorge(Phorge),
+    #[command(name = "test")]
+    Test(PhorgeTest),
     #[command(name = "store")]
-    DASubmit(DASubmitArgs),
+    Store(DaStoreArgs),
     #[command(name = "submit")]
-    DappSubmit(DappSubmitArgs),
+    Submit(DappSubmitArgs),
     Auth(AuthCommand),
-    #[command(about = "Display the current configuration")]
-    Config,
+    #[command(about = "Manage configuration")]
+    Config(ConfigArgs),
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Check if forge is installed
-    Phorge::forge_must_be_installed()?;
-    let mut config = CliConfig::read_from_file().unwrap_or_default();
+    // Configure color_eyre to hide location information and backtrace messages
+    color_eyre::config::HookBuilder::default()
+        .display_location_section(false)
+        .display_env_section(false)
+        .install()?;
 
+    let mut config = CliConfig::read_from_file().unwrap_or_default();
     let cli = Cli::parse();
+
     match cli.command {
-        Commands::Phorge(phorge) => {
-            phorge.run(&cli.args, true)?;
+        Commands::Test(phorge) => {
+            phorge.run().await?;
         }
-        Commands::DASubmit(submit) => {
-            submit.run(&cli.args, &mut config).await?;
+        Commands::Store(store) => {
+            store.run(&cli.args, &mut config).await?;
         }
-        Commands::DappSubmit(submit) => {
+        Commands::Submit(submit) => {
             submit.run(&cli.args, &mut config).await?;
         }
         Commands::Auth(auth_cmd) => {
             auth_cmd.run(&mut config).await?;
         }
-        Commands::Config => {
-            println!("{}", config);
+        Commands::Config(config_cmd) => {
+            config_cmd.run(&mut config)?;
         }
     };
+
     config.write_to_file()?;
     Ok(())
 }
+
+//TODO(GREG): Add integration tests that run cli with all the commands and confirm the output is as
+//expected.
+//This serves the purpose of forced testing of cli args and output testing. For example
+//conflicting short args can fall through CI without tests like this.
+//Consider adding unit tests with dapp and da mocks for a quicker 0-1 than running
+//the dapp in CI.

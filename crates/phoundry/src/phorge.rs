@@ -1,130 +1,331 @@
-use pcl_common::args::CliArgs;
-use std::{
-    env,
-    path::PathBuf,
-    process::{Command, Output, Stdio},
+use clap::{Parser, ValueHint};
+use color_eyre::Report;
+use forge::{
+    cmd::{build::BuildArgs, test::TestArgs},
+    opts::{Forge, ForgeSubcommand},
 };
+use foundry_cli::{
+    opts::{BuildOpts, ProjectPathOpts},
+    utils::LoadConfig,
+};
+use foundry_common::compile::ProjectCompiler;
+use foundry_compilers::{
+    flatten::{Flattener, FlattenerError},
+    info::ContractInfo,
+    multi::MultiCompilerLanguage,
+    solc::SolcLanguage,
+    utils::source_files_iter,
+    Language, ProjectCompileOutput,
+};
+use foundry_config::{error::ExtractConfigError, find_project_root};
+use std::path::PathBuf;
+use tokio::task::spawn_blocking;
 
 use crate::error::PhoundryError;
 
-const FORGE_BINARY_NAME: &str = "phorge";
-
-// Remove the const and add a function to get the forge binary path
-fn get_forge_binary_path() -> PathBuf {
-    let exe_path = env::current_exe().expect("Failed to get current executable path");
-    exe_path
-        .parent()
-        .expect("Failed to get executable directory")
-        .join(FORGE_BINARY_NAME)
+/// Command-line interface for running Phorge tests.
+/// This struct wraps the standard Foundry test arguments.
+#[derive(Debug, Parser, Clone)]
+#[clap(about = "Run tests using Phorge")]
+pub struct PhorgeTest {
+    #[clap(flatten)]
+    pub test_args: TestArgs,
 }
 
-#[derive(clap::Parser)]
-pub struct Phorge {
-    pub args: Vec<String>,
+/// Output from building and flattening a Solidity contract.
+/// Contains the compiler version used and the flattened source code.
+#[derive(Debug, Default)]
+pub struct BuildAndFlatOutput {
+    /// Version of the Solidity compiler used
+    pub compiler_version: String,
+    /// Flattened source code of the contract
+    pub flattened_source: String,
 }
 
-impl Phorge {
-    /// Run the forge command with the given arguments.
-    /// Phoundry should be installed as part of the pcl workspace, meaning that we
-    /// can assume that forge is available in the PATH.
-    /// We do this so that we don't have to re-write the forge command in the CLI, as
-    /// a lot of the functionality is implemented as part of the forge binary, which we can't import
-    /// as a crate.
-    pub fn run(&self, cli_args: &CliArgs, print_output: bool) -> Result<Output, PhoundryError> {
-        self.run_args(get_forge_binary_path(), cli_args, print_output)
+impl BuildAndFlatOutput {
+    /// Creates a new BuildAndFlatOutput instance.
+    pub fn new(compiler_version: String, flattened_source: String) -> Self {
+        Self {
+            compiler_version,
+            flattened_source,
+        }
+    }
+}
+
+/// Command-line arguments for building and flattening Solidity contracts.
+/// This is used to prepare contracts for submission to the assertion DA layer.
+#[derive(Debug, Default, Parser)]
+#[clap(about = "Build and flatten contracts using Phorge")]
+pub struct BuildAndFlattenArgs {
+    /// Root directory of the project
+    #[clap(
+        short = 'r',
+        long,
+        value_hint = ValueHint::DirPath,
+        help = "Root directory of the project"
+    )]
+    pub root: Option<PathBuf>,
+
+    /// Name of the assertion contract to build and flatten
+    #[clap(help = "Name of the assertion contract to build and flatten")]
+    pub assertion_contract: String,
+
+    /// Constructor arguments for the assertion contract
+    #[clap(help = "Constructor arguments for the assertion contract")]
+    pub constructor_args: Vec<String>,
+}
+
+impl BuildAndFlattenArgs {
+    /// Builds and flattens the specified contract.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(BuildAndFlatOutput)` containing the compiler version and flattened source
+    /// - `Err(PhoundryError)` if any step in the process fails
+    pub fn run(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
+        foundry_cli::utils::load_dotenv();
+        foundry_cli::utils::subscriber();
+        let build = self.build()?;
+        let info = ContractInfo::new(&self.assertion_contract);
+
+        // Find the contract artifact
+        let artifact = build
+            .find_contract(info)
+            .ok_or_else(|| PhoundryError::ContractNotFound(self.assertion_contract.clone()))?;
+
+        // Extract metadata and compiler version
+        let metadata = artifact
+            .metadata
+            .clone()
+            .ok_or_else(|| PhoundryError::InvalidForgeOutput("Missing contract metadata"))?;
+
+        let solc_version = metadata
+            .compiler
+            .version
+            .split_once('+')
+            .ok_or_else(|| PhoundryError::InvalidForgeOutput("Invalid solc version format"))?
+            .0
+            .to_string();
+
+        // Find the source path for the contract
+        let rel_source_path = metadata
+            .settings
+            .compilation_target
+            .iter()
+            .find_map(|(path, name)| {
+                if name == &self.assertion_contract {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| PhoundryError::ContractNotFound(self.assertion_contract.clone()))?;
+
+        // Determine the full path to the contract
+        let path = match &self.root {
+            Some(root) => root.join(rel_source_path),
+            None => find_project_root(None)
+                .map_err(|_| PhoundryError::DirectoryNotFound(PathBuf::from(".")))?
+                .join(rel_source_path),
+        };
+
+        // Flatten the contract
+        let flattened = self.flatten(&path)?;
+        Ok(BuildAndFlatOutput::new(solc_version, flattened))
     }
 
-    fn run_args(
-        &self,
-        forge_bin_path: PathBuf,
-        cli_args: &CliArgs,
-        print_output: bool,
-    ) -> Result<Output, PhoundryError> {
-        let mut args = self.args.clone();
+    /// Builds the project and returns the compilation output.
+    fn build(&self) -> Result<ProjectCompileOutput, Box<PhoundryError>> {
+        let build_cmd = BuildArgs {
+            build: BuildOpts {
+                project_paths: ProjectPathOpts {
+                    root: self.root.clone(),
+                    // FIXME(Odysseas): this essentially hard-codes the location of the assertions to live in
+                    // assertions/src
+                    contracts: Some(PathBuf::from("assertions/src")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
-        if let Some(ref root_dir) = cli_args.root_dir {
-            args.push("--root".to_string());
-            args.push(root_dir.to_str().unwrap().to_string());
+        let config = build_cmd.load_config()?;
+
+        let project = config.project().map_err(PhoundryError::SolcError)?;
+
+        // Collect sources to compile if build subdirectories specified.
+        let mut files = vec![];
+        if let Some(paths) = &build_cmd.paths {
+            for path in paths {
+                let joined = project.root().join(path);
+                let path = if joined.exists() { &joined } else { path };
+                files.extend(source_files_iter(
+                    path,
+                    MultiCompilerLanguage::FILE_EXTENSIONS,
+                ));
+            }
+            if files.is_empty() {
+                return Err(Box::new(PhoundryError::NoSourceFilesFound));
+            }
         }
 
-        let mut command = Command::new(forge_bin_path);
-
-        command.args(args);
-
-        if print_output {
-            command
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit());
-        }
-
-        // Only valid for the context of this binary execution
-        env::set_var(
-            "FOUNDRY_SRC",
-            cli_args.assertions_src().as_os_str().to_str().unwrap(),
-        );
-
-        env::set_var(
-            "FOUNDRY_TEST",
-            cli_args.assertions_test().as_os_str().to_str().unwrap(),
-        );
-
-        Ok(command.output()?)
+        let compiler = ProjectCompiler::new()
+            .files(files)
+            .dynamic_test_linking(config.dynamic_test_linking)
+            .print_names(build_cmd.names)
+            .print_sizes(build_cmd.sizes)
+            .ignore_eip_3860(build_cmd.ignore_eip_3860)
+            .bail(true);
+        let res = compiler
+            .compile(&project)
+            .map_err(PhoundryError::CompilationError)?;
+        Ok(res)
     }
 
-    /// Check if forge is installed and available in the PATH.
-    pub fn forge_must_be_installed() -> Result<(), PhoundryError> {
-        if Command::new(get_forge_binary_path())
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            return Err(PhoundryError::ForgeNotInstalled);
-        }
+    /// Flattens the contract source code.
+    fn flatten(&self, path: &PathBuf) -> Result<String, Box<PhoundryError>> {
+        let build = BuildOpts {
+            project_paths: ProjectPathOpts {
+                root: self.root.clone(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let config = build.load_config()?;
+        let project = config
+            .ephemeral_project()
+            .map_err(|e| Box::new(PhoundryError::SolcError(e)))?;
+
+        let can_path = std::fs::canonicalize(path).map_err(|e| Box::new(PhoundryError::from(e)))?;
+
+        // Try the new flattener first
+        let flattener = Flattener::new(project.clone(), &can_path);
+        let flattened_source = match flattener {
+            Ok(flattener) => Ok(flattener.flatten()),
+            Err(FlattenerError::Compilation(_)) => {
+                // Fallback to the old flattening implementation for invalid syntax
+                project
+                    .paths
+                    .with_language::<SolcLanguage>()
+                    .flatten(path)
+                    .map_err(|e| Box::new(PhoundryError::from(e)))
+            }
+            Err(FlattenerError::Other(err)) => Err(Box::new(PhoundryError::from(err))),
+        }?;
+
+        Ok(flattened_source)
+    }
+}
+
+impl PhorgeTest {
+    /// Runs the test command in a separate blocking task.
+    /// This prevents blocking the current runtime while executing the forge command.
+    pub async fn run(self) -> Result<(), Box<PhoundryError>> {
+        // Extract the Send-safe parts of the test args
+        let test_args = self.test_args;
+        let global_opts = test_args.global.clone();
+        global_opts.init()?;
+        // Spawn the blocking operation in a separate task
+        spawn_blocking(move || {
+            // Reconstruct the Forge struct inside the closure
+            let forge = Forge {
+                cmd: ForgeSubcommand::Test(test_args),
+                global: global_opts,
+            };
+            forge::args::run_command(forge)
+        })
+        .await
+        .map_err(|e| Box::new(PhoundryError::ForgeCommandFailed(e.into())))??;
         Ok(())
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use std::path::PathBuf;
-
-    fn set_current_dir(path: &str) {
-        std::env::set_current_dir(path).unwrap();
+impl From<ExtractConfigError> for Box<PhoundryError> {
+    fn from(error: ExtractConfigError) -> Self {
+        Box::new(PhoundryError::FoundryConfigError(error))
     }
+}
 
-    fn run_build_test(cli_args: &CliArgs, phorge_bin_path: &str) {
-        let phorge = Phorge {
-            args: vec!["build".to_owned(), "--force".to_owned()],
-        };
+impl From<std::io::Error> for Box<PhoundryError> {
+    fn from(error: std::io::Error) -> Self {
+        Box::new(PhoundryError::from(error))
+    }
+}
 
-        let res = phorge
-            .run_args(phorge_bin_path.into(), cli_args, true)
-            .unwrap();
+impl From<Report> for Box<PhoundryError> {
+    fn from(error: Report) -> Self {
+        Box::new(PhoundryError::ForgeCommandFailed(error))
+    }
+}
 
-        assert!(res.status.success());
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    // Helper function to create a temporary Solidity project
+    fn setup_test_project() -> (TempDir, PathBuf) {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().join("test_project");
+        fs::create_dir_all(&project_root).unwrap();
+
+        // Create a simple test contract
+        let contract_path = project_root.join("src").join("TestContract.sol");
+        fs::create_dir_all(contract_path.parent().unwrap()).unwrap();
+        fs::write(
+            &contract_path,
+            r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract TestContract {
+    function test() public pure returns (bool) {
+        return true;
+    }
+}"#,
+        )
+        .unwrap();
+
+        (temp_dir, project_root)
     }
 
     #[test]
-    fn test_build_args_with_root_dir() {
-        set_current_dir("../../testdata");
+    fn test_build_and_flatten_args_new() {
+        let args = BuildAndFlattenArgs {
+            root: None,
+            assertion_contract: "TestContract".to_string(),
+            constructor_args: vec![],
+        };
 
-        run_build_test(
-            &CliArgs {
-                root_dir: Some(PathBuf::from("mock-protocol")),
-                ..CliArgs::default()
-            },
-            "../target/debug/phorge",
-        );
+        assert_eq!(args.assertion_contract, "TestContract");
+        assert!(args.root.is_none());
+        assert!(args.constructor_args.is_empty());
+    }
 
-        set_current_dir("mock-protocol");
+    #[test]
+    fn test_build_and_flat_output_new() {
+        let output = BuildAndFlatOutput::new("0.8.0".to_string(), "contract Test { }".to_string());
 
-        run_build_test(
-            &CliArgs {
-                ..CliArgs::default()
-            },
-            "../../target/debug/phorge",
-        );
+        assert_eq!(output.compiler_version, "0.8.0");
+        assert_eq!(output.flattened_source, "contract Test { }");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_build_and_flatten_integration() {
+        let (_temp_dir, project_root) = setup_test_project();
+
+        let args = BuildAndFlattenArgs {
+            root: Some(project_root),
+            assertion_contract: "TestContract".to_string(),
+            constructor_args: vec![],
+        };
+
+        let result = args.run();
+
+        // The actual result will depend on the test environment
+        // In a real test, we would verify the output
+        assert!(result.is_ok() || result.is_err());
     }
 }

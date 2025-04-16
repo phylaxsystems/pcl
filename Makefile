@@ -1,11 +1,10 @@
 # Build the binary
 build:
-	PCL_BUILD_PHOUNDRY=true PCL_UPDATE_PHOUNDRY=true cargo build --verbose --release
+	cargo build --verbose --release
 
 # Install the binary
 install:
-	PCL_BUILD_PHOUNDRY=true PCL_UPDATE_PHOUNDRY=true cargo install --verbose --path bin/pcl
-	cp phoundry/target/release/forge ~/.cargo/bin/phorge
+	cargo install --verbose --path bin/pcl
  
 # Build the contract mocks and run the rust tests
 test:
