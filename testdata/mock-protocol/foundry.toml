@@ -1,5 +1,5 @@
 [profile.default]
-src="defaultdeafult"
+src="src"
 out = "out"
 libs = ["lib"]
 
