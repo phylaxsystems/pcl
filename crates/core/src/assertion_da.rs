@@ -10,6 +10,7 @@ use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use pcl_common::args::CliArgs;
 use pcl_phoundry::phorge::{BuildAndFlatOutput, BuildAndFlattenArgs};
+use serde_json::json;
 use tokio::time::Duration;
 
 use assertion_da_client::{DaClient, DaClientError, DaSubmissionResponse};
@@ -89,20 +90,33 @@ impl DaStoreArgs {
     ///
     /// # Arguments
     /// * `assertion` - The assertion that was successfully submitted
-    fn display_success_info(&self, assertion: &AssertionForSubmission) {
-        println!("\n\n{}", "Assertion Information".bold().green());
-        println!("{}", "===================".green());
-        println!("{}", assertion);
+    /// * `json_output` - Whether to output in JSON format
+    fn display_success_info(&self, assertion: &AssertionForSubmission, json_output: bool) {
+        if json_output {
+            let json_output = json!({
+                "status": "success",
+                "assertion_contract": assertion.assertion_contract,
+                "assertion_id": assertion.assertion_id,
+                "signature": assertion.signature,
+            });
+            println!("{}", serde_json::to_string_pretty(&json_output).unwrap());
+        } else {
+            println!("\n\n{}", "Assertion Information".bold().green());
+            println!("{}", "===================".green());
+            println!("{}", assertion);
 
-        println!("\n{}", "Next Steps:".bold());
-        println!("Submit this assertion to a project with:");
-        println!(
-            "  {} submit -a {} -p <project_name>",
-            "pcl".cyan().bold(),
-            self.args.assertion_contract
-        );
-        println!("Visit the Credible Layer DApp to link the assertion on-chain and enforce it:");
-        println!("  {}", "https://dapp.credible.layer".cyan().bold());
+            println!("\n{}", "Next Steps:".bold());
+            println!("Submit this assertion to a project with:");
+            println!(
+                "  {} submit -a {} -p <project_name>",
+                "pcl".cyan().bold(),
+                self.args.assertion_contract
+            );
+            println!(
+                "Visit the Credible Layer DApp to link the assertion on-chain and enforce it:"
+            );
+            println!("  {}", "https://dapp.credible.layer".cyan().bold());
+        }
     }
 
     /// Builds and flattens the assertion source code.
@@ -173,12 +187,14 @@ impl DaStoreArgs {
     /// # Arguments
     /// * `config` - The configuration to update
     /// * `spinner` - The progress spinner to update
+    /// * `json_output` - Whether to output in JSON format
     fn update_config<A: ToString, S: ToString>(
         &self,
         config: &mut CliConfig,
         assertion_id: A,
         signature: S,
         spinner: &ProgressBar,
+        json_output: bool,
     ) {
         let assertion_for_submission = AssertionForSubmission {
             assertion_contract: self.args.assertion_contract.to_string(),
@@ -187,9 +203,12 @@ impl DaStoreArgs {
         };
 
         config.add_assertion_for_submission(assertion_for_submission.clone());
-        spinner.finish_with_message("✅ Assertion successfully submitted!");
 
-        self.display_success_info(&assertion_for_submission);
+        if !json_output {
+            spinner.finish_with_message("✅ Assertion successfully submitted!");
+        }
+
+        self.display_success_info(&assertion_for_submission, json_output);
     }
 
     /// Executes the assertion storage process.
@@ -213,11 +232,19 @@ impl DaStoreArgs {
     /// * Returns `DaSubmitError` if there are authentication issues
     pub async fn run(
         &self,
-        _cli_args: &CliArgs,
+        cli_args: &CliArgs,
         config: &mut CliConfig,
     ) -> Result<(), DaSubmitError> {
-        let spinner = Self::create_spinner();
-        spinner.set_message("Submitting assertion to DA...");
+        let json_output = cli_args.json_output();
+        let spinner = if json_output {
+            ProgressBar::hidden()
+        } else {
+            Self::create_spinner()
+        };
+
+        if !json_output {
+            spinner.set_message("Submitting assertion to DA...");
+        }
 
         let build_output = self.build_and_flatten_assertion().await?;
         let client = self
@@ -229,6 +256,7 @@ impl DaStoreArgs {
             submission_response.id,
             &submission_response.signature,
             &spinner,
+            json_output,
         );
 
         Ok(())
@@ -241,6 +269,7 @@ mod tests {
     use crate::config::UserAuth;
     use alloy_primitives::Address;
     use chrono::DateTime;
+    use clap::Parser;
     use mockito::Server;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -301,7 +330,8 @@ mod tests {
         };
 
         // This test just ensures the function doesn't panic
-        args.display_success_info(&assertion);
+        args.display_success_info(&assertion, false);
+        args.display_success_info(&assertion, true);
     }
 
     #[tokio::test]
@@ -321,6 +351,31 @@ mod tests {
         };
 
         let cli_args = CliArgs::default();
+        let result = args.run(&cli_args, &mut config).await;
+        assert!(result.is_ok());
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_run_with_auth_json_output() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/submit_assertion")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"id": "test_id", "signature": "test_signature"}"#)
+            .create();
+
+        let mut config = create_test_config();
+        let args = DaStoreArgs {
+            url: server.url(),
+            args: create_test_build_args(),
+        };
+
+        // Create CLI args with JSON output enabled
+        let cli_args = CliArgs::parse_from(["test", "--json"]);
+        assert!(cli_args.json_output());
+
         let result = args.run(&cli_args, &mut config).await;
         assert!(result.is_ok());
         mock.assert();
@@ -420,7 +475,7 @@ mod tests {
         let mut config = CliConfig::default();
         let spinner = DaStoreArgs::create_spinner();
 
-        args.update_config(&mut config, "test_id", "test_signature", &spinner);
+        args.update_config(&mut config, "test_id", "test_signature", &spinner, false);
 
         assert_eq!(config.assertions_for_submission.len(), 1);
         let assertion = config
