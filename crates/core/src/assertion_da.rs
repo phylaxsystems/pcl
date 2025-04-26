@@ -103,7 +103,7 @@ impl DaStoreArgs {
         } else {
             println!("\n\n{}", "Assertion Information".bold().green());
             println!("{}", "===================".green());
-            println!("{}", assertion);
+            println!("{assertion}");
 
             println!("\n{}", "Next Steps:".bold());
             println!("Submit this assertion to a project with:");

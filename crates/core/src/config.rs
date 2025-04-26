@@ -53,7 +53,7 @@ impl ConfigArgs {
     pub fn run(&self, config: &mut CliConfig) -> Result<(), ConfigError> {
         match self.command {
             ConfigCommand::Show => {
-                println!("{}", config);
+                println!("{config}");
                 Ok(())
             }
             ConfigCommand::Delete => {
@@ -106,7 +106,7 @@ impl CliConfig {
             std::fs::create_dir_all(dir).map_err(|e| {
                 ConfigError::WriteError(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
-                    format!("Failed to create config directory: {}", e),
+                    format!("Failed to create config directory: {e}"),
                 ))
             })?;
         }
@@ -116,7 +116,7 @@ impl CliConfig {
         std::fs::write(&temp_file, "").map_err(|e| {
             ConfigError::WriteError(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
-                format!("No write permissions in config directory: {}", e),
+                format!("No write permissions in config directory: {e}"),
             ))
         })?;
         std::fs::remove_file(&temp_file).ok(); // Clean up test file
@@ -136,7 +136,7 @@ impl CliConfig {
             let metadata = std::fs::metadata(file).map_err(|e| {
                 ConfigError::WriteError(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
-                    format!("Failed to check file permissions: {}", e),
+                    format!("Failed to check file permissions: {e}"),
                 ))
             })?;
 
@@ -177,7 +177,7 @@ impl CliConfig {
         let metadata = std::fs::metadata(&config_file).map_err(|e| {
             ConfigError::ReadError(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
-                format!("Failed to check file permissions: {}", e),
+                format!("Failed to check file permissions: {e}"),
             ))
         })?;
 
@@ -186,7 +186,7 @@ impl CliConfig {
             std::fs::read_to_string(&config_file).map_err(|e| {
                 ConfigError::ReadError(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
-                    format!("No read permissions for config file: {}", e),
+                    format!("No read permissions for config file: {e}"),
                 ))
             })?;
         }
@@ -227,7 +227,7 @@ impl fmt::Display for CliConfig {
         writeln!(f, "Config path: {}", config_path.display())?;
 
         match &self.auth {
-            Some(auth) => writeln!(f, "{}", auth)?,
+            Some(auth) => writeln!(f, "{auth}")?,
             None => writeln!(f, "Authentication: Not authenticated")?,
         }
         if !self.assertions_for_submission.is_empty() {
@@ -386,7 +386,7 @@ mod tests {
         );
 
         // Test display format without colors
-        let formatted_cfg = format!("{}", read_config);
+        let formatted_cfg = format!("{read_config}");
         let expected_cfg = format!(
             r"PCL Configuration
 ==================
@@ -449,7 +449,7 @@ Contract: contract1
             expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(), // 2022-12-31 16:00:00 UTC
         };
 
-        let display = format!("{}", auth);
+        let display = format!("{auth}");
         assert!(display.contains("User Address: 0x0000000000000000000000000000000000000000"));
         assert!(display.contains("Token Expired at"));
         assert!(display.contains("Access Token: [Set]"));
@@ -464,7 +464,7 @@ Contract: contract1
             signature: "test_signature".to_string(),
         };
 
-        let display = format!("{}", assertion);
+        let display = format!("{assertion}");
         assert!(display.contains("Contract: test_contract"));
         assert!(display.contains("ID: test_id"));
         assert!(display.contains("Signature: test_signa..."));
@@ -531,7 +531,7 @@ Contract: contract1
     #[test]
     fn test_display_empty_config() {
         let config = CliConfig::default();
-        let display = format!("{}", config);
+        let display = format!("{config}");
         assert!(display.contains("Not authenticated"));
         assert!(display.contains("No pending assertions for submission"));
     }
@@ -550,7 +550,7 @@ Contract: contract1
             signature: "sig2".to_string(),
         });
 
-        let display = format!("{}", config);
+        let display = format!("{config}");
         assert!(display.contains("Assertion #1"));
         assert!(display.contains("Assertion #2"));
         assert!(display.contains("contract1"));

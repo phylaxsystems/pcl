@@ -5,7 +5,7 @@ use forge::{
     opts::{Forge, ForgeSubcommand},
 };
 use foundry_cli::{
-    opts::{BuildOpts, GlobalArgs, ProjectPathOpts},
+    opts::{BuildOpts, ProjectPathOpts},
     utils::LoadConfig,
 };
 use foundry_common::{
