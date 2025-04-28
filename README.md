@@ -30,33 +30,10 @@ The Phylax Credible CLI (PCL) is a command-line interface for interacting with t
 
 ## Installation
 
-### Prerequisites
+### Install from Source
 
-- `Rust >= 1.80`
-- `git`
-
-### Build from Source
-
-1. Clone the repository:
-
-   ```bash
-   git clone https://github.com/phylaxsystems/pcl.git
-   cd pcl
-   ```
-
-2. Build the CLI:
-
-   ```bash
-   make build
-   ```
-
-3. The compiled binary will be available in the `target/release` directory.
-
-4. (Optional) Add to your PATH:
-
-   ```bash
-   export PATH="$PATH:$(pwd)/target/release"
-   ```
+1. It requires Rust >= 1.80
+2. Run `cargo install --git https://github.com/phylaxsystems/pcl`
 
 ## Usage Guide
 
