@@ -1,4 +1,5 @@
 use clap::{command, Parser};
+use color_eyre::eyre::Report;
 use color_eyre::Result;
 use pcl_common::args::CliArgs;
 use pcl_core::{
@@ -8,7 +9,6 @@ use pcl_core::{
     config::{CliConfig, ConfigArgs},
 };
 use pcl_phoundry::phorge::PhorgeTest;
-use color_eyre::eyre::Report;
 use serde_json::json;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -18,7 +18,6 @@ const VERSION_MESSAGE: &str = concat!(
     "\nBuild Timestamp: ",
     env!("VERGEN_BUILD_TIMESTAMP"),
 );
-
 
 #[derive(Parser)]
 #[command(
@@ -88,18 +87,21 @@ async fn main() -> Result<()> {
 
     if let Err(err) = result {
         if cli.args.json_output() {
-            eprintln!("{}", json!({
-                "status": "error",
-                "error": {
-                    "message": err.to_string(),
-                }
-            }));
+            eprintln!(
+                "{}",
+                json!({
+                    "status": "error",
+                    "error": {
+                        "message": err.to_string(),
+                    }
+                })
+            );
             std::process::exit(1);
         } else {
             return Err(err);
         }
     }
-    
+
     Ok(())
 }
 
