@@ -8,7 +8,11 @@ use foundry_cli::{
     opts::{BuildOpts, ProjectPathOpts},
     utils::LoadConfig,
 };
-use foundry_common::compile::ProjectCompiler;
+use foundry_common::{
+    compile::ProjectCompiler,
+    shell::{ColorChoice, OutputFormat, OutputMode, Verbosity},
+    Shell,
+};
 use foundry_compilers::{
     flatten::{Flattener, FlattenerError},
     info::ContractInfo,
@@ -83,6 +87,13 @@ impl BuildAndFlattenArgs {
     /// - `Ok(BuildAndFlatOutput)` containing the compiler version and flattened source
     /// - `Err(PhoundryError)` if any step in the process fails
     pub fn run(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
+        let shell = Shell::new_with(
+            OutputFormat::Text,
+            OutputMode::Quiet,
+            ColorChoice::Auto,
+            Verbosity::default(),
+        );
+        shell.set();
         foundry_cli::utils::load_dotenv();
         foundry_cli::utils::subscriber();
         let build = self.build()?;

@@ -271,7 +271,7 @@ impl AuthCommand {
         } else {
             ("❌".red(), "Not logged in".to_string())
         };
-        println!("{} {}", icon, message);
+        println!("{icon} {message}");
         Ok(())
     }
 }
@@ -340,7 +340,7 @@ mod tests {
         let result = cmd.update_config(&mut config, status, &auth_response);
 
         if let Err(e) = &result {
-            println!("Error: {:?}", e);
+            println!("Error: {e:?}");
         }
         assert!(result.is_ok());
         assert!(config.auth.is_some());

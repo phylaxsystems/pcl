@@ -188,7 +188,7 @@ impl DappSubmitArgs {
                 if exists {
                     Ok(key.to_string())
                 } else {
-                    println!("{} does not exist", key);
+                    println!("{key} does not exist");
                     let choice = Select::new(message.as_str(), values)
                         .prompt()
                         .map_err(|_| DappSubmitError::ProjectSelectionCancelled)?;
