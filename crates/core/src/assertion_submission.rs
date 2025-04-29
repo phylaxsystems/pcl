@@ -111,6 +111,12 @@ impl DappSubmitArgs {
 
         self.submit_assertion(project, &assertions, config).await?;
 
+        println!(
+            "Successfully submitted {} assertions to project {}",
+            assertions.len(),
+            project.project_name
+        );
+
         Ok(())
     }
 
