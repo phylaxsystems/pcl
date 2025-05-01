@@ -567,7 +567,7 @@ Contract: contract1
         let assertion = AssertionForSubmission {
             assertion_contract: "test_contract".to_string(),
             assertion_id: "test_id".to_string(),
-            signature: "test_signature".to_string().into(),
+            signature: "test_signature".to_string(),
             constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 

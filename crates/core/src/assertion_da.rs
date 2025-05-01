@@ -181,7 +181,7 @@ impl DaStoreArgs {
             .collect::<Vec<_>>()
             .join(",");
 
-        let constructor_signature = format!("constructor({})", joined_inputs);
+        let constructor_signature = format!("constructor({joined_inputs})");
 
         match client
             .submit_assertion_with_args(
