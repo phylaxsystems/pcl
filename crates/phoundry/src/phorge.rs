@@ -21,6 +21,9 @@ use foundry_compilers::{
     utils::source_files_iter,
     Language, ProjectCompileOutput,
 };
+
+use alloy_json_abi::JsonAbi;
+
 use foundry_config::{error::ExtractConfigError, find_project_root};
 use std::path::PathBuf;
 use tokio::task::spawn_blocking;
@@ -44,14 +47,17 @@ pub struct BuildAndFlatOutput {
     pub compiler_version: String,
     /// Flattened source code of the contract
     pub flattened_source: String,
+    /// Abi of the contract
+    pub abi: JsonAbi,
 }
 
 impl BuildAndFlatOutput {
     /// Creates a new BuildAndFlatOutput instance.
-    pub fn new(compiler_version: String, flattened_source: String) -> Self {
+    pub fn new(compiler_version: String, flattened_source: String, abi: JsonAbi) -> Self {
         Self {
             compiler_version,
             flattened_source,
+            abi,
         }
     }
 }
@@ -74,9 +80,6 @@ pub struct BuildAndFlattenArgs {
     #[clap(help = "Name of the assertion contract to build and flatten")]
     pub assertion_contract: String,
 
-    /// Constructor arguments for the assertion contract
-    #[clap(help = "Constructor arguments for the assertion contract")]
-    pub constructor_args: Vec<String>,
 }
 
 impl BuildAndFlattenArgs {
@@ -103,6 +106,9 @@ impl BuildAndFlattenArgs {
         let artifact = build
             .find_contract(info)
             .ok_or_else(|| PhoundryError::ContractNotFound(self.assertion_contract.clone()))?;
+
+        let abi = artifact.abi.clone()
+            .ok_or_else(|| PhoundryError::InvalidForgeOutput("Failed to parse ABI from artifact"))?;
 
         // Extract metadata and compiler version
         let metadata = artifact
@@ -142,7 +148,7 @@ impl BuildAndFlattenArgs {
 
         // Flatten the contract
         let flattened = self.flatten(&path)?;
-        Ok(BuildAndFlatOutput::new(solc_version, flattened))
+        Ok(BuildAndFlatOutput::new(solc_version, flattened, abi))
     }
 
     /// Builds the project and returns the compilation output.
@@ -307,17 +313,15 @@ contract TestContract {
         let args = BuildAndFlattenArgs {
             root: None,
             assertion_contract: "TestContract".to_string(),
-            constructor_args: vec![],
         };
 
         assert_eq!(args.assertion_contract, "TestContract");
         assert!(args.root.is_none());
-        assert!(args.constructor_args.is_empty());
     }
 
     #[test]
     fn test_build_and_flat_output_new() {
-        let output = BuildAndFlatOutput::new("0.8.0".to_string(), "contract Test { }".to_string());
+        let output = BuildAndFlatOutput::new("0.8.0".to_string(), "contract Test { }".to_string(), JsonAbi::default());
 
         assert_eq!(output.compiler_version, "0.8.0");
         assert_eq!(output.flattened_source, "contract Test { }");
@@ -330,7 +334,6 @@ contract TestContract {
         let args = BuildAndFlattenArgs {
             root: Some(project_root),
             assertion_contract: "TestContract".to_string(),
-            constructor_args: vec![],
         };
 
         let result = args.run();

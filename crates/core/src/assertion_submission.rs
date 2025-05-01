@@ -1,5 +1,5 @@
 use crate::{
-    config::{AssertionForSubmission, CliConfig},
+    config::{AssertionForSubmission, CliConfig, AssertionKey},
     error::DappSubmitError,
 };
 use clap::ValueHint;
@@ -53,14 +53,15 @@ pub struct DappSubmitArgs {
     )]
     project_name: Option<String>,
 
-    /// Optional list of assertion names to skip interactive selection
+    /// Optional list of assertion name and constructor args to skip interactive selection
+    /// Format: "["assertion_name", "assertion_name(constructor_arg0,constructor_arg1)"]"
     #[clap(
         long,
         short = 'a',
-        value_name = "ASSERTION",
+        value_name = "ASSERTION_KEYS",
         value_hint = ValueHint::Other,
     )]
-    assertion_name: Option<Vec<String>>,
+    assertion_keys: Option<Vec<AssertionKey>>,
 }
 
 impl DappSubmitArgs {
@@ -78,10 +79,10 @@ impl DappSubmitArgs {
         config: &mut CliConfig,
     ) -> Result<(), DappSubmitError> {
         let projects = self.get_projects(config).await?;
-        let assertions_for_submission = config
+        let assertion_keys_for_submission = config
             .assertions_for_submission
-            .values()
-            .map(|a| a.assertion_contract.clone())
+            .keys()
+            .map(|k| k.to_string())
             .collect();
 
         let project_name = self.provide_or_select(
@@ -94,17 +95,19 @@ impl DappSubmitArgs {
             .find(|p| p.project_name == project_name)
             .unwrap(); // Safe to unwrap since it should be selected from the list
 
-        let assertion_names = self.provide_or_multi_select(
-            self.assertion_name.clone(),
-            assertions_for_submission,
+
+
+        let assertion_keys = self.provide_or_multi_select(
+            self.assertion_keys.clone().map(|keys| keys.iter().map(|k| k.to_string()).collect()),
+            assertion_keys_for_submission,
             "Select an assertion to submit:".to_string(),
         )?;
         let mut assertions = vec![];
-        for name in assertion_names {
+        for key in assertion_keys {
             let assertion = config
                 .assertions_for_submission
-                .remove(&name)
-                .ok_or(DappSubmitError::CouldNotFindStoredAssertion(name.clone()))?;
+                .remove(&key.clone().into())
+                .ok_or(DappSubmitError::CouldNotFindStoredAssertion(key.clone()))?;
 
             assertions.push(assertion);
         }
@@ -266,7 +269,7 @@ mod tests {
         let args = DappSubmitArgs {
             dapp_url: "".to_string(),
             project_name: Some("Project1".to_string()),
-            assertion_name: None,
+            assertion_keys: None,
         };
 
         let values = vec!["Project1".to_string(), "Project2".to_string()];

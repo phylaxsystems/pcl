@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use clap::Parser;
 use colored::Colorize;
 use dirs::home_dir;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer, de::{self, Visitor}, Deserializer};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -23,7 +23,104 @@ pub struct CliConfig {
     /// Optional authentication details
     pub auth: Option<UserAuth>,
     /// Map of assertions pending submission, keyed by contract name
-    pub assertions_for_submission: HashMap<String, AssertionForSubmission>,
+    pub assertions_for_submission: HashMap<AssertionKey, AssertionForSubmission>,
+}
+
+/// Key structure for assertions, used in the configuration map for storing assertions
+#[derive(Clone, Debug, Default, Hash, Eq, PartialEq)]
+pub struct AssertionKey {
+    pub assertion_name: String,
+    pub constructor_args: Vec<String>,
+}
+impl fmt::Display for AssertionKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.assertion_name)?;
+
+        if !self.constructor_args.is_empty() {
+            write!(f, "(")?;
+            write!(f, "{}", self.constructor_args.join(","))?;
+            write!(f, ")")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl From<String> for AssertionKey {
+    fn from(assertion_key: String) -> Self {
+        if !assertion_key.contains('(') {
+            return Self {
+                assertion_name: assertion_key,
+                constructor_args: vec![],
+            };
+        }
+
+        let (assertion_name, mut args) = assertion_key
+            .split_once('(')
+            .expect("Invalid assertion key");
+
+        args = args.trim_end_matches(')');
+
+        if args.is_empty() {
+            return Self {
+                assertion_name: assertion_name.to_string(),
+                constructor_args: vec![],
+            };
+        }
+
+        let constructor_args = args.split(',').map(|arg| arg.to_string()).collect();
+
+        Self {
+            assertion_name: assertion_name.to_string(),
+            constructor_args,
+        }
+    }
+}
+// Custom Serialize implementation
+impl Serialize for AssertionKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Convert AssertionKey to string using Display implementation
+        let s = self.to_string();
+        serializer.serialize_str(&s)
+    }
+}
+
+// Custom Deserialize implementation
+impl<'de> Deserialize<'de> for AssertionKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Use a visitor to deserialize the string
+        struct AssertionKeyVisitor;
+
+        impl<'de> Visitor<'de> for AssertionKeyVisitor {
+            type Value = AssertionKey;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a string in format 'name' or 'name(arg1,arg2,...)'")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<AssertionKey, E>
+            where
+                E: de::Error,
+            {
+                Ok(AssertionKey::from(value.to_string()))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<AssertionKey, E>
+            where
+                E: de::Error,
+            {
+                Ok(AssertionKey::from(value))
+            }
+        }
+
+        deserializer.deserialize_string(AssertionKeyVisitor)
+    }
 }
 
 /// Command-line arguments for configuration management
@@ -211,10 +308,12 @@ impl CliConfig {
         &mut self,
         assertion_for_submission: AssertionForSubmission,
     ) {
-        self.assertions_for_submission.insert(
-            assertion_for_submission.assertion_contract.clone(),
-            assertion_for_submission,
-        );
+        let assertion_key = AssertionKey {
+            assertion_name: assertion_for_submission.assertion_contract.clone(),
+            constructor_args: assertion_for_submission.constructor_args.clone(),
+        };
+        self.assertions_for_submission
+            .insert(assertion_key, assertion_for_submission);
     }
 }
 
@@ -287,6 +386,8 @@ pub struct AssertionForSubmission {
     pub assertion_id: String,
     /// Cryptographic signature of the assertion
     pub signature: String,
+    /// Constructor arguments for the assertion
+    pub constructor_args: Vec<String>,
 }
 
 impl fmt::Display for AssertionForSubmission {
@@ -347,11 +448,12 @@ mod tests {
                 expires_at: fixed_timestamp,
             }),
             assertions_for_submission: vec![(
-                "contract1".to_string(),
+                "contract1".to_string().into(),
                 AssertionForSubmission {
                     assertion_contract: "contract1".to_string(),
                     assertion_id: "id1".to_string(),
                     signature: "sig1".to_string(),
+                    constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
                 },
             )]
             .into_iter()
@@ -359,7 +461,7 @@ mod tests {
         };
 
         // Test writing
-        assert!(config.write_to_file_at_dir(config_dir.clone()).is_ok());
+        config.write_to_file_at_dir(config_dir.clone()).unwrap();
 
         // Test reading
         let read_config = CliConfig::read_from_file_at_dir(config_dir.clone()).unwrap();
@@ -379,7 +481,7 @@ mod tests {
         assert_eq!(
             read_config
                 .assertions_for_submission
-                .get("contract1")
+                .get(&("contract1".to_string().into()))
                 .unwrap()
                 .assertion_contract,
             "contract1"
@@ -427,6 +529,7 @@ Contract: contract1
             assertion_contract: "test_contract".to_string(),
             assertion_id: "test_id".to_string(),
             signature: "test_signature".to_string(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 
         config.add_assertion_for_submission(assertion.clone());
@@ -434,7 +537,7 @@ Contract: contract1
         assert_eq!(
             config
                 .assertions_for_submission
-                .get("test_contract")
+                .get(&("test_contract(arg1,arg2)".to_string().into()))
                 .unwrap(),
             &assertion
         );
@@ -461,7 +564,8 @@ Contract: contract1
         let assertion = AssertionForSubmission {
             assertion_contract: "test_contract".to_string(),
             assertion_id: "test_id".to_string(),
-            signature: "test_signature".to_string(),
+            signature: "test_signature".to_string().into(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 
         let display = format!("{assertion}");
@@ -543,11 +647,13 @@ Contract: contract1
             assertion_contract: "contract1".to_string(),
             assertion_id: "id1".to_string(),
             signature: "sig1".to_string(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         });
         config.add_assertion_for_submission(AssertionForSubmission {
             assertion_contract: "contract2".to_string(),
             assertion_id: "id2".to_string(),
             signature: "sig2".to_string(),
+            constructor_args: vec!["arg3".to_string(), "arg4".to_string()],
         });
 
         let display = format!("{config}");
@@ -581,6 +687,7 @@ Contract: contract1
             assertion_contract: "test_contract".to_string(),
             assertion_id: "test_id".to_string(),
             signature: "test_signature".to_string(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 
         let serialized = toml::to_string(&assertion).unwrap();
@@ -675,5 +782,31 @@ Contract: contract1
         let (config_dir, _temp_dir) = setup_config_dir();
         let config = CliConfig::default();
         assert!(config.write_to_file_at_dir(config_dir).is_ok());
+    }
+
+    #[test]
+    fn test_assertion_key_from_string() {
+        let assertion_key_str = "assertion_name(arg1,arg2)".to_string();
+        let assertion_key = AssertionKey::from(assertion_key_str.clone());
+
+        assert_eq!(assertion_key.assertion_name, "assertion_name");
+        println!("{:?}", assertion_key.constructor_args);
+        assert_eq!(
+            assertion_key.constructor_args,
+            vec!["arg1".to_string(), "arg2".to_string()]
+        );
+        assert_eq!(assertion_key.to_string(), assertion_key_str);
+
+        let assertion_key_str = "assertion_name()".to_string();
+        let assertion_key = AssertionKey::from(assertion_key_str);
+        assert_eq!(assertion_key.assertion_name, "assertion_name");
+        assert_eq!(assertion_key.constructor_args, <Vec<String>>::new());
+
+        let assertion_key_str = "assertion_name".to_string();
+
+        let assertion_key = AssertionKey::from(assertion_key_str.clone());
+        assert_eq!(assertion_key.assertion_name, "assertion_name");
+        assert_eq!(assertion_key.constructor_args, <Vec<String>>::new());
+        assert_eq!(assertion_key.to_string(), assertion_key_str);
     }
 }

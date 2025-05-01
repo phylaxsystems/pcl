@@ -8,7 +8,7 @@ install:
  
 # Build the contract mocks and run the rust tests
 test:
-	cargo nextest run --all-features --workspace --locked --no-tests=warn
+	cargo nextest run --all-features --workspace --locked 
 
 # Validate formatting
 format-check:
