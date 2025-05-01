@@ -18,7 +18,7 @@ use jsonrpsee_core::client::Error as ClientError;
 use jsonrpsee_http_client::transport::Error as TransportError;
 
 use crate::{
-    config::{AssertionForSubmission, CliConfig},
+    config::{AssertionForSubmission, CliConfig, AssertionKey},
     error::DaSubmitError,
 };
 
@@ -111,10 +111,16 @@ impl DaStoreArgs {
 
             println!("\n{}", "Next Steps:".bold());
             println!("Submit this assertion to a project with:");
+
+            let assertion_key = AssertionKey {
+                assertion_name: assertion.assertion_contract.clone(),
+                constructor_args: assertion.constructor_args.clone(),
+            };
+
             println!(
                 "  {} submit -a {} -p <project_name>",
                 "pcl".cyan().bold(),
-                self.args.assertion_contract
+                assertion_key
             );
             println!(
                 "Visit the Credible Layer DApp to link the assertion on-chain and enforce it:"
