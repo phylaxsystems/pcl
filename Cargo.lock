@@ -1558,10 +1558,10 @@ dependencies = [
 [[package]]
 name = "assertion-da-client"
 version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?branch=feat/client-auth#7c62d9044772073e87683d860944724b11ed4948"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=429200f#429200f35e563a5e840e477b0f57399110f4f39f"
 dependencies = [
  "alloy",
- "assertion-da-core 0.1.0 (git+ssh://git@github.com/phylaxsystems/assertion-da.git?branch=feat/client-auth)",
+ "assertion-da-core 0.1.0 (git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=429200f)",
  "http",
  "jsonrpsee",
  "serde_json",
@@ -1586,7 +1586,7 @@ dependencies = [
 [[package]]
 name = "assertion-da-core"
 version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?branch=feat/client-auth#7c62d9044772073e87683d860944724b11ed4948"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=429200f#429200f35e563a5e840e477b0f57399110f4f39f"
 dependencies = [
  "alloy",
  "serde",
@@ -7571,7 +7571,7 @@ name = "pcl-core"
 version = "0.0.1"
 dependencies = [
  "alloy-primitives",
- "assertion-da-client 0.1.0 (git+ssh://git@github.com/phylaxsystems/assertion-da.git?branch=feat/client-auth)",
+ "assertion-da-client 0.1.0 (git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=429200f)",
  "chrono",
  "clap",
  "color-eyre",
@@ -7597,6 +7597,7 @@ dependencies = [
 name = "pcl-phoundry"
 version = "0.0.1"
 dependencies = [
+ "alloy-json-abi",
  "clap",
  "color-eyre",
  "forge",

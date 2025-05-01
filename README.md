@@ -112,14 +112,16 @@ Display options:
 #### Store Assertions in Data Availability Layer
 
 ```bash
-pcl store [OPTIONS] <ASSERTION>
+pcl store [OPTIONS] <ASSERTION_CONTRACT> [CONSTRUCTOR_ARGS]...
 
 Arguments:
-  <ASSERTION>  Name of the assertion contract to submit
+  <ASSERTION_CONTRACT>   Name of the assertion contract to build and flatten
+  [CONSTRUCTOR_ARGS]...  Constructor arguments for the assertion contract
 
 Options:
-      --url <URL>  URL of the assertion-DA [env: PCL_DA_URL=] [default: http://localhost:5001]
-  -h, --help       Print help
+  -u, --url <URL>        URL of the assertion-DA server [default: http://localhost:5001]
+  -r, --root <ROOT>      Root directory of the project
+  -h, --help             Print help (see a summary with '-h')
 ```
 
 #### Submit Assertions to dApps
@@ -130,7 +132,8 @@ pcl submit [OPTIONS]
 Options:
   -u, --dapp-url <DAPP_URL>                 Base URL for the Credible Layer dApp API [default: http://localhost:3003/api/v1]
   -p, --project-name <PROJECT_NAME>         Optional project name to skip interactive selection
-  -a, --assertion-name <ASSERTION_NAME>...  Optional list of assertion names to skip interactive selection
+  -a, --assertion-keys <ASSERTION_KEYS>     Optional list of assertion name and constructor args to skip interactive selection
+                                            Format: "["assertion_name","assertion_name(constructor_arg0,constructor_arg1)"]"
   -h, --help                                Print help
 ```
 

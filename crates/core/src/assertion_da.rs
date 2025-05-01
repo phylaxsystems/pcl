@@ -45,6 +45,10 @@ pub struct DaStoreArgs {
     /// Build and flatten arguments for the assertion
     #[clap(flatten)]
     args: BuildAndFlattenArgs,
+
+    /// Constructor arguments for the assertion contract
+    #[clap(help = "Constructor arguments for the assertion contract")]
+    constructor_args: Vec<String>,
 }
 
 impl DaStoreArgs {
@@ -158,11 +162,34 @@ impl DaStoreArgs {
         build_output: &BuildAndFlatOutput,
         spinner: &ProgressBar,
     ) -> Result<DaSubmissionResponse, DaSubmitError> {
+        let constructor_inputs = build_output
+            .abi
+            .constructor()
+            .map(|constructor| constructor.inputs.clone())
+            .unwrap_or_default();
+
+        if constructor_inputs.len() != self.constructor_args.len() {
+            return Err(DaSubmitError::InvalidConstructorArgs(
+                constructor_inputs.len(),
+                self.constructor_args.len(),
+            ));
+        }
+
+        let joined_inputs = constructor_inputs
+            .iter()
+            .map(|input| input.selector_type().clone())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let constructor_signature = format!("constructor({joined_inputs})");
+
         match client
-            .submit_assertion(
+            .submit_assertion_with_args(
                 self.args.assertion_contract.clone(),
                 build_output.flattened_source.clone(),
                 build_output.compiler_version.clone(),
+                constructor_signature,
+                self.constructor_args.clone(),
             )
             .await
         {
@@ -200,6 +227,7 @@ impl DaStoreArgs {
             assertion_contract: self.args.assertion_contract.to_string(),
             assertion_id: assertion_id.to_string(),
             signature: signature.to_string(),
+            constructor_args: self.constructor_args.clone(),
         };
 
         config.add_assertion_for_submission(assertion_for_submission.clone());
@@ -254,7 +282,7 @@ impl DaStoreArgs {
         self.update_config(
             config,
             submission_response.id,
-            &submission_response.signature,
+            &submission_response.prover_signature,
             &spinner,
             json_output,
         );
@@ -321,12 +349,14 @@ mod tests {
         let args = DaStoreArgs {
             url: "http://localhost:5001".to_string(),
             args: create_test_build_args(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 
         let assertion = AssertionForSubmission {
             assertion_contract: "test_assertion".to_string(),
             assertion_id: "test_id".to_string(),
             signature: "test_signature".to_string(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 
         // This test just ensures the function doesn't panic
@@ -348,6 +378,7 @@ mod tests {
         let args = DaStoreArgs {
             url: server.url(),
             args: create_test_build_args(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 
         let cli_args = CliArgs::default();
@@ -370,6 +401,7 @@ mod tests {
         let args = DaStoreArgs {
             url: server.url(),
             args: create_test_build_args(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 
         // Create CLI args with JSON output enabled
@@ -393,6 +425,7 @@ mod tests {
         let args = DaStoreArgs {
             url: server.url(),
             args: create_test_build_args(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 
         let cli_args = CliArgs::default();
@@ -413,6 +446,7 @@ mod tests {
         let args = DaStoreArgs {
             url: server.url(),
             args: create_test_build_args(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 
         let cli_args = CliArgs::default();
@@ -434,6 +468,7 @@ mod tests {
         let args = DaStoreArgs {
             url: "http://localhost:5001".to_string(),
             args: BuildAndFlattenArgs::default(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 
         let config = CliConfig {
@@ -455,6 +490,7 @@ mod tests {
         let args = DaStoreArgs {
             url: "http://localhost:5001".to_string(),
             args: BuildAndFlattenArgs::default(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 
         let config = CliConfig::default();
@@ -470,6 +506,7 @@ mod tests {
                 assertion_contract: "test_assertion".to_string(),
                 ..BuildAndFlattenArgs::default()
             },
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 
         let mut config = CliConfig::default();
@@ -478,10 +515,10 @@ mod tests {
         args.update_config(&mut config, "test_id", "test_signature", &spinner, false);
 
         assert_eq!(config.assertions_for_submission.len(), 1);
-        let assertion = config
-            .assertions_for_submission
-            .get("test_assertion")
-            .unwrap();
+
+        let expected_key = "test_assertion(arg1,arg2)".to_string().into();
+
+        let assertion = config.assertions_for_submission.get(&expected_key).unwrap();
         assert_eq!(assertion.assertion_contract, "test_assertion");
         assert_eq!(assertion.assertion_id, "test_id");
         assert_eq!(assertion.signature, "test_signature");
@@ -492,6 +529,7 @@ mod tests {
         let args = DaStoreArgs {
             url: "invalid-url".to_string(),
             args: BuildAndFlattenArgs::default(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
 
         let mut config = CliConfig::default();
@@ -512,6 +550,7 @@ mod tests {
         let args = DaStoreArgs {
             url: server.url(),
             args: BuildAndFlattenArgs::default(),
+            constructor_args: vec![],
         };
 
         let cli_args = CliArgs::default();

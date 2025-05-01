@@ -21,6 +21,9 @@ pub enum DaSubmitError {
     /// HTTP Error with status code
     #[error("HTTP Error: {0}")]
     HttpError(u16),
+    /// Invalid Constructor Args
+    #[error("Invalid Constructor Args Count: Constructor Signature expects: {0}, Constructor Args submitted: {1}")]
+    InvalidConstructorArgs(usize, usize),
 }
 
 impl From<Box<DaSubmitError>> for DaSubmitError {
