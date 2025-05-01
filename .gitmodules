@@ -1,10 +1,6 @@
 [submodule "credible-std"]
 	path = testdata/mock-protocol/lib/credible-std
 	url = https://github.com/phylaxsystems/credible-std
-[submodule "phoundry"]
-	path = phoundry
-	url = https://github.com/phylaxsystems/phoundry
-	branch = pcl
 [submodule "testdata/mock-protocol/lib/openzeppelin-contracts"]
 	path = testdata/mock-protocol/lib/openzeppelin-contracts
 	url = https://github.com/OpenZeppelin/openzeppelin-contracts
