@@ -1,5 +1,5 @@
 use crate::{
-    config::{AssertionForSubmission, CliConfig, AssertionKey},
+    config::{AssertionForSubmission, AssertionKey, CliConfig},
     error::DappSubmitError,
 };
 use clap::ValueHint;
@@ -95,10 +95,10 @@ impl DappSubmitArgs {
             .find(|p| p.project_name == project_name)
             .unwrap(); // Safe to unwrap since it should be selected from the list
 
-
-
         let assertion_keys = self.provide_or_multi_select(
-            self.assertion_keys.clone().map(|keys| keys.iter().map(|k| k.to_string()).collect()),
+            self.assertion_keys
+                .clone()
+                .map(|keys| keys.iter().map(|k| k.to_string()).collect()),
             assertion_keys_for_submission,
             "Select an assertion to submit:".to_string(),
         )?;

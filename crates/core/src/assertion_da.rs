@@ -162,8 +162,11 @@ impl DaStoreArgs {
         build_output: &BuildAndFlatOutput,
         spinner: &ProgressBar,
     ) -> Result<DaSubmissionResponse, DaSubmitError> {
-
-        let constructor_inputs = build_output.abi.constructor().map(|constructor| constructor.inputs.clone()).unwrap_or_default();
+        let constructor_inputs = build_output
+            .abi
+            .constructor()
+            .map(|constructor| constructor.inputs.clone())
+            .unwrap_or_default();
 
         if constructor_inputs.len() != self.constructor_args.len() {
             return Err(DaSubmitError::InvalidConstructorArgs(
@@ -178,8 +181,7 @@ impl DaStoreArgs {
             .collect::<Vec<_>>()
             .join(",");
 
-
-        let constructor_signature  = format!("constructor({})", joined_inputs);
+        let constructor_signature = format!("constructor({})", joined_inputs);
 
         match client
             .submit_assertion_with_args(
@@ -516,10 +518,7 @@ mod tests {
 
         let expected_key = "test_assertion(arg1,arg2)".to_string().into();
 
-        let assertion = config
-            .assertions_for_submission
-            .get(&expected_key)
-            .unwrap();
+        let assertion = config.assertions_for_submission.get(&expected_key).unwrap();
         assert_eq!(assertion.assertion_contract, "test_assertion");
         assert_eq!(assertion.assertion_id, "test_id");
         assert_eq!(assertion.signature, "test_signature");

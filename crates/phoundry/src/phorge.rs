@@ -79,7 +79,6 @@ pub struct BuildAndFlattenArgs {
     /// Name of the assertion contract to build and flatten
     #[clap(help = "Name of the assertion contract to build and flatten")]
     pub assertion_contract: String,
-
 }
 
 impl BuildAndFlattenArgs {
@@ -107,8 +106,9 @@ impl BuildAndFlattenArgs {
             .find_contract(info)
             .ok_or_else(|| PhoundryError::ContractNotFound(self.assertion_contract.clone()))?;
 
-        let abi = artifact.abi.clone()
-            .ok_or_else(|| PhoundryError::InvalidForgeOutput("Failed to parse ABI from artifact"))?;
+        let abi = artifact.abi.clone().ok_or_else(|| {
+            PhoundryError::InvalidForgeOutput("Failed to parse ABI from artifact")
+        })?;
 
         // Extract metadata and compiler version
         let metadata = artifact
@@ -321,7 +321,11 @@ contract TestContract {
 
     #[test]
     fn test_build_and_flat_output_new() {
-        let output = BuildAndFlatOutput::new("0.8.0".to_string(), "contract Test { }".to_string(), JsonAbi::default());
+        let output = BuildAndFlatOutput::new(
+            "0.8.0".to_string(),
+            "contract Test { }".to_string(),
+            JsonAbi::default(),
+        );
 
         assert_eq!(output.compiler_version, "0.8.0");
         assert_eq!(output.flattened_source, "contract Test { }");

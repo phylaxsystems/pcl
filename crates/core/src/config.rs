@@ -4,7 +4,10 @@ use chrono::{DateTime, Utc};
 use clap::Parser;
 use colored::Colorize;
 use dirs::home_dir;
-use serde::{Deserialize, Serialize, Serializer, de::{self, Visitor}, Deserializer};
+use serde::{
+    de::{self, Visitor},
+    Deserialize, Deserializer, Serialize, Serializer,
+};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
