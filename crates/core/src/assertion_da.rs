@@ -119,7 +119,7 @@ impl DaStoreArgs {
             };
 
             println!(
-                "  {} submit -a {} -p <project_name>",
+                "  {} submit -a '{}' -p <project_name>",
                 "pcl".cyan().bold(),
                 assertion_key
             );
