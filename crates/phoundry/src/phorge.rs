@@ -89,7 +89,6 @@ impl BuildAndFlattenArgs {
         let build = self.build()?;
         let info = ContractInfo::new(&self.assertion_contract);
 
-
         // Find the contract artifact
         let artifact = build
             .find_contract(info)
@@ -161,8 +160,7 @@ impl BuildAndFlattenArgs {
         let project = config.project().map_err(PhoundryError::SolcError)?;
         let contracts = project.sources_path();
 
-        match std::fs::read_dir(&contracts)
-            {
+        match std::fs::read_dir(contracts) {
             Ok(files) => {
                 // Check if the directory is empty
                 if files.count() == 0 {
@@ -170,10 +168,11 @@ impl BuildAndFlattenArgs {
                 }
             }
             Err(_) => {
-                return Err(Box::new(PhoundryError::DirectoryNotFound(contracts.to_path_buf())));
+                return Err(Box::new(PhoundryError::DirectoryNotFound(
+                    contracts.to_path_buf(),
+                )));
             }
         }
-
 
         let compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
@@ -182,7 +181,6 @@ impl BuildAndFlattenArgs {
             .ignore_eip_3860(build_cmd.ignore_eip_3860)
             .bail(false)
             .quiet(true);
-
 
         let res = compiler
             .compile(&project)

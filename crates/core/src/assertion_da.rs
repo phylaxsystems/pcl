@@ -18,7 +18,7 @@ use jsonrpsee_core::client::Error as ClientError;
 use jsonrpsee_http_client::transport::Error as TransportError;
 
 use crate::{
-    config::{AssertionForSubmission, CliConfig, AssertionKey},
+    config::{AssertionForSubmission, AssertionKey, CliConfig},
     error::DaSubmitError,
 };
 

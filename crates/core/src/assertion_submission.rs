@@ -250,7 +250,11 @@ impl DappSubmitArgs {
             .get(format!(
                 "{}/projects?user={}",
                 self.dapp_url,
-                config.auth.as_ref().ok_or(DappSubmitError::NoAuthToken)?.user_address
+                config
+                    .auth
+                    .as_ref()
+                    .ok_or(DappSubmitError::NoAuthToken)?
+                    .user_address
             ))
             .send()
             .await?
