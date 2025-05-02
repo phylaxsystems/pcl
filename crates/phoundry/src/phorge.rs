@@ -161,9 +161,9 @@ impl BuildAndFlattenArgs {
         let contracts = project.sources_path();
 
         match std::fs::read_dir(contracts) {
-            Ok(files) => {
+            Ok(mut files) => {
                 // Check if the directory is empty
-                if files.count() == 0 {
+                if files.next().is_none() {
                     return Err(Box::new(PhoundryError::NoSourceFilesFound));
                 }
             }
