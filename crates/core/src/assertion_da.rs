@@ -402,7 +402,7 @@ mod tests {
 
         let cli_args = CliArgs::default();
         let result = args.run(&cli_args, &mut config).await;
-        assert!(result.is_ok(), "Expected success but got: {:?}", result);
+        assert!(result.is_ok(), "Expected success but got: {result:?}");
         mock.assert();
     }
 
@@ -437,7 +437,7 @@ mod tests {
         assert!(cli_args.json_output());
 
         let result = args.run(&cli_args, &mut config).await;
-        assert!(result.is_ok(), "Expected success but got: {:?}", result);
+        assert!(result.is_ok(), "Expected success but got: {result:?}");
         mock.assert();
     }
 
@@ -475,7 +475,7 @@ mod tests {
 
         let cli_args = CliArgs::default();
         let result = args.run(&cli_args, &mut config).await;
-        assert!(result.is_err(), "Expected error but got: {:?}", result);
+        assert!(result.is_err(), "Expected error but got: {result:?}");
         mock.assert();
     }
 
@@ -587,7 +587,7 @@ mod tests {
         };
 
         let result = args.run(&cli_args, &mut config).await;
-        assert!(result.is_err(), "Expected error but got: {:?}", result);
+        assert!(result.is_err(), "Expected error but got: {result:?}");
         mock.assert();
     }
 }
