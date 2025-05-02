@@ -79,6 +79,8 @@ impl DappSubmitArgs {
         config: &mut CliConfig,
     ) -> Result<(), DappSubmitError> {
         let projects = self.get_projects(config).await?;
+        println!("Found {}", projects);
+
         let assertion_keys_for_submission = config
             .assertions_for_submission
             .keys()
