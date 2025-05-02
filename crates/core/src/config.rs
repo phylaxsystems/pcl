@@ -397,6 +397,7 @@ impl fmt::Display for AssertionForSubmission {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Contract: {}", self.assertion_contract)?;
         writeln!(f, "  ID: {}", self.assertion_id)?;
+        writeln!(f, "  Constructor Args: {}", self.constructor_args.join(","))?;
         write!(
             f,
             "  Signature: {}...",
@@ -508,6 +509,7 @@ Pending Assertions for Submission
 Assertion #1:
 Contract: contract1
   ID: id1
+  Constructor Args: arg1,arg2
   Signature: sig1...
 ",
             config_dir.join(CONFIG_FILE).display()

@@ -8,18 +8,12 @@ use foundry_cli::{
     opts::{BuildOpts, ProjectPathOpts},
     utils::LoadConfig,
 };
-use foundry_common::{
-    compile::ProjectCompiler,
-    shell::{ColorChoice, OutputFormat, OutputMode, Verbosity},
-    Shell,
-};
+use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     flatten::{Flattener, FlattenerError},
     info::ContractInfo,
-    multi::MultiCompilerLanguage,
     solc::SolcLanguage,
-    utils::source_files_iter,
-    Language, ProjectCompileOutput,
+    ProjectCompileOutput,
 };
 
 use alloy_json_abi::JsonAbi;
@@ -89,15 +83,9 @@ impl BuildAndFlattenArgs {
     /// - `Ok(BuildAndFlatOutput)` containing the compiler version and flattened source
     /// - `Err(PhoundryError)` if any step in the process fails
     pub fn run(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
-        let shell = Shell::new_with(
-            OutputFormat::Text,
-            OutputMode::Quiet,
-            ColorChoice::Auto,
-            Verbosity::default(),
-        );
-        shell.set();
         foundry_cli::utils::load_dotenv();
         foundry_cli::utils::subscriber();
+
         let build = self.build()?;
         let info = ContractInfo::new(&self.assertion_contract);
 
@@ -170,30 +158,30 @@ impl BuildAndFlattenArgs {
         let config = build_cmd.load_config()?;
 
         let project = config.project().map_err(PhoundryError::SolcError)?;
+        let contracts = project.sources_path();
 
-        // Collect sources to compile if build subdirectories specified.
-        let mut files = vec![];
-        if let Some(paths) = &build_cmd.paths {
-            for path in paths {
-                let joined = project.root().join(path);
-                let path = if joined.exists() { &joined } else { path };
-                files.extend(source_files_iter(
-                    path,
-                    MultiCompilerLanguage::FILE_EXTENSIONS,
-                ));
+        match std::fs::read_dir(contracts) {
+            Ok(mut files) => {
+                // Check if the directory is empty
+                if files.next().is_none() {
+                    return Err(Box::new(PhoundryError::NoSourceFilesFound));
+                }
             }
-            if files.is_empty() {
-                return Err(Box::new(PhoundryError::NoSourceFilesFound));
+            Err(_) => {
+                return Err(Box::new(PhoundryError::DirectoryNotFound(
+                    contracts.to_path_buf(),
+                )));
             }
         }
 
         let compiler = ProjectCompiler::new()
-            .files(files)
             .dynamic_test_linking(config.dynamic_test_linking)
             .print_names(build_cmd.names)
             .print_sizes(build_cmd.sizes)
             .ignore_eip_3860(build_cmd.ignore_eip_3860)
-            .bail(true);
+            .bail(true)
+            .quiet(true);
+
         let res = compiler
             .compile(&project)
             .map_err(PhoundryError::CompilationError)?;

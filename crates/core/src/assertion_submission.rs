@@ -10,7 +10,7 @@ use serde_json::json;
 
 // TODO(Odysseas) Add tests for the Dapp submission + Rust bindings from the Dapp API
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 #[allow(dead_code)]
 struct Project {
     project_id: String,
@@ -54,7 +54,7 @@ pub struct DappSubmitArgs {
     project_name: Option<String>,
 
     /// Optional list of assertion name and constructor args to skip interactive selection
-    /// Format: "["assertion_name", "assertion_name(constructor_arg0,constructor_arg1)"]"
+    /// Format: assertion_name OR 'assertion_name(constructor_arg0,constructor_arg1)'
     #[clap(
         long,
         short = 'a',
@@ -79,6 +79,7 @@ impl DappSubmitArgs {
         config: &mut CliConfig,
     ) -> Result<(), DappSubmitError> {
         let projects = self.get_projects(config).await?;
+
         let assertion_keys_for_submission = config
             .assertions_for_submission
             .keys()
@@ -249,7 +250,11 @@ impl DappSubmitArgs {
             .get(format!(
                 "{}/projects?user={}",
                 self.dapp_url,
-                config.auth.as_ref().unwrap().user_address
+                config
+                    .auth
+                    .as_ref()
+                    .ok_or(DappSubmitError::NoAuthToken)?
+                    .user_address
             ))
             .send()
             .await?
