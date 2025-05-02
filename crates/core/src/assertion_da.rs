@@ -333,8 +333,6 @@ mod tests {
         BuildAndFlattenArgs {
             assertion_contract: "MockAssertion".to_string(),
             root: Some("../../testdata/mock-protocol".parse().unwrap()),
-            // Add other required fields
-            ..BuildAndFlattenArgs::default()
         }
     }
 
