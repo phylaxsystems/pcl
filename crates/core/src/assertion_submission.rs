@@ -54,7 +54,7 @@ pub struct DappSubmitArgs {
     project_name: Option<String>,
 
     /// Optional list of assertion name and constructor args to skip interactive selection
-    /// Format: 'assertion_name' OR 'assertion_name(constructor_arg0,constructor_arg1)'
+    /// Format: assertion_name OR 'assertion_name(constructor_arg0,constructor_arg1)'
     #[clap(
         long,
         short = 'a',
