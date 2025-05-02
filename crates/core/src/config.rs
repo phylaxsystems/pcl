@@ -397,6 +397,7 @@ impl fmt::Display for AssertionForSubmission {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Contract: {}", self.assertion_contract)?;
         writeln!(f, "  ID: {}", self.assertion_id)?;
+        writeln!(f, "  Constructor Args: {}", self.constructor_args.join(","))?;
         write!(
             f,
             "  Signature: {}...",

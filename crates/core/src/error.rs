@@ -36,7 +36,7 @@ impl From<Box<DaSubmitError>> for DaSubmitError {
 #[derive(Error, Debug)]
 pub enum DappSubmitError {
     /// Error when no authentication token is found in the config
-    #[error("No auth token found")]
+    #[error("No auth token found, please run `pcl auth` first")]
     NoAuthToken,
 
     /// Error when user cancels the project selection process

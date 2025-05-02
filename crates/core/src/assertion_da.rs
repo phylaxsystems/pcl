@@ -102,6 +102,7 @@ impl DaStoreArgs {
                 "assertion_contract": assertion.assertion_contract,
                 "assertion_id": assertion.assertion_id,
                 "signature": assertion.signature,
+                "constructor_args": assertion.constructor_args,
             });
             println!("{}", serde_json::to_string_pretty(&json_output).unwrap());
         } else {
