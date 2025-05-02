@@ -10,7 +10,7 @@ use serde_json::json;
 
 // TODO(Odysseas) Add tests for the Dapp submission + Rust bindings from the Dapp API
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 #[allow(dead_code)]
 struct Project {
     project_id: String,
