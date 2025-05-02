@@ -370,7 +370,7 @@ mod tests {
         args.display_success_info(&assertion, true);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_run_with_auth() {
         let mut server = Server::new_async().await;
         let mock = server
@@ -404,7 +404,7 @@ mod tests {
         mock.assert();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_run_with_auth_json_output() {
         let mut server = Server::new_async().await;
         let mock = server
@@ -439,7 +439,7 @@ mod tests {
         mock.assert();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_run_unauthorized() {
         let mut server = Server::new_async().await;
         let mock = server.mock("POST", "/").with_status(401).create();
@@ -459,7 +459,7 @@ mod tests {
         mock.assert();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_run_server_error() {
         let mut server = Server::new_async().await;
         let mock = server.mock("POST", "/").with_status(500).create();
