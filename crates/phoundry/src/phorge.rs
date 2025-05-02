@@ -179,7 +179,7 @@ impl BuildAndFlattenArgs {
             .print_names(build_cmd.names)
             .print_sizes(build_cmd.sizes)
             .ignore_eip_3860(build_cmd.ignore_eip_3860)
-            .bail(false)
+            .bail(true)
             .quiet(true);
 
         let res = compiler

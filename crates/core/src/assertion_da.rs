@@ -331,7 +331,8 @@ mod tests {
     /// Creates test build and flatten arguments
     fn create_test_build_args() -> BuildAndFlattenArgs {
         BuildAndFlattenArgs {
-            assertion_contract: "test_assertion".to_string(),
+            assertion_contract: "MockAssertion".to_string(),
+            root: Some("../../testdata/mock-protocol".parse().unwrap()),
             // Add other required fields
             ..BuildAndFlattenArgs::default()
         }
@@ -375,22 +376,33 @@ mod tests {
     async fn test_run_with_auth() {
         let mut server = Server::new_async().await;
         let mock = server
-            .mock("POST", "/submit_assertion")
+            .mock("POST", "/")
             .with_status(200)
+            .with_body(
+                r#"{
+  "jsonrpc": "2.0",
+  "result": {
+    "prover_signature": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "id": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "id": 0
+            }"#,
+            )
             .with_header("content-type", "application/json")
-            .with_body(r#"{"id": "test_id", "signature": "test_signature"}"#)
             .create();
 
         let mut config = create_test_config();
+        let args = create_test_build_args();
+
         let args = DaStoreArgs {
             url: server.url(),
-            args: create_test_build_args(),
-            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
+            args,
+            constructor_args: vec![Address::random().to_string()],
         };
 
         let cli_args = CliArgs::default();
         let result = args.run(&cli_args, &mut config).await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Expected success but got: {:?}", result);
         mock.assert();
     }
 
@@ -398,17 +410,26 @@ mod tests {
     async fn test_run_with_auth_json_output() {
         let mut server = Server::new_async().await;
         let mock = server
-            .mock("POST", "/submit_assertion")
+            .mock("POST", "/")
             .with_status(200)
+            .with_body(
+                r#"{
+  "jsonrpc": "2.0",
+  "result": {
+    "prover_signature": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "id": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "id": 0
+            }"#,
+            )
             .with_header("content-type", "application/json")
-            .with_body(r#"{"id": "test_id", "signature": "test_signature"}"#)
             .create();
 
         let mut config = create_test_config();
         let args = DaStoreArgs {
             url: server.url(),
             args: create_test_build_args(),
-            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
+            constructor_args: vec![Address::random().to_string()],
         };
 
         // Create CLI args with JSON output enabled
@@ -416,27 +437,26 @@ mod tests {
         assert!(cli_args.json_output());
 
         let result = args.run(&cli_args, &mut config).await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Expected success but got: {:?}", result);
         mock.assert();
     }
 
     #[tokio::test]
     async fn test_run_unauthorized() {
         let mut server = Server::new_async().await;
-        let mock = server
-            .mock("POST", "/submit_assertion")
-            .with_status(401)
-            .create();
+        let mock = server.mock("POST", "/").with_status(401).create();
 
         let mut config = create_test_config();
+        config.auth = None; // Simulate no auth
         let args = DaStoreArgs {
             url: server.url(),
             args: create_test_build_args(),
-            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
+            constructor_args: vec![Address::random().to_string()],
         };
 
         let cli_args = CliArgs::default();
         let result = args.run(&cli_args, &mut config).await;
+
         assert!(result.is_err());
         mock.assert();
     }
@@ -444,21 +464,18 @@ mod tests {
     #[tokio::test]
     async fn test_run_server_error() {
         let mut server = Server::new_async().await;
-        let mock = server
-            .mock("POST", "/submit_assertion")
-            .with_status(500)
-            .create();
+        let mock = server.mock("POST", "/").with_status(500).create();
 
         let mut config = create_test_config();
         let args = DaStoreArgs {
             url: server.url(),
             args: create_test_build_args(),
-            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
+            constructor_args: vec![Address::random().to_string()],
         };
 
         let cli_args = CliArgs::default();
         let result = args.run(&cli_args, &mut config).await;
-        assert!(result.is_err());
+        assert!(result.is_err(), "Expected error but got: {:?}", result);
         mock.assert();
     }
 
@@ -549,15 +566,12 @@ mod tests {
     #[tokio::test]
     async fn test_run_with_expired_auth() {
         let mut server = Server::new_async().await;
-        let mock = server
-            .mock("POST", "/submit_assertion")
-            .with_status(401)
-            .create();
+        let mock = server.mock("POST", "/").with_status(401).create();
 
         let args = DaStoreArgs {
             url: server.url(),
-            args: BuildAndFlattenArgs::default(),
-            constructor_args: vec![],
+            args: create_test_build_args(),
+            constructor_args: vec![Address::random().to_string()],
         };
 
         let cli_args = CliArgs::default();
@@ -573,7 +587,7 @@ mod tests {
         };
 
         let result = args.run(&cli_args, &mut config).await;
-        assert!(result.is_err());
+        assert!(result.is_err(), "Expected error but got: {:?}", result);
         mock.assert();
     }
 }

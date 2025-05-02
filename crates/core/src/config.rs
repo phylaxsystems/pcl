@@ -509,6 +509,7 @@ Pending Assertions for Submission
 Assertion #1:
 Contract: contract1
   ID: id1
+  Constructor Args: arg1,arg2
   Signature: sig1...
 ",
             config_dir.join(CONFIG_FILE).display()
