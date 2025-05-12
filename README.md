@@ -130,7 +130,7 @@ Options:
 pcl submit [OPTIONS]
 
 Options:
-  -u, --dapp-url <DAPP_URL>                 Base URL for the Credible Layer dApp API [default: http://localhost:3003/api/v1]
+  -u, --dapp-url <DAPP_URL>                 Base URL for the Credible Layer dApp API [default: https://dapp.phylax.systems/api/v1]
   -p, --project-name <PROJECT_NAME>         Optional project name to skip interactive selection
   -a, --assertion-keys <ASSERTION_KEYS>     Optional list of assertion name and constructor args to skip interactive selection
                                             Format: assertion_name OR 'assertion_name(constructor_arg0,constructor_arg1)'
