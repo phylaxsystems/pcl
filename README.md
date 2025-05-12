@@ -50,7 +50,7 @@ Commands:
   status  Check current authentication status
 
 Options:
-      --base-url <BASE_URL>  Base URL for authentication service [env: AUTH_BASE_URL=] [default: https://credible-layer-dapp.pages.dev]
+      --base-url <BASE_URL>  Base URL for authentication service [env: AUTH_BASE_URL=] [default: https://dapp.phylax.systems]
   -h, --help                 Print help
 ```
 
@@ -119,7 +119,7 @@ Arguments:
   [CONSTRUCTOR_ARGS]...  Constructor arguments for the assertion contract
 
 Options:
-  -u, --url <URL>        URL of the assertion-DA server [default: http://localhost:5001]
+  -u, --url <URL>        URL of the assertion-DA server [default: https://demo-21.phylax.systems/assertion-da/http]
   -r, --root <ROOT>      Root directory of the project
   -h, --help             Print help (see a summary with '-h')
 ```

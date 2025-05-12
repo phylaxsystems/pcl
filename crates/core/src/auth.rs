@@ -74,7 +74,7 @@ pub struct AuthCommand {
     #[arg(
         long = "base-url",
         env = "AUTH_BASE_URL",
-        default_value = "https://credible-layer-dapp.pages.dev",
+        default_value = "https://dapp.phylax.systems",
         help = "Base URL for authentication service"
     )]
     pub base_url: String,
@@ -319,7 +319,7 @@ mod tests {
     fn test_display_login_instructions() {
         let cmd = AuthCommand {
             command: AuthSubcommands::Login,
-            base_url: "https://credible-layer-dapp.pages.dev".to_string(),
+            base_url: "https://dapp.phylax.systems".to_string(),
         };
         let auth_response = create_test_auth_response();
 
@@ -332,7 +332,7 @@ mod tests {
         let mut config = CliConfig::default();
         let cmd = AuthCommand {
             command: AuthSubcommands::Login,
-            base_url: "https://credible-layer-dapp.pages.dev".to_string(),
+            base_url: "https://dapp.phylax.systems".to_string(),
         };
         let auth_response = create_test_auth_response();
         let status = create_test_status_response();
@@ -364,7 +364,7 @@ mod tests {
         let config = create_test_config();
         let cmd = AuthCommand {
             command: AuthSubcommands::Login,
-            base_url: "https://credible-layer-dapp.pages.dev".to_string(),
+            base_url: "https://dapp.phylax.systems".to_string(),
         };
 
         // Can't easily test stdout, but we can verify it doesn't panic
@@ -430,7 +430,7 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec![
             "auth",
             "--base-url",
-            "https://credible-layer-dapp.pages.dev",
+            "https://dapp.phylax.systems",
             "logout",
         ])
         .unwrap();
@@ -447,7 +447,7 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec![
             "auth",
             "--base-url",
-            "https://credible-layer-dapp.pages.dev",
+            "https://dapp.phylax.systems",
             "status",
         ])
         .unwrap();
@@ -461,7 +461,7 @@ mod tests {
         let config = CliConfig::default();
         let cmd = AuthCommand {
             command: AuthSubcommands::Status,
-            base_url: "https://credible-layer-dapp.pages.dev".to_string(),
+            base_url: "https://dapp.phylax.systems".to_string(),
         };
 
         let result = cmd.status(&config);
@@ -475,7 +475,7 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec![
             "auth",
             "--base-url",
-            "https://credible-layer-dapp.pages.dev",
+            "https://dapp.phylax.systems",
             "login",
         ])
         .unwrap();
