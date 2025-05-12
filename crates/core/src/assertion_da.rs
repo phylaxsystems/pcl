@@ -38,7 +38,7 @@ pub struct DaStoreArgs {
         short = 'u',
         env = "PCL_DA_URL",
         value_hint = ValueHint::Url,
-        default_value = "http://localhost:5001"
+        default_value = "https://demo-21.phylax.systems/assertion-da/http"
     )]
     url: String,
 
@@ -126,7 +126,7 @@ impl DaStoreArgs {
             println!(
                 "Visit the Credible Layer DApp to link the assertion on-chain and enforce it:"
             );
-            println!("  {}", "https://dapp.credible.layer".cyan().bold());
+            println!("  {}", "https://dapp.phylax.systems".cyan().bold());
         }
     }
 
@@ -353,7 +353,7 @@ mod tests {
     #[tokio::test]
     async fn test_display_success_info() {
         let args = DaStoreArgs {
-            url: "http://localhost:5001".to_string(),
+            url: "https://demo-21.phylax.systems/assertion-da/http".to_string(),
             args: create_test_build_args(),
             constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
@@ -488,7 +488,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_da_client_with_auth() {
         let args = DaStoreArgs {
-            url: "http://localhost:5001".to_string(),
+            url: "https://demo-21.phylax.systems/assertion-da/http".to_string(),
             args: BuildAndFlattenArgs::default(),
             constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
@@ -510,7 +510,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_da_client_without_auth() {
         let args = DaStoreArgs {
-            url: "http://localhost:5001".to_string(),
+            url: "https://demo-21.phylax.systems/assertion-da/http".to_string(),
             args: BuildAndFlattenArgs::default(),
             constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
@@ -523,7 +523,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_config() {
         let args = DaStoreArgs {
-            url: "http://localhost:5001".to_string(),
+            url: "https://demo-21.phylax.systems/assertion-da/http".to_string(),
             args: BuildAndFlattenArgs {
                 assertion_contract: "test_assertion".to_string(),
                 ..BuildAndFlattenArgs::default()

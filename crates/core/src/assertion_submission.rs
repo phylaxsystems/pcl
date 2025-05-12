@@ -39,7 +39,7 @@ pub struct DappSubmitArgs {
         long,
         value_hint = ValueHint::Url,
         value_name = "API Endpoint",
-        default_value = "http://localhost:3003/api/v1"
+        default_value = "https://dapp.phylax.systems/api/v1"
     )]
     dapp_url: String,
 
