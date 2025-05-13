@@ -47,7 +47,8 @@ pub struct DaStoreArgs {
     args: BuildAndFlattenArgs,
 
     /// Constructor arguments for the assertion contract
-    #[clap(help = "Constructor arguments for the assertion contract")]
+    #[clap(help = "Constructor arguments for the assertion contract.
+                         Format: <ARG0> <ARG1> <ARG2>")]
     constructor_args: Vec<String>,
 }
 

@@ -117,6 +117,7 @@ pcl store [OPTIONS] <ASSERTION_CONTRACT> [CONSTRUCTOR_ARGS]...
 Arguments:
   <ASSERTION_CONTRACT>   Name of the assertion contract to build and flatten
   [CONSTRUCTOR_ARGS]...  Constructor arguments for the assertion contract
+                         Format: <ARG0> <ARG1> <ARG2>
 
 Options:
   -u, --url <URL>        URL of the assertion-DA server [default: https://demo-21.phylax.systems/assertion-da/http]
