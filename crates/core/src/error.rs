@@ -23,7 +23,7 @@ pub enum DaSubmitError {
     HttpError(u16),
     /// Invalid Constructor Args
     #[error("Invalid Constructor Args Count: Constructor Signature expects: {0}, Constructor Args submitted: {1};
-        Pass args by calling the command in the following format: `pcl da submit <assertion_contract> <arg0> <arg1>`")]
+        Pass args by calling the command in the following format: `pcl store <assertion_contract> <arg0> <arg1>`")]
     InvalidConstructorArgs(usize, usize),
 }
 
