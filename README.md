@@ -33,7 +33,7 @@ The Phylax Credible CLI (PCL) is a command-line interface for interacting with t
 ### Install from Source
 
 1. It requires Rust >= 1.80
-2. Run `cargo install --git https://github.com/phylaxsystems/pcl`
+2. Run `cargo install --git https://github.com/phylaxsystems/pcl --locked`
 
 ## Usage Guide
 
@@ -117,6 +117,7 @@ pcl store [OPTIONS] <ASSERTION_CONTRACT> [CONSTRUCTOR_ARGS]...
 Arguments:
   <ASSERTION_CONTRACT>   Name of the assertion contract to build and flatten
   [CONSTRUCTOR_ARGS]...  Constructor arguments for the assertion contract
+                         Format: <ARG0> <ARG1> <ARG2>
 
 Options:
   -u, --url <URL>        URL of the assertion-DA server [default: https://demo-21.phylax.systems/assertion-da/http]
