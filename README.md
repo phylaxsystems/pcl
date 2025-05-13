@@ -32,7 +32,7 @@ The Phylax Credible CLI (PCL) is a command-line interface for interacting with t
 
 ### Install from Source
 
-1. It requires Rust >= 1.80
+1. Install the latest Rust compiler: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 2. Run `cargo +nightly install --git https://github.com/phylaxsystems/pcl --locked`
 
 ## Usage Guide
