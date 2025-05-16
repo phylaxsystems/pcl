@@ -81,13 +81,14 @@ impl DappSubmitArgs {
         let projects = self.get_projects(config).await?;
 
         let project = self.select_project(&projects)?;
-        let assertion_keys = self.select_assertions(
-            &config
-                .assertions_for_submission
-                .clone()
-                .into_keys()
-                .collect(),
-        )?;
+        let keys: Vec<AssertionKey> = config
+            .assertions_for_submission
+            .keys()
+            .map(|k| k.clone())
+            .collect();
+
+        let assertion_keys = self.select_assertions(keys.as_slice())?;
+
         let mut assertions = vec![];
         for key in assertion_keys {
             let assertion = config
@@ -312,7 +313,7 @@ mod tests {
             assertion_keys: None,
         };
 
-        let empty_assertions = vec![];
+        let empty_assertions = [];
         let result = args.select_assertions(&empty_assertions);
 
         assert!(result.is_err());
