@@ -80,14 +80,14 @@ impl DappSubmitArgs {
     ) -> Result<(), DappSubmitError> {
         let projects = self.get_projects(config).await?;
 
-        let assertion_keys_for_submission = config
-            .assertions_for_submission
-            .keys()
-            .map(|k| k.to_string())
-            .collect();
-
         let project = self.select_project(&projects)?;
-        let assertion_keys = self.select_assertions(&assertion_keys_for_submission)?;
+        let assertion_keys = self.select_assertions(
+            &config
+                .assertions_for_submission
+                .clone()
+                .into_keys()
+                .collect(),
+        )?;
         let mut assertions = vec![];
         for key in assertion_keys {
             let assertion = config
@@ -132,17 +132,25 @@ impl DappSubmitArgs {
     /// Abstracted function for selecting assertions
     fn select_assertions(
         &self,
-        assertion_keys_for_submission: &Vec<String>,
+        assertion_keys_for_submission: &Vec<AssertionKey>,
     ) -> Result<Vec<String>, DappSubmitError> {
         if assertion_keys_for_submission.is_empty() {
             return Err(DappSubmitError::NoStoredAssertions);
         }
 
+        let assertion_keys_for_selection = assertion_keys_for_submission
+            .iter()
+            .map(|k| k.to_string())
+            .collect();
+
+        let preselected_assertion_keys = self
+            .assertion_keys
+            .clone()
+            .map(|keys| keys.iter().map(|k| k.to_string()).collect());
+
         self.provide_or_multi_select(
-            self.assertion_keys
-                .clone()
-                .map(|keys| keys.iter().map(|k| k.to_string()).collect()),
-            assertion_keys_for_submission.clone(),
+            preselected_assertion_keys,
+            assertion_keys_for_selection,
             "Select an assertion to submit:".to_string(),
         )
     }
@@ -306,7 +314,7 @@ mod tests {
             assertion_keys: None,
         };
 
-        let empty_assertions: Vec<String> = vec![];
+        let empty_assertions = vec![];
         let result = args.select_assertions(&empty_assertions);
 
         assert!(result.is_err());
