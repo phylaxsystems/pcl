@@ -84,7 +84,7 @@ impl DappSubmitArgs {
         let keys: Vec<AssertionKey> = config
             .assertions_for_submission
             .keys()
-            .map(|k| k.clone())
+            .cloned()
             .collect();
 
         let assertion_keys = self.select_assertions(keys.as_slice())?;
