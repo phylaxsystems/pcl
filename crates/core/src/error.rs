@@ -45,7 +45,7 @@ pub enum DappSubmitError {
     ProjectSelectionFailed(#[from] inquire::InquireError),
 
     /// Error when no projects are found for the authenticated user
-    #[error("No projects found for the authenticated user.\nPlease run `pcl project new` to create one.")]
+    #[error("No projects found for the authenticated user.\nPlease run `pcl project new` or head to https://dapp.phylax.systems to create one.")]
     NoProjectsFound,
 
     /// Error when connection to the dApp API fails
