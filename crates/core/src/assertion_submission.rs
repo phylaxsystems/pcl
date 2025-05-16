@@ -81,11 +81,7 @@ impl DappSubmitArgs {
         let projects = self.get_projects(config).await?;
 
         let project = self.select_project(&projects)?;
-        let keys: Vec<AssertionKey> = config
-            .assertions_for_submission
-            .keys()
-            .cloned()
-            .collect();
+        let keys: Vec<AssertionKey> = config.assertions_for_submission.keys().cloned().collect();
 
         let assertion_keys = self.select_assertions(keys.as_slice())?;
 
