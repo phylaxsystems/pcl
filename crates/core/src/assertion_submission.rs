@@ -86,23 +86,8 @@ impl DappSubmitArgs {
             .map(|k| k.to_string())
             .collect();
 
-        let project_name = self.provide_or_select(
-            self.project_name.clone(),
-            projects.iter().map(|p| p.project_name.clone()).collect(),
-            "Select a project to submit the assertion to:".to_string(),
-        )?;
-        let project = projects
-            .iter()
-            .find(|p| p.project_name == project_name)
-            .unwrap(); // Safe to unwrap since it should be selected from the list
-
-        let assertion_keys = self.provide_or_multi_select(
-            self.assertion_keys
-                .clone()
-                .map(|keys| keys.iter().map(|k| k.to_string()).collect()),
-            assertion_keys_for_submission,
-            "Select an assertion to submit:".to_string(),
-        )?;
+        let project = self.select_project(&projects)?;
+        let assertion_keys = self.select_assertions(&assertion_keys_for_submission)?;
         let mut assertions = vec![];
         for key in assertion_keys {
             let assertion = config
@@ -123,6 +108,46 @@ impl DappSubmitArgs {
         );
 
         Ok(())
+    }
+
+    /// Abstracted function for selecting a project
+    fn select_project<'a>(
+        &self,
+        projects: &'a Vec<Project>,
+    ) -> Result<&'a Project, DappSubmitError> {
+        if projects.is_empty() {
+            return Err(DappSubmitError::NoProjectsFound);
+        }
+
+        let project_names: Vec<String> = projects.iter().map(|p| p.project_name.clone()).collect();
+        let project_name = self.provide_or_select(
+            self.project_name.clone(),
+            project_names,
+            "Select a project to submit the assertion to:".to_string(),
+        )?;
+        let project = projects
+            .iter()
+            .find(|p| p.project_name == project_name)
+            .ok_or(DappSubmitError::NoProjectsFound)?;
+        Ok(project)
+    }
+
+    /// Abstracted function for selecting assertions
+    fn select_assertions(
+        &self,
+        assertion_keys_for_submission: &Vec<String>,
+    ) -> Result<Vec<String>, DappSubmitError> {
+        if assertion_keys_for_submission.is_empty() {
+            return Err(DappSubmitError::NoStoredAssertions);
+        }
+
+        self.provide_or_multi_select(
+            self.assertion_keys
+                .clone()
+                .map(|keys| keys.iter().map(|k| k.to_string()).collect()),
+            assertion_keys_for_submission.clone(),
+            "Select an assertion to submit:".to_string(),
+        )
     }
 
     /// Submits selected assertions to the specified project
@@ -189,9 +214,7 @@ impl DappSubmitArgs {
         message: String,
     ) -> Result<String, DappSubmitError> {
         match maybe_key {
-            None => Select::new(message.as_str(), values)
-                .prompt()
-                .map_err(|_| DappSubmitError::ProjectSelectionCancelled),
+            None => Ok(Select::new(message.as_str(), values).prompt()?),
             Some(key) => {
                 let exists = values
                     .iter()
@@ -200,9 +223,7 @@ impl DappSubmitArgs {
                     Ok(key.to_string())
                 } else {
                     println!("{key} does not exist");
-                    let choice = Select::new(message.as_str(), values)
-                        .prompt()
-                        .map_err(|_| DappSubmitError::ProjectSelectionCancelled)?;
+                    let choice = Select::new(message.as_str(), values).prompt()?;
                     Ok(choice)
                 }
             }
@@ -225,9 +246,7 @@ impl DappSubmitArgs {
         message: String,
     ) -> Result<Vec<String>, DappSubmitError> {
         match maybe_keys {
-            None => MultiSelect::new(message.as_str(), values)
-                .prompt()
-                .map_err(|_| DappSubmitError::ProjectSelectionCancelled),
+            None => Ok(MultiSelect::new(message.as_str(), values).prompt()?),
             Some(key) => {
                 let exists = key
                     .iter()
@@ -236,10 +255,7 @@ impl DappSubmitArgs {
                     Ok(values)
                 } else {
                     println!("{} does not exist", key.join(", "));
-                    let choice = MultiSelect::new(message.as_str(), values)
-                        .prompt()
-                        .map_err(|_| DappSubmitError::ProjectSelectionCancelled)?;
-                    Ok(choice)
+                    Ok(MultiSelect::new(message.as_str(), values).prompt()?)
                 }
             }
         }
@@ -267,6 +283,7 @@ impl DappSubmitArgs {
 /// TODO(ODYSSEAS): Add tests for the DappSubmitArgs struct
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::assertion_submission::DappSubmitArgs;
 
     #[test]
@@ -283,5 +300,39 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Project1");
+    }
+    #[test]
+    fn test_no_stored_assertions() {
+        let args = DappSubmitArgs {
+            dapp_url: "".to_string(),
+            project_name: None,
+            assertion_keys: None,
+        };
+
+        let empty_assertions: Vec<String> = vec![];
+        let result = args.select_assertions(&empty_assertions);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            DappSubmitError::NoStoredAssertions
+        ));
+    }
+    #[test]
+    fn test_no_projects() {
+        let args = DappSubmitArgs {
+            dapp_url: "".to_string(),
+            project_name: None,
+            assertion_keys: None,
+        };
+
+        let empty_projects: Vec<Project> = vec![];
+        let result = args.select_project(&empty_projects);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            DappSubmitError::NoProjectsFound
+        ));
     }
 }

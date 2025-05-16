@@ -40,9 +40,13 @@ pub enum DappSubmitError {
     #[error("No auth token found, please run `pcl auth` first")]
     NoAuthToken,
 
-    /// Error when user cancels the project selection process
-    #[error("Project selection cancelled")]
-    ProjectSelectionCancelled,
+    /// Error during project selection process
+    #[error("Project selection failed: {0}")]
+    ProjectSelectionFailed(#[from] inquire::InquireError),
+
+    /// Error when no projects are found for the authenticated user
+    #[error("No projects found for the authenticated user.\nPlease run `pcl project new` to create one.")]
+    NoProjectsFound,
 
     /// Error when connection to the dApp API fails
     #[error("Failed to connect to the dApp API")]
@@ -52,9 +56,13 @@ pub enum DappSubmitError {
     #[error("Submission failed: {0}")]
     SubmissionFailed(String),
 
-    /// Error
-    #[error("Could not find stored assertion {0} in the config. Please run `pcl store` first.")]
+    /// Error when could not find stored assertion
+    #[error("Could not find stored assertion {0} in the config.\nPlease run `pcl store` first.")]
     CouldNotFindStoredAssertion(String),
+
+    /// Error when no stored assertions are found
+    #[error("No stored assertions found.\nPlease run `pcl store` first to store some assertions.")]
+    NoStoredAssertions,
 }
 
 /// Errors that can occur during configuration operations
