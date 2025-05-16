@@ -400,7 +400,7 @@ impl fmt::Display for AssertionForSubmission {
         writeln!(f, "  Constructor Args: {}", self.constructor_args.join(","))?;
         write!(
             f,
-            "  Signature: {}...",
+            "  DA Signature: {}...",
             &self.signature.chars().take(10).collect::<String>()
         )
     }
@@ -510,7 +510,7 @@ Assertion #1:
 Contract: contract1
   ID: id1
   Constructor Args: arg1,arg2
-  Signature: sig1...
+  DA Signature: sig1...
 ",
             config_dir.join(CONFIG_FILE).display()
         );
