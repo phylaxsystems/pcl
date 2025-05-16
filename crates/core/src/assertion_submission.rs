@@ -111,10 +111,7 @@ impl DappSubmitArgs {
     }
 
     /// Abstracted function for selecting a project
-    fn select_project<'a>(
-        &self,
-        projects: &'a Vec<Project>,
-    ) -> Result<&'a Project, DappSubmitError> {
+    fn select_project<'a>(&self, projects: &'a [Project]) -> Result<&'a Project, DappSubmitError> {
         if projects.is_empty() {
             return Err(DappSubmitError::NoProjectsFound);
         }
