@@ -132,7 +132,7 @@ impl DappSubmitArgs {
     /// Abstracted function for selecting assertions
     fn select_assertions(
         &self,
-        assertion_keys_for_submission: &Vec<AssertionKey>,
+        assertion_keys_for_submission: &[AssertionKey],
     ) -> Result<Vec<String>, DappSubmitError> {
         if assertion_keys_for_submission.is_empty() {
             return Err(DappSubmitError::NoStoredAssertions);
@@ -154,8 +154,6 @@ impl DappSubmitArgs {
             "Select an assertion to submit:".to_string(),
         )
     }
-
-    /// Submits selected assertions to the specified project
     ///
     /// # Arguments
     /// * `project` - Target project for submission
