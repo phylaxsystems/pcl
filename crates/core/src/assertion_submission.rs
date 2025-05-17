@@ -79,10 +79,9 @@ impl DappSubmitArgs {
         config: &mut CliConfig,
     ) -> Result<(), DappSubmitError> {
         let projects = self.get_projects(config).await?;
-
         let project = self.select_project(&projects)?;
-        let keys: Vec<AssertionKey> = config.assertions_for_submission.keys().cloned().collect();
 
+        let keys: Vec<AssertionKey> = config.assertions_for_submission.keys().cloned().collect();
         let assertion_keys = self.select_assertions(keys.as_slice())?;
 
         let mut assertions = vec![];
@@ -216,9 +215,7 @@ impl DappSubmitArgs {
         match maybe_key {
             None => Ok(Select::new(message.as_str(), values).prompt()?),
             Some(key) => {
-                let exists = values
-                    .iter()
-                    .any(|p| key.to_lowercase() == p.to_lowercase());
+                let exists = values.contains(&key);
                 if exists {
                     Ok(key.to_string())
                 } else {
@@ -247,14 +244,17 @@ impl DappSubmitArgs {
     ) -> Result<Vec<String>, DappSubmitError> {
         match maybe_keys {
             None => Ok(MultiSelect::new(message.as_str(), values).prompt()?),
-            Some(key) => {
-                let exists = key
-                    .iter()
-                    .all(|k| values.iter().any(|v| k.to_lowercase() == v.to_lowercase()));
-                if exists {
-                    Ok(values)
+            Some(keys) => {
+                let all_exist = keys.iter().all(|k| values.contains(k));
+                if all_exist {
+                    Ok(keys)
                 } else {
-                    println!("{} does not exist", key.join(", "));
+                    let missing_keys = keys
+                        .iter()
+                        .filter(|k| !values.contains(k))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    println!("{} does not exist", missing_keys.join(", "));
                     Ok(MultiSelect::new(message.as_str(), values).prompt()?)
                 }
             }
@@ -334,5 +334,66 @@ mod tests {
             result.unwrap_err(),
             DappSubmitError::NoProjectsFound
         ));
+    }
+    #[test]
+    fn test_select_assertions_with_preselected() {
+        let args = DappSubmitArgs {
+            dapp_url: "".to_string(),
+            project_name: None,
+            assertion_keys: Some(vec![AssertionKey::new("assertion1".to_string(), vec![])]),
+        };
+
+        let stored_assertions = vec![
+            AssertionKey::new("assertion1".to_string(), vec![]),
+            AssertionKey::new(
+                "assertion2".to_string(),
+                vec!["a".to_string(), "b".to_string()],
+            ),
+            AssertionKey::new("assertion3".to_string(), vec![]),
+        ];
+
+        let result = args.select_assertions(&stored_assertions);
+
+        assert!(result.is_ok());
+        let selected = result.unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0], "assertion1");
+    }
+    #[test]
+    fn test_provide_or_multi_select_with_preselected() {
+        let args = DappSubmitArgs {
+            dapp_url: "".to_string(),
+            project_name: None,
+            assertion_keys: Some(vec![AssertionKey::new("assertion1".to_string(), vec![])]),
+        };
+
+        let values = vec!["assertion1".to_string(), "assertion2".to_string()];
+        let result = args.provide_or_multi_select(
+            Some(vec!["assertion1".to_string()]),
+            values.clone(),
+            "Select:".to_string(),
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), vec!["assertion1".to_string()]);
+    }
+
+    #[test]
+    fn test_provide_or_select_with_preselected() {
+        let args = DappSubmitArgs {
+            dapp_url: "".to_string(),
+            project_name: Some("Project1".to_string()),
+            assertion_keys: None,
+        };
+
+        let values = vec!["Project1".to_string(), "Project2".to_string()];
+        let result = args.provide_or_select(
+            Some("Project1".to_string()),
+            values.clone(),
+            "Select:".to_string(),
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Project1");
     }
 }

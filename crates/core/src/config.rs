@@ -35,6 +35,21 @@ pub struct AssertionKey {
     pub assertion_name: String,
     pub constructor_args: Vec<String>,
 }
+impl AssertionKey {
+    /// Create a new assertion key
+    ///
+    /// # Arguments
+    /// * `assertion_name` - The name of the assertion
+    /// * `constructor_args` - The constructor arguments for the assertion
+    ///
+    pub fn new(assertion_name: String, constructor_args: Vec<String>) -> Self {
+        Self {
+            assertion_name,
+            constructor_args,
+        }
+    }
+}
+
 impl fmt::Display for AssertionKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.assertion_name)?;
