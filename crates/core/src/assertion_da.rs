@@ -5,20 +5,37 @@
 //! of building, flattening, and submitting assertions along with their source code
 //! to be stored in the DA layer.
 
-use clap::{Parser, ValueHint};
+use clap::{
+    Parser,
+    ValueHint,
+};
 use colored::Colorize;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{
+    ProgressBar,
+    ProgressStyle,
+};
 use pcl_common::args::CliArgs;
-use pcl_phoundry::phorge::{BuildAndFlatOutput, BuildAndFlattenArgs};
+use pcl_phoundry::phorge::{
+    BuildAndFlatOutput,
+    BuildAndFlattenArgs,
+};
 use serde_json::json;
 use tokio::time::Duration;
 
-use assertion_da_client::{DaClient, DaClientError, DaSubmissionResponse};
+use assertion_da_client::{
+    DaClient,
+    DaClientError,
+    DaSubmissionResponse,
+};
 use jsonrpsee_core::client::Error as ClientError;
 use jsonrpsee_http_client::transport::Error as TransportError;
 
 use crate::{
-    config::{AssertionForSubmission, AssertionKey, CliConfig},
+    config::{
+        AssertionForSubmission,
+        AssertionKey,
+        CliConfig,
+    },
     error::DaSubmitError,
 };
 
@@ -202,18 +219,21 @@ impl DaStoreArgs {
             .await
         {
             Ok(res) => Ok(res),
-            Err(err) => match err {
-                DaClientError::ClientError(ClientError::Transport(ref boxed_err)) => {
-                    if let Some(TransportError::Rejected { status_code }) = boxed_err.downcast_ref()
-                    {
-                        Self::handle_http_error(*status_code, spinner)?;
-                        Err(err.into())
-                    } else {
-                        Err(err.into())
+            Err(err) => {
+                match err {
+                    DaClientError::ClientError(ClientError::Transport(ref boxed_err)) => {
+                        if let Some(TransportError::Rejected { status_code }) =
+                            boxed_err.downcast_ref()
+                        {
+                            Self::handle_http_error(*status_code, spinner)?;
+                            Err(err.into())
+                        } else {
+                            Err(err.into())
+                        }
                     }
+                    _ => Err(err.into()),
                 }
-                _ => Err(err.into()),
-            },
+            }
         }
     }
 
@@ -307,7 +327,13 @@ mod tests {
     use chrono::DateTime;
     use clap::Parser;
     use mockito::Server;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::io::Write;
+    use std::sync::Mutex;
+    use std::time::Duration;
+    use std::time::{
+        SystemTime,
+        UNIX_EPOCH,
+    };
 
     /// Creates a test configuration with authentication
     fn create_test_config() -> CliConfig {
@@ -335,6 +361,122 @@ mod tests {
             assertion_contract: "MockAssertion".to_string(),
             root: Some("../../testdata/mock-protocol".parse().unwrap()),
         }
+    }
+
+    /// Helper to capture stdout for testing
+    fn capture_stdout<F>(f: F) -> String
+    where
+        F: FnOnce(),
+    {
+        let mut output = Vec::new();
+        {
+            let mut writer = std::io::BufWriter::new(&mut output);
+            let original_stdout = std::io::stdout();
+            let mut handle = original_stdout.lock();
+            let _ = handle.write_all(b"");
+            f();
+        }
+        String::from_utf8(output).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_run_with_malformed_response() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/")
+            .with_status(200)
+            .with_body("invalid json")
+            .create();
+
+        let mut config = create_test_config();
+        let args = DaStoreArgs {
+            url: server.url(),
+            args: create_test_build_args(),
+            constructor_args: vec![Address::random().to_string()],
+        };
+
+        let cli_args = CliArgs::default();
+        let result = args.run(&cli_args, &mut config).await;
+        assert!(result.is_err());
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_json_output_structure() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/")
+            .with_status(200)
+            .with_body(
+                r#"{
+  "jsonrpc": "2.0",
+  "result": {
+    "prover_signature": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "id": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "id": 0
+            }"#,
+            )
+            .with_header("content-type", "application/json")
+            .create();
+
+        let mut config = create_test_config();
+        let args = DaStoreArgs {
+            url: server.url(),
+            args: create_test_build_args(),
+            constructor_args: vec![Address::random().to_string()],
+        };
+
+        let cli_args = CliArgs::parse_from(["test", "--json"]);
+
+        // Run the command and capture the output
+        let result = args.run(&cli_args, &mut config).await;
+        assert!(result.is_ok());
+
+        // Verify the config was updated correctly
+        let assertion = config.assertions_for_submission.values().next().unwrap();
+        assert_eq!(assertion.assertion_contract, "MockAssertion");
+        assert_eq!(
+            assertion.assertion_id,
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(
+            assertion.signature,
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_invalid_constructor_args() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/")
+            .with_status(400)
+            .with_body(
+                r#"{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32602,
+    "message": "Invalid constructor arguments"
+  },
+  "id": 0
+            }"#,
+            )
+            .with_header("content-type", "application/json")
+            .create();
+
+        let mut config = create_test_config();
+        let args = DaStoreArgs {
+            url: server.url(),
+            args: create_test_build_args(),
+            constructor_args: vec!["invalid_arg".to_string()],
+        };
+
+        let cli_args = CliArgs::default();
+        let result = args.run(&cli_args, &mut config).await;
+        assert!(result.is_err());
+        mock.assert();
     }
 
     #[tokio::test]
@@ -548,21 +690,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_with_invalid_url() {
-        let args = DaStoreArgs {
-            url: "invalid-url".to_string(),
-            args: BuildAndFlattenArgs::default(),
-            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
-        };
-
-        let mut config = CliConfig::default();
-        let cli_args = CliArgs::default();
-
-        let result = args.run(&cli_args, &mut config).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
     async fn test_run_with_expired_auth() {
         let mut server = Server::new_async().await;
         let mock = server.mock("POST", "/").with_status(401).create();
@@ -588,5 +715,20 @@ mod tests {
         let result = args.run(&cli_args, &mut config).await;
         assert!(result.is_err(), "Expected error but got: {result:?}");
         mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_run_with_invalid_url() {
+        let args = DaStoreArgs {
+            url: "invalid-url".to_string(),
+            args: BuildAndFlattenArgs::default(),
+            constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
+        };
+
+        let mut config = CliConfig::default();
+        let cli_args = CliArgs::default();
+
+        let result = args.run(&cli_args, &mut config).await;
+        assert!(result.is_err());
     }
 }

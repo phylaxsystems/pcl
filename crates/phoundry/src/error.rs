@@ -1,6 +1,12 @@
 use color_eyre::eyre;
-use foundry_compilers::{error::SolcError, flatten::FlattenerError};
-use std::{fmt::Debug, path::PathBuf};
+use foundry_compilers::{
+    error::SolcError,
+    flatten::FlattenerError,
+};
+use std::{
+    fmt::Debug,
+    path::PathBuf,
+};
 use thiserror::Error;
 
 #[derive(Error, Debug)]

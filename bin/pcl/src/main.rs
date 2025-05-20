@@ -1,4 +1,7 @@
-use clap::{command, Parser};
+use clap::{
+    command,
+    Parser,
+};
 use color_eyre::eyre::Report;
 use color_eyre::Result;
 use pcl_common::args::CliArgs;
@@ -6,7 +9,10 @@ use pcl_core::{
     assertion_da::DaStoreArgs,
     assertion_submission::DappSubmitArgs,
     auth::AuthCommand,
-    config::{CliConfig, ConfigArgs},
+    config::{
+        CliConfig,
+        ConfigArgs,
+    },
 };
 use pcl_phoundry::phorge::PhorgeTest;
 use serde_json::json;
