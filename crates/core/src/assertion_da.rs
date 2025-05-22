@@ -328,8 +328,6 @@ mod tests {
     use clap::Parser;
     use mockito::Server;
     use std::io::Write;
-    use std::sync::Mutex;
-    use std::time::Duration;
     use std::time::{
         SystemTime,
         UNIX_EPOCH,
@@ -364,6 +362,7 @@ mod tests {
     }
 
     /// Helper to capture stdout for testing
+    #[allow(dead_code, unused_variables, unused_mut)]
     fn capture_stdout<F>(f: F) -> String
     where
         F: FnOnce(),
