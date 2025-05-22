@@ -401,7 +401,7 @@ mod tests {
         mock.assert();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_json_output_structure() {
         let mut server = Server::new_async().await;
         let mock = server
@@ -447,7 +447,7 @@ mod tests {
         mock.assert();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_invalid_constructor_args() {
         let mut server = Server::new_async().await;
         let mock = server
