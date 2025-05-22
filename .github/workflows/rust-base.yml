@@ -13,7 +13,7 @@ jobs:
       rust-channel: "nightly"
       require-lockfile: true
       install-foundry: true
-      submodules: "recursive"
+      submodules: true
       requires-private-deps: true
     secrets:
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
