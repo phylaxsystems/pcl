@@ -1,16 +1,31 @@
-use clap::{Parser, ValueHint};
+use clap::{
+    Parser,
+    ValueHint,
+};
 use color_eyre::Report;
 use forge::{
-    cmd::{build::BuildArgs, test::TestArgs},
-    opts::{Forge, ForgeSubcommand},
+    cmd::{
+        build::BuildArgs,
+        test::TestArgs,
+    },
+    opts::{
+        Forge,
+        ForgeSubcommand,
+    },
 };
 use foundry_cli::{
-    opts::{BuildOpts, ProjectPathOpts},
+    opts::{
+        BuildOpts,
+        ProjectPathOpts,
+    },
     utils::LoadConfig,
 };
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
-    flatten::{Flattener, FlattenerError},
+    flatten::{
+        Flattener,
+        FlattenerError,
+    },
     info::ContractInfo,
     solc::SolcLanguage,
     ProjectCompileOutput,
@@ -18,7 +33,10 @@ use foundry_compilers::{
 
 use alloy_json_abi::JsonAbi;
 
-use foundry_config::{error::ExtractConfigError, find_project_root};
+use foundry_config::{
+    error::ExtractConfigError,
+    find_project_root,
+};
 use std::path::PathBuf;
 use tokio::task::spawn_blocking;
 
@@ -129,9 +147,11 @@ impl BuildAndFlattenArgs {
         // Determine the full path to the contract
         let path = match &self.root {
             Some(root) => root.join(rel_source_path),
-            None => find_project_root(None)
-                .map_err(|_| PhoundryError::DirectoryNotFound(PathBuf::from(".")))?
-                .join(rel_source_path),
+            None => {
+                find_project_root(None)
+                    .map_err(|_| PhoundryError::DirectoryNotFound(PathBuf::from(".")))?
+                    .join(rel_source_path)
+            }
         };
 
         // Flatten the contract

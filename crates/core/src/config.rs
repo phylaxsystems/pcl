@@ -1,12 +1,21 @@
 use crate::error::ConfigError;
 use alloy_primitives::Address;
-use chrono::{DateTime, Utc};
+use chrono::{
+    DateTime,
+    Utc,
+};
 use clap::Parser;
 use colored::Colorize;
 use dirs::home_dir;
 use serde::{
-    de::{self, Visitor},
-    Deserialize, Deserializer, Serialize, Serializer,
+    de::{
+        self,
+        Visitor,
+    },
+    Deserialize,
+    Deserializer,
+    Serialize,
+    Serializer,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -41,7 +50,6 @@ impl AssertionKey {
     /// # Arguments
     /// * `assertion_name` - The name of the assertion
     /// * `constructor_args` - The constructor arguments for the assertion
-    ///
     pub fn new(assertion_name: String, constructor_args: Vec<String>) -> Self {
         Self {
             assertion_name,

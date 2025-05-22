@@ -1,13 +1,25 @@
-use crate::config::{CliConfig, UserAuth};
+use crate::config::{
+    CliConfig,
+    UserAuth,
+};
 use crate::error::AuthError;
 use alloy_primitives::Address;
-use chrono::{DateTime, Utc};
+use chrono::{
+    DateTime,
+    Utc,
+};
 use color_eyre::Result;
 use colored::*;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{
+    ProgressBar,
+    ProgressStyle,
+};
 use reqwest::Client;
 use serde::Deserialize;
-use tokio::time::{sleep, Duration};
+use tokio::time::{
+    sleep,
+    Duration,
+};
 
 /// Interval between authentication status checks
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -467,6 +479,86 @@ mod tests {
         let result = cmd.status(&config);
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_update_config_with_invalid_address() {
+        let mut config = CliConfig::default();
+        let cmd = AuthCommand {
+            command: AuthSubcommands::Login,
+            base_url: "https://dapp.phylax.systems".to_string(),
+        };
+        let auth_response = create_test_auth_response();
+        let mut status = create_test_status_response();
+        status.address = Some("invalid_address".to_string());
+
+        let result = cmd.update_config(&mut config, status, &auth_response);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(AuthError::InvalidAddress)));
+    }
+
+    #[test]
+    fn test_update_config_with_invalid_timestamp() {
+        let mut config = CliConfig::default();
+        let cmd = AuthCommand {
+            command: AuthSubcommands::Login,
+            base_url: "https://dapp.phylax.systems".to_string(),
+        };
+        let mut auth_response = create_test_auth_response();
+        auth_response.expires_at = "invalid_timestamp".to_string();
+        let status = create_test_status_response();
+
+        let result = cmd.update_config(&mut config, status, &auth_response);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(AuthError::InvalidTimestamp)));
+    }
+
+    #[test]
+    fn test_update_config_with_missing_token() {
+        let mut config = CliConfig::default();
+        let cmd = AuthCommand {
+            command: AuthSubcommands::Login,
+            base_url: "https://dapp.phylax.systems".to_string(),
+        };
+        let auth_response = create_test_auth_response();
+        let mut status = create_test_status_response();
+        status.token = None;
+
+        let result = cmd.update_config(&mut config, status, &auth_response);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(AuthError::InvalidAuthData(_))));
+    }
+
+    #[test]
+    fn test_update_config_with_missing_refresh_token() {
+        let mut config = CliConfig::default();
+        let cmd = AuthCommand {
+            command: AuthSubcommands::Login,
+            base_url: "https://dapp.phylax.systems".to_string(),
+        };
+        let auth_response = create_test_auth_response();
+        let mut status = create_test_status_response();
+        status.refresh_token = None;
+
+        let result = cmd.update_config(&mut config, status, &auth_response);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(AuthError::InvalidAuthData(_))));
+    }
+
+    #[test]
+    fn test_update_config_with_missing_address() {
+        let mut config = CliConfig::default();
+        let cmd = AuthCommand {
+            command: AuthSubcommands::Login,
+            base_url: "https://dapp.phylax.systems".to_string(),
+        };
+        let auth_response = create_test_auth_response();
+        let mut status = create_test_status_response();
+        status.address = None;
+
+        let result = cmd.update_config(&mut config, status, &auth_response);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(AuthError::InvalidAuthData(_))));
     }
 
     #[tokio::test]
