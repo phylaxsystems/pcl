@@ -3,11 +3,8 @@ mod common;
 #[cfg(test)]
 mod tests {
     use super::common::da_store_harness::TestSetup;
-    use alloy::{
-        hex,
-        primitives::{Address, U256},
-    };
-    use assertion_da_client::{DaClient, DaClientError};
+    use alloy::primitives::{Address, U256};
+    use assertion_da_client::DaClientError;
     use pcl_core::error::DaSubmitError;
     use std::{fs::File, io::Write, path::PathBuf};
 
@@ -41,8 +38,7 @@ mod tests {
                     pcl_phoundry::error::PhoundryError::NoSourceFilesFound
                 ))
             ),
-            "Result: {:#?}",
-            res
+            "Result: {res:#?}",
         );
     }
 
@@ -79,7 +75,7 @@ mod tests {
             res,
             Err(DaSubmitError::PhoundryError(
                 pcl_phoundry::error::PhoundryError::ContractNotFound(s)
-            )) if s == "ContractDoesNotExist".to_string()
+            )) if s == "ContractDoesNotExist"
         ));
     }
 
@@ -97,7 +93,7 @@ mod tests {
     // Test DA Submission
     #[tokio::test]
     async fn test_da_store_once() {
-        let mut test_setup = TestSetup::new();
+        let test_setup = TestSetup::new();
         let mut test_runner = test_setup.build().await.unwrap();
         test_runner.run().await.unwrap();
 
@@ -108,7 +104,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_da_store_already_exists() {
-        let mut test_setup = TestSetup::new();
+        let test_setup = TestSetup::new();
         let mut test_runner = test_setup.build().await.unwrap();
 
         // Submit assertion first time
@@ -129,7 +125,7 @@ mod tests {
     // Test DA Submission with invalid url
     #[tokio::test]
     async fn test_da_submission_with_invalid_url() {
-        let mut test_setup = TestSetup::new();
+        let test_setup = TestSetup::new();
         let mut test_runner = test_setup.build().await.unwrap();
         // Override the DA URL to an invalid one
         test_runner.da_store_args.url = "http://invalid-url:8080".to_string();

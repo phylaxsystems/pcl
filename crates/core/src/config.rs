@@ -18,9 +18,8 @@ use serde::{
     Serialize,
     Serializer,
 };
-use std::collections::HashMap;
-use std::fmt;
-use std::path::PathBuf;
+
+use std::{collections::HashMap, fmt, path::PathBuf};
 
 /// Directory name for storing PCL configuration
 pub const CONFIG_DIR: &str = ".pcl";

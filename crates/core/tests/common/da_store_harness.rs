@@ -5,12 +5,7 @@ use pcl_common::args::CliArgs;
 use pcl_core::config::CliConfig;
 use pcl_core::{assertion_da::DaStoreArgs, error::DaSubmitError};
 use pcl_phoundry::phorge::BuildAndFlattenArgs;
-use std::fs::File;
-use std::future::Future;
-use std::io::{self, Read, Seek, Write};
-use std::os::unix::io::{AsRawFd, RawFd};
 use std::{collections::HashMap, path::PathBuf};
-use tempfile::{tempfile, TempDir};
 
 #[derive(Debug, Default)]
 pub struct TestSetup {
@@ -42,6 +37,7 @@ impl TestSetup {
         self.constructor_args = constructor_args;
     }
 
+    #[allow(dead_code)]
     pub fn set_json(&mut self, json: bool) {
         self.json = json;
     }
@@ -66,7 +62,7 @@ impl TestSetup {
             constructor_args: self.constructor_args.clone(),
         };
 
-        let mut cli_config = CliConfig {
+        let cli_config = CliConfig {
             auth: None,
             assertions_for_submission: HashMap::new(),
         };
@@ -129,28 +125,4 @@ impl TestRunner {
             assertion_for_submission.constructor_args
         );
     }
-}
-
-/// Capture stdout from an async function
-async fn capture_stdout_async<F, Fut>(func: F) -> String
-where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = ()>,
-{
-    let mut tmpfile = tempfile().unwrap();
-    let tmpfd = tmpfile.as_raw_fd();
-    let stdout_fd = io::stdout().as_raw_fd();
-    let saved_stdout = unsafe { libc::dup(stdout_fd) };
-    unsafe { libc::dup2(tmpfd, stdout_fd) };
-
-    func().await;
-
-    io::stdout().flush().unwrap();
-    unsafe { libc::dup2(saved_stdout, stdout_fd) };
-    unsafe { libc::close(saved_stdout) };
-
-    let mut output = String::new();
-    tmpfile.seek(std::io::SeekFrom::Start(0)).unwrap();
-    tmpfile.read_to_string(&mut output).unwrap();
-    output
 }
