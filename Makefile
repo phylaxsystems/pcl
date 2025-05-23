@@ -4,8 +4,8 @@ build:
 
 # Install the binary
 install:
-	cargo install --verbose --path bin/pcl
- 
+	cargo install --locked --verbose --path bin/pcl
+
 # Build the contract mocks and run the rust tests
 test:
 	cargo nextest run --all-features --workspace --locked 

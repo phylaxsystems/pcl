@@ -7542,7 +7542,7 @@ dependencies = [
 
 [[package]]
 name = "pcl"
-version = "0.0.1"
+version = "0.0.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -7559,7 +7559,7 @@ dependencies = [
 
 [[package]]
 name = "pcl-common"
-version = "0.0.1"
+version = "0.0.4"
 dependencies = [
  "clap",
  "serde_json",
@@ -7568,7 +7568,7 @@ dependencies = [
 
 [[package]]
 name = "pcl-core"
-version = "0.0.1"
+version = "0.0.4"
 dependencies = [
  "alloy-primitives",
  "assertion-da-client 0.1.0 (git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e)",
@@ -7595,7 +7595,7 @@ dependencies = [
 
 [[package]]
 name = "pcl-phoundry"
-version = "0.0.1"
+version = "0.0.4"
 dependencies = [
  "alloy-json-abi",
  "clap",
