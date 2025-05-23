@@ -13,7 +13,6 @@ use pcl_core::{
 use pcl_phoundry::phorge::BuildAndFlattenArgs;
 use std::{
     collections::HashMap,
-    fmt,
     path::PathBuf,
 };
 
