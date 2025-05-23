@@ -1,0 +1,14 @@
+name: Release and Publish
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+
+jobs:
+  release-github:
+    permissions:
+      contents: write
+    uses: phylaxsystems/actions/.github/workflows/release-github.yaml@main
+    secrets:
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
