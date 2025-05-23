@@ -19,7 +19,11 @@ use serde::{
     Serializer,
 };
 
-use std::{collections::HashMap, fmt, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fmt,
+    path::PathBuf,
+};
 
 /// Directory name for storing PCL configuration
 pub const CONFIG_DIR: &str = ".pcl";

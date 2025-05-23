@@ -1,11 +1,21 @@
-use alloy::{hex, signers::k256::ecdsa::SigningKey};
+use alloy::{
+    hex,
+    signers::k256::ecdsa::SigningKey,
+};
 use assertion_da_client::DaClient;
 use int_test_utils::deploy_test_da;
 use pcl_common::args::CliArgs;
 use pcl_core::config::CliConfig;
-use pcl_core::{assertion_da::DaStoreArgs, error::DaSubmitError};
+use pcl_core::{
+    assertion_da::DaStoreArgs,
+    error::DaSubmitError,
+};
 use pcl_phoundry::phorge::BuildAndFlattenArgs;
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fmt,
+    path::PathBuf,
+};
 
 #[derive(Debug, Default)]
 pub struct TestSetup {
