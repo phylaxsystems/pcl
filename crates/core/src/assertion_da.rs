@@ -57,16 +57,16 @@ pub struct DaStoreArgs {
         value_hint = ValueHint::Url,
         default_value = "https://demo-21.phylax.systems/assertion-da/http"
     )]
-    url: String,
+    pub url: String,
 
     /// Build and flatten arguments for the assertion
     #[clap(flatten)]
-    args: BuildAndFlattenArgs,
+    pub args: BuildAndFlattenArgs,
 
     /// Constructor arguments for the assertion contract
     #[clap(help = "Constructor arguments for the assertion contract.
                          Format: <ARG0> <ARG1> <ARG2>")]
-    constructor_args: Vec<String>,
+    pub constructor_args: Vec<String>,
 }
 
 impl DaStoreArgs {

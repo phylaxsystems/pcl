@@ -29,7 +29,12 @@ indicatif = "0.17"
 assertion-da-client = { git = "ssh://git@github.com/phylaxsystems/assertion-da.git", rev = "cc1b26e" }
 jsonrpsee-core = { version = "0.24.9", features = ["client", "http"] }
 jsonrpsee-http-client = "0.24.9"
+anyhow = { version = "1.0.98"}
 
 [dev-dependencies]
 mockito = "1.2"
 tempfile = "3.6.0"
+alloy = { version = "0.11.1", features = ["signer-local"]}
+rand = "0.8.1"
+int-test-utils = { git = "https://github.com/phylaxsystems/int-test-utils.git", rev = "2ddaa07" }
+libc = "0.2.172"

@@ -29,8 +29,6 @@ pub enum PhoundryError {
     InvalidPath(PathBuf),
     #[error("Directory not found: {0:?}")]
     DirectoryNotFound(PathBuf),
-    #[error("File not found: {0:?}")]
-    FileNotFound(PathBuf),
     #[error("Solc error: {0}")]
     SolcError(#[from] SolcError),
     #[error("Failed to canonicalize path: {0:?}")]

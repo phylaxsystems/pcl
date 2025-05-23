@@ -7,6 +7,7 @@ use chrono::{
 use clap::Parser;
 use colored::Colorize;
 use dirs::home_dir;
+use pcl_common::args::CliArgs;
 use serde::{
     de::{
         self,
@@ -188,12 +189,20 @@ impl ConfigArgs {
 }
 
 impl CliConfig {
-    /// Writes the configuration to the default config file
+    /// Writes the configuration to the default config file, or a specific directory
+    ///
+    /// # Arguments
+    /// * `cli_args` - Command line arguments
     ///
     /// # Returns
     /// * `Result<(), ConfigError>` - Success or error
-    pub fn write_to_file(&self) -> Result<(), ConfigError> {
-        self.write_to_file_at_dir(Self::get_config_dir())
+    pub fn write_to_file(&self, cli_args: &CliArgs) -> Result<(), ConfigError> {
+        self.write_to_file_at_dir(
+            cli_args
+                .config_dir
+                .clone()
+                .unwrap_or(Self::get_config_dir()),
+        )
     }
 
     /// Writes the configuration to a specific directory
@@ -318,12 +327,20 @@ impl CliConfig {
         toml::from_str(&config_str).map_err(ConfigError::ParseError)
     }
 
-    /// Reads configuration from the default config file
+    /// Reads configuration from the default config file, or a specific directory
+    ///
+    /// # Arguments
+    /// * `cli_args` - Command line arguments
     ///
     /// # Returns
     /// * `Result<Self, ConfigError>` - Configuration or error
-    pub fn read_from_file() -> Result<Self, ConfigError> {
-        Self::read_from_file_at_dir(Self::get_config_dir())
+    pub fn read_from_file(cli_args: &CliArgs) -> Result<Self, ConfigError> {
+        Self::read_from_file_at_dir(
+            cli_args
+                .config_dir
+                .clone()
+                .unwrap_or(Self::get_config_dir()),
+        )
     }
 
     /// Adds an assertion to the pending submissions

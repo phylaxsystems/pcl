@@ -102,7 +102,6 @@ impl BuildAndFlattenArgs {
     /// - `Err(PhoundryError)` if any step in the process fails
     pub fn run(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
         foundry_cli::utils::load_dotenv();
-        foundry_cli::utils::subscriber();
 
         let build = self.build()?;
         let info = ContractInfo::new(&self.assertion_contract);
