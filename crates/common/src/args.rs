@@ -1,9 +1,12 @@
 use clap::Parser;
+use std::path::PathBuf;
 
 #[derive(Debug, Parser, Clone, Default)]
 pub struct CliArgs {
     #[clap(short, long)]
-    json: bool,
+    pub json: bool,
+    #[clap(hide = true)]
+    pub config_dir: Option<PathBuf>,
 }
 
 impl CliArgs {

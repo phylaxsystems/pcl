@@ -60,8 +60,8 @@ async fn main() -> Result<()> {
         .display_env_section(false)
         .install()?;
 
-    let mut config = CliConfig::read_from_file().unwrap_or_default();
     let cli = Cli::parse();
+    let mut config = CliConfig::read_from_file(&cli.args).unwrap_or_default();
 
     // TODO(Odysseas): Convert these commands to return strings to print for json output
     // We can also use something similar like the shell macro from Foundry
@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
                 config_cmd.run(&mut config)?;
             }
         };
-        config.write_to_file()?;
+        config.write_to_file(&cli.args)?;
         Ok::<_, Report>(())
     }
     .await;
