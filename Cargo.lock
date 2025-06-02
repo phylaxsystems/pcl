@@ -6390,7 +6390,7 @@ dependencies = [
 [[package]]
 name = "int-test-utils"
 version = "0.1.0"
-source = "git+https://github.com/phylaxsystems/int-test-utils.git?rev=2ddaa07#2ddaa074889c8b0400410eb6912f1c746686a176"
+source = "git+https://github.com/phylaxsystems/int-test-utils.git?rev=f7ae472#f7ae47297a2425aa9b04644a82249d2bc1af6b44"
 dependencies = [
  "alloy 0.11.1",
  "anyhow",
@@ -8051,7 +8051,7 @@ dependencies = [
 
 [[package]]
 name = "pcl"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -8068,7 +8068,7 @@ dependencies = [
 
 [[package]]
 name = "pcl-common"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "clap",
  "serde_json",
@@ -8077,7 +8077,7 @@ dependencies = [
 
 [[package]]
 name = "pcl-core"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "alloy 0.11.1",
  "alloy-primitives",
@@ -8109,7 +8109,7 @@ dependencies = [
 
 [[package]]
 name = "pcl-phoundry"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "alloy-json-abi",
  "clap",
