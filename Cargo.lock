@@ -1570,49 +1570,17 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-client"
-version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e#cc1b26eed4a76c14a080033651972e0767382f8f"
-dependencies = [
- "alloy 0.11.1",
- "assertion-da-core 0.1.0 (git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e)",
- "http",
- "jsonrpsee",
- "serde_json",
- "thiserror 2.0.12",
- "tokio",
-]
-
-[[package]]
-name = "assertion-da-client"
 version = "0.1.2"
 source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
 dependencies = [
  "alloy 0.11.1",
- "assertion-da-core 0.1.2",
+ "assertion-da-core",
  "http",
  "jsonrpsee",
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "assertion-da-core"
-version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e#cc1b26eed4a76c14a080033651972e0767382f8f"
-dependencies = [
- "alloy 0.11.1",
- "serde",
-]
-
-[[package]]
-name = "assertion-da-core"
-version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=ea880865dd201758166d70ea49711b45d393036d#ea880865dd201758166d70ea49711b45d393036d"
-dependencies = [
- "alloy 0.11.1",
- "serde",
 ]
 
 [[package]]
@@ -1626,14 +1594,14 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-server"
-version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=ea880865dd201758166d70ea49711b45d393036d#ea880865dd201758166d70ea49711b45d393036d"
+version = "0.1.2"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
 dependencies = [
  "alloy 0.11.1",
  "alloy-dyn-abi",
  "alloy-json-abi",
  "anyhow",
- "assertion-da-core 0.1.0 (git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=ea880865dd201758166d70ea49711b45d393036d)",
+ "assertion-da-core",
  "bincode",
  "bollard",
  "clap",
@@ -1690,7 +1658,7 @@ dependencies = [
  "alloy-transport 0.11.1",
  "alloy-transport-ws 0.11.1",
  "anyhow",
- "assertion-da-client 0.1.2",
+ "assertion-da-client",
  "bincode",
  "clap",
  "enum-as-inner",
@@ -6392,7 +6360,7 @@ dependencies = [
 [[package]]
 name = "int-test-utils"
 version = "0.1.0"
-source = "git+https://github.com/phylaxsystems/int-test-utils.git?rev=f7ae472#f7ae47297a2425aa9b04644a82249d2bc1af6b44"
+source = "git+https://github.com/phylaxsystems/int-test-utils.git?rev=60cd1fa#60cd1fae57bd1650ff667d53eecee81a17555b47"
 dependencies = [
  "alloy 0.11.1",
  "anyhow",
@@ -8084,7 +8052,7 @@ dependencies = [
  "alloy 0.11.1",
  "alloy-primitives",
  "anyhow",
- "assertion-da-client 0.1.0",
+ "assertion-da-client",
  "chrono",
  "clap",
  "color-eyre",
