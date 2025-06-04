@@ -1,15 +1,11 @@
+use alloy::node_bindings::Anvil;
 use alloy::{
     hex,
     signers::k256::ecdsa::SigningKey,
 };
-use alloy::node_bindings::Anvil;
 use assertion_da_client::DaClient;
-use chrono::{
-    DateTime,
-    Utc,
-};
+use chrono::DateTime;
 use int_test_utils::{
-    deploy_contracts,
     deploy_dapp,
     deploy_test_da,
 };
@@ -18,10 +14,6 @@ use pcl_core::config::CliConfig;
 use pcl_core::{
     assertion_da::DaStoreArgs,
     assertion_submission::DappSubmitArgs,
-    auth::{
-        AuthCommand,
-        AuthSubcommands,
-    },
     config::UserAuth,
     error::{
         AuthError,
@@ -79,8 +71,12 @@ impl TestSetup {
         let anvil = Anvil::new().spawn();
         let rpc_url = anvil.endpoint();
         let (_handle, da_url) = deploy_test_da(SigningKey::random(&mut rand::thread_rng())).await;
-        let (dapp_port, _dapp_handle) = deploy_dapp(&PathBuf::from("../../lib/credible-layer-dapp/apps/dapp/"), &rpc_url, &da_url.to_string())
-            .unwrap();
+        let (dapp_port, _dapp_handle) = deploy_dapp(
+            &PathBuf::from("../../lib/credible-layer-dapp/apps/dapp/"),
+            &rpc_url,
+            &da_url.to_string(),
+        )
+        .unwrap();
 
         let build_and_flatten_args = BuildAndFlattenArgs {
             root: Some(
