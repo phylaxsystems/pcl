@@ -1585,31 +1585,8 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-core"
-<<<<<<< HEAD
 version = "0.1.2"
 source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
-=======
-version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e#cc1b26eed4a76c14a080033651972e0767382f8f"
-dependencies = [
- "alloy 0.11.1",
- "serde",
-]
-
-[[package]]
-name = "assertion-da-core"
-version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git#7200364c4e97961dd9262818a482ae1156414d55"
->>>>>>> 062a260 (chore: remove unused import)
-dependencies = [
- "alloy 0.11.1",
- "serde",
-]
-
-[[package]]
-name = "assertion-da-core"
-version = "0.1.2"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
 dependencies = [
  "alloy 0.11.1",
  "serde",
@@ -1618,21 +1595,13 @@ dependencies = [
 [[package]]
 name = "assertion-da-server"
 version = "0.1.2"
-<<<<<<< HEAD
 source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
-=======
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
->>>>>>> 062a260 (chore: remove unused import)
 dependencies = [
  "alloy 0.11.1",
  "alloy-dyn-abi",
  "alloy-json-abi",
  "anyhow",
-<<<<<<< HEAD
  "assertion-da-core",
-=======
- "assertion-da-core 0.1.2",
->>>>>>> 062a260 (chore: remove unused import)
  "bincode",
  "bollard",
  "clap",
@@ -6391,10 +6360,7 @@ dependencies = [
 [[package]]
 name = "int-test-utils"
 version = "0.1.0"
-<<<<<<< HEAD
 source = "git+https://github.com/phylaxsystems/int-test-utils.git?rev=6633976#66339765611c636ca56a0690afc0db4ac9f26168"
-=======
->>>>>>> 062a260 (chore: remove unused import)
 dependencies = [
  "alloy 0.11.1",
  "anyhow",
