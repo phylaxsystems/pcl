@@ -218,8 +218,8 @@ impl DaStoreArgs {
         {
             Ok(res) => Ok(res),
             Err(err) => {
-                match err {
-                    DaClientError::ReqwestError(ref reqwest_err) => {
+                match &err {
+                    DaClientError::ReqwestError(reqwest_err) => {
                         if let Some(status) = reqwest_err.status() {
                             Self::handle_http_error(status.as_u16(), spinner)?;
                             Err(err.into())
@@ -227,7 +227,24 @@ impl DaStoreArgs {
                             Err(err.into())
                         }
                     }
-                    _ => Err(err.into()),
+                    DaClientError::UrlParseError(_) => {
+                        spinner.finish_with_message("❌ Invalid DA server URL");
+                        Err(err.into())
+                    }
+                    DaClientError::JsonError(_) => {
+                        spinner.finish_with_message("❌ Failed to parse server response");
+                        Err(err.into())
+                    }
+                    DaClientError::JsonRpcError { code, message } => {
+                        spinner.finish_with_message(format!(
+                            "❌ Server error (code {code}): {message}"
+                        ));
+                        Err(err.into())
+                    }
+                    DaClientError::InvalidResponse(msg) => {
+                        spinner.finish_with_message(format!("❌ Invalid server response: {msg}"));
+                        Err(err.into())
+                    }
                 }
             }
         }
@@ -409,7 +426,7 @@ mod tests {
     "prover_signature": "0x0000000000000000000000000000000000000000000000000000000000000000",
     "id": "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "id": 0
+  "id": 1
             }"#,
             )
             .with_header("content-type", "application/json")
@@ -521,7 +538,7 @@ mod tests {
     "prover_signature": "0x0000000000000000000000000000000000000000000000000000000000000000",
     "id": "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "id": 0
+  "id": 1
             }"#,
             )
             .with_header("content-type", "application/json")
@@ -555,7 +572,7 @@ mod tests {
     "prover_signature": "0x0000000000000000000000000000000000000000000000000000000000000000",
     "id": "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "id": 0
+  "id": 1
             }"#,
             )
             .with_header("content-type", "application/json")
