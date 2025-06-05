@@ -27,8 +27,6 @@ use assertion_da_client::{
     DaClientError,
     DaSubmissionResponse,
 };
-use jsonrpsee_core::client::Error as ClientError;
-use jsonrpsee_http_client::transport::Error as TransportError;
 
 use crate::{
     config::{
@@ -221,11 +219,9 @@ impl DaStoreArgs {
             Ok(res) => Ok(res),
             Err(err) => {
                 match err {
-                    DaClientError::ClientError(ClientError::Transport(ref boxed_err)) => {
-                        if let Some(TransportError::Rejected { status_code }) =
-                            boxed_err.downcast_ref()
-                        {
-                            Self::handle_http_error(*status_code, spinner)?;
+                    DaClientError::ReqwestError(ref reqwest_err) => {
+                        if let Some(status) = reqwest_err.status() {
+                            Self::handle_http_error(status.as_u16(), spinner)?;
                             Err(err.into())
                         } else {
                             Err(err.into())
