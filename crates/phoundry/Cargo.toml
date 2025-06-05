@@ -13,10 +13,10 @@ repository.workspace = true
 pcl-common = { workspace = true }
 
 # Foundry deps
-forge = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "2875888" }
-foundry-config = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "2875888" }
-foundry-cli = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "2875888" }
-foundry-common = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "2875888" }
+forge = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "a6e5630" }
+foundry-config = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "a6e5630" }
+foundry-cli = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "a6e5630" }
+foundry-common = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "a6e5630" }
 foundry-compilers = { version = "0.14.0", default-features = false }
 
 clap = { workspace = true }
