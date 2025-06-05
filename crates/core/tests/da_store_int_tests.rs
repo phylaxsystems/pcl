@@ -135,12 +135,14 @@ mod tests {
         let test_setup = TestSetup::new();
         let mut test_runner = test_setup.build().await.unwrap();
         // Override the DA URL to an invalid one
-        test_runner.da_store_args.url = "http://invalid-url:8080".to_string();
+        test_runner.da_store_args.url = "not-a-url".to_string();
 
         let res = test_runner.run().await;
         assert!(matches!(
             res,
-            Err(DaSubmitError::DaClientError(DaClientError::ClientError(..)))
+            Err(DaSubmitError::DaClientError(DaClientError::UrlParseError(
+                ..
+            )))
         ));
     }
 
@@ -176,7 +178,9 @@ mod tests {
         let res = test_runner.run().await;
         assert!(matches!(
             res,
-            Err(DaSubmitError::DaClientError(DaClientError::ClientError(..)))
+            Err(DaSubmitError::DaClientError(
+                DaClientError::JsonRpcError { .. }
+            ))
         ));
     }
 }

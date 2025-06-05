@@ -27,8 +27,6 @@ use assertion_da_client::{
     DaClientError,
     DaSubmissionResponse,
 };
-use jsonrpsee_core::client::Error as ClientError;
-use jsonrpsee_http_client::transport::Error as TransportError;
 
 use crate::{
     config::{
@@ -55,7 +53,7 @@ pub struct DaStoreArgs {
         short = 'u',
         env = "PCL_DA_URL",
         value_hint = ValueHint::Url,
-        default_value = "https://demo-21.phylax.systems/assertion-da/http"
+        default_value = "https://demo-21-assertion-da.phylax.systems"
     )]
     pub url: String,
 
@@ -220,18 +218,33 @@ impl DaStoreArgs {
         {
             Ok(res) => Ok(res),
             Err(err) => {
-                match err {
-                    DaClientError::ClientError(ClientError::Transport(ref boxed_err)) => {
-                        if let Some(TransportError::Rejected { status_code }) =
-                            boxed_err.downcast_ref()
-                        {
-                            Self::handle_http_error(*status_code, spinner)?;
+                match &err {
+                    DaClientError::ReqwestError(reqwest_err) => {
+                        if let Some(status) = reqwest_err.status() {
+                            Self::handle_http_error(status.as_u16(), spinner)?;
                             Err(err.into())
                         } else {
                             Err(err.into())
                         }
                     }
-                    _ => Err(err.into()),
+                    DaClientError::UrlParseError(_) => {
+                        spinner.finish_with_message("❌ Invalid DA server URL");
+                        Err(err.into())
+                    }
+                    DaClientError::JsonError(_) => {
+                        spinner.finish_with_message("❌ Failed to parse server response");
+                        Err(err.into())
+                    }
+                    DaClientError::JsonRpcError { code, message } => {
+                        spinner.finish_with_message(format!(
+                            "❌ Server error (code {code}): {message}"
+                        ));
+                        Err(err.into())
+                    }
+                    DaClientError::InvalidResponse(msg) => {
+                        spinner.finish_with_message(format!("❌ Invalid server response: {msg}"));
+                        Err(err.into())
+                    }
                 }
             }
         }
@@ -413,7 +426,7 @@ mod tests {
     "prover_signature": "0x0000000000000000000000000000000000000000000000000000000000000000",
     "id": "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "id": 0
+  "id": 1
             }"#,
             )
             .with_header("content-type", "application/json")
@@ -495,7 +508,7 @@ mod tests {
     #[tokio::test]
     async fn test_display_success_info() {
         let args = DaStoreArgs {
-            url: "https://demo-21.phylax.systems/assertion-da/http".to_string(),
+            url: "https://demo-21-assertion-da.phylax.systems".to_string(),
             args: create_test_build_args(),
             constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
@@ -525,7 +538,7 @@ mod tests {
     "prover_signature": "0x0000000000000000000000000000000000000000000000000000000000000000",
     "id": "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "id": 0
+  "id": 1
             }"#,
             )
             .with_header("content-type", "application/json")
@@ -559,7 +572,7 @@ mod tests {
     "prover_signature": "0x0000000000000000000000000000000000000000000000000000000000000000",
     "id": "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "id": 0
+  "id": 1
             }"#,
             )
             .with_header("content-type", "application/json")
@@ -630,7 +643,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_da_client_with_auth() {
         let args = DaStoreArgs {
-            url: "https://demo-21.phylax.systems/assertion-da/http".to_string(),
+            url: "https://demo-21-assertion-da.phylax.systems".to_string(),
             args: BuildAndFlattenArgs::default(),
             constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
@@ -652,7 +665,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_da_client_without_auth() {
         let args = DaStoreArgs {
-            url: "https://demo-21.phylax.systems/assertion-da/http".to_string(),
+            url: "https://demo-21-assertion-da.phylax.systems".to_string(),
             args: BuildAndFlattenArgs::default(),
             constructor_args: vec!["arg1".to_string(), "arg2".to_string()],
         };
@@ -665,7 +678,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_config() {
         let args = DaStoreArgs {
-            url: "https://demo-21.phylax.systems/assertion-da/http".to_string(),
+            url: "https://demo-21-assertion-da.phylax.systems".to_string(),
             args: BuildAndFlattenArgs {
                 assertion_contract: "test_assertion".to_string(),
                 ..BuildAndFlattenArgs::default()
