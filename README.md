@@ -120,7 +120,7 @@ Arguments:
                          Format: <ARG0> <ARG1> <ARG2>
 
 Options:
-  -u, --url <URL>        URL of the assertion-DA server [default: https://demo-21.phylax.systems/assertion-da/http]
+  -u, --url <URL>        URL of the assertion-DA server [default: https://demo-21-assertion-da.phylax.systems]
   -r, --root <ROOT>      Root directory of the project
   -h, --help             Print help (see a summary with '-h')
 ```
