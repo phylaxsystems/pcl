@@ -1,17 +1,12 @@
 [workspace]
-members = [
-  "bin/pcl", 
-  "crates/phoundry",
-  "crates/common",
-  "crates/core"
-]
+members = ["bin/pcl", "crates/phoundry", "crates/common", "crates/core"]
 
 default-members = ["bin/pcl"]
 resolver = '2'
 exclude = [".github", "phoundry/"]
 
 [workspace.package]
-version = "0.0.5"
+version = "0.0.6"
 authors = ["Phylax Systems"]
 edition = "2021"
 rust-version = "1.80"
@@ -22,7 +17,7 @@ repository = "https://github.com/phylaxsystems/pcl"
 [workspace.dependencies]
 pcl-phoundry = { path = "crates/phoundry" }
 pcl-common = { path = "crates/common" }
-pcl-core= { path = "crates/core" }
+pcl-core = { path = "crates/core" }
 tokio = { version = "1.39.0", features = ["full"] }
 clap = { version = "4.5.23", features = ["derive", "env", "cargo"] }
 color-eyre = "0.6"
