@@ -8,6 +8,8 @@ on:
 jobs:
   check-version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: Check version matches tag
@@ -36,6 +38,7 @@ jobs:
     uses: phylaxsystems/actions/.github/workflows/rust-build-binary.yaml@main
     with:
       binary-name: "pcl"
+      version: ${{ needs.check-version.outputs.version }}
       artifact_name: "pcl-${{ github.ref_name }}"
       rust-channel: "nightly"
 
