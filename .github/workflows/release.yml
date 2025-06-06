@@ -37,6 +37,7 @@ jobs:
     with:
       binary-name: "pcl"
       artifact_name: "pcl-${{ github.ref_name }}"
+      rust-channel: "nightly"
 
       # The tag to use is automatically inferred from the event, so you don't need to set it.
       # All other options (like release_name, generate_release_notes, etc.)
