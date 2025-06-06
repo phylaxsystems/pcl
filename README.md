@@ -33,14 +33,12 @@ The Phylax Credible CLI (PCL) is a command-line interface for interacting with t
 
 `pcl` can be installed for both macos and linux (arm64/x86) via Homebrew:
 
+1. Add the `phylaxsystems/pcl` tap to your brew taps
+2. Install the `phylax` formula
+
 ```bash
 brew tap phylaxsystems/pcl
 brew install phylax
-
-pcl --version
-pcl 0.0.7
-Commit: 7f6d41c9ea1b884db66079fc4901166cf87e4db5
-Build Timestamp: 2025-06-06T13:18:47.563541000Z
 ```
 
 Note: We have named the formula as `phylax`, but the binary is called `pcl`. This is because there is a binary already on Homebrew named `pcl`.
@@ -48,7 +46,7 @@ Note: We have named the formula as `phylax`, but the binary is called `pcl`. Thi
 ### Install from source
 
 1. Install [Rust](https://www.rust-lang.org/tools/install)
-2. Run the following command:
+2. Install `pcl` with `cargo install`:
 
 ```bash
 
@@ -57,11 +55,6 @@ cargo +nightly install --git https://github.com/phylaxsystems/pcl --locked --tag
 
 // Build from the latest commit on `main`
 cargo +nightly install --git https://github.com/phylaxsystems/pcl --locked
-
-pcl --version
-pcl 0.0.7
-Commit: 7f6d41c9ea1b884db66079fc4901166cf87e4db5
-Build Timestamp: 2025-06-06T13:18:47.563541000Z
 ```
 
 ## Usage Guide
