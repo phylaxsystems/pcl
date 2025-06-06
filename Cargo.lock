@@ -8023,7 +8023,7 @@ dependencies = [
 
 [[package]]
 name = "pcl"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -8040,7 +8040,7 @@ dependencies = [
 
 [[package]]
 name = "pcl-common"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "clap",
  "serde_json",
@@ -8049,7 +8049,7 @@ dependencies = [
 
 [[package]]
 name = "pcl-core"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "alloy 0.11.1",
  "alloy-primitives",
@@ -8081,7 +8081,7 @@ dependencies = [
 
 [[package]]
 name = "pcl-phoundry"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "alloy-json-abi",
  "clap",
