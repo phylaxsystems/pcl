@@ -1,6 +1,5 @@
 # Phylax Credible Layer (PCL) CLI
 
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](https://opensource.org/licenses/GPL-3.0)
 [![Tests, Linting, Format](https://github.com/phylaxsystems/pcl/actions/workflows/rust-base.yml/badge.svg)](https://github.com/phylaxsystems/pcl/actions/workflows/rust-base.yml)
 
 The Phylax Credible CLI (PCL) is a command-line interface for interacting with the Credible Layer. It allows developers to authenticate, build, test, and submit assertions to the Credible Layer dApp.
