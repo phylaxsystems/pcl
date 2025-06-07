@@ -7,3 +7,6 @@
 [submodule "testdata/mock-protocol/lib/forge-std"]
 	path = testdata/mock-protocol/lib/forge-std
 	url = https://github.com/foundry-rs/forge-std
+[submodule "lib/credible-layer-dapp"]
+	path = lib/credible-layer-dapp
+	url = git@github.com:phylaxsystems/credible-layer-dapp.git
