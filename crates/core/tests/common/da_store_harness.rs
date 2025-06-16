@@ -10,7 +10,7 @@ use pcl_core::{
     assertion_da::DaStoreArgs,
     error::DaSubmitError,
 };
-use pcl_phoundry::phorge::BuildAndFlattenArgs;
+use pcl_phoundry::build_and_flatten::BuildAndFlattenArgs;
 use std::{
     collections::HashMap,
     path::PathBuf,

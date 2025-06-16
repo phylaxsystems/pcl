@@ -2,17 +2,6 @@ use clap::{
     Parser,
     ValueHint,
 };
-use color_eyre::Report;
-use forge::{
-    cmd::{
-        build::BuildArgs,
-        test::TestArgs,
-    },
-    opts::{
-        Forge,
-        ForgeSubcommand,
-    },
-};
 use foundry_cli::{
     opts::{
         BuildOpts,
@@ -20,7 +9,6 @@ use foundry_cli::{
     },
     utils::LoadConfig,
 };
-use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     flatten::{
         Flattener,
@@ -33,23 +21,10 @@ use foundry_compilers::{
 
 use alloy_json_abi::JsonAbi;
 
-use foundry_config::{
-    error::ExtractConfigError,
-    find_project_root,
-};
+use foundry_config::find_project_root;
 use std::path::PathBuf;
-use tokio::task::spawn_blocking;
 
 use crate::error::PhoundryError;
-
-/// Command-line interface for running Phorge tests.
-/// This struct wraps the standard Foundry test arguments.
-#[derive(Debug, Parser, Clone)]
-#[clap(about = "Run tests using Phorge")]
-pub struct PhorgeTest {
-    #[clap(flatten)]
-    pub test_args: TestArgs,
-}
 
 /// Output from building and flattening a Solidity contract.
 /// Contains the compiler version used and the flattened source code.
@@ -160,51 +135,18 @@ impl BuildAndFlattenArgs {
 
     /// Builds the project and returns the compilation output.
     fn build(&self) -> Result<ProjectCompileOutput, Box<PhoundryError>> {
-        let build_cmd = BuildArgs {
-            build: BuildOpts {
-                project_paths: ProjectPathOpts {
-                    root: self.root.clone(),
-                    // FIXME(Odysseas): this essentially hard-codes the location of the assertions to live in
-                    // assertions/src
-                    contracts: Some(PathBuf::from("assertions/src")),
-                    ..Default::default()
-                },
+        let build_opts = BuildOpts {
+            project_paths: ProjectPathOpts {
+                root: self.root.clone(),
+                // FIXME(Odysseas): this essentially hard-codes the location of the assertions to live in
+                // assertions/src
+                contracts: Some(PathBuf::from("assertions/src")),
                 ..Default::default()
             },
             ..Default::default()
         };
 
-        let config = build_cmd.load_config()?;
-
-        let project = config.project().map_err(PhoundryError::SolcError)?;
-        let contracts = project.sources_path();
-
-        match std::fs::read_dir(contracts) {
-            Ok(mut files) => {
-                // Check if the directory is empty
-                if files.next().is_none() {
-                    return Err(Box::new(PhoundryError::NoSourceFilesFound));
-                }
-            }
-            Err(_) => {
-                return Err(Box::new(PhoundryError::DirectoryNotFound(
-                    contracts.to_path_buf(),
-                )));
-            }
-        }
-
-        let compiler = ProjectCompiler::new()
-            .dynamic_test_linking(config.dynamic_test_linking)
-            .print_names(build_cmd.names)
-            .print_sizes(build_cmd.sizes)
-            .ignore_eip_3860(build_cmd.ignore_eip_3860)
-            .bail(true)
-            .quiet(true);
-
-        let res = compiler
-            .compile(&project)
-            .map_err(PhoundryError::CompilationError)?;
-        Ok(res)
+        crate::compile::compile(build_opts)
     }
 
     /// Flattens the contract source code.
@@ -240,47 +182,6 @@ impl BuildAndFlattenArgs {
         }?;
 
         Ok(flattened_source)
-    }
-}
-
-impl PhorgeTest {
-    /// Runs the test command in a separate blocking task.
-    /// This prevents blocking the current runtime while executing the forge command.
-    pub async fn run(self) -> Result<(), Box<PhoundryError>> {
-        // Extract the Send-safe parts of the test args
-        let test_args = self.test_args;
-        let global_opts = test_args.global.clone();
-        global_opts.init()?;
-        // Spawn the blocking operation in a separate task
-        spawn_blocking(move || {
-            // Reconstruct the Forge struct inside the closure
-            let forge = Forge {
-                cmd: ForgeSubcommand::Test(test_args),
-                global: global_opts,
-            };
-            forge::args::run_command(forge)
-        })
-        .await
-        .map_err(|e| Box::new(PhoundryError::ForgeCommandFailed(e.into())))??;
-        Ok(())
-    }
-}
-
-impl From<ExtractConfigError> for Box<PhoundryError> {
-    fn from(error: ExtractConfigError) -> Self {
-        Box::new(PhoundryError::FoundryConfigError(error))
-    }
-}
-
-impl From<std::io::Error> for Box<PhoundryError> {
-    fn from(error: std::io::Error) -> Self {
-        Box::new(PhoundryError::from(error))
-    }
-}
-
-impl From<Report> for Box<PhoundryError> {
-    fn from(error: Report) -> Self {
-        Box::new(PhoundryError::ForgeCommandFailed(error))
     }
 }
 
