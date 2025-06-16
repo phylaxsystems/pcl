@@ -8,7 +8,10 @@ use crate::error::PhoundryError;
 
 /// Compiles the project and returns the compilation output.
 pub fn compile(build_opts: BuildOpts) -> Result<ProjectCompileOutput, Box<PhoundryError>> {
-    let build_cmd = BuildArgs { build: build_opts, ..Default::default() };
+    let build_cmd = BuildArgs {
+        build: build_opts,
+        ..Default::default()
+    };
 
     let config = build_cmd.load_config()?;
 

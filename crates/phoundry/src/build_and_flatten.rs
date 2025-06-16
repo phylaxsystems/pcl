@@ -135,17 +135,16 @@ impl BuildAndFlattenArgs {
 
     /// Builds the project and returns the compilation output.
     fn build(&self) -> Result<ProjectCompileOutput, Box<PhoundryError>> {
-        let build_opts = 
-            BuildOpts {
-                project_paths: ProjectPathOpts {
-                    root: self.root.clone(),
-                    // FIXME(Odysseas): this essentially hard-codes the location of the assertions to live in
-                    // assertions/src
-                    contracts: Some(PathBuf::from("assertions/src")),
-                    ..Default::default()
-                },
+        let build_opts = BuildOpts {
+            project_paths: ProjectPathOpts {
+                root: self.root.clone(),
+                // FIXME(Odysseas): this essentially hard-codes the location of the assertions to live in
+                // assertions/src
+                contracts: Some(PathBuf::from("assertions/src")),
                 ..Default::default()
-            };
+            },
+            ..Default::default()
+        };
 
         crate::compile::compile(build_opts)
     }

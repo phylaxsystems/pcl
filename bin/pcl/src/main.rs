@@ -14,7 +14,10 @@ use pcl_core::{
         ConfigArgs,
     },
 };
-use pcl_phoundry::phorge_test::PhorgeTest;
+use pcl_phoundry::{
+    build::BuildArgs,
+    phorge_test::PhorgeTest,
+};
 use serde_json::json;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -50,6 +53,8 @@ enum Commands {
     Auth(AuthCommand),
     #[command(about = "Manage configuration")]
     Config(ConfigArgs),
+    #[command(name = "build")]
+    Build(BuildArgs),
 }
 
 #[tokio::main]
@@ -84,6 +89,9 @@ async fn main() -> Result<()> {
             }
             Commands::Config(config_cmd) => {
                 config_cmd.run(&mut config)?;
+            }
+            Commands::Build(build_cmd) => {
+                build_cmd.run()?;
             }
         };
         config.write_to_file(&cli.args)?;
