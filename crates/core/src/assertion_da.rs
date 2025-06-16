@@ -15,7 +15,7 @@ use indicatif::{
     ProgressStyle,
 };
 use pcl_common::args::CliArgs;
-use pcl_phoundry::phorge::{
+use pcl_phoundry::build_and_flatten::{
     BuildAndFlatOutput,
     BuildAndFlattenArgs,
 };

@@ -1,4 +1,4 @@
-use color_eyre::eyre;
+use color_eyre::{eyre, Report};
 use foundry_compilers::{
     error::SolcError,
     flatten::FlattenerError,
@@ -8,6 +8,8 @@ use std::{
     path::PathBuf,
 };
 use thiserror::Error;
+
+use foundry_config::error::ExtractConfigError;
 
 #[derive(Error, Debug)]
 pub enum PhoundryError {
@@ -39,4 +41,23 @@ pub enum PhoundryError {
     NoSourceFilesFound,
     #[error("Compilation failed:\n{0}")]
     CompilationError(eyre::Report),
+}
+
+
+impl From<ExtractConfigError> for Box<PhoundryError> {
+    fn from(error: ExtractConfigError) -> Self {
+        Box::new(PhoundryError::FoundryConfigError(error))
+    }
+}
+
+impl From<std::io::Error> for Box<PhoundryError> {
+    fn from(error: std::io::Error) -> Self {
+        Box::new(PhoundryError::from(error))
+    }
+}
+
+impl From<Report> for Box<PhoundryError> {
+    fn from(error: Report) -> Self {
+        Box::new(PhoundryError::ForgeCommandFailed(error))
+    }
 }

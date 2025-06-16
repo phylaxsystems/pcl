@@ -42,15 +42,6 @@ use tokio::task::spawn_blocking;
 
 use crate::error::PhoundryError;
 
-/// Command-line interface for running Phorge tests.
-/// This struct wraps the standard Foundry test arguments.
-#[derive(Debug, Parser, Clone)]
-#[clap(about = "Run tests using Phorge")]
-pub struct PhorgeTest {
-    #[clap(flatten)]
-    pub test_args: TestArgs,
-}
-
 /// Output from building and flattening a Solidity contract.
 /// Contains the compiler version used and the flattened source code.
 #[derive(Debug, Default)]
@@ -243,46 +234,6 @@ impl BuildAndFlattenArgs {
     }
 }
 
-impl PhorgeTest {
-    /// Runs the test command in a separate blocking task.
-    /// This prevents blocking the current runtime while executing the forge command.
-    pub async fn run(self) -> Result<(), Box<PhoundryError>> {
-        // Extract the Send-safe parts of the test args
-        let test_args = self.test_args;
-        let global_opts = test_args.global.clone();
-        global_opts.init()?;
-        // Spawn the blocking operation in a separate task
-        spawn_blocking(move || {
-            // Reconstruct the Forge struct inside the closure
-            let forge = Forge {
-                cmd: ForgeSubcommand::Test(test_args),
-                global: global_opts,
-            };
-            forge::args::run_command(forge)
-        })
-        .await
-        .map_err(|e| Box::new(PhoundryError::ForgeCommandFailed(e.into())))??;
-        Ok(())
-    }
-}
-
-impl From<ExtractConfigError> for Box<PhoundryError> {
-    fn from(error: ExtractConfigError) -> Self {
-        Box::new(PhoundryError::FoundryConfigError(error))
-    }
-}
-
-impl From<std::io::Error> for Box<PhoundryError> {
-    fn from(error: std::io::Error) -> Self {
-        Box::new(PhoundryError::from(error))
-    }
-}
-
-impl From<Report> for Box<PhoundryError> {
-    fn from(error: Report) -> Self {
-        Box::new(PhoundryError::ForgeCommandFailed(error))
-    }
-}
 
 #[cfg(test)]
 mod tests {
