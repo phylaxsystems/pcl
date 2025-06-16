@@ -14,7 +14,7 @@ use pcl_core::{
         ConfigArgs,
     },
 };
-use pcl_phoundry::test::PhorgeTest;
+use pcl_phoundry::phorge_test::PhorgeTest;
 use serde_json::json;
 
 const VERSION_MESSAGE: &str = concat!(

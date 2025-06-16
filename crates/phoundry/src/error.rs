@@ -1,4 +1,7 @@
-use color_eyre::{eyre, Report};
+use color_eyre::{
+    eyre,
+    Report,
+};
 use foundry_compilers::{
     error::SolcError,
     flatten::FlattenerError,
@@ -42,7 +45,6 @@ pub enum PhoundryError {
     #[error("Compilation failed:\n{0}")]
     CompilationError(eyre::Report),
 }
-
 
 impl From<ExtractConfigError> for Box<PhoundryError> {
     fn from(error: ExtractConfigError) -> Self {
