@@ -171,14 +171,6 @@ contract InvalidContract {
             result.is_err(),
             "Expected compilation to fail with invalid contract"
         );
-
-        // Verify it's a compilation error
-        if let Err(error) = result {
-            // The error should be a compilation error or related error type
-            // We can't check the exact error type without knowing the PhoundryError variants,
-            // but the compilation should definitely fail
-            println!("Compilation failed as expected with error: {:?}", error);
-        }
     }
 
     #[test]
@@ -196,10 +188,6 @@ contract InvalidContract {
             result.is_err(),
             "Expected compilation to fail with empty directory"
         );
-
-        if let Err(error) = result {
-            println!("Compilation failed as expected with error: {:?}", error);
-        }
     }
 
     #[test]
@@ -213,15 +201,10 @@ contract InvalidContract {
 
         let result = args.run();
 
-        // Compilation should fail due to nonexistent directory
         assert!(
             result.is_err(),
             "Expected compilation to fail with nonexistent directory"
         );
-
-        if let Err(error) = result {
-            println!("Compilation failed as expected with error: {:?}", error);
-        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -234,16 +217,6 @@ contract InvalidContract {
 
         let result = args.run();
 
-        // This test might succeed or fail depending on the environment and dependencies
-        // In a real test environment with proper setup, it should succeed with valid contracts
-        match result {
-            Ok(_) => println!("Compilation succeeded as expected"),
-            Err(error) => {
-                println!(
-                    "Compilation failed (might be expected in test environment): {:?}",
-                    error
-                )
-            }
-        }
+        assert!(result.is_ok());
     }
 }
