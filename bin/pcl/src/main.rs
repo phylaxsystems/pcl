@@ -57,7 +57,6 @@ enum Commands {
     Config(ConfigArgs),
     #[command(name = "build")]
     Build(BuildArgs),
-    
 }
 
 #[tokio::main]
