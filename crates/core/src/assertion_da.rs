@@ -37,6 +37,16 @@ use crate::{
     error::DaSubmitError,
 };
 
+/// Macro that defines the default DA URL - can be used in concat! macros
+#[macro_export]
+macro_rules! default_da_url {
+    () => {
+        "https://demo-21-assertion-da.phylax.systems"
+    };
+}
+
+pub const DEFAULT_DA_URL: &str = default_da_url!();
+
 /// Command-line arguments for storing assertions in the Data Availability layer.
 ///
 /// This struct handles the configuration needed to submit assertions to the DA layer,
@@ -53,7 +63,7 @@ pub struct DaStoreArgs {
         short = 'u',
         env = "PCL_DA_URL",
         value_hint = ValueHint::Url,
-        default_value = "https://demo-21-assertion-da.phylax.systems"
+        default_value = DEFAULT_DA_URL
     )]
     pub url: String,
 
@@ -125,6 +135,7 @@ impl DaStoreArgs {
             println!("\n\n{}", "Assertion Information".bold().green());
             println!("{}", "===================".green());
             println!("{assertion}");
+            println!("\nSubmitted to assertion DA: {}", self.url);
 
             println!("\n{}", "Next Steps:".bold());
             println!("Submit this assertion to a project with:");

@@ -26,6 +26,8 @@ const VERSION_MESSAGE: &str = concat!(
     env!("VERGEN_GIT_SHA"),
     "\nBuild Timestamp: ",
     env!("VERGEN_BUILD_TIMESTAMP"),
+    "\nDefault DA URL: ",
+    pcl_core::default_da_url!(),
 );
 
 #[derive(Parser)]
