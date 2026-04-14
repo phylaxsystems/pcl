@@ -1,0 +1,53 @@
+[package]
+name = "pcl-core"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# workspace deps
+pcl-common = { workspace = true }
+pcl-phoundry = { workspace = true }
+
+# assertion deps (optional — behind `credible` feature)
+assertion-verification = { git = "https://github.com/phylaxsystems/credible-sdk.git", rev = "3387cf96ff9a04869445ea0d20cd5a29f1a0ddfa", optional = true }
+assertion-executor = { git = "https://github.com/phylaxsystems/credible-sdk.git", rev = "3387cf96ff9a04869445ea0d20cd5a29f1a0ddfa", default-features = false, optional = true }
+
+# alloy deps
+alloy-primitives = { workspace = true }
+alloy-json-abi = { workspace = true }
+alloy-dyn-abi = { workspace = true }
+
+# dapp API client (generated from OpenAPI spec)
+dapp-api-client = { workspace = true }
+
+# other workspace deps
+clap = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+color-eyre = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+colored = { workspace = true }
+
+# other deps
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+inquire = "0.9"
+toml = "0.8.2"
+dirs = "6.0.0"
+indicatif = "0.18"
+open = "5"
+url.workspace = true
+uuid.workspace = true
+
+[features]
+default = ["full-test"]
+full-test = []
+credible = ["dep:assertion-executor", "dep:assertion-verification"]
+
+[dev-dependencies]
+mockito = "1.2"
+tempfile = "3.6.0"

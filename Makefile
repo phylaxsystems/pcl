@@ -1,31 +1,11 @@
-# Build the binary
-build:
-	cargo build --verbose --release
+# Regenerate dapp-api-client from latest OpenAPI spec
+regenerate:
+	@echo "Regenerating dapp-api-client from latest OpenAPI spec..."
+	cd crates/dapp-api-client && FORCE_SPEC_REGENERATE=true cargo build --features regenerate
+	@echo "Client regenerated! Review changes with: git diff crates/dapp-api-client/src/generated/"
 
-# Install the binary
-install:
-	cargo install --locked --verbose --path bin/pcl
-
-# Build the contract mocks and run the rust tests
-test:
-	cargo nextest run --all-features --workspace --locked 
-
-# Validate formatting
-format-check:
-	cargo +nightly fmt --check
-
-# Format
-format:
-	cargo +nightly fmt
-
-# Lint
-lint:
-	cargo +nightly clippy --workspace
-
-# Errors if there is a warning with clippy
-lint-check:
-	cargo +nightly clippy -- -D warnings
-
-# Can be used as a manual pre-commit check
-pre-commit:
-	make format && make lint
+# Regenerate dapp-api-client from development environment
+regenerate-dev:
+	@echo "Regenerating dapp-api-client from development API (localhost:3000)..."
+	cd crates/dapp-api-client && DAPP_ENV=development FORCE_SPEC_REGENERATE=true cargo build --features regenerate
+	@echo "Client regenerated! Review changes with: git diff crates/dapp-api-client/src/generated/"

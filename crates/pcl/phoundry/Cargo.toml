@@ -1,0 +1,32 @@
+[package]
+name = "pcl-phoundry"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+credible = ["forge/credible"]
+
+[dependencies]
+# Foundry deps — pinned rev, default-features = false to avoid pulling assertion-executor
+forge = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "9289aae52324675d4e6b2f053e2970075c6e3c96", default-features = false }
+foundry-config = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "9289aae52324675d4e6b2f053e2970075c6e3c96", default-features = false }
+foundry-cli = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "9289aae52324675d4e6b2f053e2970075c6e3c96", default-features = false }
+foundry-common = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "9289aae52324675d4e6b2f053e2970075c6e3c96", default-features = false }
+
+foundry-compilers = { version = "0.19.10", default-features = false }
+
+clap = { workspace = true }
+thiserror = { workspace = true }
+color-eyre = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+
+alloy-json-abi = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
