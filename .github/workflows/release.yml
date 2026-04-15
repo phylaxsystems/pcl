@@ -165,6 +165,9 @@ jobs:
       package: "pcl"
       cargo-features: "full"
       enable-sccache: true
+      requires-private-deps: true
+    secrets:
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
 
   release-github:
     needs: [create-tag, build-pcl]
