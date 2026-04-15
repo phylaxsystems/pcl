@@ -1,6 +1,55 @@
+# General ignores
+.vscode
+.env
 /target
-**/out
 
-**/cache
+# DA specifics
+/assertions
+*.assertions
+*.ids_by_block
+*.failed_queue
 
-.cursor/rules
+# Claude code
+.claude/*
+!.claude/skills/
+CLAUDE*
+.tmp/
+
+# Git worktrees
+.worktrees/
+
+# Logs
+logs
+*.log
+flamegraph.svg
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dev-debug.log
+# Dependency directories
+node_modules/
+# Environment variables
+# Editor directories and files
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+# OS specific
+.DS_Store
+
+# Task files
+tasks.json
+tasks/
+
+# OpenAPI cache
+crates/dapp-api-client/openapi/
+
+# Local sidecar artifacts
+.local/
+assertion_store_database/
+indexer_database/
+geth/
+perf.*
+myOutput.json

@@ -1,33 +1,115 @@
-[workspace]
-members = ["bin/pcl", "crates/phoundry", "crates/common", "crates/core"]
+cargo-features = ["profile-rustflags"]
 
-default-members = ["bin/pcl"]
-resolver = '2'
-exclude = [".github", "phoundry/"]
+[workspace]
+members = [
+    "crates/pcl/cli",
+    "crates/pcl/core",
+    "crates/pcl/common",
+    "crates/pcl/phoundry",
+    "crates/dapp-api-client",
+]
+resolver = "2"
 
 [workspace.package]
-version = "0.0.7"
+version = "1.3.0"
+edition = "2024"
 authors = ["Phylax Systems"]
-edition = "2021"
-rust-version = "1.80"
-license = "GPL-3.0-only"
+license = "BSL 1.1"
 repository = "https://github.com/phylaxsystems/pcl"
 
-
 [workspace.dependencies]
-pcl-phoundry = { path = "crates/phoundry" }
-pcl-common = { path = "crates/common" }
-pcl-core = { path = "crates/core" }
-tokio = { version = "1.39.0", features = ["full"] }
-clap = { version = "4.5.23", features = ["derive", "env", "cargo"] }
-color-eyre = "0.6"
-thiserror = "2"
+# PCL workspace crates
+pcl-phoundry = { path = "crates/pcl/phoundry" }
+pcl-common = { path = "crates/pcl/common" }
+pcl-core = { path = "crates/pcl/core" }
+dapp-api-client = { path = "crates/dapp-api-client" }
 
-serde = { version = "1.0.2", features = ["derive"] }
-serde_json = "1.0.1"
-chrono = { version = "0.4", features = ["serde"] }
 
+# misc
+anyhow = "1.0.100"
+reqwest = { version = "0.12.26", features = ["json", "rustls-tls"] }
+clap = { version = "4.5.53", features = ["derive", "env"] }
+serde = "1.0.228"
+serde_json = "1.0.145"
+tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "sync", "time", "net", "signal", "io-util", "fs", "process"] }
+color-eyre = "0.6.5"
+thiserror = "2.0.17"
+chrono = { version = "0.4.42", features = ["serde"] }
 colored = "3"
+tempfile = { version = "3.23.0" }
+url = "2.5.7"
+uuid = { version = "1.23", features = ["serde", "v4"] }
 
-tempfile = "3"
-tempdir = "0.3"
+# alloy core
+alloy-primitives = { version = "1.5.1", features = ["getrandom"] }
+alloy-json-abi = "1.5.1"
+alloy-dyn-abi = { version = "1.5.1", features = ["std"] }
+
+
+[workspace.lints.clippy]
+too_many_lines = "deny"
+too_many_arguments = "deny"
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
+
+[profile.maxperf]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+incremental = false
+
+[profile.debug-perf]
+inherits = "release"
+strip = "none"
+rustflags = [
+    "-C",
+    "force-frame-pointers=yes",
+    "-C",
+    "symbol-mangling-version=v0",
+]
+debug = "line-tables-only"
+
+# Alloy pinned to 1.1.3 — required to match phoundry's alloy version.
+# Without this, cargo resolves to latest semver-compatible (1.8.x) which has breaking changes.
+[patch.crates-io]
+alloy-consensus = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-contract = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-eips = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-ens = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-genesis = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-network = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-network-primitives = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-provider = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-pubsub = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-rpc-types-any = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-rpc-types-eth = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-rpc-types-trace = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-rpc-types-engine = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-serde = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-signer = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-signer-local = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-transport = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", tag = "v1.1.3" }
+
+# Required by phoundry's transitive deps
+solar-compiler = { git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
+solar-interface = { git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
+solar-ast = { git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
+solar-sema = { git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
+solar-parse = { git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
+solar-config = { git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
+solar-data-structures = { git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
+solar-macros = { git = "https://github.com/paradigmxyz/solar.git", rev = "1f28069" }
