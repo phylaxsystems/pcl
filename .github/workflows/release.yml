@@ -1,0 +1,283 @@
+name: Tag, Release and Publish
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Cargo.toml
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create or move (e.g. 1.2.3)"
+        required: true
+        type: string
+      force_move_tag:
+        description: "Move tag if it already exists on the remote"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  # Runs on main branch push or manual dispatch to create/move a tag
+  create-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag_created: ${{ steps.create-tag.outputs.tag_created }}
+      version: ${{ steps.create-tag.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Extract versions and create tag if changed
+        id: create-tag
+        run: |
+          set -euo pipefail
+
+          get_version() {
+            awk '
+              /^\[workspace\.package\][[:space:]]*$/ { in_section=1; next }
+              /^\[/ { in_section=0 }
+              in_section && /^[[:space:]]*version[[:space:]]*=/ {
+                sub(/.*=[[:space:]]*"/, "")
+                sub(/".*/, "")
+                print; exit
+              }
+            ' "$1"
+          }
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+            FORCE_MOVE="${{ inputs.force_move_tag }}"
+            TARGET_SHA="${{ github.sha }}"
+
+            if [[ -z "$TAG" ]]; then
+              echo "::error::Tag input is required for workflow_dispatch"
+              exit 1
+            fi
+
+            if ! git rev-parse -q --verify "${TARGET_SHA}^{commit}" >/dev/null; then
+              echo "::error::Target commit not found: ${TARGET_SHA}"
+              exit 1
+            fi
+
+            EXISTING_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | awk '{print $1}')"
+            if [[ -z "$EXISTING_SHA" ]]; then
+              EXISTING_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{print $1}')"
+            fi
+            TARGET_SHA="$(git rev-parse "${TARGET_SHA}")"
+
+            if [[ -n "$EXISTING_SHA" ]]; then
+              if [[ "$EXISTING_SHA" == "$TARGET_SHA" ]]; then
+                echo "Tag ${TAG} already points to ${TARGET_SHA}; continuing"
+                echo "tag_created=true" >> $GITHUB_OUTPUT
+                echo "version=${TAG}" >> $GITHUB_OUTPUT
+                exit 0
+              fi
+
+              if [[ "$FORCE_MOVE" != "true" ]]; then
+                echo "::error::Tag ${TAG} already exists on remote at ${EXISTING_SHA}. Re-run with force_move_tag=true to move it."
+                exit 1
+              fi
+
+              echo "Moving tag ${TAG} to ${TARGET_SHA}"
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git tag -a -f "$TAG" "$TARGET_SHA" -m "Release $TAG"
+              git push --force origin "refs/tags/$TAG"
+
+              echo "tag_created=true" >> $GITHUB_OUTPUT
+              echo "version=${TAG}" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            echo "Creating tag ${TAG} at ${TARGET_SHA}"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" "$TARGET_SHA" -m "Release $TAG"
+            git push origin "refs/tags/$TAG"
+
+            echo "tag_created=true" >> $GITHUB_OUTPUT
+            echo "version=${TAG}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          CURRENT="$(get_version Cargo.toml)"
+          if [[ -z "$CURRENT" ]]; then
+            echo "::error::Could not extract [workspace.package].version from Cargo.toml"
+            exit 1
+          fi
+          echo "Current version: $CURRENT"
+
+          BEFORE="${{ github.event.before }}"
+          PREVIOUS=""
+
+          if [[ "$BEFORE" != "0000000000000000000000000000000000000000" ]]; then
+            if git cat-file -e "${BEFORE}:Cargo.toml" 2>/dev/null; then
+              git show "${BEFORE}:Cargo.toml" > /tmp/prev.toml
+              PREVIOUS="$(get_version /tmp/prev.toml || true)"
+            else
+              echo "::warning::Could not read Cargo.toml from before commit; treating as version change"
+            fi
+          fi
+
+          echo "Previous version: ${PREVIOUS:-none}"
+
+          if [[ -n "$PREVIOUS" && "$CURRENT" == "$PREVIOUS" ]]; then
+            echo "Version unchanged, skipping release"
+            echo "tag_created=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          TAG="${CURRENT}"
+
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Tag $TAG already exists locally"
+            exit 1
+          fi
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "::error::Tag $TAG already exists on remote"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+          echo "Created and pushed tag: $TAG"
+          echo "tag_created=true" >> $GITHUB_OUTPUT
+          echo "version=${CURRENT}" >> $GITHUB_OUTPUT
+
+  build-pcl:
+    needs: create-tag
+    if: needs.create-tag.outputs.tag_created == 'true'
+    uses: phylaxsystems/actions/.github/workflows/rust-build-binary.yaml@main
+    with:
+      binary-name: pcl
+      version: ${{ needs.create-tag.outputs.version }}
+      artifact_name: pcl-binaries-${{ needs.create-tag.outputs.version }}
+      rust-channel: "nightly-2026-01-07"
+      package: "pcl"
+      cargo-features: "full"
+      enable-sccache: true
+
+  release-github:
+    needs: [create-tag, build-pcl]
+    if: needs.create-tag.outputs.tag_created == 'true'
+    uses: phylaxsystems/actions/.github/workflows/release-github.yaml@main
+    permissions:
+      contents: write
+    with:
+      tag: ${{ needs.create-tag.outputs.version }}
+      artifact_name: pcl-binaries-${{ needs.create-tag.outputs.version }}
+      release_name: ${{ needs.create-tag.outputs.version }}
+      generate_release_notes: true
+      draft: false
+      prerelease: false
+    secrets:
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+
+  update-homebrew:
+    needs: [create-tag, build-pcl, release-github]
+    if: needs.create-tag.outputs.tag_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download PCL artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: pcl-binaries-${{ needs.create-tag.outputs.version }}
+          path: pcl-artifacts/
+
+      - name: Calculate SHA256 checksums
+        id: checksums
+        env:
+          VERSION: ${{ needs.create-tag.outputs.version }}
+        run: |
+          MACOS_ARM64_SHA=$(sha256sum pcl-artifacts/pcl-${VERSION}-macos-arm64.tar.gz | awk '{print $1}')
+          LINUX_X86_64_SHA=$(sha256sum pcl-artifacts/pcl-${VERSION}-linux-x86_64.tar.gz | awk '{print $1}')
+          LINUX_ARM64_SHA=$(sha256sum pcl-artifacts/pcl-${VERSION}-linux-arm64.tar.gz | awk '{print $1}')
+
+          echo "macos_arm64_sha=${MACOS_ARM64_SHA}" >> $GITHUB_OUTPUT
+          echo "linux_x86_64_sha=${LINUX_X86_64_SHA}" >> $GITHUB_OUTPUT
+          echo "linux_arm64_sha=${LINUX_ARM64_SHA}" >> $GITHUB_OUTPUT
+
+          echo "Checksums:"
+          echo "  macOS ARM64: ${MACOS_ARM64_SHA}"
+          echo "  Linux x86_64: ${LINUX_X86_64_SHA}"
+          echo "  Linux ARM64: ${LINUX_ARM64_SHA}"
+
+      - name: Checkout homebrew-pcl
+        uses: actions/checkout@v6
+        with:
+          repository: phylaxsystems/homebrew-pcl
+          token: ${{ secrets.GH_TOKEN }}
+          path: homebrew-pcl
+
+      - name: Update formula
+        env:
+          VERSION: ${{ needs.create-tag.outputs.version }}
+          MACOS_ARM64_SHA: ${{ steps.checksums.outputs.macos_arm64_sha }}
+          LINUX_X86_64_SHA: ${{ steps.checksums.outputs.linux_x86_64_sha }}
+          LINUX_ARM64_SHA: ${{ steps.checksums.outputs.linux_arm64_sha }}
+        run: |
+          cat > homebrew-pcl/Formula/phylax.rb << 'FORMULA'
+          class Phylax < Formula
+            desc "Credible Layer CLI"
+            homepage "https://github.com/phylaxsystems/pcl"
+            version "VERSION_PLACEHOLDER"
+
+            on_macos do
+              depends_on arch: :arm64
+
+              url "https://github.com/phylaxsystems/pcl/releases/download/#{version}/pcl-#{version}-macos-arm64.tar.gz"
+              sha256 "MACOS_ARM64_SHA_PLACEHOLDER"
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/phylaxsystems/pcl/releases/download/#{version}/pcl-#{version}-linux-x86_64.tar.gz"
+                sha256 "LINUX_X86_64_SHA_PLACEHOLDER"
+              end
+
+              on_arm do
+                url "https://github.com/phylaxsystems/pcl/releases/download/#{version}/pcl-#{version}-linux-arm64.tar.gz"
+                sha256 "LINUX_ARM64_SHA_PLACEHOLDER"
+              end
+            end
+
+            def install
+              bin.install "pcl"
+            end
+
+            test do
+              assert_match "pcl #{version}", shell_output("#{bin}/pcl --version")
+            end
+          end
+          FORMULA
+
+          # Replace placeholders with actual values
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" homebrew-pcl/Formula/phylax.rb
+          sed -i "s/MACOS_ARM64_SHA_PLACEHOLDER/${MACOS_ARM64_SHA}/g" homebrew-pcl/Formula/phylax.rb
+          sed -i "s/LINUX_X86_64_SHA_PLACEHOLDER/${LINUX_X86_64_SHA}/g" homebrew-pcl/Formula/phylax.rb
+          sed -i "s/LINUX_ARM64_SHA_PLACEHOLDER/${LINUX_ARM64_SHA}/g" homebrew-pcl/Formula/phylax.rb
+
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' homebrew-pcl/Formula/phylax.rb
+
+          cat homebrew-pcl/Formula/phylax.rb
+
+      - name: Commit and push
+        working-directory: homebrew-pcl
+        env:
+          VERSION: ${{ needs.create-tag.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/phylax.rb
+          git commit -m "Update pcl to ${VERSION}"
+          git push
