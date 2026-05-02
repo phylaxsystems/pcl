@@ -6263,6 +6263,41 @@ mod tests {
     }
 
     #[test]
+    fn machine_envelopes_keep_required_root_contract() {
+        let envelopes = [
+            ok_envelope(json!({"healthy": true})),
+            template_envelope(body_template("empty_object")),
+            dry_run_envelope(json!({
+                "dry_run": true,
+                "valid": true,
+                "request": {"method": "GET", "path": "/health"},
+            })),
+            ApiCommandError::InvalidPath("health".to_string()).json_envelope(),
+        ];
+
+        for envelope in envelopes {
+            assert!(envelope["status"].as_str().is_some());
+            assert_eq!(envelope["schema_version"], ENVELOPE_SCHEMA_VERSION);
+            assert_eq!(envelope["pcl_version"], env!("CARGO_PKG_VERSION"));
+            assert!(
+                envelope["next_actions"].as_array().is_some(),
+                "missing next_actions in {envelope:?}"
+            );
+            if envelope["status"] == "ok" {
+                assert!(
+                    envelope.get("data").is_some(),
+                    "missing data in {envelope:?}"
+                );
+            } else {
+                assert!(
+                    envelope.get("error").is_some(),
+                    "missing error in {envelope:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn variant_body_templates_return_variant_specific_next_actions() {
         let envelope = template_envelope(body_template("protocol_manager_confirm"));
 
