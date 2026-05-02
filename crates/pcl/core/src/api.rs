@@ -1625,12 +1625,12 @@ fn api_manifest() -> Value {
                 "description": "List public incidents, project incidents, incident detail, incident stats, or incident trace.",
                 "output": "incident data from /views/public/incidents, /views/projects/{projectId}/incidents, /views/incidents/{incidentId}, or /projects/{project_id}/incidents/stats",
                 "actions": [
-                    {"name": "list_public", "auth": false, "method": "GET", "path": "/views/public/incidents", "example": "pcl api incidents --limit 5"},
-                    {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/incidents", "example": "pcl api incidents --project <project-ref> --limit 10"},
+                    {"name": "list_public", "auth": false, "method": "GET", "path": "/views/public/incidents", "optional_flags": ["--page", "--limit", "--network", "--sort", "--dev-mode"], "example": "pcl api incidents --limit 5"},
+                    {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/incidents", "required_flags": ["--project"], "optional_flags": ["--page", "--limit", "--assertion-id", "--adopter-id", "--environment", "--from", "--to"], "example": "pcl api incidents --project <project-ref> --limit 10"},
                     {"name": "stats", "auth": true, "method": "GET", "path": "/projects/{project_id}/incidents/stats", "required_flags": ["--project"], "example": "pcl api incidents --project <project-ref> --stats"},
-                    {"name": "detail", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}", "example": "pcl api incidents --incident-id <incident-id>"},
-                    {"name": "trace", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}/transactions/{txId}/trace", "example": "pcl api incidents --incident-id <incident-id> --tx-id <tx-id>"},
-                    {"name": "retry_trace", "auth": true, "method": "POST", "path": "/incidents/{incident_id}/transactions/{tx_id}/trace/retry", "body_template": "empty_object", "example": "pcl api incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"}
+                    {"name": "detail", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}", "required_flags": ["--incident-id"], "example": "pcl api incidents --incident-id <incident-id>"},
+                    {"name": "trace", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}/transactions/{txId}/trace", "required_flags": ["--incident-id", "--tx-id"], "example": "pcl api incidents --incident-id <incident-id> --tx-id <tx-id>"},
+                    {"name": "retry_trace", "auth": true, "method": "POST", "path": "/incidents/{incident_id}/transactions/{tx_id}/trace/retry", "required_flags": ["--incident-id", "--tx-id"], "body_template": "empty_object", "example": "pcl api incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"}
                 ]
             },
             {
@@ -2748,8 +2748,24 @@ fn body_template(kind: &str) -> Value {
         }
         "protocol_manager_confirm" => {
             json!({
-                "mode": "direct",
-                "new_manager_address": "0x..."
+                "body_variants": [
+                    {
+                        "name": "direct",
+                        "body": {
+                            "mode": "direct",
+                            "new_manager_address": "0x..."
+                        }
+                    },
+                    {
+                        "name": "onchain",
+                        "body": {
+                            "mode": "onchain",
+                            "new_manager_address": "0x...",
+                            "chain_id": 1,
+                            "tx_hash": "0x..."
+                        }
+                    }
+                ]
             })
         }
         "transfer_reject" => {
@@ -3848,6 +3864,9 @@ fn example_call(method: HttpMethod, path: &str, operation: &Value) -> String {
         method.openapi_key(),
         shell_quote_path(&path)
     );
+    if should_allow_unauthenticated_raw_call(&path, operation) {
+        command.push_str(" --allow-unauthenticated");
+    }
     for parameter in required_query_parameters(operation) {
         command.push_str(&format!(
             " --query {}",
@@ -3864,6 +3883,44 @@ fn example_call(method: HttpMethod, path: &str, operation: &Value) -> String {
         }
     }
     command
+}
+
+fn should_allow_unauthenticated_raw_call(path: &str, operation: &Value) -> bool {
+    public_raw_call_path(path) && !has_required_authorization_parameter(operation)
+}
+
+fn public_raw_call_path(path: &str) -> bool {
+    path == "/health"
+        || path == "/stats"
+        || path == "/system-status"
+        || path == "/search"
+        || path == "/assertions"
+        || path == "/views/projects"
+        || path.starts_with("/views/public/")
+        || path.starts_with("/views/incidents/")
+        || path.starts_with("/projects/resolve/")
+        || path.starts_with("/web/verified-contract")
+        || path.starts_with("/enforcer/")
+        || (path.starts_with("/invitations/") && path.ends_with("/preview"))
+}
+
+fn has_required_authorization_parameter(operation: &Value) -> bool {
+    operation
+        .get("parameters")
+        .and_then(Value::as_array)
+        .is_some_and(|parameters| {
+            parameters.iter().any(|parameter| {
+                parameter.get("in").and_then(Value::as_str) == Some("header")
+                    && parameter
+                        .get("required")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    && parameter
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .is_some_and(|name| name.eq_ignore_ascii_case("authorization"))
+            })
+        })
 }
 
 fn example_path(path: &str, operation: &Value) -> String {
@@ -4207,6 +4264,74 @@ mod tests {
         assert_eq!(
             inspected["input_placeholders"],
             json!(["path:project_id", "query:environment", "body"])
+        );
+    }
+
+    #[test]
+    fn public_openapi_call_commands_opt_out_of_local_auth() {
+        let health = json!({});
+        assert_eq!(
+            example_call(HttpMethod::Get, "/health", &health),
+            "pcl api call get /health --allow-unauthenticated"
+        );
+
+        let public_incidents = json!({
+            "parameters": [
+                {
+                    "name": "limit",
+                    "in": "query",
+                    "required": true,
+                    "schema": {"type": "integer"}
+                }
+            ]
+        });
+        assert_eq!(
+            example_call(
+                HttpMethod::Get,
+                "/views/public/incidents",
+                &public_incidents
+            ),
+            "pcl api call get /views/public/incidents --allow-unauthenticated --query 'limit=<limit>'"
+        );
+
+        let public_with_optional_auth = json!({
+            "parameters": [
+                {
+                    "name": "Authorization",
+                    "in": "header",
+                    "required": false,
+                    "schema": {"type": "string"}
+                },
+                {
+                    "name": "address",
+                    "in": "query",
+                    "required": true,
+                    "schema": {"type": "string"}
+                }
+            ]
+        });
+        assert_eq!(
+            example_call(
+                HttpMethod::Get,
+                "/web/verified-contract",
+                &public_with_optional_auth
+            ),
+            "pcl api call get /web/verified-contract --allow-unauthenticated --query 'address=<address>'"
+        );
+
+        let authenticated = json!({
+            "parameters": [
+                {
+                    "name": "Authorization",
+                    "in": "header",
+                    "required": false,
+                    "schema": {"type": "string"}
+                }
+            ]
+        });
+        assert_eq!(
+            example_call(HttpMethod::Get, "/web/auth/me", &authenticated),
+            "pcl api call get /web/auth/me"
         );
     }
 
@@ -4756,6 +4881,32 @@ mod tests {
             json!({})
         );
         assert_eq!(
+            protocol_manager_body_template(&ProtocolManagerArgs {
+                confirm_transfer: true,
+                ..protocol_manager_args()
+            }),
+            json!({
+                "body_variants": [
+                    {
+                        "name": "direct",
+                        "body": {
+                            "mode": "direct",
+                            "new_manager_address": "0x..."
+                        }
+                    },
+                    {
+                        "name": "onchain",
+                        "body": {
+                            "mode": "onchain",
+                            "new_manager_address": "0x...",
+                            "chain_id": 1,
+                            "tx_hash": "0x..."
+                        }
+                    }
+                ]
+            })
+        );
+        assert_eq!(
             body_template("pagerduty"),
             json!({ "routing_key": "<pagerduty-routing-key>", "enabled": true })
         );
@@ -4818,6 +4969,18 @@ mod tests {
                     ),
                     "invalid method for {command_name} action {action:?}"
                 );
+                let path = action["path"].as_str().unwrap();
+                if path.contains('{') {
+                    let required_flags = action["required_flags"].as_array().unwrap_or_else(|| {
+                        panic!(
+                            "path placeholders require required_flags for {command_name} action {action:?}"
+                        )
+                    });
+                    assert!(
+                        !required_flags.is_empty(),
+                        "empty required_flags for {command_name} action {action:?}"
+                    );
+                }
             }
         }
 
@@ -4838,6 +5001,19 @@ mod tests {
             }),
             "manifest must include project incident stats workflow"
         );
+        for (name, flags) in [
+            ("list_project", json!(["--project"])),
+            ("detail", json!(["--incident-id"])),
+            ("trace", json!(["--incident-id", "--tx-id"])),
+            ("retry_trace", json!(["--incident-id", "--tx-id"])),
+        ] {
+            assert!(
+                incident_actions
+                    .iter()
+                    .any(|action| action["name"] == name && action["required_flags"] == flags),
+                "manifest must include required flags for incident action {name}"
+            );
+        }
     }
 
     #[test]
