@@ -1621,12 +1621,13 @@ fn api_manifest() -> Value {
         },
         "commands": [
             {
-                "command": "pcl api incidents [--project-id <id>] [--incident-id <id>] [--limit <n>]",
-                "description": "List public incidents, project incidents, incident detail, or incident trace.",
-                "output": "incident data from /views/public/incidents, /views/projects/{projectId}/incidents, or /views/incidents/{incidentId}",
+                "command": "pcl api incidents [--project-id <id>] [--incident-id <id>] [--stats] [--limit <n>]",
+                "description": "List public incidents, project incidents, incident detail, incident stats, or incident trace.",
+                "output": "incident data from /views/public/incidents, /views/projects/{projectId}/incidents, /views/incidents/{incidentId}, or /projects/{project_id}/incidents/stats",
                 "actions": [
                     {"name": "list_public", "auth": false, "method": "GET", "path": "/views/public/incidents", "example": "pcl api incidents --limit 5"},
                     {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/incidents", "example": "pcl api incidents --project <project-ref> --limit 10"},
+                    {"name": "stats", "auth": true, "method": "GET", "path": "/projects/{project_id}/incidents/stats", "required_flags": ["--project"], "example": "pcl api incidents --project <project-ref> --stats"},
                     {"name": "detail", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}", "example": "pcl api incidents --incident-id <incident-id>"},
                     {"name": "trace", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}/transactions/{txId}/trace", "example": "pcl api incidents --incident-id <incident-id> --tx-id <tx-id>"},
                     {"name": "retry_trace", "auth": true, "method": "POST", "path": "/incidents/{incident_id}/transactions/{tx_id}/trace/retry", "body_template": "empty_object", "example": "pcl api incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"}
@@ -4284,6 +4285,32 @@ mod tests {
     }
 
     #[test]
+    fn builds_project_incident_stats_workflow_request() {
+        let request = incidents_request(&IncidentsArgs {
+            project_id: Some("project-1".to_string()),
+            incident_id: None,
+            tx_id: None,
+            assertion_id: None,
+            assertion_adopter_id: None,
+            environment: None,
+            from_date: None,
+            to_date: None,
+            page: None,
+            limit: None,
+            network: None,
+            sort: None,
+            dev_mode: None,
+            stats: true,
+            retry_trace: false,
+        })
+        .unwrap();
+
+        assert_eq!(request.path, "/projects/project-1/incidents/stats");
+        assert_eq!(request.method.openapi_key(), "get");
+        assert!(request.require_auth);
+    }
+
+    #[test]
     fn builds_incident_trace_retry_request() {
         let request = incidents_request(&IncidentsArgs {
             project_id: None,
@@ -4793,6 +4820,24 @@ mod tests {
                 );
             }
         }
+
+        let incident_actions = commands
+            .iter()
+            .find(|command| {
+                command["command"]
+                    .as_str()
+                    .is_some_and(|value| value.contains("incidents"))
+            })
+            .and_then(|command| command["actions"].as_array())
+            .unwrap();
+        assert!(
+            incident_actions.iter().any(|action| {
+                action["name"] == "stats"
+                    && action["path"] == "/projects/{project_id}/incidents/stats"
+                    && action["required_flags"] == json!(["--project"])
+            }),
+            "manifest must include project incident stats workflow"
+        );
     }
 
     #[test]
