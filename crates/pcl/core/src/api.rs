@@ -73,6 +73,14 @@ pub enum ApiCommandError {
     #[error("API request failed: {0}")]
     Request(#[from] reqwest::Error),
 
+    #[error("API request failed with status {status} for {method} {path}")]
+    HttpStatus {
+        method: &'static str,
+        path: String,
+        status: u16,
+        body: Value,
+    },
+
     #[error("OpenAPI spec does not contain a paths object")]
     MissingPaths,
 
@@ -101,6 +109,17 @@ impl ApiCommandError {
                     Some(401) => "auth.unauthorized",
                     Some(403) => "auth.forbidden",
                     _ => "network.request_failed",
+                }
+            }
+            Self::HttpStatus { status, .. } => {
+                match *status {
+                    400 => "api.bad_request",
+                    401 => "auth.unauthorized",
+                    403 => "auth.forbidden",
+                    404 => "api.not_found",
+                    422 => "api.validation_failed",
+                    500..=599 => "api.server_error",
+                    _ => "api.request_failed",
                 }
             }
             Self::MissingPaths => "openapi.missing_paths",
@@ -168,6 +187,42 @@ impl ApiCommandError {
                     "Use --allow-unauthenticated only for public endpoints".to_string(),
                 ]
             }
+            Self::HttpStatus {
+                status: 401 | 403, ..
+            } => {
+                vec![
+                    "pcl auth login".to_string(),
+                    "Use --allow-unauthenticated only for public endpoints".to_string(),
+                ]
+            }
+            Self::HttpStatus {
+                method,
+                path,
+                status: 400 | 422,
+                ..
+            } => {
+                vec![
+                    format!(
+                        "pcl api inspect {} {} --json",
+                        method.to_ascii_lowercase(),
+                        path
+                    ),
+                    "pcl api manifest --json".to_string(),
+                    "Read error.http.body for the rejected field details".to_string(),
+                ]
+            }
+            Self::HttpStatus { status: 404, .. } => {
+                vec![
+                    "pcl api list --json".to_string(),
+                    "Check identifiers and required path/query parameters".to_string(),
+                ]
+            }
+            Self::HttpStatus { .. } => {
+                vec![
+                    "pcl api manifest --json".to_string(),
+                    "Read error.http.body for API-provided failure details".to_string(),
+                ]
+            }
             Self::Request(_) | Self::Url(_) => vec!["Check --api-url and retry".to_string()],
             Self::BodyFile { .. } => {
                 vec!["Check --body-file path or pass --body directly".to_string()]
@@ -180,13 +235,32 @@ impl ApiCommandError {
     }
 
     pub fn json_envelope(&self) -> Value {
+        let mut error = Map::new();
+        error.insert("code".to_string(), json!(self.code()));
+        error.insert("message".to_string(), json!(self.to_string()));
+        error.insert("recoverable".to_string(), json!(self.recoverable()));
+
+        if let Self::HttpStatus {
+            method,
+            path,
+            status,
+            body,
+        } = self
+        {
+            error.insert(
+                "http".to_string(),
+                json!({
+                    "method": method,
+                    "path": path,
+                    "status": status,
+                    "body": body,
+                }),
+            );
+        }
+
         json!({
             "status": "error",
-            "error": {
-                "code": self.code(),
-                "message": self.to_string(),
-                "recoverable": self.recoverable(),
-            },
+            "error": error,
             "next_actions": self.next_actions(),
         })
     }
@@ -228,7 +302,7 @@ enum ApiCommand {
 
     #[command(
         about = "List, inspect, create, update, save, or delete projects",
-        after_help = "Examples:\n  pcl api projects\n  pcl api projects --project-id <project-ref>\n  pcl api projects --create --project-name demo --chain-id 1\n  pcl api projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl api projects --project-id <project-ref> --save"
+        after_help = "Examples:\n  pcl api projects\n  pcl api projects --project-id <project-ref>\n  pcl api projects --saved --user-id <user-id>\n  pcl api projects --create --project-name demo --chain-id 1\n  pcl api projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl api projects --project-id <project-ref> --save"
     )]
     Projects(ProjectsArgs),
 
@@ -252,13 +326,13 @@ enum ApiCommand {
 
     #[command(
         about = "List or manage project contracts and assertion adopters",
-        after_help = "Examples:\n  pcl api contracts --project <project-ref>\n  pcl api contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl api contracts --unassigned\n  pcl api contracts --create --body '{...}'"
+        after_help = "Examples:\n  pcl api contracts --project <project-ref>\n  pcl api contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl api contracts --unassigned --manager <manager-address>\n  pcl api contracts --create --body '{...}'"
     )]
     Contracts(ContractsArgs),
 
     #[command(
         about = "List, inspect, create, preview, deploy, or remove releases",
-        after_help = "Examples:\n  pcl api releases --project <project-ref>\n  pcl api releases --project <project-ref> --release-id <release-id>\n  pcl api releases --project <project-ref> --preview --body-file release.json\n  pcl api releases --project <project-ref> --release-id <release-id> --deploy-calldata"
+        after_help = "Examples:\n  pcl api releases --project <project-ref>\n  pcl api releases --project <project-ref> --release-id <release-id>\n  pcl api releases --project <project-ref> --preview --body-file release.json\n  pcl api releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address <signer-address>"
     )]
     Releases(ReleasesArgs),
 
@@ -282,7 +356,7 @@ enum ApiCommand {
 
     #[command(
         about = "Manage project protocol manager settings",
-        after_help = "Examples:\n  pcl api protocol-manager --project <project-ref> --nonce\n  pcl api protocol-manager --project <project-ref> --transfer-calldata\n  pcl api protocol-manager --project <project-ref> --set --body '{...}'"
+        after_help = "Examples:\n  pcl api protocol-manager --project <project-ref> --nonce --address <manager-address>\n  pcl api protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...\n  pcl api protocol-manager --project <project-ref> --set --body '{...}'"
     )]
     ProtocolManager(ProtocolManagerArgs),
 
@@ -520,6 +594,8 @@ struct ProjectsArgs {
     home: bool,
     #[arg(long, help = "Return saved projects")]
     saved: bool,
+    #[arg(long, alias = "user_id", help = "User ID for --saved")]
+    user_id: Option<String>,
     #[arg(long, help = "Page number for project explorer")]
     page: Option<u64>,
     #[arg(long, help = "Items per page for project explorer")]
@@ -720,6 +796,8 @@ struct ContractsArgs {
         help = "Assertion adopter contract address"
     )]
     aa_address: Option<String>,
+    #[arg(long, help = "Manager address for --unassigned")]
+    manager: Option<String>,
     #[arg(long, help = "List unassigned assertion adopters")]
     unassigned: bool,
     #[arg(long, help = "Create an assertion adopter")]
@@ -764,6 +842,12 @@ struct ReleasesArgs {
     project: String,
     #[arg(long, alias = "release_id", help = "Release ID")]
     release_id: Option<String>,
+    #[arg(
+        long,
+        alias = "signer_address",
+        help = "Signer address for --deploy-calldata"
+    )]
+    signer_address: Option<String>,
     #[arg(long, help = "Create a release")]
     create: bool,
     #[arg(long, help = "Preview release diff without persisting")]
@@ -961,6 +1045,10 @@ struct ProtocolManagerArgs {
         help = "New manager address for transfer calldata"
     )]
     new_manager: Option<String>,
+    #[arg(long, help = "Address for --nonce")]
+    address: Option<String>,
+    #[arg(long, alias = "chain_id", help = "Chain ID for --nonce")]
+    chain_id: Option<u64>,
     #[arg(long, help = "JSON request body")]
     body: Option<String>,
     #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
@@ -1311,16 +1399,7 @@ impl ApiArgs {
             .unwrap_or_default()
             .to_string();
         let bytes = response.bytes().await?;
-        let body = if content_type.contains("application/json") {
-            serde_json::from_slice(&bytes).unwrap_or_else(|_| {
-                json!({
-                    "parse_error": "response declared JSON but could not be parsed",
-                    "raw": String::from_utf8_lossy(&bytes),
-                })
-            })
-        } else {
-            json!(String::from_utf8_lossy(&bytes).to_string())
-        };
+        let body = response_body_value(&content_type, &bytes);
 
         Ok(json!({
             "request": {
@@ -1356,8 +1435,25 @@ impl ApiArgs {
             let json_body = self.normalize_request_body(config, &path, body).await?;
             builder = builder.json(&json_body);
         }
-        let response = builder.send().await?.error_for_status()?;
-        Ok(response.json().await?)
+        let response = builder.send().await?;
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let bytes = response.bytes().await?;
+        let body = response_body_value(&content_type, &bytes);
+        if !status.is_success() {
+            return Err(ApiCommandError::HttpStatus {
+                method: request.method.as_str(),
+                path,
+                status: status.as_u16(),
+                body,
+            });
+        }
+        Ok(body)
     }
 
     async fn normalize_request_body(
@@ -1467,6 +1563,20 @@ impl ApiArgs {
     }
 }
 
+fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {
+    if content_type.contains("application/json") {
+        return serde_json::from_slice(bytes).unwrap_or_else(|_| {
+            json!({
+                "parse_error": "response declared JSON but could not be parsed",
+                "raw": String::from_utf8_lossy(bytes),
+            })
+        });
+    }
+
+    serde_json::from_slice(bytes)
+        .unwrap_or_else(|_| json!(String::from_utf8_lossy(bytes).to_string()))
+}
+
 fn print_output(value: &Value, json_output: bool) -> Result<(), ApiCommandError> {
     if json_output {
         println!("{}", serde_json::to_string_pretty(value)?);
@@ -1523,13 +1633,13 @@ fn api_manifest() -> Value {
                 ]
             },
             {
-                "command": "pcl api projects [--project <ref>] [--create|--update|--delete|--save|--unsave|--resolve|--widget]",
+                "command": "pcl api projects [--project <ref>] [--saved --user-id <id>] [--create|--update|--delete|--save|--unsave|--resolve|--widget]",
                 "description": "List, inspect, create, update, save, unsave, resolve, widget, and delete projects.",
                 "output": "project explorer, project detail, projects home, saved projects, widget, or mutation result",
                 "actions": [
                     {"name": "explorer", "auth": false, "method": "GET", "path": "/views/projects", "example": "pcl api projects --limit 10"},
                     {"name": "home", "auth": true, "method": "GET", "path": "/views/projects/home", "example": "pcl api projects --home"},
-                    {"name": "saved", "auth": true, "method": "GET", "path": "/projects/saved", "example": "pcl api projects --saved"},
+                    {"name": "saved", "auth": true, "method": "GET", "path": "/projects/saved", "required_flags": ["--user-id"], "query": {"user_id": "<user-id>"}, "example": "pcl api projects --saved --user-id <user-id>"},
                     {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project_id}", "required_flags": ["--project"], "example": "pcl api projects --project <project-ref>"},
                     {"name": "create", "auth": true, "method": "POST", "path": "/projects", "body_template": "project_create", "required_body_fields": ["project_name", "chain_id"], "example": "pcl api projects --create --project-name demo --chain-id 1"},
                     {"name": "update", "auth": true, "method": "PUT", "path": "/projects/{project_id}", "required_flags": ["--project"], "body_template": "project_update", "example": "pcl api projects --project <project-ref> --update --field github_url=https://github.com/org/repo"},
@@ -1579,14 +1689,14 @@ fn api_manifest() -> Value {
                 ]
             },
             {
-                "command": "pcl api contracts [--project <ref>] [--adopter-id <id>] [--unassigned] [--create --body '{...}']",
+                "command": "pcl api contracts [--project <ref>] [--adopter-id <id>] [--unassigned --manager <address>] [--create --body '{...}']",
                 "description": "List and manage project contracts and assertion adopters.",
                 "output": "contract views, adopter records, assignment results, or remove calldata",
                 "actions": [
                     {"name": "list_all", "auth": true, "method": "GET", "path": "/assertion_adopters", "example": "pcl api contracts"},
                     {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{project}/contracts", "required_flags": ["--project"], "example": "pcl api contracts --project <project-ref>"},
                     {"name": "detail", "auth": true, "method": "GET", "path": "/views/projects/{project}/contracts/{adopter_id}", "required_flags": ["--project", "--adopter-id"], "example": "pcl api contracts --project <project-ref> --adopter-id <adopter-id>"},
-                    {"name": "unassigned", "auth": true, "method": "GET", "path": "/assertion_adopters/no-project", "example": "pcl api contracts --unassigned"},
+                    {"name": "unassigned", "auth": true, "method": "GET", "path": "/assertion_adopters/no-project", "required_flags": ["--manager"], "query": {"manager": "<manager-address>"}, "example": "pcl api contracts --unassigned --manager 0x..."},
                     {"name": "create", "auth": true, "method": "POST", "path": "/assertion_adopters", "body_template": "contracts", "example": "pcl api contracts --create --body-template"},
                     {"name": "assign_project", "auth": true, "method": "POST", "path": "/assertion_adopters/assign-project", "body_template": "contracts_assign_project", "example": "pcl api contracts --assign-project --body-template"},
                     {"name": "remove", "auth": true, "method": "DELETE", "path": "/projects/{project}/{aa_address}", "required_flags": ["--project", "--aa-address"], "example": "pcl api contracts --project <project-ref> --aa-address 0x... --remove"},
@@ -1594,7 +1704,7 @@ fn api_manifest() -> Value {
                 ]
             },
             {
-                "command": "pcl api releases --project <ref> [--release-id <id>] [--preview|--create|--deploy|--remove|--deploy-calldata|--remove-calldata]",
+                "command": "pcl api releases --project <ref> [--release-id <id>] [--preview|--create|--deploy|--remove|--deploy-calldata --signer-address <address>|--remove-calldata]",
                 "description": "List, inspect, create, preview, deploy, and remove releases.",
                 "output": "release data, diffs, deployment confirmations, or calldata",
                 "actions": [
@@ -1602,7 +1712,7 @@ fn api_manifest() -> Value {
                     {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}", "required_flags": ["--project", "--release-id"], "example": "pcl api releases --project <project-ref> --release-id <release-id>"},
                     {"name": "preview", "auth": true, "method": "POST", "path": "/projects/{project}/releases/preview", "required_flags": ["--project"], "body_template": "release", "example": "pcl api releases --project <project-ref> --preview --body-file release.json"},
                     {"name": "create", "auth": true, "method": "POST", "path": "/projects/{project}/releases", "required_flags": ["--project"], "body_template": "release", "example": "pcl api releases --project <project-ref> --create --body-file release.json"},
-                    {"name": "deploy_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/deploy-calldata", "required_flags": ["--project", "--release-id"], "example": "pcl api releases --project <project-ref> --release-id <release-id> --deploy-calldata"},
+                    {"name": "deploy_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/deploy-calldata", "required_flags": ["--project", "--release-id", "--signer-address"], "query": {"signerAddress": "<signer-address>"}, "example": "pcl api releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address 0x..."},
                     {"name": "deploy", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/deploy", "required_flags": ["--project", "--release-id"], "body_template": "release_deploy", "example": "pcl api releases --project <project-ref> --release-id <release-id> --deploy --body-template"},
                     {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/remove-calldata", "required_flags": ["--project", "--release-id"], "example": "pcl api releases --project <project-ref> --release-id <release-id> --remove-calldata"},
                     {"name": "remove", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/remove", "required_flags": ["--project", "--release-id"], "body_template": "release_remove", "example": "pcl api releases --project <project-ref> --release-id <release-id> --remove --body-template"}
@@ -1647,12 +1757,12 @@ fn api_manifest() -> Value {
                 ]
             },
             {
-                "command": "pcl api protocol-manager --project <ref> [--nonce|--set|--clear|--transfer-calldata|--accept-calldata|--pending-transfer|--confirm-transfer]",
+                "command": "pcl api protocol-manager --project <ref> [--nonce --address <address>|--set|--clear|--transfer-calldata|--accept-calldata|--pending-transfer|--confirm-transfer]",
                 "description": "Manage protocol manager transfers and calldata.",
                 "output": "manager state, nonce, calldata, pending transfer, or mutation result",
                 "actions": [
                     {"name": "pending_transfer", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/pending-transfer", "required_flags": ["--project"], "example": "pcl api protocol-manager --project <project-ref> --pending-transfer"},
-                    {"name": "nonce", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/nonce", "required_flags": ["--project"], "example": "pcl api protocol-manager --project <project-ref> --nonce"},
+                    {"name": "nonce", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/nonce", "required_flags": ["--project", "--address"], "optional_flags": ["--chain-id"], "query": {"address": "<address>", "chain_id": "<chain-id>"}, "example": "pcl api protocol-manager --project <project-ref> --nonce --address 0x..."},
                     {"name": "set", "auth": true, "method": "POST", "path": "/projects/{project}/protocol-manager", "required_flags": ["--project"], "body_template": "protocol_manager_set", "example": "pcl api protocol-manager --project <project-ref> --set --body-template"},
                     {"name": "clear", "auth": true, "method": "DELETE", "path": "/projects/{project}/protocol-manager", "required_flags": ["--project"], "body_template": "empty_object", "example": "pcl api protocol-manager --project <project-ref> --clear"},
                     {"name": "transfer_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/transfer-calldata", "required_flags": ["--project", "--new-manager"], "query": {"new_manager": "<address>"}, "example": "pcl api protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x..."},
@@ -1809,7 +1919,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
             "/assertion_adopters",
             true,
             body,
-            vec!["pcl api contracts --unassigned".to_string()],
+            vec!["pcl api contracts --unassigned --manager <manager-address>".to_string()],
         ));
     }
     if args.assign_project {
@@ -1822,11 +1932,14 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
         ));
     }
     if args.unassigned {
-        return Ok(WorkflowRequest::get(
+        let manager = required_arg(args.manager.as_deref(), "--manager")?;
+        let mut request = WorkflowRequest::get(
             "/assertion_adopters/no-project",
             true,
             vec!["pcl api contracts --assign-project --body '{...}'".to_string()],
-        ));
+        );
+        push_query_string_value(&mut request.query, "manager", manager);
+        return Ok(request);
     }
     if args.remove_calldata {
         let address = required_arg(args.aa_address.as_deref(), "--aa-address")?;
@@ -1867,7 +1980,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
     Ok(WorkflowRequest::get(
         "/assertion_adopters",
         true,
-        vec!["pcl api contracts --unassigned".to_string()],
+        vec!["pcl api contracts --unassigned --manager <manager-address>".to_string()],
     ))
 }
 
@@ -1917,13 +2030,16 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
             ));
         }
         if args.deploy_calldata {
-            return Ok(WorkflowRequest::get(
+            let signer_address = required_arg(args.signer_address.as_deref(), "--signer-address")?;
+            let mut request = WorkflowRequest::get(
                 format!("/projects/{project}/releases/{release_id}/deploy-calldata"),
                 true,
                 vec![format!(
                     "pcl api releases --project {project} --release-id {release_id} --deploy"
                 )],
-            ));
+            );
+            push_query_string_value(&mut request.query, "signerAddress", signer_address);
+            return Ok(request);
         }
         return Ok(WorkflowRequest::get(
             format!("/projects/{project}/releases/{release_id}/remove-calldata"),
@@ -1947,7 +2063,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
         true,
         vec![
             format!(
-                "pcl api releases --project {project} --release-id {release_id} --deploy-calldata"
+                "pcl api releases --project {project} --release-id {release_id} --deploy-calldata --signer-address <signer-address>"
             ),
             format!(
                 "pcl api releases --project {project} --release-id {release_id} --remove-calldata"
@@ -2143,14 +2259,18 @@ fn protocol_manager_request(
     let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
     let base = format!("/projects/{}/protocol-manager", args.project);
     if args.nonce {
-        return Ok(WorkflowRequest::get(
+        let address = required_arg(args.address.as_deref(), "--address")?;
+        let mut request = WorkflowRequest::get(
             format!("{base}/nonce"),
             true,
             vec![format!(
                 "pcl api protocol-manager --project {} --set --body '{{...}}'",
                 args.project
             )],
-        ));
+        );
+        push_query_string_value(&mut request.query, "address", address);
+        push_query(&mut request.query, "chain_id", args.chain_id);
+        return Ok(request);
     }
     if args.set {
         return Ok(workflow_with_body(
@@ -2171,7 +2291,7 @@ fn protocol_manager_request(
             true,
             body,
             vec![format!(
-                "pcl api protocol-manager --project {} --nonce",
+                "pcl api protocol-manager --project {} --nonce --address <manager-address>",
                 args.project
             )],
         ));
@@ -2216,11 +2336,11 @@ fn protocol_manager_request(
         true,
         vec![
             format!(
-                "pcl api protocol-manager --project {} --nonce",
+                "pcl api protocol-manager --project {} --nonce --address <manager-address>",
                 args.project
             ),
             format!(
-                "pcl api protocol-manager --project {} --transfer-calldata",
+                "pcl api protocol-manager --project {} --transfer-calldata --new-manager <manager-address>",
                 args.project
             ),
         ],
@@ -2897,10 +3017,15 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
             query,
             body: None,
             require_auth: true,
-            next_actions: vec!["pcl api projects --saved".to_string()],
+            next_actions: vec![
+                "pcl api account".to_string(),
+                "pcl api projects --saved --user-id <user-id>".to_string(),
+            ],
         });
     }
     if args.saved {
+        let user_id = required_arg(args.user_id.as_deref(), "--user-id")?;
+        push_query_string_value(&mut query, "user_id", user_id);
         return Ok(WorkflowRequest {
             method: HttpMethod::Get,
             path: "/projects/saved".to_string(),
@@ -2943,7 +3068,10 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
                 "/projects/saved",
                 true,
                 Some(json!({ "project_id": project_id }).to_string()),
-                vec!["pcl api projects --saved".to_string()],
+                vec![
+                    "pcl api account".to_string(),
+                    "pcl api projects --home".to_string(),
+                ],
             ));
         }
         if args.update {
@@ -3871,6 +3999,36 @@ mod tests {
         }
     }
 
+    fn projects_args() -> ProjectsArgs {
+        ProjectsArgs {
+            project_id: None,
+            home: false,
+            saved: false,
+            user_id: None,
+            page: None,
+            limit: None,
+            search: None,
+            create: false,
+            update: false,
+            delete: false,
+            save: false,
+            unsave: false,
+            resolve: false,
+            widget: false,
+            project_name: None,
+            project_description: None,
+            profile_image_url: None,
+            github_url: None,
+            chain_id: None,
+            is_private: None,
+            is_dev: None,
+            field: Vec::new(),
+            body: None,
+            body_file: None,
+            body_template: false,
+        }
+    }
+
     fn protocol_manager_args() -> ProtocolManagerArgs {
         ProtocolManagerArgs {
             project: "project-1".to_string(),
@@ -3882,6 +4040,26 @@ mod tests {
             pending_transfer: false,
             confirm_transfer: false,
             new_manager: None,
+            address: None,
+            chain_id: None,
+            body: None,
+            field: Vec::new(),
+            body_file: None,
+            body_template: false,
+        }
+    }
+
+    fn contracts_args() -> ContractsArgs {
+        ContractsArgs {
+            project: None,
+            adopter_id: None,
+            aa_address: None,
+            manager: None,
+            unassigned: false,
+            create: false,
+            assign_project: false,
+            remove: false,
+            remove_calldata: false,
             body: None,
             field: Vec::new(),
             body_file: None,
@@ -3917,6 +4095,7 @@ mod tests {
         ReleasesArgs {
             project: "project-1".to_string(),
             release_id: None,
+            signer_address: None,
             create: false,
             preview: false,
             deploy: false,
@@ -4136,30 +4315,11 @@ mod tests {
     #[test]
     fn builds_project_create_body_from_typed_flags() {
         let request = projects_request(&ProjectsArgs {
-            project_id: None,
-            home: false,
-            saved: false,
-            page: None,
-            limit: None,
-            search: None,
             create: true,
-            update: false,
-            delete: false,
-            save: false,
-            unsave: false,
-            resolve: false,
-            widget: false,
             project_name: Some("Demo".to_string()),
-            project_description: None,
-            profile_image_url: None,
-            github_url: None,
             chain_id: Some(1),
             is_private: Some(false),
-            is_dev: None,
-            field: Vec::new(),
-            body: None,
-            body_file: None,
-            body_template: false,
+            ..projects_args()
         })
         .unwrap();
 
@@ -4256,32 +4416,107 @@ mod tests {
     }
 
     #[test]
+    fn saved_projects_require_and_send_user_id() {
+        let error = projects_request(&ProjectsArgs {
+            saved: true,
+            ..projects_args()
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("--user-id is required"));
+
+        let request = projects_request(&ProjectsArgs {
+            saved: true,
+            user_id: Some("user-1".to_string()),
+            ..projects_args()
+        })
+        .unwrap();
+        assert_eq!(request.path, "/projects/saved");
+        assert_eq!(
+            request.query,
+            vec![("user_id".to_string(), "user-1".to_string())]
+        );
+    }
+
+    #[test]
+    fn contracts_unassigned_require_and_send_manager() {
+        let error = contracts_request(&ContractsArgs {
+            unassigned: true,
+            ..contracts_args()
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("--manager is required"));
+
+        let request = contracts_request(&ContractsArgs {
+            unassigned: true,
+            manager: Some("0xmanager".to_string()),
+            ..contracts_args()
+        })
+        .unwrap();
+        assert_eq!(request.path, "/assertion_adopters/no-project");
+        assert_eq!(
+            request.query,
+            vec![("manager".to_string(), "0xmanager".to_string())]
+        );
+    }
+
+    #[test]
+    fn release_deploy_calldata_requires_and_sends_signer_address() {
+        let error = releases_request(&ReleasesArgs {
+            release_id: Some("release-1".to_string()),
+            deploy_calldata: true,
+            ..release_args()
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("--signer-address is required"));
+
+        let request = releases_request(&ReleasesArgs {
+            release_id: Some("release-1".to_string()),
+            signer_address: Some("0xsigner".to_string()),
+            deploy_calldata: true,
+            ..release_args()
+        })
+        .unwrap();
+        assert_eq!(
+            request.path,
+            "/projects/project-1/releases/release-1/deploy-calldata"
+        );
+        assert_eq!(
+            request.query,
+            vec![("signerAddress".to_string(), "0xsigner".to_string())]
+        );
+    }
+
+    #[test]
+    fn protocol_manager_nonce_requires_and_sends_address() {
+        let error = protocol_manager_request(&ProtocolManagerArgs {
+            nonce: true,
+            ..protocol_manager_args()
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("--address is required"));
+
+        let request = protocol_manager_request(&ProtocolManagerArgs {
+            nonce: true,
+            address: Some("0xmanager".to_string()),
+            chain_id: Some(1),
+            ..protocol_manager_args()
+        })
+        .unwrap();
+        assert_eq!(request.path, "/projects/project-1/protocol-manager/nonce");
+        assert_eq!(
+            request.query,
+            vec![
+                ("address".to_string(), "0xmanager".to_string()),
+                ("chain_id".to_string(), "1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn write_actions_require_target_identifiers() {
         let project_error = projects_request(&ProjectsArgs {
-            project_id: None,
-            home: false,
-            saved: false,
-            page: None,
-            limit: None,
-            search: None,
-            create: false,
-            update: false,
-            delete: false,
             save: true,
-            unsave: false,
-            resolve: false,
-            widget: false,
-            project_name: None,
-            project_description: None,
-            profile_image_url: None,
-            github_url: None,
-            chain_id: None,
-            is_private: None,
-            is_dev: None,
-            field: Vec::new(),
-            body: None,
-            body_file: None,
-            body_template: false,
+            ..projects_args()
         })
         .unwrap_err();
         assert!(project_error.to_string().contains("--project is required"));
@@ -4358,6 +4593,47 @@ mod tests {
         assert_eq!(accept_terms.body.as_deref(), Some("{}"));
     }
 
+    #[tokio::test]
+    async fn workflow_http_errors_include_response_body() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/v1/health")
+            .with_status(422)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"message":"address is required","field":"address"}"#)
+            .create_async()
+            .await;
+        let api = ApiArgs {
+            command: ApiCommand::Manifest,
+            api_url: server.url().parse().unwrap(),
+            allow_unauthenticated: true,
+        };
+        let config = CliConfig::default();
+        let request = WorkflowRequest::get("/health", false, Vec::new());
+
+        let error = api.call_workflow(&config, &request).await.unwrap_err();
+        let ApiCommandError::HttpStatus {
+            method,
+            path,
+            status,
+            body,
+        } = &error
+        else {
+            panic!("expected HTTP status error, got {error:?}");
+        };
+
+        assert_eq!(*method, "GET");
+        assert_eq!(path, "/health");
+        assert_eq!(*status, 422);
+        assert_eq!(body["field"], "address");
+        assert_eq!(error.code(), "api.validation_failed");
+        assert_eq!(
+            error.json_envelope()["error"]["http"]["body"]["message"],
+            "address is required"
+        );
+        mock.assert_async().await;
+    }
+
     #[test]
     fn body_templates_are_action_specific() {
         assert_eq!(
@@ -4388,6 +4664,7 @@ mod tests {
             release_body_template(&ReleasesArgs {
                 project: "project-1".to_string(),
                 release_id: Some("release-1".to_string()),
+                signer_address: None,
                 create: false,
                 preview: false,
                 deploy: true,
@@ -4405,6 +4682,7 @@ mod tests {
             release_body_template(&ReleasesArgs {
                 project: "project-1".to_string(),
                 release_id: Some("release-1".to_string()),
+                signer_address: None,
                 create: false,
                 preview: false,
                 deploy: false,
