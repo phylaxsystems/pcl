@@ -9,8 +9,14 @@ use color_eyre::{
     Result,
     eyre::Report,
 };
-use pcl_core::config::CliConfig;
-use serde_json::json;
+use pcl_core::{
+    api::ApiCommandError,
+    config::CliConfig,
+};
+use serde_json::{
+    Value,
+    json,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -37,6 +43,9 @@ async fn main() -> Result<()> {
             Commands::Apply(apply) => {
                 apply.run(&cli.args, &config).await?;
             }
+            Commands::Api(api) => {
+                api.run(&config, cli.args.json_output()).await?;
+            }
             Commands::Auth(auth_cmd) => {
                 auth_cmd.run(&mut config).await?;
             }
@@ -61,15 +70,7 @@ async fn main() -> Result<()> {
 
     if let Err(err) = result {
         if cli.args.json_output() {
-            eprintln!(
-                "{}",
-                json!({
-                    "status": "error",
-                    "error": {
-                        "message": err.to_string(),
-                    }
-                })
-            );
+            eprintln!("{}", serde_json::to_string_pretty(&error_envelope(&err))?);
             std::process::exit(1);
         } else {
             return Err(err);
@@ -77,4 +78,20 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn error_envelope(err: &Report) -> Value {
+    if let Some(api_error) = err.downcast_ref::<ApiCommandError>() {
+        return api_error.json_envelope();
+    }
+
+    json!({
+        "status": "error",
+        "error": {
+            "code": "unknown",
+            "message": err.to_string(),
+            "recoverable": false,
+        },
+        "next_actions": [],
+    })
 }

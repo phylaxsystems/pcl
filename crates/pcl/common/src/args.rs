@@ -3,9 +3,14 @@ use std::path::PathBuf;
 
 #[derive(Debug, Parser, Clone, Default)]
 pub struct CliArgs {
-    #[clap(short, long)]
+    #[clap(
+        short,
+        long,
+        global = true,
+        help = "Emit a machine-readable JSON envelope instead of default TOON output"
+    )]
     pub json: bool,
-    #[clap(hide = true)]
+    #[clap(hide = true, global = true)]
     pub config_dir: Option<PathBuf>,
 }
 

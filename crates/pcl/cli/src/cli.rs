@@ -4,6 +4,7 @@ use pcl_common::args::CliArgs;
 use pcl_core::verify::VerifyArgs;
 use pcl_core::{
     DEFAULT_PLATFORM_URL,
+    api::ApiArgs,
     apply::ApplyArgs,
     auth::AuthCommand,
     config::ConfigArgs,
@@ -51,6 +52,8 @@ pub enum Commands {
     Test(PhorgeTest),
     #[command(name = "apply")]
     Apply(ApplyArgs),
+    #[command(name = "api")]
+    Api(ApiArgs),
     Auth(AuthCommand),
     #[command(about = "Manage configuration")]
     Config(ConfigArgs),
@@ -93,6 +96,23 @@ mod tests {
             }
             _ => panic!("expected apply command"),
         }
+    }
+
+    #[test]
+    fn parses_api_call_command() {
+        let cli = Cli::try_parse_from([
+            "pcl",
+            "api",
+            "call",
+            "get",
+            "/views/public/incidents",
+            "--query",
+            "limit=5",
+            "--json",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Commands::Api(_)));
+        assert!(cli.args.json);
     }
 
     #[test]

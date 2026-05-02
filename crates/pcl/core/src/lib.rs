@@ -3,6 +3,7 @@
 #![allow(clippy::struct_field_names)]
 #![allow(clippy::unreadable_literal)]
 
+pub mod api;
 pub mod apply;
 pub mod auth;
 pub mod client;
