@@ -404,6 +404,13 @@ pub struct ApiArgs {
         help = "Do not attach the stored bearer token to API requests"
     )]
     allow_unauthenticated: bool,
+
+    #[arg(
+        long = "dry-run",
+        global = true,
+        help = "Print the request plan without sending an API request"
+    )]
+    dry_run: bool,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -586,7 +593,7 @@ enum ApiCommand {
     },
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum HttpMethod {
     Get,
     Post,
@@ -650,6 +657,7 @@ struct ApiRequestInput<'a> {
     require_auth: bool,
 }
 
+#[derive(Clone, Copy)]
 struct RawPaginationOptions<'a> {
     item_field: &'a str,
     start_page: u64,
@@ -1454,21 +1462,23 @@ impl ApiArgs {
                     body_file,
                     require_auth: !self.allow_unauthenticated,
                 };
-                let (mut response, next_actions) = if let Some(item_field) = paginate {
-                    let response = self
-                        .call_api_paginated(
-                            config,
-                            input,
-                            RawPaginationOptions {
-                                item_field,
-                                start_page: page.unwrap_or(1),
-                                limit: limit.unwrap_or(50),
-                                page_param: page_param.as_deref().unwrap_or("page"),
-                                limit_param: limit_param.as_deref().unwrap_or("limit"),
-                                max_pages: max_pages.unwrap_or(100),
-                            },
-                        )
-                        .await?;
+                let pagination = paginate.as_ref().map(|item_field| {
+                    RawPaginationOptions {
+                        item_field,
+                        start_page: page.unwrap_or(1),
+                        limit: limit.unwrap_or(50),
+                        page_param: page_param.as_deref().unwrap_or("page"),
+                        limit_param: limit_param.as_deref().unwrap_or("limit"),
+                        max_pages: max_pages.unwrap_or(100),
+                    }
+                });
+                if self.dry_run {
+                    let output = dry_run_envelope(self.raw_call_plan(input, pagination)?);
+                    print_output(&output, json_output)?;
+                    return Ok(());
+                }
+                let (mut response, next_actions) = if let Some(pagination) = pagination {
+                    let response = self.call_api_paginated(config, input, pagination).await?;
                     (
                         response,
                         vec![
@@ -1639,6 +1649,22 @@ impl ApiArgs {
                 message: "--jsonl requires --output".to_string(),
             });
         }
+        if self.dry_run {
+            let pagination = args.all.then(|| {
+                json!({
+                    "enabled": true,
+                    "item_field": "incidents",
+                    "start_page": args.page.unwrap_or(1),
+                    "limit": args.limit.unwrap_or(50),
+                    "max_pages": args.max_pages.unwrap_or(100),
+                    "output": args.output.as_ref().map(|path| path.display().to_string()),
+                    "jsonl": args.jsonl,
+                })
+            });
+            return Ok(dry_run_envelope(
+                self.workflow_request_plan(&request, pagination),
+            ));
+        }
         if args.all {
             let mut data = self
                 .call_workflow_paginated(
@@ -1723,12 +1749,97 @@ impl ApiArgs {
         config: &CliConfig,
         request: WorkflowRequest,
     ) -> Result<Value, ApiCommandError> {
+        if self.dry_run {
+            return Ok(dry_run_envelope(self.workflow_request_plan(&request, None)));
+        }
         let data = self.call_workflow(config, &request).await?;
         Ok(json!({
             "status": "ok",
             "data": data,
             "next_actions": request.next_actions,
         }))
+    }
+
+    fn workflow_request_plan(&self, request: &WorkflowRequest, pagination: Option<Value>) -> Value {
+        let body = request.body.as_deref().map_or(Ok(Value::Null), |body| {
+            serde_json::from_str(body).map_err(ApiCommandError::Json)
+        });
+        let body = match body {
+            Ok(body) => body,
+            Err(error) => {
+                return json!({
+                    "dry_run": true,
+                    "valid": false,
+                    "error": {
+                        "code": error.code(),
+                        "message": error.to_string(),
+                    },
+                });
+            }
+        };
+
+        let destructive = request_is_destructive(request.method, &request.path);
+        json!({
+            "dry_run": true,
+            "valid": true,
+            "request": {
+                "method": request.method.as_str(),
+                "path": request.path.as_str(),
+                "query": query_pairs_value(&request.query),
+                "body": body,
+                "auth": self.auth_plan(request.require_auth),
+                "side_effecting": request.method != HttpMethod::Get,
+                "destructive": destructive,
+                "project_resolution": "not_performed",
+            },
+            "pagination": pagination,
+        })
+    }
+
+    fn raw_call_plan(
+        &self,
+        input: ApiRequestInput<'_>,
+        pagination: Option<RawPaginationOptions<'_>>,
+    ) -> Result<Value, ApiCommandError> {
+        let (path, mut query) = split_path_and_inline_query(input.path)?;
+        query.extend(parse_key_values("query", input.query)?);
+        let header = parse_key_values("header", input.header)?;
+        let body = read_body(input.body, input.body_file)?
+            .map(|body| serde_json::from_str::<Value>(&body))
+            .transpose()?;
+        let destructive = request_is_destructive(input.method, &path);
+
+        Ok(json!({
+            "dry_run": true,
+            "valid": true,
+            "request": {
+                "method": input.method.as_str(),
+                "path": path.as_str(),
+                "query": query_pairs_value(&query),
+                "headers": query_pairs_value(&header),
+                "body": body.unwrap_or(Value::Null),
+                "auth": self.auth_plan(input.require_auth),
+                "side_effecting": input.method != HttpMethod::Get,
+                "destructive": destructive,
+            },
+            "pagination": pagination.map(|pagination| json!({
+                "enabled": true,
+                "item_field": pagination.item_field,
+                "start_page": pagination.start_page,
+                "limit": pagination.limit,
+                "page_param": pagination.page_param,
+                "limit_param": pagination.limit_param,
+                "max_pages": pagination.max_pages,
+            })),
+        }))
+    }
+
+    fn auth_plan(&self, require_auth: bool) -> Value {
+        json!({
+            "required": require_auth && !self.allow_unauthenticated,
+            "will_attach_stored_token": !self.allow_unauthenticated,
+            "allow_unauthenticated": self.allow_unauthenticated,
+        })
     }
 
     async fn fetch_openapi(&self, config: &CliConfig) -> Result<Value, ApiCommandError> {
@@ -2096,6 +2207,26 @@ fn ok_envelope(data: Value) -> Value {
     }))
 }
 
+fn dry_run_envelope(data: Value) -> Value {
+    with_envelope_metadata(json!({
+        "status": "ok",
+        "data": data,
+        "next_actions": [
+            "Remove --dry-run to execute this request",
+            "Use --json to consume this plan programmatically",
+            "Use --body-template when constructing mutation bodies",
+        ],
+    }))
+}
+
+fn request_is_destructive(method: HttpMethod, path: &str) -> bool {
+    method == HttpMethod::Delete
+        || path.contains("/delete")
+        || path.contains("/remove")
+        || path.contains("/reject")
+        || path.contains("/logout")
+}
+
 fn api_manifest() -> Value {
     json!({
         "name": "pcl api",
@@ -2303,11 +2434,11 @@ fn api_manifest() -> Value {
                 "output": "operation_id, method, path, path_params, required_query, body_fields, required_body_fields, body_template, response_statuses, example_call",
             },
             {
-                "command": "pcl api call <method> <path[?query]> [--query key=value] [--body '{...}'] [--paginate <field>] [--page-param page] [--limit-param limit] [--jsonl] [--output <file>]",
-                "description": "Execute any endpoint below /api/v1. Query strings in PATH and repeated --query flags are both accepted; GET calls can paginate any array response with --paginate.",
+                "command": "pcl api call <method> <path[?query]> [--query key=value] [--body '{...}'] [--paginate <field>] [--page-param page] [--limit-param limit] [--jsonl] [--output <file>] [--dry-run]",
+                "description": "Execute any endpoint below /api/v1. Query strings in PATH and repeated --query flags are both accepted; GET calls can paginate any array response with --paginate. Add --dry-run to print the request plan without sending it.",
                 "output": "request and response status/body; non-2xx responses return structured error envelopes with request_id when the API provides one",
                 "actions": [
-                    {"name": "execute", "method": "*", "path": "<path>", "auth": "default", "example": "pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated"},
+                    {"name": "execute", "method": "*", "path": "<path>", "auth": "default", "optional_flags": ["--dry-run"], "example": "pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated"},
                     {"name": "paginate", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate"], "optional_flags": ["--all", "--page", "--limit", "--page-param", "--limit-param", "--max-pages", "--jsonl", "--output"], "example": "pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json"},
                     {"name": "export_jsonl", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate", "--jsonl", "--output"], "example": "pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl"}
                 ]
@@ -5201,6 +5332,7 @@ mod tests {
             command: ApiCommand::Manifest,
             api_url: server.url().parse().unwrap(),
             allow_unauthenticated: true,
+            dry_run: false,
         };
         let request = WorkflowRequest::get("/views/public/incidents", false, Vec::new());
 
@@ -5511,6 +5643,7 @@ mod tests {
             command: ApiCommand::Manifest,
             api_url: server.url().parse().unwrap(),
             allow_unauthenticated: true,
+            dry_run: false,
         };
         let config = CliConfig::default();
         let request = WorkflowRequest::get("/health", false, Vec::new());
@@ -5558,6 +5691,7 @@ mod tests {
             command: ApiCommand::Manifest,
             api_url: server.url().parse().unwrap(),
             allow_unauthenticated: true,
+            dry_run: false,
         };
 
         let response = api
@@ -5586,6 +5720,94 @@ mod tests {
         );
         assert_eq!(response["response"]["body"]["ok"], true);
         mock.assert_async().await;
+    }
+
+    #[test]
+    fn parser_accepts_global_dry_run() {
+        let args = ApiArgs::try_parse_from([
+            "api",
+            "--dry-run",
+            "call",
+            "post",
+            "/web/auth/logout",
+            "--body",
+            "{}",
+        ])
+        .unwrap();
+
+        assert!(args.dry_run);
+    }
+
+    #[test]
+    fn raw_api_dry_run_plans_request_without_auth_or_network() {
+        let api = ApiArgs {
+            command: ApiCommand::Manifest,
+            api_url: "https://api.example.com".parse().unwrap(),
+            allow_unauthenticated: false,
+            dry_run: true,
+        };
+        let query = vec!["force=true".to_string()];
+        let header = vec!["x-test=yes".to_string()];
+
+        let plan = api
+            .raw_call_plan(
+                ApiRequestInput {
+                    method: HttpMethod::Post,
+                    path: "/web/auth/logout?reason=test",
+                    query: &query,
+                    header: &header,
+                    body: Some("{}"),
+                    body_file: &None,
+                    require_auth: true,
+                },
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(plan["dry_run"], true);
+        assert_eq!(plan["valid"], true);
+        assert_eq!(plan["request"]["method"], "POST");
+        assert_eq!(plan["request"]["path"], "/web/auth/logout");
+        assert_eq!(
+            plan["request"]["query"],
+            json!([
+                {"name": "reason", "value": "test"},
+                {"name": "force", "value": "true"}
+            ])
+        );
+        assert_eq!(plan["request"]["body"], json!({}));
+        assert_eq!(plan["request"]["auth"]["required"], true);
+        assert_eq!(plan["request"]["side_effecting"], true);
+        assert_eq!(plan["request"]["destructive"], true);
+    }
+
+    #[test]
+    fn workflow_dry_run_plans_destructive_requests() {
+        let api = ApiArgs {
+            command: ApiCommand::Manifest,
+            api_url: "https://api.example.com".parse().unwrap(),
+            allow_unauthenticated: false,
+            dry_run: true,
+        };
+        let request = WorkflowRequest {
+            method: HttpMethod::Delete,
+            path: "/projects/project-1".to_string(),
+            query: vec![("environment".to_string(), "production".to_string())],
+            body: None,
+            require_auth: true,
+            next_actions: Vec::new(),
+        };
+
+        let plan = api.workflow_request_plan(&request, None);
+
+        assert_eq!(plan["dry_run"], true);
+        assert_eq!(plan["valid"], true);
+        assert_eq!(plan["request"]["method"], "DELETE");
+        assert_eq!(plan["request"]["path"], "/projects/project-1");
+        assert_eq!(plan["request"]["auth"]["will_attach_stored_token"], true);
+        assert_eq!(plan["request"]["side_effecting"], true);
+        assert_eq!(plan["request"]["destructive"], true);
+        assert_eq!(plan["request"]["project_resolution"], "not_performed");
     }
 
     #[tokio::test]
@@ -5619,6 +5841,7 @@ mod tests {
             command: ApiCommand::Manifest,
             api_url: server.url().parse().unwrap(),
             allow_unauthenticated: true,
+            dry_run: false,
         };
 
         let response = api
@@ -5675,6 +5898,7 @@ mod tests {
             command: ApiCommand::Manifest,
             api_url: server.url().parse().unwrap(),
             allow_unauthenticated: true,
+            dry_run: false,
         };
 
         let response = api
@@ -5713,6 +5937,7 @@ mod tests {
             command: ApiCommand::Manifest,
             api_url: "https://api.example.com".parse().unwrap(),
             allow_unauthenticated: true,
+            dry_run: false,
         };
 
         let error = api
@@ -5779,6 +6004,7 @@ mod tests {
             command: ApiCommand::Manifest,
             api_url: server.url().parse().unwrap(),
             allow_unauthenticated: true,
+            dry_run: false,
         };
 
         let error = api
