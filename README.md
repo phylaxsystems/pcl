@@ -26,8 +26,8 @@ brew install phylax/pcl/phylax
 `pcl api` exposes the platform API as structured CLI operations for agents and scripts.
 It is designed around the platform workflows documented in the [Phylax docs](https://docs.phylax.systems):
 projects, assertions, transparency views, deployment state, integrations, and incidents.
-API commands default to compact TOON-style output with `next_actions`; pass `--json` for the full
-machine-readable envelope. Successes and errors use the same envelope shape, so agents can recover
+API commands default to compact TOON-style envelopes with `status`, `data`, and `next_actions`;
+pass `--json` for the same machine-readable envelope as JSON. Successes and errors use the same shape, so agents can recover
 from auth, validation, and parser failures without scraping prose diagnostics.
 `pcl auth status` also reports token validity, expiry, and platform URL; expired stored tokens return
 a nonzero structured error so agents do not mistake stale credentials for a working login.
@@ -82,6 +82,7 @@ pcl api inspect get_views_projects_project_id_incidents
 pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated
 pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated
 pcl api call get /views/projects/<project-id>/incidents --query environment=production
+pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json
 pcl api call get /views/projects/<project-id>/assertions
 pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json
 pcl api call post /web/auth/logout --body '{}'

@@ -451,7 +451,7 @@ enum ApiCommand {
 
     #[command(
         about = "Call any platform API endpoint",
-        after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json"
+        after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json"
     )]
     Call {
         #[arg(value_enum, help = "HTTP method")]
@@ -474,6 +474,22 @@ enum ApiCommand {
             help = "Path to JSON request body, or - for stdin"
         )]
         body_file: Option<PathBuf>,
+        #[arg(
+            long,
+            value_name = "FIELD",
+            help = "Fetch every page and aggregate array field/path from each response"
+        )]
+        paginate: Option<String>,
+        #[arg(long, requires = "paginate", help = "Starting page for --paginate")]
+        page: Option<u64>,
+        #[arg(long, requires = "paginate", help = "Items per page for --paginate")]
+        limit: Option<u64>,
+        #[arg(
+            long,
+            requires = "paginate",
+            help = "Maximum pages to fetch with --paginate"
+        )]
+        max_pages: Option<u64>,
         #[arg(long, help = "Write response body to a JSON file")]
         output: Option<PathBuf>,
     },
@@ -1308,22 +1324,51 @@ impl ApiArgs {
                 header,
                 body,
                 body_file,
+                paginate,
+                page,
+                limit,
+                max_pages,
                 output,
             } => {
-                let mut response = self
-                    .call_api(
-                        config,
-                        ApiRequestInput {
-                            method: *method,
-                            path,
-                            query,
-                            header,
-                            body: body.as_deref(),
-                            body_file,
-                            require_auth: !self.allow_unauthenticated,
-                        },
+                let input = ApiRequestInput {
+                    method: *method,
+                    path,
+                    query,
+                    header,
+                    body: body.as_deref(),
+                    body_file,
+                    require_auth: !self.allow_unauthenticated,
+                };
+                let (mut response, next_actions) = if let Some(item_field) = paginate {
+                    let response = self
+                        .call_api_paginated(
+                            config,
+                            input,
+                            item_field,
+                            page.unwrap_or(1),
+                            limit.unwrap_or(50),
+                            max_pages.unwrap_or(100),
+                        )
+                        .await?;
+                    (
+                        response,
+                        vec![
+                            "Adjust --limit or --max-pages if the result set was truncated"
+                                .to_string(),
+                            "Use --output results.json to save paginated data".to_string(),
+                            "pcl api manifest --json".to_string(),
+                        ],
                     )
-                    .await?;
+                } else {
+                    let response = self.call_api(config, input).await?;
+                    (
+                        response,
+                        vec![
+                            "pcl api list --json".to_string(),
+                            "pcl api manifest --json".to_string(),
+                        ],
+                    )
+                };
                 if let Some(path) = output {
                     let body = response.pointer("/response/body").unwrap_or(&response);
                     write_json_output_file(path, body)?;
@@ -1334,16 +1379,125 @@ impl ApiArgs {
                 let output = json!({
                     "status": "ok",
                     "data": response,
-                    "next_actions": [
-                        "pcl api list --json",
-                        "pcl api manifest --json"
-                    ],
+                    "next_actions": next_actions,
                 });
                 print_output(&output, json_output)?;
             }
         }
 
         Ok(())
+    }
+
+    async fn call_api_paginated(
+        &self,
+        config: &CliConfig,
+        input: ApiRequestInput<'_>,
+        item_field: &str,
+        start_page: u64,
+        limit: u64,
+        max_pages: u64,
+    ) -> Result<Value, ApiCommandError> {
+        if input.method.openapi_key() != "get" {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: "--paginate is only supported for GET requests".to_string(),
+            });
+        }
+        if input.body.is_some() || input.body_file.is_some() {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: "--paginate cannot be used with request bodies".to_string(),
+            });
+        }
+        if limit == 0 {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: "--limit must be greater than zero".to_string(),
+            });
+        }
+        if max_pages == 0 {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: "--max-pages must be greater than zero".to_string(),
+            });
+        }
+
+        let (path, mut base_query) = split_path_and_inline_query(input.path)?;
+        base_query.extend(parse_key_values("query", input.query)?);
+        let url = self.api_url(&path)?;
+        let headers = parse_headers(input.header)?;
+        let client = self.http_client(
+            config,
+            !self.allow_unauthenticated,
+            input.require_auth && !self.allow_unauthenticated,
+        )?;
+
+        let mut items = Vec::new();
+        let mut pages_fetched = 0_u64;
+        let mut last_page_count = 0_usize;
+
+        for offset in 0..max_pages {
+            let page = start_page + offset;
+            let mut page_query = base_query.clone();
+            upsert_query(&mut page_query, "page", page.to_string());
+            upsert_query(&mut page_query, "limit", limit.to_string());
+
+            let response = client
+                .get(url.clone())
+                .headers(headers.clone())
+                .query(&page_query)
+                .send()
+                .await?;
+            let status = response.status();
+            let request_id = request_id_from_headers(response.headers());
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            let bytes = response.bytes().await?;
+            let body = response_body_value(&content_type, &bytes);
+            if !status.is_success() {
+                return Err(ApiCommandError::HttpStatus {
+                    method: input.method.as_str(),
+                    path,
+                    status: status.as_u16(),
+                    request_id,
+                    body: Box::new(body),
+                });
+            }
+
+            let page_items = extract_paginated_items(&body, item_field).ok_or_else(|| {
+                ApiCommandError::InvalidWorkflow {
+                    message: format!(
+                        "Could not find an array at `{item_field}` or common pagination fields in response"
+                    ),
+                }
+            })?;
+            last_page_count = page_items.len();
+            pages_fetched += 1;
+            items.extend(page_items);
+
+            if last_page_count < usize::try_from(limit).unwrap_or(usize::MAX) {
+                break;
+            }
+        }
+
+        let count = items.len();
+        Ok(json!({
+            "request": {
+                "method": input.method.as_str(),
+                "path": path,
+                "query": query_pairs_value(&base_query),
+                "pagination": {
+                    "field": item_field,
+                    "start_page": start_page,
+                    "limit": limit,
+                    "max_pages": max_pages,
+                }
+            },
+            "items": items,
+            "count": count,
+            "pages_fetched": pages_fetched,
+            "last_page_count": last_page_count,
+        }))
     }
 
     async fn run_incidents(
@@ -1780,17 +1934,16 @@ fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {
 }
 
 fn print_output(value: &Value, json_output: bool) -> Result<(), ApiCommandError> {
-    if json_output {
-        println!("{}", serde_json::to_string_pretty(value)?);
-    } else {
-        if let Some(data) = value.get("data") {
-            print!("{}", toon_string(data));
-        }
-        if let Some(next_actions) = value.get("next_actions") {
-            print!("{}", toon_field_string("next_actions", next_actions, 0));
-        }
-    }
+    print!("{}", output_string(value, json_output)?);
     Ok(())
+}
+
+fn output_string(value: &Value, json_output: bool) -> Result<String, ApiCommandError> {
+    if json_output {
+        Ok(format!("{}\n", serde_json::to_string_pretty(value)?))
+    } else {
+        Ok(toon_string(value))
+    }
 }
 
 fn ok_envelope(data: Value) -> Value {
@@ -1810,11 +1963,15 @@ fn api_manifest() -> Value {
         "name": "pcl api",
         "description": "Use workflow-shaped commands for every UI/API workflow, with raw OpenAPI commands as an escape hatch.",
         "default_output": "toon",
-        "json_output": "Add --json to emit {status,data,next_actions}.",
+        "json_output": "Add --json to emit the same {status,data,error,next_actions} envelope as JSON.",
         "body_input": {
             "preferred": "Use typed flags when available, then --field key=value, then --body-file for nested payloads.",
             "template_flag": "--body-template",
             "field_flag": "--field key=value parses JSON scalars/objects/arrays when VALUE is valid JSON, otherwise a string"
+        },
+        "pagination": {
+            "workflow": "Use workflow-specific --all where available, for example pcl api incidents --all --limit 50 --output incidents.json.",
+            "raw_call": "Use pcl api call get /path --paginate <array-field> --limit 50 --max-pages 100 --output results.json for generic GET pagination."
         },
         "auth": {
             "default": "Stored bearer token is attached to API calls.",
@@ -2007,9 +2164,13 @@ fn api_manifest() -> Value {
                 "output": "operation_id, method, path, path_params, required_query, body_fields, required_body_fields, body_template, response_statuses, example_call",
             },
             {
-                "command": "pcl api call <method> <path[?query]> [--query key=value] [--body '{...}'] [--output <file>]",
-                "description": "Execute any endpoint below /api/v1. Query strings in PATH and repeated --query flags are both accepted.",
+                "command": "pcl api call <method> <path[?query]> [--query key=value] [--body '{...}'] [--paginate <field>] [--output <file>]",
+                "description": "Execute any endpoint below /api/v1. Query strings in PATH and repeated --query flags are both accepted; GET calls can paginate any array response with --paginate.",
                 "output": "request and response status/body; non-2xx responses return structured error envelopes with request_id when the API provides one",
+                "actions": [
+                    {"name": "execute", "method": "*", "path": "<path>", "auth": "default", "example": "pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated"},
+                    {"name": "paginate", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate"], "optional_flags": ["--page", "--limit", "--max-pages", "--output"], "example": "pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json"}
+                ]
             },
         ],
         "examples": [
@@ -3526,12 +3687,6 @@ fn array_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a [Value]> {
 pub fn toon_string(value: &Value) -> String {
     let mut output = String::new();
     write_toon(value, 0, &mut output);
-    output
-}
-
-fn toon_field_string(key: &str, value: &Value, indent: usize) -> String {
-    let mut output = String::new();
-    write_toon_field(key, value, indent, &mut output);
     output
 }
 
@@ -5268,6 +5423,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn raw_api_call_paginates_any_array_response() {
+        let mut server = mockito::Server::new_async().await;
+        let page_1 = server
+            .mock("GET", "/api/v1/views/public/incidents")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("environment".into(), "production".into()),
+                mockito::Matcher::UrlEncoded("page".into(), "1".into()),
+                mockito::Matcher::UrlEncoded("limit".into(), "2".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"incidents":[{"id":"i1"},{"id":"i2"}]}"#)
+            .create_async()
+            .await;
+        let page_2 = server
+            .mock("GET", "/api/v1/views/public/incidents")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("environment".into(), "production".into()),
+                mockito::Matcher::UrlEncoded("page".into(), "2".into()),
+                mockito::Matcher::UrlEncoded("limit".into(), "2".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"incidents":[{"id":"i3"}]}"#)
+            .create_async()
+            .await;
+        let api = ApiArgs {
+            command: ApiCommand::Manifest,
+            api_url: server.url().parse().unwrap(),
+            allow_unauthenticated: true,
+        };
+
+        let response = api
+            .call_api_paginated(
+                &CliConfig::default(),
+                ApiRequestInput {
+                    method: HttpMethod::Get,
+                    path: "/views/public/incidents?environment=production",
+                    query: &[],
+                    header: &[],
+                    body: None,
+                    body_file: &None,
+                    require_auth: false,
+                },
+                "incidents",
+                1,
+                2,
+                5,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response["count"], 3);
+        assert_eq!(response["pages_fetched"], 2);
+        assert_eq!(response["items"][2]["id"], "i3");
+        assert_eq!(
+            response["request"]["query"],
+            json!([{"name": "environment", "value": "production"}])
+        );
+        assert_eq!(response["request"]["pagination"]["field"], "incidents");
+        page_1.assert_async().await;
+        page_2.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn raw_api_call_pagination_rejects_non_get_requests() {
+        let api = ApiArgs {
+            command: ApiCommand::Manifest,
+            api_url: "https://api.example.com".parse().unwrap(),
+            allow_unauthenticated: true,
+        };
+
+        let error = api
+            .call_api_paginated(
+                &CliConfig::default(),
+                ApiRequestInput {
+                    method: HttpMethod::Post,
+                    path: "/views/public/incidents",
+                    query: &[],
+                    header: &[],
+                    body: None,
+                    body_file: &None,
+                    require_auth: false,
+                },
+                "incidents",
+                1,
+                50,
+                100,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("--paginate is only supported"));
+    }
+
+    #[tokio::test]
     async fn raw_api_call_errors_include_request_id() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
@@ -5449,6 +5700,24 @@ mod tests {
     }
 
     #[test]
+    fn default_api_output_is_full_toon_envelope() {
+        let output = output_string(
+            &json!({
+                "status": "ok",
+                "data": {"healthy": true},
+                "next_actions": ["pcl api list"],
+            }),
+            false,
+        )
+        .unwrap();
+
+        assert!(output.contains("status: ok"));
+        assert!(output.contains("data:"));
+        assert!(output.contains("healthy: true"));
+        assert!(output.contains("next_actions[1]:"));
+    }
+
+    #[test]
     fn variant_body_templates_return_variant_specific_next_actions() {
         let envelope = template_envelope(body_template("protocol_manager_confirm"));
 
@@ -5563,6 +5832,24 @@ mod tests {
                 "manifest must include required flags for incident action {name}"
             );
         }
+
+        let call_actions = commands
+            .iter()
+            .find(|command| {
+                command["command"]
+                    .as_str()
+                    .is_some_and(|value| value.starts_with("pcl api call "))
+            })
+            .and_then(|command| command["actions"].as_array())
+            .unwrap();
+        assert!(
+            call_actions.iter().any(|action| {
+                action["name"] == "paginate"
+                    && action["method"] == "GET"
+                    && action["required_flags"] == json!(["--paginate"])
+            }),
+            "manifest must include generic raw-call pagination"
+        );
     }
 
     #[test]
