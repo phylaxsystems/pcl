@@ -667,6 +667,13 @@ struct RawPaginationOptions<'a> {
     max_pages: u64,
 }
 
+#[derive(Debug)]
+struct WorkflowCallResult {
+    body: Value,
+    request: Value,
+    response: Value,
+}
+
 #[derive(Clone, Debug)]
 struct WorkflowRequest {
     method: HttpMethod,
@@ -1699,13 +1706,9 @@ impl ApiArgs {
                 "next_actions": next_actions,
             }));
         }
-        let data = self.call_workflow(config, &request).await?;
-        let next_actions = incidents_next_actions(&data, args, request.next_actions);
-        Ok(json!({
-            "status": "ok",
-            "data": data,
-            "next_actions": next_actions,
-        }))
+        let result = self.call_workflow_result(config, &request).await?;
+        let next_actions = incidents_next_actions(&result.body, args, request.next_actions);
+        Ok(workflow_success_envelope(result, next_actions))
     }
 
     async fn run_projects(
@@ -1717,13 +1720,9 @@ impl ApiArgs {
             return Ok(template_envelope(project_body_template(args)));
         }
         let request = projects_request(args)?;
-        let data = self.call_workflow(config, &request).await?;
-        let next_actions = projects_next_actions(&data, request.next_actions);
-        Ok(json!({
-            "status": "ok",
-            "data": data,
-            "next_actions": next_actions,
-        }))
+        let result = self.call_workflow_result(config, &request).await?;
+        let next_actions = projects_next_actions(&result.body, request.next_actions);
+        Ok(workflow_success_envelope(result, next_actions))
     }
 
     async fn run_assertions(
@@ -1735,13 +1734,9 @@ impl ApiArgs {
             return Ok(template_envelope(assertions_body_template(args)));
         }
         let request = assertions_request(args)?;
-        let data = self.call_workflow(config, &request).await?;
-        let next_actions = assertions_next_actions(&data, args, request.next_actions);
-        Ok(json!({
-            "status": "ok",
-            "data": data,
-            "next_actions": next_actions,
-        }))
+        let result = self.call_workflow_result(config, &request).await?;
+        let next_actions = assertions_next_actions(&result.body, args, request.next_actions);
+        Ok(workflow_success_envelope(result, next_actions))
     }
 
     async fn run_workflow(
@@ -1752,12 +1747,8 @@ impl ApiArgs {
         if self.dry_run {
             return Ok(dry_run_envelope(self.workflow_request_plan(&request, None)));
         }
-        let data = self.call_workflow(config, &request).await?;
-        Ok(json!({
-            "status": "ok",
-            "data": data,
-            "next_actions": request.next_actions,
-        }))
+        let result = self.call_workflow_result(config, &request).await?;
+        Ok(workflow_success_envelope(result, request.next_actions))
     }
 
     fn workflow_request_plan(&self, request: &WorkflowRequest, pagination: Option<Value>) -> Value {
@@ -1928,6 +1919,14 @@ impl ApiArgs {
         config: &CliConfig,
         request: &WorkflowRequest,
     ) -> Result<Value, ApiCommandError> {
+        Ok(self.call_workflow_result(config, request).await?.body)
+    }
+
+    async fn call_workflow_result(
+        &self,
+        config: &CliConfig,
+        request: &WorkflowRequest,
+    ) -> Result<WorkflowCallResult, ApiCommandError> {
         let path = self.normalize_project_path(config, &request.path).await?;
         let url = self.api_url(&path)?;
         let client = self.http_client(
@@ -1963,7 +1962,23 @@ impl ApiArgs {
                 body: Box::new(body),
             });
         }
-        Ok(body)
+        Ok(WorkflowCallResult {
+            body,
+            request: json!({
+                "method": request.method.as_str(),
+                "path": path,
+                "query": query_pairs_value(&request.query),
+                "auth": self.auth_plan(request.require_auth),
+                "side_effecting": request.method != HttpMethod::Get,
+                "destructive": request_is_destructive(request.method, &request.path),
+            }),
+            response: json!({
+                "status": status.as_u16(),
+                "success": true,
+                "request_id": request_id,
+                "fetched_at": chrono::Utc::now().to_rfc3339(),
+            }),
+        })
     }
 
     async fn call_workflow_paginated(
@@ -2216,6 +2231,16 @@ fn dry_run_envelope(data: Value) -> Value {
             "Use --json to consume this plan programmatically",
             "Use --body-template when constructing mutation bodies",
         ],
+    }))
+}
+
+fn workflow_success_envelope(result: WorkflowCallResult, next_actions: Vec<String>) -> Value {
+    with_envelope_metadata(json!({
+        "status": "ok",
+        "data": result.body,
+        "request": result.request,
+        "response": result.response,
+        "next_actions": next_actions,
     }))
 }
 
@@ -5670,6 +5695,42 @@ mod tests {
             error.json_envelope()["error"]["http"]["body"]["message"],
             "address is required"
         );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_success_envelopes_include_request_provenance() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/v1/health")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_header("x-request-id", "req-workflow-123")
+            .with_body(r#"{"ok":true}"#)
+            .create_async()
+            .await;
+        let api = ApiArgs {
+            command: ApiCommand::Manifest,
+            api_url: server.url().parse().unwrap(),
+            allow_unauthenticated: true,
+            dry_run: false,
+        };
+        let request = WorkflowRequest::get("/health", false, vec!["next".to_string()]);
+
+        let envelope = api
+            .run_workflow(&CliConfig::default(), request)
+            .await
+            .unwrap();
+
+        assert_eq!(envelope["status"], "ok");
+        assert_eq!(envelope["data"]["ok"], true);
+        assert_eq!(envelope["request"]["method"], "GET");
+        assert_eq!(envelope["request"]["path"], "/health");
+        assert_eq!(envelope["request"]["auth"]["required"], false);
+        assert_eq!(envelope["response"]["status"], 200);
+        assert_eq!(envelope["response"]["request_id"], "req-workflow-123");
+        assert!(envelope["response"]["fetched_at"].as_str().is_some());
+        assert_eq!(envelope["next_actions"], json!(["next"]));
         mock.assert_async().await;
     }
 
