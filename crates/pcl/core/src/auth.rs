@@ -161,7 +161,7 @@ impl AuthCommand {
             .append_pair("session_id", &auth_response.session_id.to_string());
         let url = device_url.as_str();
 
-        if open::that(url).is_ok() {
+        if Self::should_open_browser() && open::that(url).is_ok() {
             println!(
                 "\n{} Opening browser for authentication...\n\n🔗 {}\n📝 {}\n",
                 "🌐".green(),
@@ -175,6 +175,10 @@ impl AuthCommand {
                 format!("Code: {}", *auth_response.code).green().bold()
             );
         }
+    }
+
+    fn should_open_browser() -> bool {
+        !cfg!(test) && std::env::var_os("PCL_AUTH_NO_BROWSER").is_none()
     }
 
     /// Wait for the user to complete the authentication process
@@ -406,6 +410,11 @@ mod tests {
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
         cmd.display_login_instructions(&auth_response);
+    }
+
+    #[test]
+    fn test_login_instructions_do_not_open_browser_in_tests() {
+        assert!(!AuthCommand::should_open_browser());
     }
 
     #[test]
