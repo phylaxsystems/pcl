@@ -276,6 +276,40 @@ impl ApiCommandError {
         }
     }
 
+    pub fn suggested_next_actions(&self) -> Vec<&'static str> {
+        match self {
+            Self::NoAuthToken | Self::ExpiredAuthToken(_) => vec!["login", "retry"],
+            Self::InvalidKeyValue { .. }
+            | Self::InvalidHeaderName { .. }
+            | Self::InvalidHeaderValue { .. }
+            | Self::InvalidPath(_)
+            | Self::Json(_)
+            | Self::InvalidWorkflow { .. } => vec!["fix_input", "retry"],
+            Self::OperationNotFound(_) | Self::MissingPaths => vec!["inspect_manifest"],
+            Self::Request(_) | Self::Url(_) => vec!["check_network", "retry"],
+            Self::BodyFile { .. } | Self::Stdin(_) => vec!["fix_body_input", "retry"],
+            Self::OutputFile { .. } => vec!["fix_output_path", "retry"],
+            Self::HttpStatus {
+                status: 401 | 403, ..
+            } => vec!["login", "retry"],
+            Self::HttpStatus {
+                status: 400 | 422, ..
+            } => vec!["inspect_operation", "fix_request", "retry"],
+            Self::HttpStatus { status: 404, .. } => vec!["inspect_manifest", "check_ids"],
+            Self::HttpStatus { status: 429, .. } => vec!["retry_later", "reduce_request_rate"],
+            Self::HttpStatus {
+                status: 500..=599, ..
+            } => {
+                vec![
+                    "retry_later",
+                    "export_project_incidents_with_errors",
+                    "contact_platform_with_request_id",
+                ]
+            }
+            Self::HttpStatus { .. } => vec!["inspect_response_body", "retry"],
+        }
+    }
+
     pub fn json_envelope(&self) -> Value {
         let mut error = Map::new();
         error.insert("code".to_string(), json!(self.code()));
@@ -305,11 +339,30 @@ impl ApiCommandError {
             );
         }
 
-        json!({
+        let mut envelope = json!({
             "status": "error",
             "error": error,
+            "recoverable": self.recoverable(),
+            "suggested_next_actions": self.suggested_next_actions(),
             "next_actions": self.next_actions(),
-        })
+        });
+
+        if let Self::HttpStatus {
+            method,
+            path,
+            status,
+            request_id,
+            ..
+        } = self
+            && let Some(object) = envelope.as_object_mut()
+        {
+            object.insert("http_status".to_string(), json!(status));
+            object.insert("method".to_string(), json!(method));
+            object.insert("path".to_string(), json!(path));
+            object.insert("request_id".to_string(), json!(request_id));
+        }
+
+        envelope
     }
 }
 
@@ -451,7 +504,7 @@ enum ApiCommand {
 
     #[command(
         about = "Call any platform API endpoint",
-        after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json"
+        after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json"
     )]
     Call {
         #[arg(value_enum, help = "HTTP method")]
@@ -480,16 +533,40 @@ enum ApiCommand {
             help = "Fetch every page and aggregate array field/path from each response"
         )]
         paginate: Option<String>,
+        #[arg(
+            long,
+            requires = "paginate",
+            help = "Explicitly fetch all pages; --paginate already enables this"
+        )]
+        all: bool,
         #[arg(long, requires = "paginate", help = "Starting page for --paginate")]
         page: Option<u64>,
         #[arg(long, requires = "paginate", help = "Items per page for --paginate")]
         limit: Option<u64>,
+        #[arg(
+            long = "page-param",
+            requires = "paginate",
+            help = "Query parameter name for page number"
+        )]
+        page_param: Option<String>,
+        #[arg(
+            long = "limit-param",
+            requires = "paginate",
+            help = "Query parameter name for page size"
+        )]
+        limit_param: Option<String>,
         #[arg(
             long,
             requires = "paginate",
             help = "Maximum pages to fetch with --paginate"
         )]
         max_pages: Option<u64>,
+        #[arg(
+            long,
+            requires = "paginate",
+            help = "With --paginate and --output, write items as JSON Lines"
+        )]
+        jsonl: bool,
         #[arg(long, help = "Write response body to a JSON file")]
         output: Option<PathBuf>,
     },
@@ -557,6 +634,15 @@ struct ApiRequestInput<'a> {
     body: Option<&'a str>,
     body_file: &'a Option<PathBuf>,
     require_auth: bool,
+}
+
+struct RawPaginationOptions<'a> {
+    item_field: &'a str,
+    start_page: u64,
+    limit: u64,
+    page_param: &'a str,
+    limit_param: &'a str,
+    max_pages: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -645,6 +731,12 @@ struct IncidentsArgs {
     max_pages: Option<u64>,
     #[arg(long, help = "Write response data to a JSON file")]
     output: Option<PathBuf>,
+    #[arg(
+        long,
+        requires = "all",
+        help = "With --all and --output, write incident items as JSON Lines"
+    )]
+    jsonl: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -1325,11 +1417,20 @@ impl ApiArgs {
                 body,
                 body_file,
                 paginate,
+                all: _,
                 page,
                 limit,
+                page_param,
+                limit_param,
                 max_pages,
+                jsonl,
                 output,
             } => {
+                if *jsonl && output.is_none() {
+                    return Err(ApiCommandError::InvalidWorkflow {
+                        message: "--jsonl requires --output".to_string(),
+                    });
+                }
                 let input = ApiRequestInput {
                     method: *method,
                     path,
@@ -1344,10 +1445,14 @@ impl ApiArgs {
                         .call_api_paginated(
                             config,
                             input,
-                            item_field,
-                            page.unwrap_or(1),
-                            limit.unwrap_or(50),
-                            max_pages.unwrap_or(100),
+                            RawPaginationOptions {
+                                item_field,
+                                start_page: page.unwrap_or(1),
+                                limit: limit.unwrap_or(50),
+                                page_param: page_param.as_deref().unwrap_or("page"),
+                                limit_param: limit_param.as_deref().unwrap_or("limit"),
+                                max_pages: max_pages.unwrap_or(100),
+                            },
                         )
                         .await?;
                     (
@@ -1370,8 +1475,12 @@ impl ApiArgs {
                     )
                 };
                 if let Some(path) = output {
-                    let body = response.pointer("/response/body").unwrap_or(&response);
-                    write_json_output_file(path, body)?;
+                    if *jsonl {
+                        write_jsonl_items_output_file(path, &response)?;
+                    } else {
+                        let body = response.pointer("/response/body").unwrap_or(&response);
+                        write_json_output_file(path, body)?;
+                    }
                     if let Some(object) = response.as_object_mut() {
                         object.insert("output_path".to_string(), json!(path.display().to_string()));
                     }
@@ -1392,10 +1501,7 @@ impl ApiArgs {
         &self,
         config: &CliConfig,
         input: ApiRequestInput<'_>,
-        item_field: &str,
-        start_page: u64,
-        limit: u64,
-        max_pages: u64,
+        pagination: RawPaginationOptions<'_>,
     ) -> Result<Value, ApiCommandError> {
         if input.method.openapi_key() != "get" {
             return Err(ApiCommandError::InvalidWorkflow {
@@ -1407,12 +1513,12 @@ impl ApiArgs {
                 message: "--paginate cannot be used with request bodies".to_string(),
             });
         }
-        if limit == 0 {
+        if pagination.limit == 0 {
             return Err(ApiCommandError::InvalidWorkflow {
                 message: "--limit must be greater than zero".to_string(),
             });
         }
-        if max_pages == 0 {
+        if pagination.max_pages == 0 {
             return Err(ApiCommandError::InvalidWorkflow {
                 message: "--max-pages must be greater than zero".to_string(),
             });
@@ -1432,11 +1538,15 @@ impl ApiArgs {
         let mut pages_fetched = 0_u64;
         let mut last_page_count = 0_usize;
 
-        for offset in 0..max_pages {
-            let page = start_page + offset;
+        for offset in 0..pagination.max_pages {
+            let page = pagination.start_page + offset;
             let mut page_query = base_query.clone();
-            upsert_query(&mut page_query, "page", page.to_string());
-            upsert_query(&mut page_query, "limit", limit.to_string());
+            upsert_query(&mut page_query, pagination.page_param, page.to_string());
+            upsert_query(
+                &mut page_query,
+                pagination.limit_param,
+                pagination.limit.to_string(),
+            );
 
             let response = client
                 .get(url.clone())
@@ -1464,10 +1574,12 @@ impl ApiArgs {
                 });
             }
 
-            let page_items = extract_paginated_items(&body, item_field).ok_or_else(|| {
+            let page_items =
+                extract_paginated_items(&body, pagination.item_field).ok_or_else(|| {
                 ApiCommandError::InvalidWorkflow {
                     message: format!(
-                        "Could not find an array at `{item_field}` or common pagination fields in response"
+                        "Could not find an array at `{}` or common pagination fields in response",
+                        pagination.item_field
                     ),
                 }
             })?;
@@ -1475,7 +1587,7 @@ impl ApiArgs {
             pages_fetched += 1;
             items.extend(page_items);
 
-            if last_page_count < usize::try_from(limit).unwrap_or(usize::MAX) {
+            if last_page_count < usize::try_from(pagination.limit).unwrap_or(usize::MAX) {
                 break;
             }
         }
@@ -1487,10 +1599,12 @@ impl ApiArgs {
                 "path": path,
                 "query": query_pairs_value(&base_query),
                 "pagination": {
-                    "field": item_field,
-                    "start_page": start_page,
-                    "limit": limit,
-                    "max_pages": max_pages,
+                    "field": pagination.item_field,
+                    "start_page": pagination.start_page,
+                    "limit": pagination.limit,
+                    "page_param": pagination.page_param,
+                    "limit_param": pagination.limit_param,
+                    "max_pages": pagination.max_pages,
                 }
             },
             "items": items,
@@ -1506,6 +1620,11 @@ impl ApiArgs {
         args: &IncidentsArgs,
     ) -> Result<Value, ApiCommandError> {
         let request = incidents_request(args)?;
+        if args.jsonl && args.output.is_none() {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: "--jsonl requires --output".to_string(),
+            });
+        }
         if args.all {
             let mut data = self
                 .call_workflow_paginated(
@@ -1518,7 +1637,11 @@ impl ApiArgs {
                 )
                 .await?;
             if let Some(path) = &args.output {
-                write_json_output_file(path, &data)?;
+                if args.jsonl {
+                    write_jsonl_items_output_file(path, &data)?;
+                } else {
+                    write_json_output_file(path, &data)?;
+                }
                 if let Some(object) = data.as_object_mut() {
                     object.insert("output_path".to_string(), json!(path.display().to_string()));
                 }
@@ -1971,7 +2094,8 @@ fn api_manifest() -> Value {
         },
         "pagination": {
             "workflow": "Use workflow-specific --all where available, for example pcl api incidents --all --limit 50 --output incidents.json.",
-            "raw_call": "Use pcl api call get /path --paginate <array-field> --limit 50 --max-pages 100 --output results.json for generic GET pagination."
+            "raw_call": "Use pcl api call get /path --paginate <array-field> --limit 50 --max-pages 100 --output results.json for generic GET pagination.",
+            "jsonl": "Add --jsonl with --output on paginated commands to write one item per line for resumable analysis."
         },
         "auth": {
             "default": "Stored bearer token is attached to API calls.",
@@ -2164,12 +2288,13 @@ fn api_manifest() -> Value {
                 "output": "operation_id, method, path, path_params, required_query, body_fields, required_body_fields, body_template, response_statuses, example_call",
             },
             {
-                "command": "pcl api call <method> <path[?query]> [--query key=value] [--body '{...}'] [--paginate <field>] [--output <file>]",
+                "command": "pcl api call <method> <path[?query]> [--query key=value] [--body '{...}'] [--paginate <field>] [--page-param page] [--limit-param limit] [--jsonl] [--output <file>]",
                 "description": "Execute any endpoint below /api/v1. Query strings in PATH and repeated --query flags are both accepted; GET calls can paginate any array response with --paginate.",
                 "output": "request and response status/body; non-2xx responses return structured error envelopes with request_id when the API provides one",
                 "actions": [
                     {"name": "execute", "method": "*", "path": "<path>", "auth": "default", "example": "pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated"},
-                    {"name": "paginate", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate"], "optional_flags": ["--page", "--limit", "--max-pages", "--output"], "example": "pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json"}
+                    {"name": "paginate", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate"], "optional_flags": ["--all", "--page", "--limit", "--page-param", "--limit-param", "--max-pages", "--jsonl", "--output"], "example": "pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json"},
+                    {"name": "export_jsonl", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate", "--jsonl", "--output"], "example": "pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl"}
                 ]
             },
         ],
@@ -3910,6 +4035,28 @@ fn write_json_output_file(path: &PathBuf, value: &Value) -> Result<(), ApiComman
     })
 }
 
+fn write_jsonl_items_output_file(path: &PathBuf, value: &Value) -> Result<(), ApiCommandError> {
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            ApiCommandError::InvalidWorkflow {
+                message: "--jsonl output requires paginated data with an items array".to_string(),
+            }
+        })?;
+    let mut body = String::new();
+    for item in items {
+        body.push_str(&serde_json::to_string(item)?);
+        body.push('\n');
+    }
+    fs::write(path, body).map_err(|source| {
+        ApiCommandError::OutputFile {
+            path: path.clone(),
+            source,
+        }
+    })
+}
+
 fn list_operations(
     spec: &Value,
     filter: Option<&str>,
@@ -4894,6 +5041,7 @@ mod tests {
             all: false,
             max_pages: None,
             output: None,
+            jsonl: false,
         })
         .unwrap();
 
@@ -4923,6 +5071,7 @@ mod tests {
             all: false,
             max_pages: None,
             output: None,
+            jsonl: false,
         })
         .unwrap();
 
@@ -4966,6 +5115,7 @@ mod tests {
             all: false,
             max_pages: None,
             output: None,
+            jsonl: false,
         })
         .unwrap();
 
@@ -4995,6 +5145,7 @@ mod tests {
             all: false,
             max_pages: None,
             output: None,
+            jsonl: false,
         })
         .unwrap();
 
@@ -5467,10 +5618,14 @@ mod tests {
                     body_file: &None,
                     require_auth: false,
                 },
-                "incidents",
-                1,
-                2,
-                5,
+                RawPaginationOptions {
+                    item_field: "incidents",
+                    start_page: 1,
+                    limit: 2,
+                    page_param: "page",
+                    limit_param: "limit",
+                    max_pages: 5,
+                },
             )
             .await
             .unwrap();
@@ -5485,6 +5640,56 @@ mod tests {
         assert_eq!(response["request"]["pagination"]["field"], "incidents");
         page_1.assert_async().await;
         page_2.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn raw_api_call_pagination_supports_custom_param_names() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/v1/custom")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("p".into(), "3".into()),
+                mockito::Matcher::UrlEncoded("per_page".into(), "10".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"items":[{"id":"i1"}]}"#)
+            .create_async()
+            .await;
+        let api = ApiArgs {
+            command: ApiCommand::Manifest,
+            api_url: server.url().parse().unwrap(),
+            allow_unauthenticated: true,
+        };
+
+        let response = api
+            .call_api_paginated(
+                &CliConfig::default(),
+                ApiRequestInput {
+                    method: HttpMethod::Get,
+                    path: "/custom",
+                    query: &[],
+                    header: &[],
+                    body: None,
+                    body_file: &None,
+                    require_auth: false,
+                },
+                RawPaginationOptions {
+                    item_field: "items",
+                    start_page: 3,
+                    limit: 10,
+                    page_param: "p",
+                    limit_param: "per_page",
+                    max_pages: 1,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response["count"], 1);
+        assert_eq!(response["request"]["pagination"]["page_param"], "p");
+        assert_eq!(response["request"]["pagination"]["limit_param"], "per_page");
+        mock.assert_async().await;
     }
 
     #[tokio::test]
@@ -5507,15 +5712,41 @@ mod tests {
                     body_file: &None,
                     require_auth: false,
                 },
-                "incidents",
-                1,
-                50,
-                100,
+                RawPaginationOptions {
+                    item_field: "incidents",
+                    start_page: 1,
+                    limit: 50,
+                    page_param: "page",
+                    limit_param: "limit",
+                    max_pages: 100,
+                },
             )
             .await
             .unwrap_err();
 
         assert!(error.to_string().contains("--paginate is only supported"));
+    }
+
+    #[test]
+    fn writes_paginated_items_as_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("incidents.jsonl");
+        let data = json!({
+            "items": [
+                {"id": "i1", "status": "ok"},
+                {"id": "i2", "status": "failed"}
+            ]
+        });
+
+        write_jsonl_items_output_file(&path, &data).unwrap();
+
+        let output = fs::read_to_string(path).unwrap();
+        let lines = output.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            serde_json::from_str::<Value>(lines[0]).unwrap(),
+            json!({"id": "i1", "status": "ok"})
+        );
     }
 
     #[tokio::test]
@@ -5564,6 +5795,16 @@ mod tests {
         assert_eq!(request_id.as_deref(), Some("req-123"));
         assert_eq!(body["message"], "server failed");
         assert_eq!(error.json_envelope()["error"]["request_id"], "req-123");
+        assert_eq!(error.json_envelope()["http_status"], 500);
+        assert_eq!(error.json_envelope()["request_id"], "req-123");
+        assert_eq!(
+            error.json_envelope()["suggested_next_actions"],
+            json!([
+                "retry_later",
+                "export_project_incidents_with_errors",
+                "contact_platform_with_request_id"
+            ])
+        );
         assert!(
             error
                 .next_actions()

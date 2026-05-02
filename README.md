@@ -83,6 +83,7 @@ pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated
 pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated
 pcl api call get /views/projects/<project-id>/incidents --query environment=production
 pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json
+pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl
 pcl api call get /views/projects/<project-id>/assertions
 pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json
 pcl api call post /web/auth/logout --body '{}'
