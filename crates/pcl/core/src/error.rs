@@ -108,6 +108,10 @@ pub enum ConfigError {
     #[error("Failed to serialize config file: {0}")]
     SerializeError(#[source] toml::ser::Error),
 
+    /// Error when serializing structured CLI output fails
+    #[error("Failed to serialize JSON output: {0}")]
+    JsonError(#[source] serde_json::Error),
+
     /// Error when attempting an operation that requires authentication
     /// but no authentication token is present in the config
     #[error("No Authentication Token Found")]

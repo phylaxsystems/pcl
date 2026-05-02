@@ -1,4 +1,7 @@
-use crate::error::ConfigError;
+use crate::{
+    api::toon_string,
+    error::ConfigError,
+};
 use alloy_primitives::Address;
 use chrono::{
     DateTime,
@@ -11,6 +14,10 @@ use pcl_common::args::CliArgs;
 use serde::{
     Deserialize,
     Serialize,
+};
+use serde_json::{
+    Value,
+    json,
 };
 
 use std::{
@@ -63,21 +70,46 @@ impl ConfigArgs {
     ///
     /// # Returns
     /// * `Result<(), ConfigError>` - Success or error
-    pub fn run(&self, config: &mut CliConfig) -> Result<(), ConfigError> {
+    pub fn run(&self, config: &mut CliConfig, cli_args: &CliArgs) -> Result<(), ConfigError> {
         match self.command {
             ConfigCommand::Show => {
-                println!("{config}");
-                Ok(())
+                print_config_output(
+                    &config_show_envelope(config, cli_args),
+                    cli_args.json_output(),
+                )
             }
             ConfigCommand::Delete => {
                 *config = CliConfig::default();
-                Ok(())
+                print_config_output(
+                    &json!({
+                        "status": "ok",
+                        "data": {
+                            "deleted": true,
+                            "config_path": CliConfig::config_file_path(cli_args).display().to_string(),
+                            "auth": config_auth_value(config),
+                        },
+                        "next_actions": [
+                            "pcl auth login",
+                            "pcl config show",
+                        ],
+                    }),
+                    cli_args.json_output(),
+                )
             }
         }
     }
 }
 
 impl CliConfig {
+    /// Returns the path to the active config file for the supplied CLI arguments.
+    pub fn config_file_path(cli_args: &CliArgs) -> PathBuf {
+        cli_args
+            .config_dir
+            .clone()
+            .unwrap_or(Self::get_config_dir())
+            .join(CONFIG_FILE)
+    }
+
     /// Writes the configuration to the default config file, or a specific directory
     ///
     /// # Arguments
@@ -297,6 +329,68 @@ impl CliConfig {
                 .unwrap_or(Self::get_config_dir()),
         )
     }
+}
+
+fn config_show_envelope(config: &CliConfig, cli_args: &CliArgs) -> Value {
+    json!({
+        "status": "ok",
+        "data": {
+            "config_path": CliConfig::config_file_path(cli_args).display().to_string(),
+            "auth": config_auth_value(config),
+        },
+        "next_actions": if config.auth.is_some() {
+            json!(["pcl auth status", "pcl api account", "pcl config delete"])
+        } else {
+            json!(["pcl auth login", "pcl config delete"])
+        },
+    })
+}
+
+fn config_auth_value(config: &CliConfig) -> Value {
+    let Some(auth) = &config.auth else {
+        return json!({
+            "authenticated": false,
+            "token_present": false,
+            "refresh_token_present": false,
+            "token_valid": false,
+            "token_expired": false,
+            "expired": false,
+            "expires_at": null,
+            "seconds_remaining": null,
+            "expires_in_seconds": null,
+        });
+    };
+
+    let now = Utc::now();
+    let seconds_remaining = (auth.expires_at - now).num_seconds();
+    let token_expired = auth.expires_at <= now;
+    json!({
+        "authenticated": true,
+        "user": auth.display_name(),
+        "user_id": auth.user_id.map(|id| id.to_string()),
+        "wallet_address": auth.wallet_address.map(|address| address.to_string()),
+        "email": auth.email.as_deref(),
+        "token_present": !auth.access_token.is_empty(),
+        "refresh_token_present": !auth.refresh_token.is_empty(),
+        "token_valid": !token_expired,
+        "token_expired": token_expired,
+        "expired": token_expired,
+        "expires_at": auth.expires_at.to_rfc3339(),
+        "seconds_remaining": seconds_remaining,
+        "expires_in_seconds": seconds_remaining,
+    })
+}
+
+fn print_config_output(value: &Value, json_output: bool) -> Result<(), ConfigError> {
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(value).map_err(ConfigError::JsonError)?
+        );
+    } else {
+        print!("{}", toon_string(value));
+    }
+    Ok(())
 }
 
 impl fmt::Display for CliConfig {
@@ -549,7 +643,7 @@ mod tests {
         let args = ConfigArgs {
             command: ConfigCommand::Show,
         };
-        assert!(args.run(&mut config).is_ok());
+        assert!(args.run(&mut config, &CliArgs::default()).is_ok());
     }
 
     #[test]
@@ -567,8 +661,42 @@ mod tests {
         let args = ConfigArgs {
             command: ConfigCommand::Delete,
         };
-        assert!(args.run(&mut config).is_ok());
+        assert!(args.run(&mut config, &CliArgs::default()).is_ok());
         assert!(config.auth.is_none());
+    }
+
+    #[test]
+    fn config_show_envelope_hides_tokens_and_reports_expiry() {
+        let args = CliArgs {
+            config_dir: Some(PathBuf::from("/tmp/pcl-test-config")),
+            ..Default::default()
+        };
+        let config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "secret-access".to_string(),
+                refresh_token: "secret-refresh".to_string(),
+                expires_at: Utc::now() + chrono::Duration::minutes(10),
+                user_id: Some(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()),
+                wallet_address: None,
+                email: Some("test@example.com".to_string()),
+            }),
+        };
+
+        let envelope = config_show_envelope(&config, &args);
+
+        assert_eq!(envelope["status"], "ok");
+        assert_eq!(
+            envelope["data"]["config_path"],
+            "/tmp/pcl-test-config/config.toml"
+        );
+        assert_eq!(envelope["data"]["auth"]["authenticated"], true);
+        assert_eq!(envelope["data"]["auth"]["user"], "test@example.com");
+        assert_eq!(envelope["data"]["auth"]["token_valid"], true);
+        assert_eq!(envelope["data"]["auth"]["expired"], false);
+        assert!(envelope["data"]["auth"]["seconds_remaining"].is_number());
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        assert!(!serialized.contains("secret-access"));
+        assert!(!serialized.contains("secret-refresh"));
     }
 
     #[test]

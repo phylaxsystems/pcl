@@ -78,6 +78,17 @@ mod tests {
     }
 
     #[test]
+    fn parses_hidden_config_dir_globally() {
+        let cli = Cli::try_parse_from(["pcl", "--config-dir", "/tmp/pcl", "config", "show"])
+            .expect("config-dir should parse as a hidden global flag");
+        assert_eq!(
+            cli.args.config_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/pcl"))
+        );
+        assert!(matches!(cli.command, Commands::Config(_)));
+    }
+
+    #[test]
     fn parses_apply_command() {
         let cli =
             Cli::try_parse_from(["pcl", "apply", "--root", "./testdata/mock-protocol"]).unwrap();

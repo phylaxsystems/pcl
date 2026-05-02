@@ -18,7 +18,10 @@ use pcl_core::{
         toon_string,
     },
     config::CliConfig,
-    error::AuthError,
+    error::{
+        AuthError,
+        ConfigError,
+    },
 };
 use serde_json::{
     Value,
@@ -27,6 +30,10 @@ use serde_json::{
 use std::{
     env,
     ffi::OsStr,
+    time::{
+        SystemTime,
+        UNIX_EPOCH,
+    },
 };
 
 #[tokio::main]
@@ -81,7 +88,7 @@ async fn main() -> Result<()> {
                 auth_cmd.run(&mut config, cli.args.json_output()).await?;
             }
             Commands::Config(config_cmd) => {
-                config_cmd.run(&mut config)?;
+                config_cmd.run(&mut config, &cli.args)?;
             }
             Commands::Build(build_cmd) => {
                 build_cmd.run()?;
@@ -119,6 +126,9 @@ fn error_envelope(err: &Report) -> Value {
     if let Some(auth_error) = err.downcast_ref::<AuthError>() {
         return auth_error_envelope(auth_error);
     }
+    if let Some(config_error) = err.downcast_ref::<ConfigError>() {
+        return config_error_envelope(config_error);
+    }
 
     json!({
         "status": "error",
@@ -138,6 +148,7 @@ fn auth_error_envelope(err: &AuthError) -> Value {
             expires_at,
             platform_url,
         } => {
+            let seconds_remaining = expires_at.timestamp() - unix_timestamp_now();
             json!({
                 "status": "error",
                 "error": {
@@ -149,7 +160,10 @@ fn auth_error_envelope(err: &AuthError) -> Value {
                         "user": user,
                         "token_valid": false,
                         "token_expired": true,
+                        "expired": true,
                         "expires_at": expires_at.to_rfc3339(),
+                        "seconds_remaining": seconds_remaining,
+                        "expires_in_seconds": seconds_remaining,
                         "platform_url": platform_url,
                     },
                 },
@@ -197,6 +211,40 @@ fn auth_error_envelope(err: &AuthError) -> Value {
                 "next_actions": ["pcl auth login"],
             })
         }
+    }
+}
+
+fn unix_timestamp_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
+        })
+}
+
+fn config_error_envelope(err: &ConfigError) -> Value {
+    json!({
+        "status": "error",
+        "error": {
+            "code": config_error_code(err),
+            "message": err.to_string(),
+            "recoverable": !matches!(err, ConfigError::ParseError(_) | ConfigError::JsonError(_)),
+        },
+        "next_actions": [
+            "pcl config show",
+            "pcl config delete",
+        ],
+    })
+}
+
+fn config_error_code(err: &ConfigError) -> &'static str {
+    match err {
+        ConfigError::ReadError(_) => "config.read_failed",
+        ConfigError::WriteError(_) => "config.write_failed",
+        ConfigError::ParseError(_) => "config.parse_failed",
+        ConfigError::SerializeError(_) => "config.serialize_failed",
+        ConfigError::JsonError(_) => "config.json_failed",
+        ConfigError::NotAuthenticated => "config.not_authenticated",
     }
 }
 

@@ -10,7 +10,7 @@ pub struct CliArgs {
         help = "Emit a machine-readable JSON envelope instead of default TOON output"
     )]
     pub json: bool,
-    #[clap(hide = true, global = true)]
+    #[clap(long = "config-dir", hide = true, global = true)]
     pub config_dir: Option<PathBuf>,
 }
 
@@ -36,6 +36,10 @@ mod tests {
 
     #[test]
     fn config_dir_can_be_overridden() {
+        let parsed = CliArgs::try_parse_from(["cli", "--config-dir", "/tmp/pcl"])
+            .expect("should parse hidden config-dir");
+        assert_eq!(parsed.config_dir.as_deref(), Some(Path::new("/tmp/pcl")));
+
         let args = CliArgs {
             config_dir: Some(PathBuf::from("/tmp/pcl")),
             ..Default::default()

@@ -309,6 +309,9 @@ impl AuthCommand {
                     "token_present": false,
                     "token_valid": false,
                     "token_expired": false,
+                    "expired": false,
+                    "seconds_remaining": null,
+                    "expires_in_seconds": null,
                     "platform_url": self.auth_url.as_str(),
                 },
                 "next_actions": ["pcl auth login"],
@@ -317,6 +320,7 @@ impl AuthCommand {
 
         let now = chrono::Utc::now();
         let token_expired = auth.expires_at <= now;
+        let seconds_remaining = (auth.expires_at - now).num_seconds();
         json!({
             "status": "ok",
             "data": {
@@ -329,8 +333,10 @@ impl AuthCommand {
                 "refresh_token_present": !auth.refresh_token.is_empty(),
                 "token_valid": !token_expired,
                 "token_expired": token_expired,
+                "expired": token_expired,
                 "expires_at": auth.expires_at.to_rfc3339(),
-                "expires_in_seconds": (auth.expires_at - now).num_seconds(),
+                "seconds_remaining": seconds_remaining,
+                "expires_in_seconds": seconds_remaining,
                 "platform_url": self.auth_url.as_str(),
             },
             "next_actions": if token_expired {
