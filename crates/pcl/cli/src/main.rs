@@ -4,7 +4,10 @@ use crate::cli::{
     Cli,
     Commands,
 };
-use clap::Parser;
+use clap::{
+    Parser,
+    error::ErrorKind,
+};
 use color_eyre::{
     Result,
     eyre::Report,
@@ -17,6 +20,10 @@ use serde_json::{
     Value,
     json,
 };
+use std::{
+    env,
+    ffi::OsStr,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -26,7 +33,20 @@ async fn main() -> Result<()> {
         .display_env_section(false)
         .install()?;
 
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(err) => {
+            if wants_json_output(env::args_os()) {
+                let exit_code = err.exit_code();
+                eprintln!(
+                    "{}",
+                    serde_json::to_string_pretty(&clap_error_envelope(&err))?
+                );
+                std::process::exit(exit_code);
+            }
+            err.exit();
+        }
+    };
     let mut config = CliConfig::read_from_file(&cli.args).unwrap_or_default();
 
     // TODO(Odysseas): Convert these commands to return strings to print for json output
@@ -94,4 +114,70 @@ fn error_envelope(err: &Report) -> Value {
         },
         "next_actions": [],
     })
+}
+
+fn wants_json_output<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    args.into_iter().any(|arg| {
+        let arg = arg.as_ref();
+        arg == OsStr::new("--json") || arg == OsStr::new("-j")
+    })
+}
+
+fn clap_error_envelope(err: &clap::Error) -> Value {
+    json!({
+        "status": "error",
+        "error": {
+            "code": clap_error_code(err.kind()),
+            "message": err.to_string(),
+            "recoverable": !matches!(err.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion),
+        },
+        "next_actions": [
+            "pcl --help",
+            "pcl api manifest --json"
+        ],
+    })
+}
+
+fn clap_error_code(kind: ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::ArgumentConflict => "cli.argument_conflict",
+        ErrorKind::UnknownArgument => "cli.unknown_argument",
+        ErrorKind::InvalidValue => "cli.invalid_value",
+        ErrorKind::InvalidSubcommand => "cli.invalid_subcommand",
+        ErrorKind::MissingRequiredArgument => "cli.missing_required_argument",
+        ErrorKind::MissingSubcommand => "cli.missing_subcommand",
+        ErrorKind::DisplayHelp => "cli.help",
+        ErrorKind::DisplayVersion => "cli.version",
+        _ => "cli.parse_error",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn detects_json_flag_before_successful_parse() {
+        assert!(wants_json_output(["pcl", "--json", "api"]));
+        assert!(wants_json_output(["pcl", "api", "projects", "-j"]));
+        assert!(!wants_json_output(["pcl", "api", "projects"]));
+    }
+
+    #[test]
+    fn wraps_clap_conflicts_as_json_errors() {
+        let err = Cli::command()
+            .try_get_matches_from(["pcl", "--json", "api", "projects", "--save", "--unsave"])
+            .unwrap_err();
+        let envelope = clap_error_envelope(&err);
+
+        assert_eq!(envelope["status"], "error");
+        assert_eq!(envelope["error"]["code"], "cli.argument_conflict");
+        assert_eq!(envelope["error"]["recoverable"], true);
+        assert!(envelope["next_actions"].as_array().unwrap().len() >= 2);
+    }
 }

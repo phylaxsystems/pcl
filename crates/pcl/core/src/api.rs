@@ -406,6 +406,8 @@ struct OperationSummary {
     tags: Vec<String>,
     inspect_command: String,
     call_command: String,
+    input_placeholders: Vec<String>,
+    requires_input: bool,
 }
 
 struct ApiRequestInput<'a> {
@@ -1513,11 +1515,11 @@ fn api_manifest() -> Value {
                 "description": "List public incidents, project incidents, incident detail, or incident trace.",
                 "output": "incident data from /views/public/incidents, /views/projects/{projectId}/incidents, or /views/incidents/{incidentId}",
                 "actions": [
-                    {"name": "list_public", "method": "GET", "path": "/views/public/incidents", "example": "pcl api incidents --limit 5"},
-                    {"name": "list_project", "method": "GET", "path": "/views/projects/{projectId}/incidents", "example": "pcl api incidents --project <project-ref> --limit 10"},
-                    {"name": "detail", "method": "GET", "path": "/views/incidents/{incidentId}", "example": "pcl api incidents --incident-id <incident-id>"},
-                    {"name": "trace", "method": "GET", "path": "/views/incidents/{incidentId}/transactions/{txId}/trace", "example": "pcl api incidents --incident-id <incident-id> --tx-id <tx-id>"},
-                    {"name": "retry_trace", "method": "POST", "path": "/incidents/{incident_id}/transactions/{tx_id}/trace/retry", "example": "pcl api incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"}
+                    {"name": "list_public", "auth": false, "method": "GET", "path": "/views/public/incidents", "example": "pcl api incidents --limit 5"},
+                    {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/incidents", "example": "pcl api incidents --project <project-ref> --limit 10"},
+                    {"name": "detail", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}", "example": "pcl api incidents --incident-id <incident-id>"},
+                    {"name": "trace", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}/transactions/{txId}/trace", "example": "pcl api incidents --incident-id <incident-id> --tx-id <tx-id>"},
+                    {"name": "retry_trace", "auth": true, "method": "POST", "path": "/incidents/{incident_id}/transactions/{tx_id}/trace/retry", "body_template": "empty_object", "example": "pcl api incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"}
                 ]
             },
             {
@@ -1525,17 +1527,17 @@ fn api_manifest() -> Value {
                 "description": "List, inspect, create, update, save, unsave, resolve, widget, and delete projects.",
                 "output": "project explorer, project detail, projects home, saved projects, widget, or mutation result",
                 "actions": [
-                    {"name": "explorer", "method": "GET", "path": "/views/projects", "example": "pcl api projects --limit 10"},
-                    {"name": "home", "method": "GET", "path": "/views/projects/home", "example": "pcl api projects --home"},
-                    {"name": "saved", "method": "GET", "path": "/projects/saved", "example": "pcl api projects --saved"},
-                    {"name": "detail", "method": "GET", "path": "/projects/{project_id}", "example": "pcl api projects --project <project-ref>"},
-                    {"name": "create", "method": "POST", "path": "/projects", "required_body_fields": ["project_name", "chain_id"], "example": "pcl api projects --create --project-name demo --chain-id 1"},
-                    {"name": "update", "method": "PUT", "path": "/projects/{project_id}", "example": "pcl api projects --project <project-ref> --update --field github_url=https://github.com/org/repo"},
-                    {"name": "delete", "method": "DELETE", "path": "/projects/{project_id}", "example": "pcl api projects --project <project-ref> --delete"},
-                    {"name": "save", "method": "POST", "path": "/projects/saved", "example": "pcl api projects --project <project-ref> --save"},
-                    {"name": "unsave", "method": "DELETE", "path": "/projects/saved", "example": "pcl api projects --project <project-ref> --unsave"},
-                    {"name": "resolve", "method": "GET", "path": "/projects/resolve/{project_ref}", "example": "pcl api projects --project <project-ref> --resolve"},
-                    {"name": "widget", "method": "GET", "path": "/projects/{project_id}/widget", "example": "pcl api projects --project <project-ref> --widget"}
+                    {"name": "explorer", "auth": false, "method": "GET", "path": "/views/projects", "example": "pcl api projects --limit 10"},
+                    {"name": "home", "auth": true, "method": "GET", "path": "/views/projects/home", "example": "pcl api projects --home"},
+                    {"name": "saved", "auth": true, "method": "GET", "path": "/projects/saved", "example": "pcl api projects --saved"},
+                    {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project_id}", "required_flags": ["--project"], "example": "pcl api projects --project <project-ref>"},
+                    {"name": "create", "auth": true, "method": "POST", "path": "/projects", "body_template": "project_create", "required_body_fields": ["project_name", "chain_id"], "example": "pcl api projects --create --project-name demo --chain-id 1"},
+                    {"name": "update", "auth": true, "method": "PUT", "path": "/projects/{project_id}", "required_flags": ["--project"], "body_template": "project_update", "example": "pcl api projects --project <project-ref> --update --field github_url=https://github.com/org/repo"},
+                    {"name": "delete", "auth": true, "method": "DELETE", "path": "/projects/{project_id}", "required_flags": ["--project"], "example": "pcl api projects --project <project-ref> --delete"},
+                    {"name": "save", "auth": true, "method": "POST", "path": "/projects/saved", "required_flags": ["--project"], "body_template": "project_saved", "example": "pcl api projects --project <project-ref> --save"},
+                    {"name": "unsave", "auth": true, "method": "DELETE", "path": "/projects/saved", "required_flags": ["--project"], "body_template": "project_saved", "example": "pcl api projects --project <project-ref> --unsave"},
+                    {"name": "resolve", "auth": false, "method": "GET", "path": "/projects/resolve/{project_ref}", "required_flags": ["--project"], "example": "pcl api projects --project <project-ref> --resolve"},
+                    {"name": "widget", "auth": true, "method": "GET", "path": "/projects/{project_id}/widget", "required_flags": ["--project"], "example": "pcl api projects --project <project-ref> --widget"}
                 ]
             },
             {
@@ -1543,14 +1545,14 @@ fn api_manifest() -> Value {
                 "description": "List, inspect, submit, and manage project assertion lifecycle state.",
                 "output": "assertion index/detail, submitted assertions, registered assertions, removal info/calldata, or submit result",
                 "actions": [
-                    {"name": "index", "method": "GET", "path": "/views/projects/{projectId}/assertions", "example": "pcl api assertions --project <project-ref>"},
-                    {"name": "detail", "method": "GET", "path": "/views/projects/{projectId}/assertions/{assertionId}", "example": "pcl api assertions --project <project-ref> --assertion-id <assertion-id>"},
-                    {"name": "adopter_lookup", "method": "GET", "path": "/assertions", "required_flags": ["--adopter-address"], "optional_flags": ["--network", "--environment", "--include-onchain-only"], "example": "pcl api assertions --adopter-address 0x... --network 1"},
-                    {"name": "submitted", "method": "GET", "path": "/projects/{project_id}/submitted-assertions", "example": "pcl api assertions --project <project-ref> --submitted"},
-                    {"name": "submit", "method": "POST", "path": "/projects/{project_id}/submitted-assertions", "required_body_fields": ["assertions"], "example": "pcl api assertions --project <project-ref> --submit --body-file submitted-assertions.json"},
-                    {"name": "registered", "method": "GET", "path": "/projects/{project_id}/registered-assertions", "example": "pcl api assertions --project <project-ref> --registered"},
-                    {"name": "remove_info", "method": "GET", "path": "/projects/{project_id}/remove-assertions-info", "example": "pcl api assertions --project <project-ref> --remove-info"},
-                    {"name": "remove_calldata", "method": "GET", "path": "/projects/{project_id}/remove-assertions-calldata", "example": "pcl api assertions --project <project-ref> --remove-calldata"}
+                    {"name": "index", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/assertions", "required_flags": ["--project"], "example": "pcl api assertions --project <project-ref>"},
+                    {"name": "detail", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/assertions/{assertionId}", "required_flags": ["--project", "--assertion-id"], "example": "pcl api assertions --project <project-ref> --assertion-id <assertion-id>"},
+                    {"name": "adopter_lookup", "auth": false, "method": "GET", "path": "/assertions", "required_flags": ["--adopter-address"], "optional_flags": ["--network", "--environment", "--include-onchain-only"], "example": "pcl api assertions --adopter-address 0x... --network 1"},
+                    {"name": "submitted", "auth": true, "method": "GET", "path": "/projects/{project_id}/submitted-assertions", "required_flags": ["--project"], "example": "pcl api assertions --project <project-ref> --submitted"},
+                    {"name": "submit", "auth": true, "method": "POST", "path": "/projects/{project_id}/submitted-assertions", "required_flags": ["--project"], "body_template": "submitted_assertions", "required_body_fields": ["assertions"], "example": "pcl api assertions --project <project-ref> --submit --body-file submitted-assertions.json"},
+                    {"name": "registered", "auth": true, "method": "GET", "path": "/projects/{project_id}/registered-assertions", "required_flags": ["--project"], "example": "pcl api assertions --project <project-ref> --registered"},
+                    {"name": "remove_info", "auth": true, "method": "GET", "path": "/projects/{project_id}/remove-assertions-info", "required_flags": ["--project"], "example": "pcl api assertions --project <project-ref> --remove-info"},
+                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/projects/{project_id}/remove-assertions-calldata", "required_flags": ["--project"], "example": "pcl api assertions --project <project-ref> --remove-calldata"}
                 ]
             },
             {
@@ -3307,10 +3309,7 @@ fn list_operations(
                 continue;
             }
 
-            let Some(operation) = path_item
-                .get(method.openapi_key())
-                .and_then(Value::as_object)
-            else {
+            let Some(operation) = path_item.get(method.openapi_key()) else {
                 continue;
             };
 
@@ -3348,9 +3347,13 @@ fn list_operations(
                 }
             }
 
+            let input_placeholders = operation_input_placeholders(path, operation);
+            let requires_input = !input_placeholders.is_empty();
             operations.push(OperationSummary {
                 inspect_command: format!("pcl api inspect {operation_id}"),
-                call_command: format!("pcl api call {} {}", method.openapi_key(), path),
+                call_command: example_call(method, path, operation),
+                input_placeholders,
+                requires_input,
                 operation_id,
                 method: method.as_str(),
                 path: path.clone(),
@@ -3464,8 +3467,10 @@ fn operation_manifest(
         "required_query": named_parameters(operation, "query", true),
         "request_body": request_body_manifest(operation),
         "body_fields": body_fields(operation),
+        "body_variants": body_variants(operation),
         "required_body_fields": required_body_fields(operation),
         "body_template": openapi_body_template(operation),
+        "input_placeholders": operation_input_placeholders(path, operation),
         "response_statuses": response_statuses(operation),
         "example_call": example_call(method, path, operation),
     });
@@ -3543,7 +3548,13 @@ fn body_schema(operation: &Value) -> Option<&Value> {
 
 fn required_body_fields(operation: &Value) -> Vec<String> {
     body_schema(operation)
-        .and_then(|schema| schema.get("required"))
+        .map(required_fields_for_schema)
+        .unwrap_or_default()
+}
+
+fn required_fields_for_schema(schema: &Value) -> Vec<String> {
+    schema
+        .get("required")
         .and_then(Value::as_array)
         .map(|required| {
             required
@@ -3556,9 +3567,15 @@ fn required_body_fields(operation: &Value) -> Vec<String> {
 }
 
 fn body_fields(operation: &Value) -> Vec<Value> {
-    let required = required_body_fields(operation);
     body_schema(operation)
-        .and_then(|schema| schema.get("properties"))
+        .map(body_fields_for_schema)
+        .unwrap_or_default()
+}
+
+fn body_fields_for_schema(schema: &Value) -> Vec<Value> {
+    let required = required_fields_for_schema(schema);
+    schema
+        .get("properties")
         .and_then(Value::as_object)
         .map(|properties| {
             properties
@@ -3569,11 +3586,48 @@ fn body_fields(operation: &Value) -> Vec<Value> {
                         "required": required.iter().any(|required| required == name),
                         "type": compact_schema_type(schema),
                         "enum": schema.get("enum").cloned().unwrap_or(Value::Null),
+                        "const": schema.get("const").cloned().unwrap_or(Value::Null),
                     })
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn body_variants(operation: &Value) -> Vec<Value> {
+    let Some(schema) = body_schema(operation) else {
+        return Vec::new();
+    };
+    let Some(variants) = schema
+        .get("oneOf")
+        .or_else(|| schema.get("anyOf"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+
+    variants
+        .iter()
+        .enumerate()
+        .map(|(index, variant)| {
+            json!({
+                "name": schema_variant_name(variant, index),
+                "schema_type": compact_schema_type(variant),
+                "required_body_fields": required_fields_for_schema(variant),
+                "body_fields": body_fields_for_schema(variant),
+                "body_template": template_from_schema(variant),
+            })
+        })
+        .collect()
+}
+
+fn schema_variant_name(schema: &Value, index: usize) -> String {
+    schema
+        .pointer("/properties/mode/const")
+        .or_else(|| schema.pointer("/properties/mode/enum/0"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("variant_{}", index + 1))
 }
 
 fn compact_schema_type(schema: &Value) -> String {
@@ -3618,6 +3672,9 @@ fn template_from_schema(schema: &Value) -> Value {
         Some("integer") | Some("number") => json!(0),
         Some("boolean") => json!(false),
         Some("string") => {
+            if let Some(value) = schema.get("const") {
+                return value.clone();
+            }
             schema
                 .get("enum")
                 .and_then(Value::as_array)
@@ -3656,14 +3713,67 @@ fn response_statuses(operation: &Value) -> Vec<Value> {
 }
 
 fn example_call(method: HttpMethod, path: &str, operation: &Value) -> String {
-    let mut command = format!("pcl api call {} {}", method.openapi_key(), path);
+    let path = example_path(path, operation);
+    let mut command = format!(
+        "pcl api call {} {}",
+        method.openapi_key(),
+        shell_quote_path(&path)
+    );
     for parameter in required_query_parameters(operation) {
-        command.push_str(&format!(" --query {parameter}=<value>"));
+        command.push_str(&format!(
+            " --query {}",
+            shell_quote(&format!("{parameter}=<{parameter}>"))
+        ));
     }
     if operation.get("requestBody").is_some() {
-        command.push_str(" --body '{...}'");
+        let body = openapi_body_template(operation);
+        if body.is_null() {
+            command.push_str(" --body '{}'");
+        } else {
+            let body = serde_json::to_string(&body).unwrap_or_else(|_| "{...}".to_string());
+            command.push_str(&format!(" --body {}", shell_quote(&body)));
+        }
     }
     command
+}
+
+fn example_path(path: &str, operation: &Value) -> String {
+    let mut path = path.to_string();
+    for parameter in named_parameters(operation, "path", false) {
+        path = path.replace(&format!("{{{parameter}}}"), &format!("<{parameter}>"));
+    }
+    path
+}
+
+fn shell_quote_path(path: &str) -> String {
+    if path.contains('<') || path.contains('>') {
+        shell_quote(path)
+    } else {
+        path.to_string()
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn operation_input_placeholders(path: &str, operation: &Value) -> Vec<String> {
+    let mut placeholders = named_parameters(operation, "path", false)
+        .into_iter()
+        .map(|parameter| format!("path:{parameter}"))
+        .collect::<Vec<_>>();
+    placeholders.extend(
+        required_query_parameters(operation)
+            .into_iter()
+            .map(|parameter| format!("query:{parameter}")),
+    );
+    if operation.get("requestBody").is_some() {
+        placeholders.push("body".to_string());
+    }
+    if placeholders.is_empty() && path.contains('{') {
+        placeholders.push("path".to_string());
+    }
+    placeholders
 }
 
 fn required_query_parameters(operation: &Value) -> Vec<String> {
@@ -3691,10 +3801,17 @@ fn next_actions_for_operations(operations: &[OperationSummary]) -> Vec<String> {
     operations
         .first()
         .map(|operation| {
-            vec![
-                operation.inspect_command.clone(),
-                operation.call_command.clone(),
-            ]
+            if operation.requires_input {
+                vec![
+                    format!("{} --json", operation.inspect_command),
+                    "Use data.example_call after filling placeholders".to_string(),
+                ]
+            } else {
+                vec![
+                    operation.inspect_command.clone(),
+                    operation.call_command.clone(),
+                ]
+            }
         })
         .unwrap_or_else(|| vec!["pcl api list".to_string(), "pcl api manifest".to_string()])
 }
@@ -3841,6 +3958,76 @@ mod tests {
             inspect_operation(&spec, "get_views_public_incidents", None, false).unwrap();
         assert_eq!(operation["method"], "GET");
         assert_eq!(operation["path"], "/views/public/incidents");
+    }
+
+    #[test]
+    fn openapi_call_commands_include_required_inputs() {
+        let spec = json!({
+            "paths": {
+                "/projects/{project_id}/widgets": {
+                    "post": {
+                        "operationId": "post_project_widgets",
+                        "parameters": [
+                            {
+                                "name": "project_id",
+                                "in": "path",
+                                "required": true,
+                                "schema": {"type": "string"}
+                            },
+                            {
+                                "name": "environment",
+                                "in": "query",
+                                "required": true,
+                                "schema": {"type": "string"}
+                            }
+                        ],
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "required": ["name"],
+                                        "properties": {
+                                            "name": {"type": "string"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let operations = list_operations(&spec, Some("widgets"), Some(HttpMethod::Post)).unwrap();
+        let operation = operations.first().unwrap();
+        assert!(operation.requires_input);
+        assert_eq!(
+            operation.input_placeholders,
+            vec![
+                "path:project_id".to_string(),
+                "query:environment".to_string(),
+                "body".to_string()
+            ]
+        );
+        assert_eq!(
+            operation.call_command,
+            "pcl api call post '/projects/<project_id>/widgets' --query 'environment=<environment>' --body '{\"name\":\"<string>\"}'"
+        );
+        assert_eq!(
+            next_actions_for_operations(&operations),
+            vec![
+                "pcl api inspect post_project_widgets --json".to_string(),
+                "Use data.example_call after filling placeholders".to_string()
+            ]
+        );
+
+        let inspected = inspect_operation(&spec, "post_project_widgets", None, false).unwrap();
+        assert_eq!(inspected["example_call"], operation.call_command);
+        assert_eq!(
+            inspected["input_placeholders"],
+            json!(["path:project_id", "query:environment", "body"])
+        );
     }
 
     #[test]
@@ -4296,10 +4483,37 @@ mod tests {
                         .is_some_and(|value| value.contains(command_name))
                 })
                 .unwrap_or_else(|| panic!("missing manifest command {command_name}"));
+            assert!(
+                command["output"]
+                    .as_str()
+                    .is_some_and(|value| !value.is_empty()),
+                "missing output shape for {command_name}"
+            );
             let actions = command["actions"].as_array().unwrap_or_else(|| {
                 panic!("missing structured actions for manifest command {command_name}")
             });
             assert!(!actions.is_empty(), "empty actions for {command_name}");
+            for action in actions {
+                for field in ["name", "method", "path", "example"] {
+                    assert!(
+                        action[field]
+                            .as_str()
+                            .is_some_and(|value| !value.is_empty()),
+                        "missing {field} for {command_name} action {action:?}"
+                    );
+                }
+                assert!(
+                    action["auth"].as_bool().is_some(),
+                    "missing auth for {command_name} action {action:?}"
+                );
+                assert!(
+                    matches!(
+                        action["method"].as_str(),
+                        Some("GET" | "POST" | "PUT" | "PATCH" | "DELETE")
+                    ),
+                    "invalid method for {command_name} action {action:?}"
+                );
+            }
         }
     }
 
@@ -4348,6 +4562,54 @@ mod tests {
             openapi_body_template(&operation),
             json!({"name": "<string>", "private": false})
         );
+    }
+
+    #[test]
+    fn summarizes_one_of_body_variants() {
+        let operation = json!({
+            "requestBody": {
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "oneOf": [
+                                {
+                                    "type": "object",
+                                    "required": ["mode", "new_manager_address"],
+                                    "properties": {
+                                        "mode": {"type": "string", "const": "direct"},
+                                        "new_manager_address": {"type": "string"}
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["mode", "tx_hash", "chain_id", "new_manager_address"],
+                                    "properties": {
+                                        "mode": {"type": "string", "const": "onchain"},
+                                        "tx_hash": {"type": "string"},
+                                        "chain_id": {"type": "integer"},
+                                        "new_manager_address": {"type": "string"}
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        });
+
+        let variants = body_variants(&operation);
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0]["name"], "direct");
+        assert_eq!(
+            variants[0]["required_body_fields"],
+            json!(["mode", "new_manager_address"])
+        );
+        assert_eq!(
+            variants[0]["body_template"],
+            json!({"mode": "direct", "new_manager_address": "<string>"})
+        );
+        assert_eq!(variants[1]["name"], "onchain");
+        assert_eq!(variants[1]["body_fields"].as_array().unwrap().len(), 4);
     }
 
     #[test]
