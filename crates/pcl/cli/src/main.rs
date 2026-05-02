@@ -16,6 +16,7 @@ use pcl_core::{
     api::{
         ApiCommandError,
         toon_string,
+        with_envelope_metadata,
     },
     config::CliConfig,
     error::{
@@ -49,10 +50,8 @@ async fn main() -> Result<()> {
         Err(err) => {
             if wants_json_output(env::args_os()) {
                 let exit_code = err.exit_code();
-                eprintln!(
-                    "{}",
-                    serde_json::to_string_pretty(&clap_error_envelope(&err))?
-                );
+                let envelope = with_envelope_metadata(clap_error_envelope(&err));
+                eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
                 std::process::exit(exit_code);
             }
             if matches!(
@@ -61,7 +60,10 @@ async fn main() -> Result<()> {
             ) {
                 err.exit();
             }
-            eprint!("{}", toon_string(&clap_error_envelope(&err)));
+            eprint!(
+                "{}",
+                toon_string(&with_envelope_metadata(clap_error_envelope(&err)))
+            );
             std::process::exit(err.exit_code());
         }
     };
@@ -107,7 +109,7 @@ async fn main() -> Result<()> {
     .await;
 
     if let Err(err) = result {
-        let envelope = error_envelope(&err);
+        let envelope = with_envelope_metadata(error_envelope(&err));
         if cli.args.json_output() {
             eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
         } else {
@@ -124,13 +126,13 @@ fn error_envelope(err: &Report) -> Value {
         return api_error.json_envelope();
     }
     if let Some(auth_error) = err.downcast_ref::<AuthError>() {
-        return auth_error_envelope(auth_error);
+        return with_envelope_metadata(auth_error_envelope(auth_error));
     }
     if let Some(config_error) = err.downcast_ref::<ConfigError>() {
-        return config_error_envelope(config_error);
+        return with_envelope_metadata(config_error_envelope(config_error));
     }
 
-    json!({
+    with_envelope_metadata(json!({
         "status": "error",
         "error": {
             "code": "unknown",
@@ -138,7 +140,7 @@ fn error_envelope(err: &Report) -> Value {
             "recoverable": false,
         },
         "next_actions": [],
-    })
+    }))
 }
 
 fn auth_error_envelope(err: &AuthError) -> Value {
@@ -149,7 +151,7 @@ fn auth_error_envelope(err: &AuthError) -> Value {
             platform_url,
         } => {
             let seconds_remaining = expires_at.timestamp() - unix_timestamp_now();
-            json!({
+            with_envelope_metadata(json!({
                 "status": "error",
                 "error": {
                     "code": "auth.expired_token",
@@ -171,10 +173,10 @@ fn auth_error_envelope(err: &AuthError) -> Value {
                     "pcl auth login",
                     "pcl auth logout",
                 ],
-            })
+            }))
         }
         AuthError::SessionExpired | AuthError::SessionNotFound | AuthError::InvalidSession(_) => {
-            json!({
+            with_envelope_metadata(json!({
                 "status": "error",
                 "error": {
                     "code": "auth.session_invalid",
@@ -182,10 +184,10 @@ fn auth_error_envelope(err: &AuthError) -> Value {
                     "recoverable": true,
                 },
                 "next_actions": ["pcl auth login"],
-            })
+            }))
         }
         AuthError::UserNotFound => {
-            json!({
+            with_envelope_metadata(json!({
                 "status": "error",
                 "error": {
                     "code": "auth.user_not_found",
@@ -193,7 +195,7 @@ fn auth_error_envelope(err: &AuthError) -> Value {
                     "recoverable": true,
                 },
                 "next_actions": ["pcl auth login"],
-            })
+            }))
         }
         AuthError::AuthRequestFailed(_)
         | AuthError::StatusRequestFailed(_)
@@ -201,7 +203,7 @@ fn auth_error_envelope(err: &AuthError) -> Value {
         | AuthError::Timeout(_)
         | AuthError::InvalidAuthData(_)
         | AuthError::ConfigError(_) => {
-            json!({
+            with_envelope_metadata(json!({
                 "status": "error",
                 "error": {
                     "code": "auth.request_failed",
@@ -209,7 +211,7 @@ fn auth_error_envelope(err: &AuthError) -> Value {
                     "recoverable": true,
                 },
                 "next_actions": ["pcl auth login"],
-            })
+            }))
         }
     }
 }
@@ -223,7 +225,7 @@ fn unix_timestamp_now() -> i64 {
 }
 
 fn config_error_envelope(err: &ConfigError) -> Value {
-    json!({
+    with_envelope_metadata(json!({
         "status": "error",
         "error": {
             "code": config_error_code(err),
@@ -234,7 +236,7 @@ fn config_error_envelope(err: &ConfigError) -> Value {
             "pcl config show",
             "pcl config delete",
         ],
-    })
+    }))
 }
 
 fn config_error_code(err: &ConfigError) -> &'static str {
@@ -260,7 +262,7 @@ where
 }
 
 fn clap_error_envelope(err: &clap::Error) -> Value {
-    json!({
+    with_envelope_metadata(json!({
         "status": "error",
         "error": {
             "code": clap_error_code(err.kind()),
@@ -271,7 +273,7 @@ fn clap_error_envelope(err: &clap::Error) -> Value {
             "pcl --help",
             "pcl api manifest --json"
         ],
-    })
+    }))
 }
 
 fn clap_error_code(kind: ErrorKind) -> &'static str {
@@ -308,6 +310,8 @@ mod tests {
         let envelope = clap_error_envelope(&err);
 
         assert_eq!(envelope["status"], "error");
+        assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+        assert_eq!(envelope["pcl_version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(envelope["error"]["code"], "cli.argument_conflict");
         assert_eq!(envelope["error"]["recoverable"], true);
         assert!(envelope["next_actions"].as_array().unwrap().len() >= 2);

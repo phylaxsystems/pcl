@@ -37,6 +37,20 @@ use std::{
     str::FromStr,
 };
 
+pub const ENVELOPE_SCHEMA_VERSION: &str = "pcl.envelope.v1";
+
+pub fn with_envelope_metadata(mut value: Value) -> Value {
+    if let Value::Object(object) = &mut value {
+        object
+            .entry("schema_version")
+            .or_insert_with(|| json!(ENVELOPE_SCHEMA_VERSION));
+        object
+            .entry("pcl_version")
+            .or_insert_with(|| json!(env!("CARGO_PKG_VERSION")));
+    }
+    value
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ApiCommandError {
     #[error("Run `pcl auth login` first, or pass `--allow-unauthenticated`")]
@@ -362,7 +376,7 @@ impl ApiCommandError {
             object.insert("request_id".to_string(), json!(request_id));
         }
 
-        envelope
+        with_envelope_metadata(envelope)
     }
 }
 
@@ -2062,15 +2076,16 @@ fn print_output(value: &Value, json_output: bool) -> Result<(), ApiCommandError>
 }
 
 fn output_string(value: &Value, json_output: bool) -> Result<String, ApiCommandError> {
+    let value = with_envelope_metadata(value.clone());
     if json_output {
-        Ok(format!("{}\n", serde_json::to_string_pretty(value)?))
+        Ok(format!("{}\n", serde_json::to_string_pretty(&value)?))
     } else {
-        Ok(toon_string(value))
+        Ok(toon_string(&value))
     }
 }
 
 fn ok_envelope(data: Value) -> Value {
-    json!({
+    with_envelope_metadata(json!({
         "status": "ok",
         "data": data,
         "next_actions": [
@@ -2078,7 +2093,7 @@ fn ok_envelope(data: Value) -> Value {
             "pcl api inspect get_views_public_incidents",
             "pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated",
         ],
-    })
+    }))
 }
 
 fn api_manifest() -> Value {
@@ -3006,11 +3021,11 @@ fn template_envelope(data: Value) -> Value {
             "Or pass individual fields with --field key=value",
         ]
     };
-    json!({
+    with_envelope_metadata(json!({
         "status": "ok",
         "data": data,
         "next_actions": next_actions,
-    })
+    }))
 }
 
 fn project_body_template(args: &ProjectsArgs) -> Value {
@@ -5953,6 +5968,8 @@ mod tests {
         .unwrap();
 
         assert!(output.contains("status: ok"));
+        assert!(output.contains("schema_version: pcl.envelope.v1"));
+        assert!(output.contains("pcl_version:"));
         assert!(output.contains("data:"));
         assert!(output.contains("healthy: true"));
         assert!(output.contains("next_actions[1]:"));
@@ -5969,6 +5986,8 @@ mod tests {
                 "Or pass fields from the chosen variant body with --field key=value"
             ])
         );
+        assert_eq!(envelope["schema_version"], ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(envelope["pcl_version"], env!("CARGO_PKG_VERSION"));
     }
 
     #[test]

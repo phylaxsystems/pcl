@@ -1,6 +1,9 @@
 use crate::{
     DEFAULT_PLATFORM_URL,
-    api::toon_string,
+    api::{
+        toon_string,
+        with_envelope_metadata,
+    },
     config::{
         CliConfig,
         UserAuth,
@@ -302,7 +305,7 @@ impl AuthCommand {
 
     fn status_envelope(&self, config: &CliConfig) -> Value {
         let Some(auth) = &config.auth else {
-            return json!({
+            return with_envelope_metadata(json!({
                 "status": "ok",
                 "data": {
                     "authenticated": false,
@@ -315,13 +318,13 @@ impl AuthCommand {
                     "platform_url": self.auth_url.as_str(),
                 },
                 "next_actions": ["pcl auth login"],
-            });
+            }));
         };
 
         let now = chrono::Utc::now();
         let token_expired = auth.expires_at <= now;
         let seconds_remaining = (auth.expires_at - now).num_seconds();
-        json!({
+        with_envelope_metadata(json!({
             "status": "ok",
             "data": {
                 "authenticated": true,
@@ -344,18 +347,19 @@ impl AuthCommand {
             } else {
                 json!(["pcl api account", "pcl api projects --home"])
             },
-        })
+        }))
     }
 
     fn print_output(value: &Value, json_output: bool) -> Result<(), AuthError> {
+        let value = with_envelope_metadata(value.clone());
         if json_output {
             println!(
                 "{}",
-                serde_json::to_string_pretty(value)
+                serde_json::to_string_pretty(&value)
                     .map_err(|error| AuthError::InvalidAuthData(error.to_string()))?
             );
         } else {
-            print!("{}", toon_string(value));
+            print!("{}", toon_string(&value));
         }
         Ok(())
     }
@@ -569,6 +573,8 @@ mod tests {
         ])
         .unwrap();
         let output = cmd.status_envelope(&config);
+        assert_eq!(output["schema_version"], "pcl.envelope.v1");
+        assert_eq!(output["pcl_version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(output["data"]["authenticated"], false);
         assert_eq!(output["data"]["token_valid"], false);
         assert_eq!(output["next_actions"], json!(["pcl auth login"]));

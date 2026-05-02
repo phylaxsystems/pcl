@@ -1,5 +1,8 @@
 use crate::{
-    api::toon_string,
+    api::{
+        toon_string,
+        with_envelope_metadata,
+    },
     error::ConfigError,
 };
 use alloy_primitives::Address;
@@ -332,7 +335,7 @@ impl CliConfig {
 }
 
 fn config_show_envelope(config: &CliConfig, cli_args: &CliArgs) -> Value {
-    json!({
+    with_envelope_metadata(json!({
         "status": "ok",
         "data": {
             "config_path": CliConfig::config_file_path(cli_args).display().to_string(),
@@ -343,7 +346,7 @@ fn config_show_envelope(config: &CliConfig, cli_args: &CliArgs) -> Value {
         } else {
             json!(["pcl auth login", "pcl config delete"])
         },
-    })
+    }))
 }
 
 fn config_auth_value(config: &CliConfig) -> Value {
@@ -382,13 +385,14 @@ fn config_auth_value(config: &CliConfig) -> Value {
 }
 
 fn print_config_output(value: &Value, json_output: bool) -> Result<(), ConfigError> {
+    let value = with_envelope_metadata(value.clone());
     if json_output {
         println!(
             "{}",
-            serde_json::to_string_pretty(value).map_err(ConfigError::JsonError)?
+            serde_json::to_string_pretty(&value).map_err(ConfigError::JsonError)?
         );
     } else {
-        print!("{}", toon_string(value));
+        print!("{}", toon_string(&value));
     }
     Ok(())
 }
@@ -685,6 +689,8 @@ mod tests {
         let envelope = config_show_envelope(&config, &args);
 
         assert_eq!(envelope["status"], "ok");
+        assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+        assert_eq!(envelope["pcl_version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(
             envelope["data"]["config_path"],
             "/tmp/pcl-test-config/config.toml"
