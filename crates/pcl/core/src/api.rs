@@ -1,3 +1,15 @@
+#![allow(
+    clippy::format_push_string,
+    clippy::map_unwrap_or,
+    clippy::match_same_arms,
+    clippy::needless_pass_by_value,
+    clippy::ref_option,
+    clippy::struct_excessive_bools,
+    clippy::too_many_lines,
+    clippy::unnested_or_patterns,
+    clippy::unused_self
+)]
+
 use crate::{
     DEFAULT_PLATFORM_URL,
     config::CliConfig,
