@@ -851,7 +851,7 @@ struct ReleasesArgs {
         alias = "project_id",
         help = "Project UUID or slug"
     )]
-    project: String,
+    project: Option<String>,
     #[arg(long, alias = "release_id", help = "Release ID")]
     release_id: Option<String>,
     #[arg(
@@ -899,7 +899,7 @@ struct DeploymentsArgs {
         alias = "project_id",
         help = "Project UUID or slug"
     )]
-    project: String,
+    project: Option<String>,
     #[arg(long, help = "Confirm deployment")]
     confirm: bool,
     #[arg(long, help = "JSON request body")]
@@ -1000,9 +1000,9 @@ struct IntegrationsArgs {
         alias = "project_id",
         help = "Project UUID or slug"
     )]
-    project: String,
+    project: Option<String>,
     #[arg(long, value_enum, help = "Integration provider")]
-    provider: IntegrationProvider,
+    provider: Option<IntegrationProvider>,
     #[arg(long, help = "Configure integration")]
     configure: bool,
     #[arg(long, help = "Test integration")]
@@ -1036,7 +1036,7 @@ struct ProtocolManagerArgs {
         alias = "project_id",
         help = "Project UUID or slug"
     )]
-    project: String,
+    project: Option<String>,
     #[arg(long, help = "Get nonce")]
     nonce: bool,
     #[arg(long, help = "Set protocol manager")]
@@ -1999,7 +1999,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
 
 fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
-    let project = &args.project;
+    let project = required_arg(args.project.as_deref(), "--project")?;
     if args.preview {
         return Ok(workflow_with_body(
             HttpMethod::Post,
@@ -2087,19 +2087,20 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
 
 fn deployments_request(args: &DeploymentsArgs) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
+    let project = required_arg(args.project.as_deref(), "--project")?;
     if args.confirm {
         return Ok(workflow_with_body(
             HttpMethod::Post,
-            format!("/projects/{}/confirm-deployment", args.project),
+            format!("/projects/{project}/confirm-deployment"),
             true,
             body,
-            vec![format!("pcl api deployments --project {}", args.project)],
+            vec![format!("pcl api deployments --project {project}")],
         ));
     }
     Ok(WorkflowRequest::get(
-        format!("/views/projects/{}/deployments", args.project),
+        format!("/views/projects/{project}/deployments"),
         true,
-        vec![format!("pcl api releases --project {}", args.project)],
+        vec![format!("pcl api releases --project {project}")],
     ))
 }
 
@@ -2212,8 +2213,14 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
 
 fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
-    let provider = args.provider.path();
-    let base = format!("/projects/{}/integrations/{provider}", args.project);
+    let project = required_arg(args.project.as_deref(), "--project")?;
+    let Some(provider) = args.provider else {
+        return Err(ApiCommandError::InvalidWorkflow {
+            message: "--provider is required".to_string(),
+        });
+    };
+    let provider = provider.path();
+    let base = format!("/projects/{project}/integrations/{provider}");
     if args.configure {
         return Ok(workflow_with_body(
             HttpMethod::Post,
@@ -2221,8 +2228,7 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
             true,
             body,
             vec![format!(
-                "pcl api integrations --project {} --provider {provider}",
-                args.project
+                "pcl api integrations --project {project} --provider {provider}"
             )],
         ));
     }
@@ -2233,8 +2239,7 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
             true,
             body,
             vec![format!(
-                "pcl api integrations --project {} --provider {provider}",
-                args.project
+                "pcl api integrations --project {project} --provider {provider}"
             )],
         ));
     }
@@ -2245,8 +2250,7 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
             true,
             body,
             vec![format!(
-                "pcl api integrations --project {} --provider slack",
-                args.project
+                "pcl api integrations --project {project} --provider slack"
             )],
         ));
     }
@@ -2254,13 +2258,9 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
         base,
         true,
         vec![
+            format!("pcl api integrations --project {project} --provider {provider} --test"),
             format!(
-                "pcl api integrations --project {} --provider {provider} --test",
-                args.project
-            ),
-            format!(
-                "pcl api integrations --project {} --provider {provider} --configure --body '{{...}}'",
-                args.project
+                "pcl api integrations --project {project} --provider {provider} --configure --body '{{...}}'"
             ),
         ],
     ))
@@ -2270,15 +2270,15 @@ fn protocol_manager_request(
     args: &ProtocolManagerArgs,
 ) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
-    let base = format!("/projects/{}/protocol-manager", args.project);
+    let project = required_arg(args.project.as_deref(), "--project")?;
+    let base = format!("/projects/{project}/protocol-manager");
     if args.nonce {
         let address = required_arg(args.address.as_deref(), "--address")?;
         let mut request = WorkflowRequest::get(
             format!("{base}/nonce"),
             true,
             vec![format!(
-                "pcl api protocol-manager --project {} --set --body '{{...}}'",
-                args.project
+                "pcl api protocol-manager --project {project} --set --body '{{...}}'"
             )],
         );
         push_query_string_value(&mut request.query, "address", address);
@@ -2292,8 +2292,7 @@ fn protocol_manager_request(
             true,
             body,
             vec![format!(
-                "pcl api protocol-manager --project {} --pending-transfer",
-                args.project
+                "pcl api protocol-manager --project {project} --pending-transfer"
             )],
         ));
     }
@@ -2304,8 +2303,7 @@ fn protocol_manager_request(
             true,
             body,
             vec![format!(
-                "pcl api protocol-manager --project {} --nonce --address <manager-address>",
-                args.project
+                "pcl api protocol-manager --project {project} --nonce --address <manager-address>"
             )],
         ));
     }
@@ -2315,8 +2313,7 @@ fn protocol_manager_request(
             format!("{base}/transfer-calldata"),
             true,
             vec![format!(
-                "pcl api protocol-manager --project {} --set --body '{{...}}'",
-                args.project
+                "pcl api protocol-manager --project {project} --set --body '{{...}}'"
             )],
         );
         push_query_string_value(&mut request.query, "new_manager", new_manager);
@@ -2327,8 +2324,7 @@ fn protocol_manager_request(
             format!("{base}/accept-calldata"),
             true,
             vec![format!(
-                "pcl api protocol-manager --project {} --confirm-transfer --body '{{...}}'",
-                args.project
+                "pcl api protocol-manager --project {project} --confirm-transfer --body '{{...}}'"
             )],
         ));
     }
@@ -2339,8 +2335,7 @@ fn protocol_manager_request(
             true,
             body,
             vec![format!(
-                "pcl api protocol-manager --project {} --pending-transfer",
-                args.project
+                "pcl api protocol-manager --project {project} --pending-transfer"
             )],
         ));
     }
@@ -2349,12 +2344,10 @@ fn protocol_manager_request(
         true,
         vec![
             format!(
-                "pcl api protocol-manager --project {} --nonce --address <manager-address>",
-                args.project
+                "pcl api protocol-manager --project {project} --nonce --address <manager-address>"
             ),
             format!(
-                "pcl api protocol-manager --project {} --transfer-calldata --new-manager <manager-address>",
-                args.project
+                "pcl api protocol-manager --project {project} --transfer-calldata --new-manager <manager-address>"
             ),
         ],
     ))
@@ -2522,13 +2515,25 @@ fn insert_optional(map: &mut Map<String, Value>, key: &str, value: Option<Value>
 }
 
 fn template_envelope(data: Value) -> Value {
+    let next_actions = if data
+        .get("body_variants")
+        .and_then(Value::as_array)
+        .is_some_and(|variants| !variants.is_empty())
+    {
+        vec![
+            "Choose one entry from data.body_variants and pass only its body with --body-file <path>",
+            "Or pass fields from the chosen variant body with --field key=value",
+        ]
+    } else {
+        vec![
+            "Pass the template with --body-file <path>",
+            "Or pass individual fields with --field key=value",
+        ]
+    };
     json!({
         "status": "ok",
         "data": data,
-        "next_actions": [
-            "Pass the template with --body-file <path>",
-            "Or pass individual fields with --field key=value"
-        ],
+        "next_actions": next_actions,
     })
 }
 
@@ -2612,7 +2617,21 @@ fn integration_body_template(args: &IntegrationsArgs) -> Value {
     if args.test || args.delete {
         return body_template("empty_object");
     }
-    body_template(args.provider.path())
+    if let Some(provider) = args.provider {
+        return body_template(provider.path());
+    }
+    json!({
+        "body_variants": [
+            {
+                "name": "slack",
+                "body": body_template("slack")
+            },
+            {
+                "name": "pagerduty",
+                "body": body_template("pagerduty")
+            }
+        ]
+    })
 }
 
 fn protocol_manager_body_template(args: &ProtocolManagerArgs) -> Value {
@@ -3876,7 +3895,7 @@ fn example_call(method: HttpMethod, path: &str, operation: &Value) -> String {
         method.openapi_key(),
         shell_quote_path(&path)
     );
-    if should_allow_unauthenticated_raw_call(&path, operation) {
+    if should_allow_unauthenticated_raw_call(method, &path, operation) {
         command.push_str(" --allow-unauthenticated");
     }
     for parameter in required_query_parameters(operation) {
@@ -3897,23 +3916,36 @@ fn example_call(method: HttpMethod, path: &str, operation: &Value) -> String {
     command
 }
 
-fn should_allow_unauthenticated_raw_call(path: &str, operation: &Value) -> bool {
-    public_raw_call_path(path) && !has_required_authorization_parameter(operation)
+fn should_allow_unauthenticated_raw_call(
+    method: HttpMethod,
+    path: &str,
+    operation: &Value,
+) -> bool {
+    public_raw_call_path(method, path) && !has_required_authorization_parameter(operation)
 }
 
-fn public_raw_call_path(path: &str) -> bool {
-    path == "/health"
-        || path == "/stats"
-        || path == "/system-status"
-        || path == "/search"
-        || path == "/assertions"
-        || path == "/views/projects"
-        || path.starts_with("/views/public/")
-        || path.starts_with("/views/incidents/")
-        || path.starts_with("/projects/resolve/")
-        || path.starts_with("/web/verified-contract")
-        || path.starts_with("/enforcer/")
-        || (path.starts_with("/invitations/") && path.ends_with("/preview"))
+fn public_raw_call_path(method: HttpMethod, path: &str) -> bool {
+    match method {
+        HttpMethod::Get => {
+            path == "/health"
+                || path == "/openapi"
+                || path == "/projects"
+                || path == "/public/incidents"
+                || path == "/stats"
+                || path == "/system-status"
+                || path == "/search"
+                || path == "/assertions"
+                || path == "/views/projects"
+                || path.starts_with("/incidents/")
+                || path.starts_with("/views/public/")
+                || path.starts_with("/views/incidents/")
+                || path.starts_with("/projects/resolve/")
+                || path.starts_with("/web/verified-contract")
+                || (path.starts_with("/invitations/") && path.ends_with("/preview"))
+        }
+        HttpMethod::Post => path.starts_with("/enforcer/"),
+        HttpMethod::Put | HttpMethod::Patch | HttpMethod::Delete => false,
+    }
 }
 
 fn has_required_authorization_parameter(operation: &Value) -> bool {
@@ -4101,7 +4133,7 @@ mod tests {
 
     fn protocol_manager_args() -> ProtocolManagerArgs {
         ProtocolManagerArgs {
-            project: "project-1".to_string(),
+            project: Some("project-1".to_string()),
             nonce: false,
             set: false,
             clear: false,
@@ -4163,7 +4195,7 @@ mod tests {
 
     fn release_args() -> ReleasesArgs {
         ReleasesArgs {
-            project: "project-1".to_string(),
+            project: Some("project-1".to_string()),
             release_id: None,
             signer_address: None,
             create: false,
@@ -4286,6 +4318,18 @@ mod tests {
             example_call(HttpMethod::Get, "/health", &health),
             "pcl api call get /health --allow-unauthenticated"
         );
+        assert_eq!(
+            example_call(HttpMethod::Get, "/openapi", &health),
+            "pcl api call get /openapi --allow-unauthenticated"
+        );
+        assert_eq!(
+            example_call(HttpMethod::Get, "/projects", &health),
+            "pcl api call get /projects --allow-unauthenticated"
+        );
+        assert_eq!(
+            example_call(HttpMethod::Post, "/projects", &json!({"requestBody": {}})),
+            "pcl api call post /projects --body '{}'"
+        );
 
         let public_incidents = json!({
             "parameters": [
@@ -4304,6 +4348,10 @@ mod tests {
                 &public_incidents
             ),
             "pcl api call get /views/public/incidents --allow-unauthenticated --query 'limit=<limit>'"
+        );
+        assert_eq!(
+            example_call(HttpMethod::Get, "/public/incidents", &public_incidents),
+            "pcl api call get /public/incidents --allow-unauthenticated --query 'limit=<limit>'"
         );
 
         let public_with_optional_auth = json!({
@@ -4826,7 +4874,7 @@ mod tests {
         );
         assert_eq!(
             release_body_template(&ReleasesArgs {
-                project: "project-1".to_string(),
+                project: Some("project-1".to_string()),
                 release_id: Some("release-1".to_string()),
                 signer_address: None,
                 create: false,
@@ -4844,7 +4892,7 @@ mod tests {
         );
         assert_eq!(
             release_body_template(&ReleasesArgs {
-                project: "project-1".to_string(),
+                project: Some("project-1".to_string()),
                 release_id: Some("release-1".to_string()),
                 signer_address: None,
                 create: false,
@@ -4921,6 +4969,19 @@ mod tests {
         assert_eq!(
             body_template("pagerduty"),
             json!({ "routing_key": "<pagerduty-routing-key>", "enabled": true })
+        );
+    }
+
+    #[test]
+    fn variant_body_templates_return_variant_specific_next_actions() {
+        let envelope = template_envelope(body_template("protocol_manager_confirm"));
+
+        assert_eq!(
+            envelope["next_actions"],
+            json!([
+                "Choose one entry from data.body_variants and pass only its body with --body-file <path>",
+                "Or pass fields from the chosen variant body with --field key=value"
+            ])
         );
     }
 
@@ -5045,6 +5106,29 @@ mod tests {
         assert!(
             ApiArgs::try_parse_from(["api", "transfers", "--transfer-id", "t1", "--reject"])
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn parser_allows_body_template_without_routing_ids() {
+        assert!(
+            ApiArgs::try_parse_from(["api", "releases", "--deploy", "--body-template"]).is_ok()
+        );
+        assert!(
+            ApiArgs::try_parse_from(["api", "deployments", "--confirm", "--body-template"]).is_ok()
+        );
+        assert!(
+            ApiArgs::try_parse_from(["api", "integrations", "--configure", "--body-template"])
+                .is_ok()
+        );
+        assert!(
+            ApiArgs::try_parse_from([
+                "api",
+                "protocol-manager",
+                "--confirm-transfer",
+                "--body-template"
+            ])
+            .is_ok()
         );
     }
 
