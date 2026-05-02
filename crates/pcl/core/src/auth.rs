@@ -1,5 +1,6 @@
 use crate::{
     DEFAULT_PLATFORM_URL,
+    api::toon_string,
     config::{
         CliConfig,
         UserAuth,
@@ -19,6 +20,10 @@ use dapp_api_client::generated::client::{
 use indicatif::{
     ProgressBar,
     ProgressStyle,
+};
+use serde_json::{
+    Value,
+    json,
 };
 use tokio::time::{
     Duration,
@@ -75,33 +80,48 @@ pub enum AuthSubcommands {
 
 impl AuthCommand {
     /// Execute the authentication command
-    pub async fn run(&self, config: &mut CliConfig) -> Result<(), AuthError> {
+    pub async fn run(&self, config: &mut CliConfig, json_output: bool) -> Result<(), AuthError> {
         match &self.command {
             AuthSubcommands::Login => self.login(config).await,
             AuthSubcommands::Logout => {
                 Self::logout(config);
+                Self::print_output(
+                    &json!({
+                        "status": "ok",
+                        "data": {
+                            "authenticated": false,
+                            "platform_url": self.auth_url.as_str(),
+                        },
+                        "next_actions": ["pcl auth login"],
+                    }),
+                    json_output,
+                )?;
                 Ok(())
             }
-            AuthSubcommands::Status => {
-                Self::status(config);
-                Ok(())
-            }
+            AuthSubcommands::Status => self.status(config, json_output),
         }
     }
 
     /// Initiate the login process and wait for user authentication
     async fn login(&self, config: &mut CliConfig) -> Result<(), AuthError> {
         if let Some(auth) = &config.auth {
+            if auth.expires_at > chrono::Utc::now() {
+                println!(
+                    "{} Already logged in as: {}",
+                    "ℹ️".blue(),
+                    auth.display_name()
+                );
+                println!(
+                    "Please use {} first to login with a different account",
+                    "pcl auth logout".yellow()
+                );
+                return Ok(());
+            }
             println!(
-                "{} Already logged in as: {}",
-                "ℹ️".blue(),
-                auth.display_name()
+                "{} Stored auth token expired at {}. Starting a fresh login.",
+                "⚠️".yellow(),
+                auth.expires_at.to_rfc3339()
             );
-            println!(
-                "Please use {} first to login with a different account",
-                "pcl auth logout".yellow()
-            );
-            return Ok(());
         }
 
         let client = self.api_client();
@@ -259,20 +279,79 @@ impl AuthCommand {
     /// Remove authentication data from configuration
     fn logout(config: &mut CliConfig) {
         config.auth = None;
-        println!("{} Logged out successfully", "👋".green());
     }
 
     /// Display current authentication status
-    fn status(config: &CliConfig) {
-        let (icon, message) = if let Some(auth) = &config.auth {
-            (
-                "✅".green(),
-                format!("Logged in as: {}", auth.display_name().green().bold()),
-            )
-        } else {
-            ("❌".red(), "Not logged in".to_string())
+    fn status(&self, config: &CliConfig, json_output: bool) -> Result<(), AuthError> {
+        let output = self.status_envelope(config);
+        if output
+            .pointer("/data/token_expired")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            let auth = config.auth.as_ref().expect("expired status requires auth");
+            return Err(AuthError::StoredTokenExpired {
+                user: auth.display_name(),
+                expires_at: auth.expires_at,
+                platform_url: self.auth_url.as_str().to_string(),
+            });
+        }
+
+        Self::print_output(&output, json_output)
+    }
+
+    fn status_envelope(&self, config: &CliConfig) -> Value {
+        let Some(auth) = &config.auth else {
+            return json!({
+                "status": "ok",
+                "data": {
+                    "authenticated": false,
+                    "token_present": false,
+                    "token_valid": false,
+                    "token_expired": false,
+                    "platform_url": self.auth_url.as_str(),
+                },
+                "next_actions": ["pcl auth login"],
+            });
         };
-        println!("{icon} {message}");
+
+        let now = chrono::Utc::now();
+        let token_expired = auth.expires_at <= now;
+        json!({
+            "status": "ok",
+            "data": {
+                "authenticated": true,
+                "user": auth.display_name(),
+                "user_id": auth.user_id.map(|id| id.to_string()),
+                "wallet_address": auth.wallet_address.map(|address| address.to_string()),
+                "email": auth.email.as_deref(),
+                "token_present": !auth.access_token.is_empty(),
+                "refresh_token_present": !auth.refresh_token.is_empty(),
+                "token_valid": !token_expired,
+                "token_expired": token_expired,
+                "expires_at": auth.expires_at.to_rfc3339(),
+                "expires_in_seconds": (auth.expires_at - now).num_seconds(),
+                "platform_url": self.auth_url.as_str(),
+            },
+            "next_actions": if token_expired {
+                json!(["pcl auth login", "pcl auth logout"])
+            } else {
+                json!(["pcl api account", "pcl api projects --home"])
+            },
+        })
+    }
+
+    fn print_output(value: &Value, json_output: bool) -> Result<(), AuthError> {
+        if json_output {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(value)
+                    .map_err(|error| AuthError::InvalidAuthData(error.to_string()))?
+            );
+        } else {
+            print!("{}", toon_string(value));
+        }
+        Ok(())
     }
 }
 
@@ -292,7 +371,7 @@ mod tests {
             auth: Some(UserAuth {
                 access_token: "test_token".to_string(),
                 refresh_token: "test_refresh".to_string(),
-                expires_at: Utc.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap(),
+                expires_at: Utc.with_ymd_and_hms(2099, 12, 31, 0, 0, 0).unwrap(),
                 user_id: Some(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()),
                 wallet_address: Some(
                     "0x1234567890123456789012345678901234567890"
@@ -457,13 +536,54 @@ mod tests {
     #[test]
     fn test_status() {
         let config = create_test_config();
-        AuthCommand::status(&config);
+        let cmd = AuthCommand::try_parse_from(vec![
+            "auth",
+            "--auth-url",
+            "https://app.phylax.systems",
+            "status",
+        ])
+        .unwrap();
+        let output = cmd.status_envelope(&config);
+        assert_eq!(output["data"]["authenticated"], true);
+        assert_eq!(output["data"]["token_valid"], true);
+        assert_eq!(
+            output["data"]["platform_url"],
+            "https://app.phylax.systems/"
+        );
     }
 
     #[test]
     fn test_status_when_logged_out() {
         let config = CliConfig::default();
-        AuthCommand::status(&config);
+        let cmd = AuthCommand::try_parse_from(vec![
+            "auth",
+            "--auth-url",
+            "https://app.phylax.systems",
+            "status",
+        ])
+        .unwrap();
+        let output = cmd.status_envelope(&config);
+        assert_eq!(output["data"]["authenticated"], false);
+        assert_eq!(output["data"]["token_valid"], false);
+        assert_eq!(output["next_actions"], json!(["pcl auth login"]));
+    }
+
+    #[test]
+    fn test_status_detects_expired_token() {
+        let mut config = create_test_config();
+        config.auth.as_mut().unwrap().expires_at =
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
+        let cmd = AuthCommand::try_parse_from(vec![
+            "auth",
+            "--auth-url",
+            "https://app.phylax.systems",
+            "status",
+        ])
+        .unwrap();
+        let output = cmd.status_envelope(&config);
+        assert_eq!(output["data"]["authenticated"], true);
+        assert_eq!(output["data"]["token_valid"], false);
+        assert_eq!(output["data"]["token_expired"], true);
     }
 
     #[tokio::test]

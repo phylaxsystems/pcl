@@ -77,6 +77,13 @@ pub enum ApiCommandError {
         source: std::io::Error,
     },
 
+    #[error("Failed to write output file `{path}`: {source}")]
+    OutputFile {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[error("Failed to read request body from stdin: {0}")]
     Stdin(std::io::Error),
 
@@ -91,7 +98,8 @@ pub enum ApiCommandError {
         method: &'static str,
         path: String,
         status: u16,
-        body: Value,
+        request_id: Option<String>,
+        body: Box<Value>,
     },
 
     #[error("OpenAPI spec does not contain a paths object")]
@@ -115,6 +123,7 @@ impl ApiCommandError {
             Self::InvalidPath(_) => "input.invalid_path",
             Self::Url(_) => "input.invalid_url",
             Self::BodyFile { .. } => "input.body_file_read_failed",
+            Self::OutputFile { .. } => "output.file_write_failed",
             Self::Stdin(_) => "input.stdin_read_failed",
             Self::Json(_) => "input.invalid_json",
             Self::Request(source) => {
@@ -230,6 +239,23 @@ impl ApiCommandError {
                     "Check identifiers and required path/query parameters".to_string(),
                 ]
             }
+            Self::HttpStatus {
+                status: 500..=599,
+                request_id,
+                ..
+            } => {
+                let mut actions = vec![
+                    "Retry the same command once; server errors can be transient".to_string(),
+                    "pcl api manifest --json".to_string(),
+                    "Read error.http.body for API-provided failure details".to_string(),
+                ];
+                if let Some(request_id) = request_id {
+                    actions.push(format!(
+                        "Include request_id {request_id} when reporting this server error"
+                    ));
+                }
+                actions
+            }
             Self::HttpStatus { .. } => {
                 vec![
                     "pcl api manifest --json".to_string(),
@@ -239,6 +265,9 @@ impl ApiCommandError {
             Self::Request(_) | Self::Url(_) => vec!["Check --api-url and retry".to_string()],
             Self::BodyFile { .. } => {
                 vec!["Check --body-file path or pass --body directly".to_string()]
+            }
+            Self::OutputFile { .. } => {
+                vec!["Check --output path permissions or choose a writable file".to_string()]
             }
             Self::Stdin(_) => vec!["Pipe a JSON body into --body-file -".to_string()],
             Self::MissingPaths => {
@@ -257,16 +286,21 @@ impl ApiCommandError {
             method,
             path,
             status,
+            request_id,
             body,
         } = self
         {
+            if let Some(request_id) = request_id {
+                error.insert("request_id".to_string(), json!(request_id));
+            }
             error.insert(
                 "http".to_string(),
                 json!({
                     "method": method,
                     "path": path,
                     "status": status,
-                    "body": body,
+                    "request_id": request_id,
+                    "body": body.as_ref(),
                 }),
             );
         }
@@ -309,7 +343,7 @@ pub struct ApiArgs {
 enum ApiCommand {
     #[command(
         about = "List or inspect incidents",
-        after_help = "Examples:\n  pcl api incidents --limit 5\n  pcl api incidents --project-id <project-id> --environment production\n  pcl api incidents --incident-id <incident-id>\n  pcl api incidents --incident-id <incident-id> --tx-id <tx-id>\n  pcl api incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"
+        after_help = "Examples:\n  pcl api incidents --limit 5\n  pcl api incidents --project-id <project-id> --environment production\n  pcl api incidents --project-id <project-id> --all --limit 50 --output incidents.json\n  pcl api incidents --incident-id <incident-id>\n  pcl api incidents --incident-id <incident-id> --tx-id <tx-id>\n  pcl api incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"
     )]
     Incidents(IncidentsArgs),
 
@@ -417,7 +451,7 @@ enum ApiCommand {
 
     #[command(
         about = "Call any platform API endpoint",
-        after_help = "Examples:\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json"
+        after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json"
     )]
     Call {
         #[arg(value_enum, help = "HTTP method")]
@@ -440,6 +474,8 @@ enum ApiCommand {
             help = "Path to JSON request body, or - for stdin"
         )]
         body_file: Option<PathBuf>,
+        #[arg(long, help = "Write response body to a JSON file")]
+        output: Option<PathBuf>,
     },
 }
 
@@ -507,7 +543,7 @@ struct ApiRequestInput<'a> {
     require_auth: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct WorkflowRequest {
     method: HttpMethod,
     path: String,
@@ -587,6 +623,12 @@ struct IncidentsArgs {
     stats: bool,
     #[arg(long, alias = "retry_trace", help = "Retry failed trace generation")]
     retry_trace: bool,
+    #[arg(long, help = "Fetch every page for incident list workflows")]
+    all: bool,
+    #[arg(long, help = "Maximum pages to fetch with --all")]
+    max_pages: Option<u64>,
+    #[arg(long, help = "Write response data to a JSON file")]
+    output: Option<PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -1266,8 +1308,9 @@ impl ApiArgs {
                 header,
                 body,
                 body_file,
+                output,
             } => {
-                let response = self
+                let mut response = self
                     .call_api(
                         config,
                         ApiRequestInput {
@@ -1281,6 +1324,13 @@ impl ApiArgs {
                         },
                     )
                     .await?;
+                if let Some(path) = output {
+                    let body = response.pointer("/response/body").unwrap_or(&response);
+                    write_json_output_file(path, body)?;
+                    if let Some(object) = response.as_object_mut() {
+                        object.insert("output_path".to_string(), json!(path.display().to_string()));
+                    }
+                }
                 let output = json!({
                     "status": "ok",
                     "data": response,
@@ -1302,6 +1352,36 @@ impl ApiArgs {
         args: &IncidentsArgs,
     ) -> Result<Value, ApiCommandError> {
         let request = incidents_request(args)?;
+        if args.all {
+            let mut data = self
+                .call_workflow_paginated(
+                    config,
+                    request.clone(),
+                    "incidents",
+                    args.page.unwrap_or(1),
+                    args.limit.unwrap_or(50),
+                    args.max_pages.unwrap_or(100),
+                )
+                .await?;
+            if let Some(path) = &args.output {
+                write_json_output_file(path, &data)?;
+                if let Some(object) = data.as_object_mut() {
+                    object.insert("output_path".to_string(), json!(path.display().to_string()));
+                }
+            }
+            let mut next_actions = request.next_actions;
+            if args.output.is_none() {
+                next_actions.insert(
+                    0,
+                    "Use --output incidents.json to save large paginated results".to_string(),
+                );
+            }
+            return Ok(json!({
+                "status": "ok",
+                "data": data,
+                "next_actions": next_actions,
+            }));
+        }
         let data = self.call_workflow(config, &request).await?;
         let next_actions = incidents_next_actions(&data, args, request.next_actions);
         Ok(json!({
@@ -1372,8 +1452,9 @@ impl ApiArgs {
         config: &CliConfig,
         input: ApiRequestInput<'_>,
     ) -> Result<Value, ApiCommandError> {
-        let url = self.api_url(input.path)?;
-        let query = parse_key_values("query", input.query)?;
+        let (path, mut query) = split_path_and_inline_query(input.path)?;
+        query.extend(parse_key_values("query", input.query)?);
+        let url = self.api_url(&path)?;
         let headers = parse_headers(input.header)?;
         let body = read_body(input.body, input.body_file)?;
 
@@ -1395,6 +1476,7 @@ impl ApiArgs {
 
         let response = request.send().await?;
         let status = response.status();
+        let request_id = request_id_from_headers(response.headers());
         let headers = response
             .headers()
             .iter()
@@ -1413,15 +1495,26 @@ impl ApiArgs {
             .to_string();
         let bytes = response.bytes().await?;
         let body = response_body_value(&content_type, &bytes);
+        if !status.is_success() {
+            return Err(ApiCommandError::HttpStatus {
+                method: input.method.as_str(),
+                path,
+                status: status.as_u16(),
+                request_id,
+                body: Box::new(body),
+            });
+        }
 
         Ok(json!({
             "request": {
                 "method": input.method.as_str(),
-                "path": input.path,
+                "path": path,
+                "query": query_pairs_value(&query),
             },
             "response": {
                 "status": status.as_u16(),
                 "success": status.is_success(),
+                "request_id": request_id,
                 "headers": headers,
                 "body": body,
             }
@@ -1450,6 +1543,7 @@ impl ApiArgs {
         }
         let response = builder.send().await?;
         let status = response.status();
+        let request_id = request_id_from_headers(response.headers());
         let content_type = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
@@ -1463,10 +1557,69 @@ impl ApiArgs {
                 method: request.method.as_str(),
                 path,
                 status: status.as_u16(),
-                body,
+                request_id,
+                body: Box::new(body),
             });
         }
         Ok(body)
+    }
+
+    async fn call_workflow_paginated(
+        &self,
+        config: &CliConfig,
+        request: WorkflowRequest,
+        item_field: &str,
+        start_page: u64,
+        limit: u64,
+        max_pages: u64,
+    ) -> Result<Value, ApiCommandError> {
+        if request.method.openapi_key() != "get" {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: "--all is only supported for GET list workflows".to_string(),
+            });
+        }
+        if max_pages == 0 {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: "--max-pages must be greater than zero".to_string(),
+            });
+        }
+
+        let mut items = Vec::new();
+        let mut pages_fetched = 0_u64;
+        let mut last_page_count = 0_usize;
+
+        for offset in 0..max_pages {
+            let page = start_page + offset;
+            let mut page_request = request.clone();
+            upsert_query(&mut page_request.query, "page", page.to_string());
+            upsert_query(&mut page_request.query, "limit", limit.to_string());
+            let data = self.call_workflow(config, &page_request).await?;
+            let page_items = extract_paginated_items(&data, item_field).ok_or_else(|| {
+                ApiCommandError::InvalidWorkflow {
+                    message: format!(
+                        "Could not find an array at `{item_field}` or common pagination fields in response"
+                    ),
+                }
+            })?;
+            last_page_count = page_items.len();
+            pages_fetched += 1;
+            items.extend(page_items);
+
+            if last_page_count < usize::try_from(limit).unwrap_or(usize::MAX) {
+                break;
+            }
+        }
+
+        let count = items.len();
+        Ok(json!({
+            "items": items,
+            "count": count,
+            "pages_fetched": pages_fetched,
+            "start_page": start_page,
+            "limit": limit,
+            "max_pages": max_pages,
+            "last_page_count": last_page_count,
+        }))
     }
 
     async fn normalize_request_body(
@@ -1576,6 +1729,42 @@ impl ApiArgs {
     }
 }
 
+fn split_path_and_inline_query(
+    input: &str,
+) -> Result<(String, Vec<(String, String)>), ApiCommandError> {
+    if !input.starts_with('/') {
+        return Err(ApiCommandError::InvalidPath(input.to_string()));
+    }
+    let Some((path, query)) = input.split_once('?') else {
+        return Ok((input.to_string(), Vec::new()));
+    };
+    if path.is_empty() || !path.starts_with('/') {
+        return Err(ApiCommandError::InvalidPath(input.to_string()));
+    }
+    let query = url::form_urlencoded::parse(query.as_bytes())
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+    Ok((path.to_string(), query))
+}
+
+fn request_id_from_headers(headers: &HeaderMap) -> Option<String> {
+    [
+        "x-request-id",
+        "x-correlation-id",
+        "x-amzn-requestid",
+        "cf-ray",
+        "request-id",
+    ]
+    .into_iter()
+    .find_map(|name| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    })
+}
+
 fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {
     if content_type.contains("application/json") {
         return serde_json::from_slice(bytes).unwrap_or_else(|_| {
@@ -1634,12 +1823,12 @@ fn api_manifest() -> Value {
         },
         "commands": [
             {
-                "command": "pcl api incidents [--project-id <id>] [--incident-id <id>] [--stats] [--limit <n>]",
-                "description": "List public incidents, project incidents, incident detail, incident stats, or incident trace.",
+                "command": "pcl api incidents [--project-id <id>] [--incident-id <id>] [--stats] [--limit <n>] [--all --output <file>]",
+                "description": "List public incidents, project incidents, fetch all incident pages, inspect incident detail, incident stats, or incident trace.",
                 "output": "incident data from /views/public/incidents, /views/projects/{projectId}/incidents, /views/incidents/{incidentId}, or /projects/{project_id}/incidents/stats",
                 "actions": [
-                    {"name": "list_public", "auth": false, "method": "GET", "path": "/views/public/incidents", "optional_flags": ["--page", "--limit", "--network", "--sort", "--dev-mode"], "example": "pcl api incidents --limit 5"},
-                    {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/incidents", "required_flags": ["--project"], "optional_flags": ["--page", "--limit", "--assertion-id", "--adopter-id", "--environment", "--from", "--to"], "example": "pcl api incidents --project <project-ref> --limit 10"},
+                    {"name": "list_public", "auth": false, "method": "GET", "path": "/views/public/incidents", "optional_flags": ["--page", "--limit", "--network", "--sort", "--dev-mode", "--all", "--max-pages", "--output"], "example": "pcl api incidents --limit 5"},
+                    {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/incidents", "required_flags": ["--project"], "optional_flags": ["--page", "--limit", "--assertion-id", "--adopter-id", "--environment", "--from", "--to", "--all", "--max-pages", "--output"], "example": "pcl api incidents --project <project-ref> --all --limit 50 --output incidents.json"},
                     {"name": "stats", "auth": true, "method": "GET", "path": "/projects/{project_id}/incidents/stats", "required_flags": ["--project"], "example": "pcl api incidents --project <project-ref> --stats"},
                     {"name": "detail", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}", "required_flags": ["--incident-id"], "example": "pcl api incidents --incident-id <incident-id>"},
                     {"name": "trace", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}/transactions/{txId}/trace", "required_flags": ["--incident-id", "--tx-id"], "example": "pcl api incidents --incident-id <incident-id> --tx-id <tx-id>"},
@@ -1818,9 +2007,9 @@ fn api_manifest() -> Value {
                 "output": "operation_id, method, path, path_params, required_query, body_fields, required_body_fields, body_template, response_statuses, example_call",
             },
             {
-                "command": "pcl api call <method> <path> [--query key=value] [--body '{...}']",
-                "description": "Execute any endpoint below /api/v1.",
-                "output": "request and response status/body",
+                "command": "pcl api call <method> <path[?query]> [--query key=value] [--body '{...}'] [--output <file>]",
+                "description": "Execute any endpoint below /api/v1. Query strings in PATH and repeated --query flags are both accepted.",
+                "output": "request and response status/body; non-2xx responses return structured error envelopes with request_id when the API provides one",
             },
         ],
         "examples": [
@@ -2861,6 +3050,11 @@ fn split_first_segment(path: &str) -> (&str, &str) {
 }
 
 fn incidents_request(args: &IncidentsArgs) -> Result<WorkflowRequest, ApiCommandError> {
+    if args.all && (args.incident_id.is_some() || args.stats || args.retry_trace) {
+        return Err(ApiCommandError::InvalidWorkflow {
+            message: "--all is only supported for incident list workflows".to_string(),
+        });
+    }
     if args.stats && args.project_id.is_none() {
         return Err(ApiCommandError::InvalidWorkflow {
             message: "--stats requires --project-id".to_string(),
@@ -3280,6 +3474,54 @@ fn push_query_string(query: &mut Vec<(String, String)>, name: &str, value: &Opti
     }
 }
 
+fn query_pairs_value(query: &[(String, String)]) -> Value {
+    Value::Array(
+        query
+            .iter()
+            .map(|(name, value)| json!({ "name": name, "value": value }))
+            .collect(),
+    )
+}
+
+fn upsert_query(query: &mut Vec<(String, String)>, name: &str, value: String) {
+    if let Some((_, existing)) = query.iter_mut().find(|(key, _)| key == name) {
+        *existing = value;
+    } else {
+        query.push((name.to_string(), value));
+    }
+}
+
+fn extract_paginated_items(value: &Value, preferred_field: &str) -> Option<Vec<Value>> {
+    if let Some(items) = array_at_path(value, preferred_field) {
+        return Some(items.to_vec());
+    }
+    for path in [
+        "items",
+        "incidents",
+        "results",
+        "data.items",
+        "data.incidents",
+        "data.results",
+        "data",
+    ] {
+        if let Some(items) = array_at_path(value, path) {
+            return Some(items.to_vec());
+        }
+    }
+    value.as_array().cloned()
+}
+
+fn array_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a [Value]> {
+    let mut current = value;
+    for segment in path.split('.') {
+        if segment.is_empty() {
+            continue;
+        }
+        current = current.get(segment)?;
+    }
+    current.as_array().map(Vec::as_slice)
+}
+
 /// Render a JSON value as the CLI's compact TOON-style text output.
 pub fn toon_string(value: &Value) -> String {
     let mut output = String::new();
@@ -3501,6 +3743,16 @@ fn read_body(
     }
 
     Ok(None)
+}
+
+fn write_json_output_file(path: &PathBuf, value: &Value) -> Result<(), ApiCommandError> {
+    let body = serde_json::to_string_pretty(value)?;
+    fs::write(path, body).map_err(|source| {
+        ApiCommandError::OutputFile {
+            path: path.clone(),
+            source,
+        }
+    })
 }
 
 fn list_operations(
@@ -4264,6 +4516,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_inline_query_strings() {
+        let (path, query) = split_path_and_inline_query(
+            "/projects/project-1/incidents?environment=production&limit=50",
+        )
+        .unwrap();
+
+        assert_eq!(path, "/projects/project-1/incidents");
+        assert_eq!(
+            query,
+            vec![
+                ("environment".to_string(), "production".to_string()),
+                ("limit".to_string(), "50".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn lists_and_inspects_operations() {
         let spec = json!({
             "paths": {
@@ -4467,6 +4736,9 @@ mod tests {
             dev_mode: None,
             stats: false,
             retry_trace: false,
+            all: false,
+            max_pages: None,
+            output: None,
         })
         .unwrap();
 
@@ -4493,6 +4765,9 @@ mod tests {
             dev_mode: None,
             stats: false,
             retry_trace: false,
+            all: false,
+            max_pages: None,
+            output: None,
         })
         .unwrap();
 
@@ -4533,6 +4808,9 @@ mod tests {
             dev_mode: None,
             stats: true,
             retry_trace: false,
+            all: false,
+            max_pages: None,
+            output: None,
         })
         .unwrap();
 
@@ -4559,6 +4837,9 @@ mod tests {
             dev_mode: None,
             stats: false,
             retry_trace: true,
+            all: false,
+            max_pages: None,
+            output: None,
         })
         .unwrap();
 
@@ -4568,6 +4849,50 @@ mod tests {
         );
         assert_eq!(request.method.openapi_key(), "post");
         assert!(request.require_auth);
+    }
+
+    #[tokio::test]
+    async fn paginates_incident_list_workflows() {
+        let mut server = mockito::Server::new_async().await;
+        let page_1 = server
+            .mock("GET", "/api/v1/views/public/incidents")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("page".into(), "1".into()),
+                mockito::Matcher::UrlEncoded("limit".into(), "2".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"incidents":[{"id":"i1"},{"id":"i2"}]}"#)
+            .create_async()
+            .await;
+        let page_2 = server
+            .mock("GET", "/api/v1/views/public/incidents")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("page".into(), "2".into()),
+                mockito::Matcher::UrlEncoded("limit".into(), "2".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"incidents":[{"id":"i3"}]}"#)
+            .create_async()
+            .await;
+        let api = ApiArgs {
+            command: ApiCommand::Manifest,
+            api_url: server.url().parse().unwrap(),
+            allow_unauthenticated: true,
+        };
+        let request = WorkflowRequest::get("/views/public/incidents", false, Vec::new());
+
+        let data = api
+            .call_workflow_paginated(&CliConfig::default(), request, "incidents", 1, 2, 5)
+            .await
+            .unwrap();
+
+        assert_eq!(data["count"], 3);
+        assert_eq!(data["pages_fetched"], 2);
+        assert_eq!(data["items"][2]["id"], "i3");
+        page_1.assert_async().await;
+        page_2.assert_async().await;
     }
 
     #[test]
@@ -4874,6 +5199,7 @@ mod tests {
             method,
             path,
             status,
+            request_id,
             body,
         } = &error
         else {
@@ -4883,11 +5209,115 @@ mod tests {
         assert_eq!(*method, "GET");
         assert_eq!(path, "/health");
         assert_eq!(*status, 422);
+        assert_eq!(request_id, &None);
         assert_eq!(body["field"], "address");
         assert_eq!(error.code(), "api.validation_failed");
         assert_eq!(
             error.json_envelope()["error"]["http"]["body"]["message"],
             "address is required"
+        );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn raw_api_call_accepts_inline_query_strings() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/v1/projects/project-1/incidents")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("environment".into(), "production".into()),
+                mockito::Matcher::UrlEncoded("limit".into(), "50".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"ok":true}"#)
+            .create_async()
+            .await;
+        let api = ApiArgs {
+            command: ApiCommand::Manifest,
+            api_url: server.url().parse().unwrap(),
+            allow_unauthenticated: true,
+        };
+
+        let response = api
+            .call_api(
+                &CliConfig::default(),
+                ApiRequestInput {
+                    method: HttpMethod::Get,
+                    path: "/projects/project-1/incidents?environment=production",
+                    query: &["limit=50".to_string()],
+                    header: &[],
+                    body: None,
+                    body_file: &None,
+                    require_auth: false,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response["request"]["path"], "/projects/project-1/incidents");
+        assert_eq!(
+            response["request"]["query"],
+            json!([
+                {"name": "environment", "value": "production"},
+                {"name": "limit", "value": "50"}
+            ])
+        );
+        assert_eq!(response["response"]["body"]["ok"], true);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn raw_api_call_errors_include_request_id() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/v1/health")
+            .with_status(500)
+            .with_header("content-type", "application/json")
+            .with_header("x-request-id", "req-123")
+            .with_body(r#"{"message":"server failed"}"#)
+            .create_async()
+            .await;
+        let api = ApiArgs {
+            command: ApiCommand::Manifest,
+            api_url: server.url().parse().unwrap(),
+            allow_unauthenticated: true,
+        };
+
+        let error = api
+            .call_api(
+                &CliConfig::default(),
+                ApiRequestInput {
+                    method: HttpMethod::Get,
+                    path: "/health",
+                    query: &[],
+                    header: &[],
+                    body: None,
+                    body_file: &None,
+                    require_auth: false,
+                },
+            )
+            .await
+            .unwrap_err();
+
+        let ApiCommandError::HttpStatus {
+            status,
+            request_id,
+            body,
+            ..
+        } = &error
+        else {
+            panic!("expected HTTP status error, got {error:?}");
+        };
+        assert_eq!(*status, 500);
+        assert_eq!(request_id.as_deref(), Some("req-123"));
+        assert_eq!(body["message"], "server failed");
+        assert_eq!(error.json_envelope()["error"]["request_id"], "req-123");
+        assert!(
+            error
+                .next_actions()
+                .iter()
+                .any(|action| action.contains("req-123"))
         );
         mock.assert_async().await;
     }

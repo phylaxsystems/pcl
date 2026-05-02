@@ -18,6 +18,9 @@ clap = { workspace = true }
 tokio = { workspace = true }
 color-eyre = { workspace = true }
 
+[dev-dependencies]
+chrono = { workspace = true }
+
 [features]
 default = []
 credible = ["pcl-phoundry/credible", "pcl-core/credible"]

@@ -18,6 +18,7 @@ use pcl_core::{
         toon_string,
     },
     config::CliConfig,
+    error::AuthError,
 };
 use serde_json::{
     Value,
@@ -77,7 +78,7 @@ async fn main() -> Result<()> {
                 api.run(&config, cli.args.json_output()).await?;
             }
             Commands::Auth(auth_cmd) => {
-                auth_cmd.run(&mut config).await?;
+                auth_cmd.run(&mut config, cli.args.json_output()).await?;
             }
             Commands::Config(config_cmd) => {
                 config_cmd.run(&mut config)?;
@@ -115,6 +116,9 @@ fn error_envelope(err: &Report) -> Value {
     if let Some(api_error) = err.downcast_ref::<ApiCommandError>() {
         return api_error.json_envelope();
     }
+    if let Some(auth_error) = err.downcast_ref::<AuthError>() {
+        return auth_error_envelope(auth_error);
+    }
 
     json!({
         "status": "error",
@@ -125,6 +129,75 @@ fn error_envelope(err: &Report) -> Value {
         },
         "next_actions": [],
     })
+}
+
+fn auth_error_envelope(err: &AuthError) -> Value {
+    match err {
+        AuthError::StoredTokenExpired {
+            user,
+            expires_at,
+            platform_url,
+        } => {
+            json!({
+                "status": "error",
+                "error": {
+                    "code": "auth.expired_token",
+                    "message": err.to_string(),
+                    "recoverable": true,
+                    "auth": {
+                        "authenticated": true,
+                        "user": user,
+                        "token_valid": false,
+                        "token_expired": true,
+                        "expires_at": expires_at.to_rfc3339(),
+                        "platform_url": platform_url,
+                    },
+                },
+                "next_actions": [
+                    "pcl auth login",
+                    "pcl auth logout",
+                ],
+            })
+        }
+        AuthError::SessionExpired | AuthError::SessionNotFound | AuthError::InvalidSession(_) => {
+            json!({
+                "status": "error",
+                "error": {
+                    "code": "auth.session_invalid",
+                    "message": err.to_string(),
+                    "recoverable": true,
+                },
+                "next_actions": ["pcl auth login"],
+            })
+        }
+        AuthError::UserNotFound => {
+            json!({
+                "status": "error",
+                "error": {
+                    "code": "auth.user_not_found",
+                    "message": err.to_string(),
+                    "recoverable": true,
+                },
+                "next_actions": ["pcl auth login"],
+            })
+        }
+        AuthError::AuthRequestFailed(_)
+        | AuthError::StatusRequestFailed(_)
+        | AuthError::ServerError(_)
+        | AuthError::Timeout(_)
+        | AuthError::InvalidAuthData(_)
+        | AuthError::ConfigError(_) => {
+            json!({
+                "status": "error",
+                "error": {
+                    "code": "auth.request_failed",
+                    "message": err.to_string(),
+                    "recoverable": true,
+                },
+                "next_actions": ["pcl auth login"],
+            })
+        }
+    }
 }
 
 fn wants_json_output<I, S>(args: I) -> bool
@@ -220,5 +293,23 @@ mod tests {
         assert!(output.contains("pcl auth login"));
         assert!(!output.contains("Location:"));
         assert!(!output.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn wraps_auth_errors_as_structured_errors() {
+        let expires_at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .to_utc();
+        let err = Report::new(AuthError::StoredTokenExpired {
+            user: "user-1".to_string(),
+            expires_at,
+            platform_url: "https://app.phylax.systems/".to_string(),
+        });
+        let envelope = error_envelope(&err);
+
+        assert_eq!(envelope["status"], "error");
+        assert_eq!(envelope["error"]["code"], "auth.expired_token");
+        assert_eq!(envelope["error"]["auth"]["token_valid"], false);
+        assert_eq!(envelope["next_actions"][0], "pcl auth login");
     }
 }

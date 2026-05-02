@@ -29,6 +29,8 @@ projects, assertions, transparency views, deployment state, integrations, and in
 API commands default to compact TOON-style output with `next_actions`; pass `--json` for the full
 machine-readable envelope. Successes and errors use the same envelope shape, so agents can recover
 from auth, validation, and parser failures without scraping prose diagnostics.
+`pcl auth status` also reports token validity, expiry, and platform URL; expired stored tokens return
+a nonzero structured error so agents do not mistake stale credentials for a working login.
 
 ```bash
 # Print an agent-readable command manifest
@@ -38,6 +40,7 @@ pcl api manifest --json
 # Use natural workflow commands first
 pcl api incidents --limit 5
 pcl api incidents --project-id <project-ref> --environment production
+pcl api incidents --project-id <project-ref> --all --limit 50 --output incidents.json
 pcl api incidents --incident-id <incident-id>
 pcl api incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace
 pcl api projects --limit 10
@@ -77,8 +80,10 @@ pcl api inspect get_views_projects_project_id_incidents
 
 # Call any endpoint below /api/v1
 pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated
+pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated
 pcl api call get /views/projects/<project-id>/incidents --query environment=production
 pcl api call get /views/projects/<project-id>/assertions
+pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json
 pcl api call post /web/auth/logout --body '{}'
 ```
 
