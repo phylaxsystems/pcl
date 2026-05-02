@@ -13,7 +13,10 @@ use color_eyre::{
     eyre::Report,
 };
 use pcl_core::{
-    api::ApiCommandError,
+    api::{
+        ApiCommandError,
+        toon_string,
+    },
     config::CliConfig,
 };
 use serde_json::{
@@ -44,7 +47,14 @@ async fn main() -> Result<()> {
                 );
                 std::process::exit(exit_code);
             }
-            err.exit();
+            if matches!(
+                err.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) {
+                err.exit();
+            }
+            eprint!("{}", toon_string(&clap_error_envelope(&err)));
+            std::process::exit(err.exit_code());
         }
     };
     let mut config = CliConfig::read_from_file(&cli.args).unwrap_or_default();
@@ -89,12 +99,13 @@ async fn main() -> Result<()> {
     .await;
 
     if let Err(err) = result {
+        let envelope = error_envelope(&err);
         if cli.args.json_output() {
-            eprintln!("{}", serde_json::to_string_pretty(&error_envelope(&err))?);
-            std::process::exit(1);
+            eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
         } else {
-            return Err(err);
+            eprint!("{}", toon_string(&envelope));
         }
+        std::process::exit(1);
     }
 
     Ok(())
@@ -179,5 +190,35 @@ mod tests {
         assert_eq!(envelope["error"]["code"], "cli.argument_conflict");
         assert_eq!(envelope["error"]["recoverable"], true);
         assert!(envelope["next_actions"].as_array().unwrap().len() >= 2);
+    }
+
+    #[test]
+    fn wraps_clap_conflicts_as_toon_errors() {
+        let err = Cli::command()
+            .try_get_matches_from(["pcl", "api", "projects", "--save", "--unsave"])
+            .unwrap_err();
+        let output = toon_string(&clap_error_envelope(&err));
+
+        assert!(output.contains("status: error"));
+        assert!(output.contains("code: cli.argument_conflict"));
+        assert!(output.contains("message: |"));
+        assert!(output.contains("  Usage: pcl api projects --save"));
+        assert!(output.contains("recoverable: true"));
+        assert!(output.contains("next_actions[2]:"));
+        assert!(!output.contains("Location:"));
+        assert!(!output.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn wraps_runtime_errors_as_toon_errors() {
+        let err = Report::new(ApiCommandError::NoAuthToken);
+        let output = toon_string(&error_envelope(&err));
+
+        assert!(output.contains("status: error"));
+        assert!(output.contains("code: auth.no_token"));
+        assert!(output.contains("recoverable: true"));
+        assert!(output.contains("pcl auth login"));
+        assert!(!output.contains("Location:"));
+        assert!(!output.contains('\u{1b}'));
     }
 }
