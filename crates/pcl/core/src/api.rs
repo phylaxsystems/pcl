@@ -282,7 +282,7 @@ impl ApiCommandError {
 #[derive(clap::Parser, Debug)]
 #[command(
     about = "Discover and call the platform API",
-    long_about = "Discover and call the Credible Layer platform API. Commands return structured JSON with next actions so agents can inspect the API surface and execute any endpoint."
+    long_about = "Discover and call the Credible Layer platform API. Commands return compact structured TOON by default, including error envelopes and next actions. Pass --json for full JSON envelopes."
 )]
 pub struct ApiArgs {
     #[command(subcommand)]
@@ -393,7 +393,7 @@ enum ApiCommand {
 
     #[command(
         about = "List OpenAPI operations",
-        after_help = "Examples:\n  pcl api list --json\n  pcl api list --filter incidents --json\n  pcl api list --method get --json"
+        after_help = "Examples:\n  pcl api list\n  pcl api list --filter incidents\n  pcl api list --method get\n  pcl api list --json"
     )]
     List {
         #[arg(long, help = "Filter operation id, summary, tags, or path")]
@@ -404,7 +404,7 @@ enum ApiCommand {
 
     #[command(
         about = "Inspect one OpenAPI operation",
-        after_help = "Examples:\n  pcl api inspect get_views_projects_project_id_incidents --json\n  pcl api inspect get /views/public/incidents --json"
+        after_help = "Examples:\n  pcl api inspect get_views_projects_project_id_incidents\n  pcl api inspect get /views/public/incidents\n  pcl api inspect get_views_projects_project_id_incidents --json"
     )]
     Inspect {
         #[arg(help = "Operation id, or HTTP method when PATH is also provided")]
@@ -417,7 +417,7 @@ enum ApiCommand {
 
     #[command(
         about = "Call any platform API endpoint",
-        after_help = "Examples:\n  pcl api call get /views/public/incidents --query limit=5 --json\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production --json\n  pcl api call post /web/auth/logout --body '{}' --json"
+        after_help = "Examples:\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json"
     )]
     Call {
         #[arg(value_enum, help = "HTTP method")]

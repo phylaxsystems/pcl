@@ -27,7 +27,8 @@ brew install phylax/pcl/phylax
 It is designed around the platform workflows documented in the [Phylax docs](https://docs.phylax.systems):
 projects, assertions, transparency views, deployment state, integrations, and incidents.
 API commands default to compact TOON-style output with `next_actions`; pass `--json` for the full
-machine-readable envelope.
+machine-readable envelope. Successes and errors use the same envelope shape, so agents can recover
+from auth, validation, and parser failures without scraping prose diagnostics.
 
 ```bash
 # Print an agent-readable command manifest
