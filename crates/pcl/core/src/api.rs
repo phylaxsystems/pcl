@@ -1762,6 +1762,13 @@ impl ApiArgs {
                 .to_string();
             let bytes = response.bytes().await?;
             let body = response_body_value(&content_type, &bytes);
+            write_request_log(
+                "raw_paginated",
+                input.method.as_str(),
+                &path,
+                status.as_u16(),
+                request_id.as_deref(),
+            );
             if !status.is_success() {
                 return Err(ApiCommandError::HttpStatus {
                     method: input.method.as_str(),
@@ -2062,6 +2069,13 @@ impl ApiArgs {
             .to_string();
         let bytes = response.bytes().await?;
         let body = response_body_value(&content_type, &bytes);
+        write_request_log(
+            "raw",
+            input.method.as_str(),
+            &path,
+            status.as_u16(),
+            request_id.as_deref(),
+        );
         if !status.is_success() {
             return Err(ApiCommandError::HttpStatus {
                 method: input.method.as_str(),
@@ -2124,6 +2138,13 @@ impl ApiArgs {
             .to_string();
         let bytes = response.bytes().await?;
         let body = response_body_value(&content_type, &bytes);
+        write_request_log(
+            "workflow",
+            request.method.as_str(),
+            &path,
+            status.as_u16(),
+            request_id.as_deref(),
+        );
         if !status.is_success() {
             return Err(ApiCommandError::HttpStatus {
                 method: request.method.as_str(),
@@ -2358,6 +2379,23 @@ fn request_id_from_headers(headers: &HeaderMap) -> Option<String> {
     })
 }
 
+fn write_request_log(kind: &str, method: &str, path: &str, status: u16, request_id: Option<&str>) {
+    #[cfg(not(test))]
+    {
+        let _ = crate::request_log::append_request_record(&json!({
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "kind": kind,
+            "method": method,
+            "path": path,
+            "status": status,
+            "success": (200..=299).contains(&status),
+            "request_id": request_id,
+        }));
+    }
+    #[cfg(test)]
+    let _ = (kind, method, path, status, request_id);
+}
+
 fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {
     if content_type.contains("application/json") {
         return serde_json::from_slice(bytes).unwrap_or_else(|_| {
@@ -2428,7 +2466,7 @@ fn request_is_destructive(method: HttpMethod, path: &str) -> bool {
         || path.contains("/logout")
 }
 
-fn api_manifest() -> Value {
+pub fn api_manifest() -> Value {
     json!({
         "name": "pcl",
         "description": "Use top-level workflow commands for common UI/API workflows; use pcl api list/inspect/call as the raw OpenAPI escape hatch.",
@@ -2450,6 +2488,15 @@ fn api_manifest() -> Value {
             "public_endpoints": "Workflow commands use public view endpoints without requiring login when possible.",
             "login_command": "pcl auth login",
         },
+        "product_surfaces": [
+            {"command": "pcl doctor", "description": "Diagnose config, auth, request-log, artifact, and API health state."},
+            {"command": "pcl whoami", "description": "Print local identity, token validity, and expiry."},
+            {"command": "pcl workflows [show <name>]", "description": "List agent-friendly workflow recipes with concrete command steps."},
+            {"command": "pcl export incidents", "description": "Export incident list data as resumable JSONL artifacts with checkpoint and error files."},
+            {"command": "pcl artifacts [path|init|list]", "description": "Find and inspect generated artifacts."},
+            {"command": "pcl requests|logs [path|list|clear]", "description": "Inspect the local API request log with status and request IDs."},
+            {"command": "pcl schema [list|get <workflow>]", "description": "Inspect workflow/action schemas from the command manifest."}
+        ],
         "commands": [
             {
                 "command": "pcl incidents [--project-id <id>] [--incident-id <id>] [--stats] [--limit <n>] [--all --output <file>]",

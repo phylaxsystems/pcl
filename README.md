@@ -17,6 +17,9 @@ brew install phylax/pcl/phylax
 | `pcl incidents`, `pcl projects`, `pcl assertions` | Natural platform workflow commands |
 | `pcl account`, `pcl contracts`, `pcl releases`, `pcl deployments` | Account, contract, release, and deployment workflows |
 | `pcl access`, `pcl integrations`, `pcl protocol-manager`, `pcl transfers`, `pcl events`, `pcl search` | Access control, integrations, protocol manager, transfer, audit, and search workflows |
+| `pcl doctor`, `pcl whoami` | Diagnose local/API readiness and inspect identity state |
+| `pcl workflows`, `pcl schema` | Agent-facing workflow recipes and command/action schemas |
+| `pcl export`, `pcl artifacts`, `pcl requests` | Export JSONL artifacts and inspect local API request logs |
 | `pcl api` | Discover, inspect, and call raw platform API endpoints |
 | `pcl auth` | Authenticate with the Credible Layer platform |
 | `pcl config` | Manage CLI configuration |
@@ -69,6 +72,19 @@ pcl protocol-manager --project <project-ref> --pending-transfer
 pcl transfers --pending
 pcl events --project <project-ref> --audit-log
 pcl search --query settler
+
+# Diagnose and orient before long-running work
+pcl doctor
+pcl whoami
+pcl workflows
+pcl workflows show incident-investigation
+pcl schema get incidents --action list_public
+
+# Export investigation artifacts and inspect provenance
+pcl export incidents --project-id <project-ref> --environment production --out incidents.jsonl --errors errors.jsonl --resume
+pcl export incidents --project-id <project-ref> --dry-run
+pcl artifacts list
+pcl requests list --limit 20
 
 # Ask for valid mutation bodies before writing
 pcl projects --body-template

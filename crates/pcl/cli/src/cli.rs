@@ -24,6 +24,15 @@ use pcl_core::{
     auth::AuthCommand,
     config::ConfigArgs,
     download::DownloadArgs,
+    surface::{
+        ArtifactsArgs,
+        DoctorArgs,
+        ExportArgs,
+        RequestsArgs,
+        SchemaArgs,
+        WhoamiArgs,
+        WorkflowsArgs,
+    },
 };
 use pcl_phoundry::build::BuildArgs;
 #[cfg(feature = "credible")]
@@ -95,6 +104,20 @@ pub enum Commands {
     Transfers(TransfersCommand),
     #[command(name = "events")]
     Events(EventsCommand),
+    #[command(name = "doctor")]
+    Doctor(DoctorArgs),
+    #[command(name = "whoami")]
+    Whoami(WhoamiArgs),
+    #[command(name = "workflows")]
+    Workflows(WorkflowsArgs),
+    #[command(name = "export")]
+    Export(ExportArgs),
+    #[command(name = "artifacts")]
+    Artifacts(ArtifactsArgs),
+    #[command(name = "requests", alias = "logs")]
+    Requests(RequestsArgs),
+    #[command(name = "schema")]
+    Schema(SchemaArgs),
     Auth(AuthCommand),
     #[command(about = "Manage configuration")]
     Config(ConfigArgs),
@@ -109,6 +132,20 @@ pub enum Commands {
 
 impl Commands {
     pub fn can_run_without_valid_config(&self) -> bool {
+        matches!(
+            self,
+            Self::Config(config) if config.can_run_without_valid_config()
+        ) || matches!(
+            self,
+            Self::Doctor(_)
+                | Self::Workflows(_)
+                | Self::Artifacts(_)
+                | Self::Requests(_)
+                | Self::Schema(_)
+        )
+    }
+
+    pub fn should_write_after_invalid_config(&self) -> bool {
         matches!(self, Self::Config(config) if config.can_run_without_valid_config())
     }
 }
@@ -208,6 +245,54 @@ mod tests {
         ])
         .unwrap();
         assert!(matches!(manager.command, Commands::ProtocolManager(_)));
+    }
+
+    #[test]
+    fn parses_agent_product_surface_commands() {
+        assert!(matches!(
+            Cli::try_parse_from(["pcl", "doctor", "--offline"])
+                .unwrap()
+                .command,
+            Commands::Doctor(_)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pcl", "workflows", "show", "incident-investigation"])
+                .unwrap()
+                .command,
+            Commands::Workflows(_)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from([
+                "pcl",
+                "schema",
+                "get",
+                "incidents",
+                "--action",
+                "list_public"
+            ])
+            .unwrap()
+            .command,
+            Commands::Schema(_)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from([
+                "pcl",
+                "export",
+                "incidents",
+                "--project-id",
+                "project-1",
+                "--dry-run"
+            ])
+            .unwrap()
+            .command,
+            Commands::Export(_)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pcl", "logs", "list"])
+                .unwrap()
+                .command,
+            Commands::Requests(_)
+        ));
     }
 
     #[test]

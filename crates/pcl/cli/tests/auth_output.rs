@@ -163,6 +163,69 @@ fn invalid_config_returns_json_error_without_overwriting_file() {
 }
 
 #[test]
+fn doctor_can_run_with_invalid_config_without_overwriting_file() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let config_path = temp_dir.path().join("config.toml");
+    let original_config = "not = [toml\n";
+    fs::write(&config_path, original_config).expect("write invalid config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "doctor",
+            "--offline",
+        ])
+        .output()
+        .expect("run pcl doctor");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json envelope");
+    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+    assert_eq!(
+        fs::read_to_string(config_path).expect("read invalid config"),
+        original_config
+    );
+}
+
+#[test]
+fn workflows_can_run_with_invalid_config_without_overwriting_file() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let config_path = temp_dir.path().join("config.toml");
+    let original_config = "not = [toml\n";
+    fs::write(&config_path, original_config).expect("write invalid config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "workflows",
+        ])
+        .output()
+        .expect("run pcl workflows");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json envelope");
+    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+    assert_eq!(
+        fs::read_to_string(config_path).expect("read invalid config"),
+        original_config
+    );
+}
+
+#[test]
 fn api_dry_run_project_create_does_not_hit_network() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     write_valid_auth_config(temp_dir.path());
@@ -379,4 +442,46 @@ fn top_level_public_incidents_workflow_matches_api_alias() {
         serde_json::from_slice(&top_level_output.stdout).expect("top-level json envelope");
     assert_eq!(top_level_envelope["status"], "ok");
     assert_eq!(top_level_envelope["data"], api_envelope["data"]);
+}
+
+#[test]
+fn agent_product_surfaces_emit_json_envelopes() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_valid_auth_config(temp_dir.path());
+    let config_dir = temp_dir.path().to_str().expect("utf-8 temp path");
+
+    for command in [
+        vec!["doctor", "--offline"],
+        vec!["whoami"],
+        vec!["workflows", "show", "incident-investigation"],
+        vec!["schema", "get", "incidents", "--action", "list_public"],
+        vec!["artifacts", "path"],
+        vec!["requests", "path"],
+        vec![
+            "export",
+            "incidents",
+            "--project-id",
+            "project-1",
+            "--dry-run",
+        ],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+            .args(["--config-dir", config_dir, "--json"])
+            .args(command)
+            .output()
+            .expect("run pcl product surface");
+
+        assert!(
+            output.status.success(),
+            "command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let envelope: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("json envelope");
+        assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+        assert!(
+            envelope["status"].as_str().is_some(),
+            "missing status in {envelope}"
+        );
+    }
 }

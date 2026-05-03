@@ -24,6 +24,7 @@ use pcl_core::{
         AuthError,
         ConfigError,
     },
+    surface::ProductSurfaceError,
 };
 use serde_json::{
     Value,
@@ -68,9 +69,13 @@ async fn main() -> Result<()> {
             std::process::exit(err.exit_code());
         }
     };
+    let mut read_valid_config = true;
     let mut config = match CliConfig::read_from_file(&cli.args) {
         Ok(config) => config,
-        Err(err) if cli.command.can_run_without_valid_config() => CliConfig::default(),
+        Err(err) if cli.command.can_run_without_valid_config() => {
+            read_valid_config = false;
+            CliConfig::default()
+        }
         Err(err) => {
             let envelope = with_envelope_metadata(config_error_envelope(&err));
             if cli.args.json_output() {
@@ -87,9 +92,12 @@ async fn main() -> Result<()> {
     // where a global static lazy is used to signal to every print statement
     // whether it should be a noop or print to stdout/stderr.
 
+    let should_write_after_invalid_config = cli.command.should_write_after_invalid_config();
     let result = async {
         run_command(cli.command, &cli.args, &mut config, cli.args.json_output()).await?;
-        config.write_to_file(&cli.args)?;
+        if read_valid_config || should_write_after_invalid_config {
+            config.write_to_file(&cli.args)?;
+        }
         Ok::<_, Report>(())
     }
     .await;
@@ -131,6 +139,13 @@ async fn run_command(
         Commands::ProtocolManager(command) => command.run(config, json_output).await?,
         Commands::Transfers(command) => command.run(config, json_output).await?,
         Commands::Events(command) => command.run(config, json_output).await?,
+        Commands::Doctor(command) => command.run(config, cli_args, json_output).await?,
+        Commands::Whoami(command) => command.run(config, json_output)?,
+        Commands::Workflows(command) => command.run(json_output)?,
+        Commands::Export(command) => command.run(config, cli_args, json_output).await?,
+        Commands::Artifacts(command) => command.run(cli_args, json_output)?,
+        Commands::Requests(command) => command.run(json_output)?,
+        Commands::Schema(command) => command.run(json_output)?,
         Commands::Auth(auth_cmd) => auth_cmd.run(config, json_output).await?,
         Commands::Config(config_cmd) => config_cmd.run(config, cli_args)?,
         Commands::Build(build_cmd) => build_cmd.run()?,
@@ -150,6 +165,9 @@ fn error_envelope(err: &Report) -> Value {
     }
     if let Some(config_error) = err.downcast_ref::<ConfigError>() {
         return with_envelope_metadata(config_error_envelope(config_error));
+    }
+    if let Some(surface_error) = err.downcast_ref::<ProductSurfaceError>() {
+        return surface_error.json_envelope();
     }
 
     with_envelope_metadata(json!({
