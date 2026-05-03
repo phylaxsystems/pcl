@@ -66,6 +66,10 @@ enum ConfigCommand {
 }
 
 impl ConfigArgs {
+    pub fn can_run_without_valid_config(&self) -> bool {
+        matches!(self.command, ConfigCommand::Delete)
+    }
+
     /// Executes the configuration command
     ///
     /// # Arguments

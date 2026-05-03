@@ -67,7 +67,19 @@ async fn main() -> Result<()> {
             std::process::exit(err.exit_code());
         }
     };
-    let mut config = CliConfig::read_from_file(&cli.args).unwrap_or_default();
+    let mut config = match CliConfig::read_from_file(&cli.args) {
+        Ok(config) => config,
+        Err(err) if cli.command.can_run_without_valid_config() => CliConfig::default(),
+        Err(err) => {
+            let envelope = with_envelope_metadata(config_error_envelope(&err));
+            if cli.args.json_output() {
+                eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
+            } else {
+                eprint!("{}", toon_string(&envelope));
+            }
+            std::process::exit(1);
+        }
+    };
 
     // TODO(Odysseas): Convert these commands to return strings to print for json output
     // We can also use something similar like the shell macro from Foundry

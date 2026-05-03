@@ -126,13 +126,22 @@ impl AuthCommand {
         let client = self.api_client();
         let auth_response = Self::request_auth_code(&client).await?;
         if json_output {
-            Self::print_output(
+            Self::print_json_event(
                 &self.login_instructions_envelope(&auth_response, expired_auth),
-                true,
             )?;
-        } else {
-            self.display_login_instructions(&auth_response);
+            self.wait_for_verification(config, &client, &auth_response, true)
+                .await?;
+            let mut output = self.status_envelope(config);
+            if let Some(object) = output.as_object_mut() {
+                object.insert("event".to_string(), json!("auth.login_complete"));
+                object.insert("terminal".to_string(), json!(true));
+                object.insert("output_mode".to_string(), json!("jsonl"));
+            }
+            Self::print_json_event(&output)?;
+            return Ok(());
         }
+
+        self.display_login_instructions(&auth_response);
         self.wait_for_verification(config, &client, &auth_response, json_output)
             .await
     }
@@ -191,7 +200,10 @@ impl AuthCommand {
             .query_pairs_mut()
             .append_pair("session_id", &auth_response.session_id.to_string());
         with_envelope_metadata(json!({
-            "status": "ok",
+            "status": "pending",
+            "event": "auth.login_instructions",
+            "terminal": false,
+            "output_mode": "jsonl",
             "data": {
                 "state": "login_instructions",
                 "device_url": device_url.as_str(),
@@ -422,6 +434,15 @@ impl AuthCommand {
         }
         Ok(())
     }
+
+    fn print_json_event(value: &Value) -> Result<(), AuthError> {
+        println!(
+            "{}",
+            serde_json::to_string(&with_envelope_metadata(value.clone()))
+                .map_err(|error| AuthError::InvalidAuthData(error.to_string()))?
+        );
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -486,7 +507,10 @@ mod tests {
             Some(Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap()),
         );
 
-        assert_eq!(output["status"], "ok");
+        assert_eq!(output["status"], "pending");
+        assert_eq!(output["event"], "auth.login_instructions");
+        assert_eq!(output["terminal"], false);
+        assert_eq!(output["output_mode"], "jsonl");
         assert_eq!(output["data"]["state"], "login_instructions");
         assert_eq!(
             output["data"]["device_url"],

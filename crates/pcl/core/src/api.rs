@@ -1834,7 +1834,7 @@ impl ApiArgs {
     fn auth_plan(&self, require_auth: bool) -> Value {
         let will_attach_stored_token = require_auth && !self.allow_unauthenticated;
         json!({
-            "required": will_attach_stored_token,
+            "required": require_auth,
             "will_attach_stored_token": will_attach_stored_token,
             "allow_unauthenticated": self.allow_unauthenticated,
         })

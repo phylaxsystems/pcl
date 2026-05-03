@@ -66,6 +66,12 @@ pub enum Commands {
     Download(DownloadArgs),
 }
 
+impl Commands {
+    pub fn can_run_without_valid_config(&self) -> bool {
+        matches!(self, Self::Config(config) if config.can_run_without_valid_config())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
