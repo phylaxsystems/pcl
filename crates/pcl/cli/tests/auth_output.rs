@@ -226,6 +226,95 @@ fn workflows_can_run_with_invalid_config_without_overwriting_file() {
 }
 
 #[test]
+fn global_llms_flag_outputs_json_without_config_read() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let config_path = temp_dir.path().join("config.toml");
+    let original_config = "not = [toml\n";
+    fs::write(&config_path, original_config).expect("write invalid config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "--llms",
+        ])
+        .output()
+        .expect("run pcl --llms");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json envelope");
+    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+    assert_eq!(envelope["data"]["default_output"], "toon");
+    assert_eq!(envelope["data"]["no_mcp_required"], true);
+    assert_eq!(
+        fs::read_to_string(config_path).expect("read invalid config"),
+        original_config
+    );
+}
+
+#[test]
+fn completions_can_run_with_invalid_config_without_overwriting_file() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let config_path = temp_dir.path().join("config.toml");
+    let original_config = "not = [toml\n";
+    fs::write(&config_path, original_config).expect("write invalid config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "completions",
+            "bash",
+        ])
+        .output()
+        .expect("run pcl completions");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    assert!(stdout.contains("_pcl"));
+    assert!(stdout.contains("complete"));
+
+    let json_output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "completions",
+            "bash",
+        ])
+        .output()
+        .expect("run pcl completions --json");
+    assert!(
+        json_output.status.success(),
+        "json command failed: {}",
+        String::from_utf8_lossy(&json_output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&json_output.stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok");
+    assert_eq!(envelope["data"]["shell"], "bash");
+    assert!(
+        envelope["data"]["script"]
+            .as_str()
+            .is_some_and(|script| script.contains("_pcl"))
+    );
+    assert_eq!(
+        fs::read_to_string(config_path).expect("read invalid config"),
+        original_config
+    );
+}
+
+#[test]
 fn api_dry_run_project_create_does_not_hit_network() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     write_valid_auth_config(temp_dir.path());
@@ -455,6 +544,8 @@ fn agent_product_surfaces_emit_json_envelopes() {
         vec!["whoami"],
         vec!["workflows", "show", "incident-investigation"],
         vec!["schema", "get", "incidents", "--action", "list_public"],
+        vec!["llms"],
+        vec!["jobs", "path"],
         vec!["artifacts", "path"],
         vec!["requests", "path"],
         vec![

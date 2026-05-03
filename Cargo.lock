@@ -7360,6 +7360,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "clap_complete",
  "color-eyre",
  "mockito",
  "pcl-common",

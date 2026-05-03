@@ -1,4 +1,8 @@
-use clap::Parser;
+use clap::{
+    CommandFactory,
+    Parser,
+};
+use clap_complete::Shell;
 use pcl_common::args::CliArgs;
 #[cfg(feature = "credible")]
 use pcl_core::verify::VerifyArgs;
@@ -19,6 +23,7 @@ use pcl_core::{
         ReleasesCommand,
         SearchCommand,
         TransfersCommand,
+        with_envelope_metadata,
     },
     apply::ApplyArgs,
     auth::AuthCommand,
@@ -28,6 +33,8 @@ use pcl_core::{
         ArtifactsArgs,
         DoctorArgs,
         ExportArgs,
+        JobsArgs,
+        LlmsArgs,
         RequestsArgs,
         SchemaArgs,
         WhoamiArgs,
@@ -37,7 +44,11 @@ use pcl_core::{
 use pcl_phoundry::build::BuildArgs;
 #[cfg(feature = "credible")]
 use pcl_phoundry::phorge_test::PhorgeTest;
-use std::sync::OnceLock;
+use serde_json::json;
+use std::{
+    io,
+    sync::OnceLock,
+};
 
 fn version_message() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
@@ -118,6 +129,12 @@ pub enum Commands {
     Requests(RequestsArgs),
     #[command(name = "schema")]
     Schema(SchemaArgs),
+    #[command(name = "llms")]
+    Llms(LlmsArgs),
+    #[command(name = "jobs")]
+    Jobs(JobsArgs),
+    #[command(name = "completions")]
+    Completions(CompletionsArgs),
     Auth(AuthCommand),
     #[command(about = "Manage configuration")]
     Config(ConfigArgs),
@@ -142,11 +159,47 @@ impl Commands {
                 | Self::Artifacts(_)
                 | Self::Requests(_)
                 | Self::Schema(_)
+                | Self::Llms(_)
+                | Self::Jobs(_)
+                | Self::Completions(_)
         )
     }
 
     pub fn should_write_after_invalid_config(&self) -> bool {
         matches!(self, Self::Config(config) if config.can_run_without_valid_config())
+    }
+}
+
+#[derive(clap::Args)]
+#[command(about = "Generate shell completion scripts")]
+pub struct CompletionsArgs {
+    #[arg(value_enum, help = "Shell to generate completions for")]
+    shell: Shell,
+}
+
+impl CompletionsArgs {
+    pub fn run(&self, json_output: bool) -> Result<(), serde_json::Error> {
+        let mut command = Cli::command();
+        if json_output {
+            let mut script = Vec::new();
+            clap_complete::generate(self.shell, &mut command, "pcl", &mut script);
+            let script = String::from_utf8_lossy(&script).to_string();
+            let envelope = with_envelope_metadata(json!({
+                "status": "ok",
+                "data": {
+                    "shell": self.shell.to_string(),
+                    "script": script,
+                    "install_note": "Run without --json and redirect stdout into your shell completion directory.",
+                },
+                "next_actions": [
+                    format!("pcl completions {}", self.shell),
+                ],
+            }));
+            println!("{}", serde_json::to_string_pretty(&envelope)?);
+        } else {
+            clap_complete::generate(self.shell, &mut command, "pcl", &mut io::stdout());
+        }
+        Ok(())
     }
 }
 
@@ -292,6 +345,22 @@ mod tests {
                 .unwrap()
                 .command,
             Commands::Requests(_)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pcl", "llms"]).unwrap().command,
+            Commands::Llms(_)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pcl", "jobs", "list"])
+                .unwrap()
+                .command,
+            Commands::Jobs(_)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["pcl", "completions", "bash"])
+                .unwrap()
+                .command,
+            Commands::Completions(_)
         ));
     }
 

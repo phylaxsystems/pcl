@@ -12,6 +12,12 @@ pub struct CliArgs {
     pub json: bool,
     #[clap(long = "config-dir", hide = true, global = true)]
     pub config_dir: Option<PathBuf>,
+    #[clap(
+        long = "llms",
+        global = true,
+        help = "Print a CLI-native LLM usage guide and exit"
+    )]
+    pub llms: bool,
 }
 
 impl CliArgs {
@@ -32,6 +38,12 @@ mod tests {
     fn parses_json_flag() {
         let args = CliArgs::try_parse_from(["cli", "--json"]).expect("should parse");
         assert!(args.json_output());
+    }
+
+    #[test]
+    fn parses_llms_flag() {
+        let args = CliArgs::try_parse_from(["cli", "--llms"]).expect("should parse");
+        assert!(args.llms);
     }
 
     #[test]

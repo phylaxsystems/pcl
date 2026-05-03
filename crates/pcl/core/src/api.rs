@@ -2471,6 +2471,7 @@ pub fn api_manifest() -> Value {
         "name": "pcl",
         "description": "Use top-level workflow commands for common UI/API workflows; use pcl api list/inspect/call as the raw OpenAPI escape hatch.",
         "raw_api": "pcl api list | pcl api inspect | pcl api call | pcl api manifest",
+        "llms": "pcl --llms | pcl llms",
         "default_output": "toon",
         "json_output": "Add --json to emit the same {status,data,error,next_actions} envelope as JSON.",
         "body_input": {
@@ -2489,13 +2490,16 @@ pub fn api_manifest() -> Value {
             "login_command": "pcl auth login",
         },
         "product_surfaces": [
+            {"command": "pcl --llms | pcl llms", "description": "Print the CLI-native LLM usage guide; use --json for JSON."},
             {"command": "pcl doctor", "description": "Diagnose config, auth, request-log, artifact, and API health state."},
             {"command": "pcl whoami", "description": "Print local identity, token validity, and expiry."},
             {"command": "pcl workflows [show <name>]", "description": "List agent-friendly workflow recipes with concrete command steps."},
             {"command": "pcl export incidents", "description": "Export incident list data as resumable JSONL artifacts with checkpoint and error files."},
             {"command": "pcl artifacts [path|init|list]", "description": "Find and inspect generated artifacts."},
+            {"command": "pcl jobs [path|list|status|resume|cancel]", "description": "Inspect resumable local job records from export workflows."},
             {"command": "pcl requests|logs [path|list|clear]", "description": "Inspect the local API request log with status and request IDs."},
-            {"command": "pcl schema [list|get <workflow>]", "description": "Inspect workflow/action schemas from the command manifest."}
+            {"command": "pcl schema [list|get <workflow>]", "description": "Inspect workflow/action schemas from the command manifest."},
+            {"command": "pcl completions <shell>", "description": "Generate shell completion scripts for bash, zsh, fish, powershell, and elvish."}
         ],
         "commands": [
             {

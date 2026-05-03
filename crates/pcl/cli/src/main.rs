@@ -47,6 +47,11 @@ async fn main() -> Result<()> {
         .display_env_section(false)
         .install()?;
 
+    if wants_llms_output(env::args_os()) {
+        pcl_core::surface::print_llms_guide(wants_json_output(env::args_os()))?;
+        return Ok(());
+    }
+
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(err) => {
@@ -146,6 +151,9 @@ async fn run_command(
         Commands::Artifacts(command) => command.run(cli_args, json_output)?,
         Commands::Requests(command) => command.run(json_output)?,
         Commands::Schema(command) => command.run(json_output)?,
+        Commands::Llms(command) => command.run(json_output)?,
+        Commands::Jobs(command) => command.run(cli_args, json_output)?,
+        Commands::Completions(command) => command.run(json_output)?,
         Commands::Auth(auth_cmd) => auth_cmd.run(config, json_output).await?,
         Commands::Config(config_cmd) => config_cmd.run(config, cli_args)?,
         Commands::Build(build_cmd) => build_cmd.run()?,
@@ -299,6 +307,15 @@ where
     })
 }
 
+fn wants_llms_output<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    args.into_iter()
+        .any(|arg| arg.as_ref() == OsStr::new("--llms"))
+}
+
 fn clap_error_envelope(err: &clap::Error) -> Value {
     with_envelope_metadata(json!({
         "status": "error",
@@ -338,6 +355,13 @@ mod tests {
         assert!(wants_json_output(["pcl", "--json", "api"]));
         assert!(wants_json_output(["pcl", "api", "projects", "-j"]));
         assert!(!wants_json_output(["pcl", "api", "projects"]));
+    }
+
+    #[test]
+    fn detects_llms_flag_before_successful_parse() {
+        assert!(wants_llms_output(["pcl", "--llms"]));
+        assert!(wants_llms_output(["pcl", "--json", "--llms"]));
+        assert!(!wants_llms_output(["pcl", "llms"]));
     }
 
     #[test]

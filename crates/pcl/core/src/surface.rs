@@ -32,8 +32,18 @@ use serde_json::{
     json,
 };
 use std::{
+    collections::{
+        HashSet,
+        hash_map::DefaultHasher,
+    },
     fs,
+    hash::{
+        Hash,
+        Hasher,
+    },
     io::{
+        BufRead,
+        BufReader,
         BufWriter,
         Write,
     },
@@ -44,6 +54,7 @@ use std::{
 };
 
 const ARTIFACT_DIR_ENV: &str = "PCL_ARTIFACT_DIR";
+const JOBS_FILE_ENV: &str = "PCL_JOBS_FILE";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProductSurfaceError {
@@ -266,6 +277,34 @@ enum SchemaCommand {
         #[arg(long, help = "Action name within the workflow")]
         action: Option<String>,
     },
+}
+
+#[derive(clap::Args, Debug)]
+#[command(about = "Print a CLI-native LLM usage guide")]
+pub struct LlmsArgs;
+
+#[derive(clap::Args, Debug)]
+#[command(about = "Inspect and resume local CLI jobs")]
+pub struct JobsArgs {
+    #[command(subcommand)]
+    command: Option<JobsCommand>,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum JobsCommand {
+    #[command(about = "List known local jobs")]
+    List {
+        #[arg(long, default_value_t = 20, help = "Maximum jobs to list")]
+        limit: usize,
+    },
+    #[command(about = "Show one local job")]
+    Status { job_id: String },
+    #[command(about = "Show the command needed to resume one local job")]
+    Resume { job_id: String },
+    #[command(about = "Mark one local job canceled")]
+    Cancel { job_id: String },
+    #[command(about = "Print the local job registry path")]
+    Path,
 }
 
 #[derive(clap::Args, Debug)]
@@ -579,6 +618,61 @@ impl SchemaArgs {
     }
 }
 
+impl LlmsArgs {
+    pub fn run(&self, json_output: bool) -> Result<(), ProductSurfaceError> {
+        print_llms_guide(json_output)
+    }
+}
+
+impl JobsArgs {
+    pub fn run(&self, cli_args: &CliArgs, json_output: bool) -> Result<(), ProductSurfaceError> {
+        let path = jobs_path(cli_args);
+        let data = match &self.command {
+            Some(JobsCommand::Path) => json!({ "jobs_path": path }),
+            None | Some(JobsCommand::List { .. }) => {
+                let limit = match &self.command {
+                    Some(JobsCommand::List { limit }) => *limit,
+                    _ => 20,
+                };
+                json!({
+                    "jobs_path": path,
+                    "jobs": list_jobs(cli_args, limit)?,
+                })
+            }
+            Some(JobsCommand::Status { job_id }) => find_job(cli_args, job_id)?,
+            Some(JobsCommand::Resume { job_id }) => {
+                let job = find_job(cli_args, job_id)?;
+                json!({
+                    "job": job,
+                    "resume_command": job["resume_command"],
+                })
+            }
+            Some(JobsCommand::Cancel { job_id }) => {
+                let mut job = find_job(cli_args, job_id)?;
+                let updated_at = Utc::now().to_rfc3339();
+                if let Some(object) = job.as_object_mut() {
+                    object.insert("status".to_string(), json!("canceled"));
+                    object.insert("updated_at".to_string(), json!(updated_at));
+                }
+                append_job_record(cli_args, &job)?;
+                job
+            }
+        };
+        print_output(
+            &json!({
+                "status": "ok",
+                "data": data,
+                "next_actions": [
+                    "pcl jobs list",
+                    "pcl jobs resume <job-id>",
+                    "pcl export incidents --help",
+                ],
+            }),
+            json_output,
+        )
+    }
+}
+
 impl ExportArgs {
     pub async fn run(
         &self,
@@ -624,12 +718,18 @@ async fn export_incidents(
         .clone()
         .unwrap_or_else(|| artifact_dir(cli_args).join("incident-export-checkpoint.json"));
     let plan = export_plan(args, &out, &errors, &checkpoint);
+    let job_id = incident_export_job_id(args, &checkpoint);
+    let resume_command = incident_export_resume_command(args, &out, &errors, &checkpoint);
 
     if args.dry_run {
         return print_output(
             &json!({
                 "status": "ok",
-                "data": plan,
+                "data": {
+                    "job_id": job_id,
+                    "resume_command": resume_command,
+                    "plan": plan,
+                },
                 "next_actions": ["Remove --dry-run to execute", "pcl artifacts list"],
             }),
             json_output,
@@ -680,6 +780,18 @@ async fn export_incidents(
     let mut pages_fetched = 0_u64;
     let mut incidents_written = 0_u64;
     let mut errors_written = 0_u64;
+    append_job_record(
+        cli_args,
+        &job_record(
+            &job_id,
+            "incident_export",
+            "running",
+            &resume_command,
+            &out,
+            &errors,
+            &checkpoint,
+        ),
+    )?;
 
     for offset in 0..args.max_pages {
         let page = start_page + offset;
@@ -730,6 +842,18 @@ async fn export_incidents(
             if args.continue_on_error {
                 continue;
             }
+            append_job_record(
+                cli_args,
+                &job_record(
+                    &job_id,
+                    "incident_export",
+                    "failed",
+                    &resume_command,
+                    &out,
+                    &errors,
+                    &checkpoint,
+                ),
+            )?;
             return Err(ProductSurfaceError::HttpStatus {
                 method: "GET",
                 path,
@@ -751,12 +875,26 @@ async fn export_incidents(
             break;
         }
     }
+    append_job_record(
+        cli_args,
+        &job_record(
+            &job_id,
+            "incident_export",
+            "completed",
+            &resume_command,
+            &out,
+            &errors,
+            &checkpoint,
+        ),
+    )?;
 
     print_output(
         &json!({
             "status": "ok",
             "data": {
+                "job_id": job_id,
                 "export": "incidents",
+                "resume_command": resume_command,
                 "out": out,
                 "errors": errors,
                 "checkpoint": checkpoint,
@@ -796,6 +934,268 @@ fn artifact_dir(cli_args: &CliArgs) -> PathBuf {
         },
         PathBuf::from,
     )
+}
+
+fn jobs_path(cli_args: &CliArgs) -> PathBuf {
+    std::env::var_os(JOBS_FILE_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| artifact_dir(cli_args).join("jobs.jsonl"))
+}
+
+fn append_job_record(cli_args: &CliArgs, record: &Value) -> Result<(), ProductSurfaceError> {
+    let path = jobs_path(cli_args);
+    ensure_parent_dir(&path)?;
+    let mut file = BufWriter::new(
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|source| {
+                ProductSurfaceError::Io {
+                    path: path.clone(),
+                    source,
+                }
+            })?,
+    );
+    serde_json::to_writer(&mut file, record)?;
+    file.write_all(b"\n").map_err(|source| {
+        ProductSurfaceError::Io {
+            path: path.clone(),
+            source,
+        }
+    })?;
+    Ok(())
+}
+
+fn read_job_records(cli_args: &CliArgs) -> Result<Vec<Value>, ProductSurfaceError> {
+    let path = jobs_path(cli_args);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let file = fs::File::open(&path).map_err(|source| {
+        ProductSurfaceError::Io {
+            path: path.clone(),
+            source,
+        }
+    })?;
+    BufReader::new(file)
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let line = match line {
+                Ok(line) if line.trim().is_empty() => return None,
+                Ok(line) => line,
+                Err(source) => {
+                    return Some(Err(ProductSurfaceError::Io {
+                        path: path.clone(),
+                        source,
+                    }));
+                }
+            };
+            Some(serde_json::from_str(&line).map_err(|source| {
+                ProductSurfaceError::InvalidInput(format!(
+                    "Invalid job record at {}:{}: {source}",
+                    path.display(),
+                    index + 1
+                ))
+            }))
+        })
+        .collect()
+}
+
+fn list_jobs(cli_args: &CliArgs, limit: usize) -> Result<Vec<Value>, ProductSurfaceError> {
+    let records = read_job_records(cli_args)?;
+    let mut seen = HashSet::new();
+    let mut jobs = Vec::new();
+    for record in records.into_iter().rev() {
+        let Some(job_id) = record.get("job_id").and_then(Value::as_str) else {
+            continue;
+        };
+        if seen.insert(job_id.to_string()) {
+            jobs.push(record);
+            if jobs.len() == limit {
+                break;
+            }
+        }
+    }
+    Ok(jobs)
+}
+
+fn find_job(cli_args: &CliArgs, job_id: &str) -> Result<Value, ProductSurfaceError> {
+    read_job_records(cli_args)?
+        .into_iter()
+        .rev()
+        .find(|record| record.get("job_id").and_then(Value::as_str) == Some(job_id))
+        .ok_or_else(|| ProductSurfaceError::InvalidInput(format!("Unknown job `{job_id}`")))
+}
+
+fn job_record(
+    job_id: &str,
+    kind: &str,
+    status: &str,
+    resume_command: &str,
+    out: &Path,
+    errors: &Path,
+    checkpoint: &Path,
+) -> Value {
+    let now = Utc::now().to_rfc3339();
+    json!({
+        "job_id": job_id,
+        "kind": kind,
+        "status": status,
+        "created_at": now,
+        "updated_at": now,
+        "resume_command": resume_command,
+        "artifacts": {
+            "out": out,
+            "errors": errors,
+            "checkpoint": checkpoint,
+        },
+    })
+}
+
+fn incident_export_job_id(args: &ExportIncidentsArgs, checkpoint: &Path) -> String {
+    let mut hasher = DefaultHasher::new();
+    "incident_export".hash(&mut hasher);
+    args.project_id.hash(&mut hasher);
+    args.environment.hash(&mut hasher);
+    args.page.hash(&mut hasher);
+    args.limit.hash(&mut hasher);
+    args.max_pages.hash(&mut hasher);
+    checkpoint.hash(&mut hasher);
+    format!("incident-export-{:016x}", hasher.finish())
+}
+
+fn incident_export_resume_command(
+    args: &ExportIncidentsArgs,
+    out: &Path,
+    errors: &Path,
+    checkpoint: &Path,
+) -> String {
+    let mut parts = vec![
+        "pcl".to_string(),
+        "export".to_string(),
+        "incidents".to_string(),
+        "--resume".to_string(),
+        "--out".to_string(),
+        shell_word(out.display().to_string()),
+        "--errors".to_string(),
+        shell_word(errors.display().to_string()),
+        "--checkpoint".to_string(),
+        shell_word(checkpoint.display().to_string()),
+        "--page".to_string(),
+        args.page.to_string(),
+        "--limit".to_string(),
+        args.limit.to_string(),
+        "--max-pages".to_string(),
+        args.max_pages.to_string(),
+        "--max-retries".to_string(),
+        args.max_retries.to_string(),
+        "--api-url".to_string(),
+        shell_word(args.api_url.as_str()),
+    ];
+
+    if let Some(project_id) = &args.project_id {
+        parts.push("--project-id".to_string());
+        parts.push(shell_word(project_id));
+    }
+    if let Some(environment) = &args.environment {
+        parts.push("--environment".to_string());
+        parts.push(shell_word(environment));
+    }
+    if !args.include.is_empty() {
+        parts.push("--include".to_string());
+        parts.push(shell_word(args.include.join(",")));
+    }
+    if args.continue_on_error {
+        parts.push("--continue-on-error".to_string());
+    }
+    if args.allow_unauthenticated {
+        parts.push("--allow-unauthenticated".to_string());
+    }
+
+    parts.join(" ")
+}
+
+fn shell_word(value: impl AsRef<str>) -> String {
+    let value = value.as_ref();
+    if !value.is_empty()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(byte, b'/' | b'.' | b'_' | b'-' | b':' | b'@' | b'=')
+        })
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+pub fn print_llms_guide(json_output: bool) -> Result<(), ProductSurfaceError> {
+    print_output(
+        &json!({
+            "status": "ok",
+            "data": llms_guide(),
+            "next_actions": [
+                "pcl doctor",
+                "pcl api manifest --json",
+                "pcl completions bash > ~/.local/share/bash-completion/completions/pcl",
+                "pcl jobs list",
+            ],
+        }),
+        json_output,
+    )
+}
+
+fn llms_guide() -> Value {
+    json!({
+        "name": "pcl",
+        "purpose": "CLI-native control surface for Credible Layer API investigation and assertion workflows.",
+        "default_output": "toon",
+        "json_flag": "--json",
+        "no_mcp_required": true,
+        "principles": [
+            "Use top-level workflow commands first.",
+            "Use pcl api list/inspect/call as the raw OpenAPI escape hatch.",
+            "Treat every output as an envelope with status, data, error, and next_actions.",
+            "Use JSONL export artifacts for long investigations.",
+            "Use request IDs from errors and pcl requests for audit trails."
+        ],
+        "orientation": [
+            {
+                "goal": "Check local readiness and auth truthfulness",
+                "commands": ["pcl doctor", "pcl whoami", "pcl auth status --json"]
+            },
+            {
+                "goal": "Discover available workflows",
+                "commands": ["pcl workflows", "pcl schema list", "pcl api manifest --json"]
+            },
+            {
+                "goal": "Inspect raw API shape",
+                "commands": ["pcl api list --filter incidents --json", "pcl api inspect <operation-id> --json"]
+            },
+            {
+                "goal": "Run raw calls",
+                "commands": ["pcl api call get /health --allow-unauthenticated", "pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated"]
+            },
+            {
+                "goal": "Export resumable incident data",
+                "commands": ["pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --resume", "pcl jobs list"]
+            }
+        ],
+        "command_surfaces": {
+            "workflows": ["pcl incidents", "pcl projects", "pcl assertions", "pcl account", "pcl contracts", "pcl releases", "pcl deployments", "pcl access", "pcl integrations", "pcl protocol-manager", "pcl transfers", "pcl events", "pcl search"],
+            "discovery": ["pcl --llms", "pcl llms", "pcl workflows", "pcl schema", "pcl api manifest", "pcl api list", "pcl api inspect"],
+            "execution": ["pcl api call", "pcl export incidents"],
+            "state": ["pcl artifacts", "pcl requests", "pcl jobs"],
+            "shell": ["pcl completions bash", "pcl completions zsh", "pcl completions fish"]
+        },
+        "output_contract": {
+            "default": "TOON envelope",
+            "json": "Pass --json for pretty JSON envelopes.",
+            "errors": "Parser, auth, config, validation, network, and API failures return structured envelopes and nonzero exit codes.",
+            "long_running": "Export commands write JSONL artifacts, error files, checkpoints, and job records."
+        },
+    })
 }
 
 fn list_artifacts(dir: &Path, limit: usize) -> Result<Vec<Value>, ProductSurfaceError> {
@@ -1155,5 +1555,108 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(artifact_dir(&args), temp.path().join("artifacts"));
+    }
+
+    #[test]
+    fn llms_guide_advertises_cli_native_surfaces() {
+        let guide = llms_guide();
+
+        assert_eq!(guide["default_output"], "toon");
+        assert_eq!(guide["no_mcp_required"], true);
+        assert!(
+            guide["command_surfaces"]["discovery"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|command| command == "pcl --llms")
+        );
+        assert!(
+            guide["command_surfaces"]["state"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|command| command == "pcl jobs")
+        );
+    }
+
+    #[test]
+    fn jobs_are_stored_as_latest_jsonl_records() {
+        let temp = tempdir().unwrap();
+        let args = CliArgs {
+            config_dir: Some(temp.path().to_path_buf()),
+            ..Default::default()
+        };
+        let out = temp.path().join("incidents.jsonl");
+        let errors = temp.path().join("errors.jsonl");
+        let checkpoint = temp.path().join("checkpoint.json");
+
+        append_job_record(
+            &args,
+            &job_record(
+                "incident-export-test",
+                "incident_export",
+                "running",
+                "pcl export incidents --resume",
+                &out,
+                &errors,
+                &checkpoint,
+            ),
+        )
+        .unwrap();
+        append_job_record(
+            &args,
+            &job_record(
+                "incident-export-test",
+                "incident_export",
+                "completed",
+                "pcl export incidents --resume",
+                &out,
+                &errors,
+                &checkpoint,
+            ),
+        )
+        .unwrap();
+
+        let jobs = list_jobs(&args, 20).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0]["job_id"], "incident-export-test");
+        assert_eq!(jobs[0]["status"], "completed");
+        assert_eq!(
+            find_job(&args, "incident-export-test").unwrap()["status"],
+            "completed"
+        );
+    }
+
+    #[test]
+    fn incident_export_resume_command_quotes_paths() {
+        let args = ExportIncidentsArgs {
+            project_id: Some("project one".to_string()),
+            environment: Some("production".to_string()),
+            include: vec!["transactions".to_string(), "traces".to_string()],
+            page: 1,
+            limit: 50,
+            max_pages: 10,
+            out: None,
+            errors: None,
+            checkpoint: None,
+            resume: false,
+            continue_on_error: true,
+            max_retries: 3,
+            dry_run: false,
+            api_url: DEFAULT_PLATFORM_URL.parse().unwrap(),
+            allow_unauthenticated: false,
+        };
+
+        let command = incident_export_resume_command(
+            &args,
+            Path::new("/tmp/pcl artifacts/incidents.jsonl"),
+            Path::new("/tmp/pcl artifacts/errors.jsonl"),
+            Path::new("/tmp/pcl artifacts/checkpoint.json"),
+        );
+
+        assert!(command.contains("--resume"));
+        assert!(command.contains("'project one'"));
+        assert!(command.contains("'/tmp/pcl artifacts/incidents.jsonl'"));
+        assert!(command.contains("--continue-on-error"));
     }
 }

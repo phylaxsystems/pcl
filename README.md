@@ -19,7 +19,9 @@ brew install phylax/pcl/phylax
 | `pcl access`, `pcl integrations`, `pcl protocol-manager`, `pcl transfers`, `pcl events`, `pcl search` | Access control, integrations, protocol manager, transfer, audit, and search workflows |
 | `pcl doctor`, `pcl whoami` | Diagnose local/API readiness and inspect identity state |
 | `pcl workflows`, `pcl schema` | Agent-facing workflow recipes and command/action schemas |
-| `pcl export`, `pcl artifacts`, `pcl requests` | Export JSONL artifacts and inspect local API request logs |
+| `pcl --llms`, `pcl llms` | Print the CLI-native LLM usage guide |
+| `pcl export`, `pcl jobs`, `pcl artifacts`, `pcl requests` | Export JSONL artifacts and inspect local jobs, artifacts, and request logs |
+| `pcl completions` | Generate shell completion scripts |
 | `pcl api` | Discover, inspect, and call raw platform API endpoints |
 | `pcl auth` | Authenticate with the Credible Layer platform |
 | `pcl config` | Manage CLI configuration |
@@ -41,6 +43,8 @@ a nonzero structured error so agents do not mistake stale credentials for a work
 
 ```bash
 # Print an agent-readable command manifest
+pcl --llms
+pcl --json --llms
 pcl api manifest
 pcl api manifest --json
 
@@ -79,10 +83,14 @@ pcl whoami
 pcl workflows
 pcl workflows show incident-investigation
 pcl schema get incidents --action list_public
+pcl completions zsh > ~/.zfunc/_pcl
 
 # Export investigation artifacts and inspect provenance
 pcl export incidents --project-id <project-ref> --environment production --out incidents.jsonl --errors errors.jsonl --resume
 pcl export incidents --project-id <project-ref> --dry-run
+pcl jobs list
+pcl jobs status <job-id>
+pcl jobs resume <job-id>
 pcl artifacts list
 pcl requests list --limit 20
 
