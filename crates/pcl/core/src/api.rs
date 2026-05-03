@@ -1720,6 +1720,9 @@ impl ApiArgs {
             return Ok(template_envelope(project_body_template(args)));
         }
         let request = projects_request(args)?;
+        if self.dry_run {
+            return Ok(dry_run_envelope(self.workflow_request_plan(&request, None)));
+        }
         let result = self.call_workflow_result(config, &request).await?;
         let next_actions = projects_next_actions(&result.body, request.next_actions);
         Ok(workflow_success_envelope(result, next_actions))
@@ -1734,6 +1737,9 @@ impl ApiArgs {
             return Ok(template_envelope(assertions_body_template(args)));
         }
         let request = assertions_request(args)?;
+        if self.dry_run {
+            return Ok(dry_run_envelope(self.workflow_request_plan(&request, None)));
+        }
         let result = self.call_workflow_result(config, &request).await?;
         let next_actions = assertions_next_actions(&result.body, args, request.next_actions);
         Ok(workflow_success_envelope(result, next_actions))
@@ -1826,9 +1832,10 @@ impl ApiArgs {
     }
 
     fn auth_plan(&self, require_auth: bool) -> Value {
+        let will_attach_stored_token = require_auth && !self.allow_unauthenticated;
         json!({
-            "required": require_auth && !self.allow_unauthenticated,
-            "will_attach_stored_token": !self.allow_unauthenticated,
+            "required": will_attach_stored_token,
+            "will_attach_stored_token": will_attach_stored_token,
             "allow_unauthenticated": self.allow_unauthenticated,
         })
     }
@@ -1929,11 +1936,8 @@ impl ApiArgs {
     ) -> Result<WorkflowCallResult, ApiCommandError> {
         let path = self.normalize_project_path(config, &request.path).await?;
         let url = self.api_url(&path)?;
-        let client = self.http_client(
-            config,
-            !self.allow_unauthenticated,
-            request.require_auth && !self.allow_unauthenticated,
-        )?;
+        let requires_auth = request.require_auth && !self.allow_unauthenticated;
+        let client = self.http_client(config, requires_auth, requires_auth)?;
         let mut builder = client.request(request.method.reqwest(), url);
         if !request.query.is_empty() {
             builder = builder.query(&request.query);
@@ -1993,6 +1997,11 @@ impl ApiArgs {
         if request.method.openapi_key() != "get" {
             return Err(ApiCommandError::InvalidWorkflow {
                 message: "--all is only supported for GET list workflows".to_string(),
+            });
+        }
+        if limit == 0 {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: "--limit must be greater than zero".to_string(),
             });
         }
         if max_pages == 0 {
@@ -4105,7 +4114,9 @@ fn write_table_row(item: &Value, columns: &[String], indent: usize, output: &mut
 
 fn is_toon_scalar(value: &Value) -> bool {
     matches!(value, Value::Null | Value::Bool(_) | Value::Number(_))
-        || value.as_str().is_some_and(|value| !value.contains('\n'))
+        || value
+            .as_str()
+            .is_some_and(|value| !value.contains('\n') && !value.contains(','))
 }
 
 fn scalar_to_string(value: &Value) -> String {
@@ -4847,7 +4858,13 @@ fn synthetic_operation_id(method: HttpMethod, path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::UserAuth;
+    use chrono::{
+        TimeZone,
+        Utc,
+    };
     use clap::Parser;
+    use mockito::Matcher;
 
     fn assertions_args(project_id: Option<&str>) -> AssertionsArgs {
         AssertionsArgs {
@@ -5371,6 +5388,120 @@ mod tests {
         assert_eq!(data["items"][2]["id"], "i3");
         page_1.assert_async().await;
         page_2.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn incident_workflow_pagination_rejects_zero_limit() {
+        let api = ApiArgs {
+            command: ApiCommand::Manifest,
+            api_url: "https://app.phylax.systems".parse().unwrap(),
+            allow_unauthenticated: true,
+            dry_run: false,
+        };
+        let request = WorkflowRequest::get("/views/public/incidents", false, Vec::new());
+
+        let error = api
+            .call_workflow_paginated(&CliConfig::default(), request, "incidents", 1, 0, 5)
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("--limit must be greater than zero")
+        );
+    }
+
+    #[tokio::test]
+    async fn public_workflows_do_not_attach_expired_stored_tokens() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/v1/health")
+            .match_header("authorization", Matcher::Missing)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"healthy":true}"#)
+            .create_async()
+            .await;
+        let api = ApiArgs {
+            command: ApiCommand::Manifest,
+            api_url: server.url().parse().unwrap(),
+            allow_unauthenticated: false,
+            dry_run: false,
+        };
+        let config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "expired-token".to_string(),
+                refresh_token: "refresh-token".to_string(),
+                expires_at: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+                user_id: None,
+                wallet_address: None,
+                email: Some("agent@example.com".to_string()),
+            }),
+        };
+
+        let output = api
+            .run_workflow(
+                &config,
+                WorkflowRequest::get(
+                    "/health",
+                    false,
+                    vec!["pcl api search --health".to_string()],
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output["status"], "ok");
+        assert_eq!(output["request"]["auth"]["will_attach_stored_token"], false);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn dry_run_projects_and_assertions_do_not_execute_requests() {
+        let api = ApiArgs {
+            command: ApiCommand::Manifest,
+            api_url: "https://app.phylax.systems".parse().unwrap(),
+            allow_unauthenticated: false,
+            dry_run: true,
+        };
+
+        let project_output = api
+            .run_projects(
+                &CliConfig::default(),
+                &ProjectsArgs {
+                    create: true,
+                    project_name: Some("Demo".to_string()),
+                    chain_id: Some(1),
+                    ..projects_args()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(project_output["status"], "ok");
+        assert_eq!(project_output["data"]["dry_run"], true);
+        assert_eq!(project_output["data"]["request"]["method"], "POST");
+        assert_eq!(project_output["data"]["request"]["path"], "/projects");
+
+        let assertion_output = api
+            .run_assertions(
+                &CliConfig::default(),
+                &AssertionsArgs {
+                    project_id: Some("project-1".to_string()),
+                    submit: true,
+                    body: Some(r#"{"assertions":[]}"#.to_string()),
+                    ..assertions_args(None)
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(assertion_output["status"], "ok");
+        assert_eq!(assertion_output["data"]["dry_run"], true);
+        assert_eq!(assertion_output["data"]["request"]["method"], "POST");
+        assert_eq!(
+            assertion_output["data"]["request"]["path"],
+            "/projects/project-1/submitted-assertions"
+        );
     }
 
     #[test]
@@ -6260,6 +6391,22 @@ mod tests {
         assert!(output.contains("data:"));
         assert!(output.contains("healthy: true"));
         assert!(output.contains("next_actions[1]:"));
+    }
+
+    #[test]
+    fn toon_table_mode_avoids_comma_containing_strings() {
+        let output = toon_string(&json!({
+            "items": [
+                {
+                    "id": "project-1",
+                    "name": "Alpha, Beta"
+                }
+            ]
+        }));
+
+        assert!(output.contains("items[1]:"));
+        assert!(output.contains("name: Alpha, Beta"));
+        assert!(!output.contains("items[1]{"));
     }
 
     #[test]

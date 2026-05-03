@@ -85,7 +85,7 @@ impl AuthCommand {
     /// Execute the authentication command
     pub async fn run(&self, config: &mut CliConfig, json_output: bool) -> Result<(), AuthError> {
         match &self.command {
-            AuthSubcommands::Login => self.login(config).await,
+            AuthSubcommands::Login => self.login(config, json_output).await,
             AuthSubcommands::Logout => {
                 Self::logout(config);
                 Self::print_output(
@@ -106,31 +106,34 @@ impl AuthCommand {
     }
 
     /// Initiate the login process and wait for user authentication
-    async fn login(&self, config: &mut CliConfig) -> Result<(), AuthError> {
+    async fn login(&self, config: &mut CliConfig, json_output: bool) -> Result<(), AuthError> {
+        let mut expired_auth = None;
         if let Some(auth) = &config.auth {
             if auth.expires_at > chrono::Utc::now() {
-                println!(
-                    "{} Already logged in as: {}",
-                    "ℹ️".blue(),
-                    auth.display_name()
-                );
-                println!(
-                    "Please use {} first to login with a different account",
-                    "pcl auth logout".yellow()
-                );
+                Self::print_output(&self.status_envelope(config), json_output)?;
                 return Ok(());
             }
-            println!(
-                "{} Stored auth token expired at {}. Starting a fresh login.",
-                "⚠️".yellow(),
-                auth.expires_at.to_rfc3339()
-            );
+            expired_auth = Some(auth.expires_at);
+            if !json_output {
+                println!(
+                    "{} Stored auth token expired at {}. Starting a fresh login.",
+                    "⚠️".yellow(),
+                    auth.expires_at.to_rfc3339()
+                );
+            }
         }
 
         let client = self.api_client();
         let auth_response = Self::request_auth_code(&client).await?;
-        self.display_login_instructions(&auth_response);
-        self.wait_for_verification(config, &client, &auth_response)
+        if json_output {
+            Self::print_output(
+                &self.login_instructions_envelope(&auth_response, expired_auth),
+                true,
+            )?;
+        } else {
+            self.display_login_instructions(&auth_response);
+        }
+        self.wait_for_verification(config, &client, &auth_response, json_output)
             .await
     }
 
@@ -177,6 +180,35 @@ impl AuthCommand {
         }
     }
 
+    fn login_instructions_envelope(
+        &self,
+        auth_response: &GetCliAuthCodeResponse,
+        previous_token_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Value {
+        let mut device_url = self.auth_url.clone();
+        device_url.set_path("/device");
+        device_url
+            .query_pairs_mut()
+            .append_pair("session_id", &auth_response.session_id.to_string());
+        with_envelope_metadata(json!({
+            "status": "ok",
+            "data": {
+                "state": "login_instructions",
+                "device_url": device_url.as_str(),
+                "code": auth_response.code.as_str(),
+                "session_id": auth_response.session_id.to_string(),
+                "expires_at": auth_response.expires_at.to_rfc3339(),
+                "previous_token_expired_at": previous_token_expires_at.map(|expires_at| expires_at.to_rfc3339()),
+                "browser_opened": false,
+                "waiting_for_verification": true,
+            },
+            "next_actions": [
+                "Open data.device_url and enter data.code",
+                "Wait for this command to finish",
+            ],
+        }))
+    }
+
     fn should_open_browser() -> bool {
         !cfg!(test) && std::env::var_os("PCL_AUTH_NO_BROWSER").is_none()
     }
@@ -187,8 +219,13 @@ impl AuthCommand {
         config: &mut CliConfig,
         client: &GeneratedClient,
         auth_response: &GetCliAuthCodeResponse,
+        json_output: bool,
     ) -> Result<(), AuthError> {
-        let spinner = ProgressBar::new_spinner();
+        let spinner = if json_output {
+            ProgressBar::hidden()
+        } else {
+            ProgressBar::new_spinner()
+        };
         spinner.set_style(
             ProgressStyle::default_spinner()
                 .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
@@ -203,7 +240,11 @@ impl AuthCommand {
         for _ in 0..MAX_RETRIES {
             // Stop polling once the session has expired
             if chrono::Utc::now() >= auth_response.expires_at {
-                spinner.finish_with_message("❌ Session expired");
+                if json_output {
+                    spinner.finish_and_clear();
+                } else {
+                    spinner.finish_with_message("❌ Session expired");
+                }
                 return Err(AuthError::SessionExpired);
             }
 
@@ -217,7 +258,11 @@ impl AuthCommand {
                 }
                 // Terminal errors — stop immediately
                 Err(e) => {
-                    spinner.finish_with_message(format!("❌ {e}"));
+                    if json_output {
+                        spinner.finish_and_clear();
+                    } else {
+                        spinner.finish_with_message(format!("❌ {e}"));
+                    }
                     return Err(e);
                 }
             };
@@ -236,7 +281,11 @@ impl AuthCommand {
                     .address
                     .and_then(|a| a.to_string().parse::<Address>().ok());
 
-                spinner.finish_with_message("✅ Authentication successful!");
+                if json_output {
+                    spinner.finish_and_clear();
+                } else {
+                    spinner.finish_with_message("✅ Authentication successful!");
+                }
                 config.auth = Some(UserAuth {
                     access_token: token,
                     refresh_token,
@@ -245,7 +294,9 @@ impl AuthCommand {
                     wallet_address,
                     email: status.email,
                 });
-                Self::display_success_message(config)?;
+                if !json_output {
+                    Self::display_success_message(config)?;
+                }
                 return Ok(());
             }
 
@@ -253,7 +304,11 @@ impl AuthCommand {
             sleep(POLL_INTERVAL).await;
         }
 
-        spinner.finish_with_message("❌ Authentication timed out");
+        if json_output {
+            spinner.finish_and_clear();
+        } else {
+            spinner.finish_with_message("❌ Authentication timed out");
+        }
         Err(AuthError::Timeout(MAX_RETRIES))
     }
 
@@ -415,6 +470,35 @@ mod tests {
     #[test]
     fn test_login_instructions_do_not_open_browser_in_tests() {
         assert!(!AuthCommand::should_open_browser());
+    }
+
+    #[test]
+    fn test_login_instructions_envelope_is_structured() {
+        let cmd = AuthCommand {
+            command: AuthSubcommands::Login,
+            auth_url: "https://app.phylax.systems".parse().unwrap(),
+        };
+        let auth_response: GetCliAuthCodeResponse =
+            serde_json::from_str(test_auth_response_json()).unwrap();
+
+        let output = cmd.login_instructions_envelope(
+            &auth_response,
+            Some(Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap()),
+        );
+
+        assert_eq!(output["status"], "ok");
+        assert_eq!(output["data"]["state"], "login_instructions");
+        assert_eq!(
+            output["data"]["device_url"],
+            "https://app.phylax.systems/device?session_id=550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(output["data"]["code"], "123456");
+        assert_eq!(output["data"]["browser_opened"], false);
+        assert_eq!(output["data"]["waiting_for_verification"], true);
+        assert_eq!(
+            output["data"]["previous_token_expired_at"],
+            "2020-01-01T00:00:00+00:00"
+        );
     }
 
     #[test]
@@ -618,7 +702,7 @@ mod tests {
         ])
         .unwrap();
 
-        let result = cmd.login(&mut config).await;
+        let result = cmd.login(&mut config, false).await;
         assert!(result.is_ok());
         assert_eq!(
             config.auth.as_ref().unwrap().wallet_address,
@@ -684,7 +768,7 @@ mod tests {
         .unwrap();
 
         let result = cmd
-            .wait_for_verification(&mut config, &client, &expired_response)
+            .wait_for_verification(&mut config, &client, &expired_response, false)
             .await;
 
         assert!(result.is_err());
@@ -877,7 +961,7 @@ mod tests {
         .unwrap();
 
         let result = cmd
-            .wait_for_verification(&mut config, &client, &auth_response)
+            .wait_for_verification(&mut config, &client, &auth_response, false)
             .await;
 
         assert!(
@@ -935,7 +1019,7 @@ mod tests {
         .unwrap();
 
         let result = cmd
-            .wait_for_verification(&mut config, &client, &auth_response)
+            .wait_for_verification(&mut config, &client, &auth_response, false)
             .await;
 
         assert!(
@@ -1008,7 +1092,7 @@ mod tests {
         .unwrap();
 
         let result = cmd
-            .wait_for_verification(&mut config, &client, &auth_response)
+            .wait_for_verification(&mut config, &client, &auth_response, false)
             .await;
 
         assert!(
