@@ -1,6 +1,4 @@
 #![allow(
-    clippy::format_push_string,
-    clippy::map_unwrap_or,
     clippy::missing_errors_doc,
     clippy::struct_excessive_bools,
     clippy::too_many_lines
@@ -938,8 +936,7 @@ fn artifact_dir(cli_args: &CliArgs) -> PathBuf {
 
 fn jobs_path(cli_args: &CliArgs) -> PathBuf {
     std::env::var_os(JOBS_FILE_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| artifact_dir(cli_args).join("jobs.jsonl"))
+        .map_or_else(|| artifact_dir(cli_args).join("jobs.jsonl"), PathBuf::from)
 }
 
 fn append_job_record(cli_args: &CliArgs, record: &Value) -> Result<(), ProductSurfaceError> {

@@ -1,9 +1,6 @@
 #![allow(
-    clippy::format_push_string,
-    clippy::map_unwrap_or,
     clippy::match_same_arms,
     clippy::needless_pass_by_value,
-    clippy::ref_option,
     clippy::struct_excessive_bools,
     clippy::too_many_lines,
     clippy::unnested_or_patterns,
@@ -30,6 +27,7 @@ use serde_json::{
     json,
 };
 use std::{
+    fmt::Write as _,
     fs,
     io::Read,
     path::PathBuf,
@@ -715,7 +713,7 @@ struct ApiRequestInput<'a> {
     query: &'a [String],
     header: &'a [String],
     body: Option<&'a str>,
-    body_file: &'a Option<PathBuf>,
+    body_file: Option<&'a PathBuf>,
     require_auth: bool,
 }
 
@@ -1632,7 +1630,7 @@ impl ApiArgs {
                     query,
                     header,
                     body: body.as_deref(),
-                    body_file,
+                    body_file: body_file.as_ref(),
                     require_auth: !self.allow_unauthenticated,
                 };
                 let pagination = paginate.as_ref().map(|item_field| {
@@ -2101,14 +2099,6 @@ impl ApiArgs {
         }))
     }
 
-    async fn call_workflow(
-        &self,
-        config: &CliConfig,
-        request: &WorkflowRequest,
-    ) -> Result<Value, ApiCommandError> {
-        Ok(self.call_workflow_result(config, request).await?.body)
-    }
-
     async fn call_workflow_result(
         &self,
         config: &CliConfig,
@@ -2206,7 +2196,7 @@ impl ApiArgs {
             let mut page_request = request.clone();
             upsert_query(&mut page_request.query, "page", page.to_string());
             upsert_query(&mut page_request.query, "limit", limit.to_string());
-            let data = self.call_workflow(config, &page_request).await?;
+            let data = self.call_workflow_result(config, &page_request).await?.body;
             let page_items = extract_paginated_items(&data, item_field).ok_or_else(|| {
                 ApiCommandError::InvalidWorkflow {
                     message: format!(
@@ -2761,12 +2751,12 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
             "pcl contracts --project <project-ref>".to_string(),
         ],
     );
-    push_query_string(&mut request.query, "query", &args.query);
+    push_query_string(&mut request.query, "query", args.query.as_deref());
     Ok(request)
 }
 
 fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, ApiCommandError> {
-    let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
+    let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     if args.accept_terms {
         return Ok(workflow_with_body(
             HttpMethod::Post,
@@ -2796,7 +2786,7 @@ fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, ApiCommandErro
 }
 
 fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommandError> {
-    let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
+    let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     if args.create {
         return Ok(workflow_with_body(
             HttpMethod::Post,
@@ -2869,7 +2859,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
 }
 
 fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandError> {
-    let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
+    let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     let project = required_arg(args.project.as_deref(), "--project")?;
     if args.preview {
         return Ok(workflow_with_body(
@@ -2955,7 +2945,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
 }
 
 fn deployments_request(args: &DeploymentsArgs) -> Result<WorkflowRequest, ApiCommandError> {
-    let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
+    let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     let project = required_arg(args.project.as_deref(), "--project")?;
     if args.confirm {
         return Ok(workflow_with_body(
@@ -2974,7 +2964,7 @@ fn deployments_request(args: &DeploymentsArgs) -> Result<WorkflowRequest, ApiCom
 }
 
 fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError> {
-    let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
+    let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     if args.pending {
         return Ok(WorkflowRequest::get(
             "/invitations/pending",
@@ -3081,7 +3071,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
 }
 
 fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiCommandError> {
-    let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
+    let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     let project = required_arg(args.project.as_deref(), "--project")?;
     let Some(provider) = args.provider else {
         return Err(ApiCommandError::InvalidWorkflow {
@@ -3138,7 +3128,7 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
 fn protocol_manager_request(
     args: &ProtocolManagerArgs,
 ) -> Result<WorkflowRequest, ApiCommandError> {
-    let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
+    let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     let project = required_arg(args.project.as_deref(), "--project")?;
     let base = format!("/projects/{project}/protocol-manager");
     if args.nonce {
@@ -3221,7 +3211,7 @@ fn protocol_manager_request(
 }
 
 fn transfers_request(args: &TransfersArgs) -> Result<WorkflowRequest, ApiCommandError> {
-    let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
+    let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     if args.reject {
         return Ok(workflow_with_body(
             HttpMethod::Post,
@@ -3261,7 +3251,11 @@ fn events_request(args: &EventsArgs) -> WorkflowRequest {
     };
     push_query(&mut request.query, "page", args.page);
     push_query(&mut request.query, "limit", args.limit);
-    push_query_string(&mut request.query, "environment", &args.environment);
+    push_query_string(
+        &mut request.query,
+        "environment",
+        args.environment.as_deref(),
+    );
     request
 }
 
@@ -3284,7 +3278,7 @@ fn workflow_with_body(
 
 fn request_body(
     body: Option<&str>,
-    body_file: &Option<PathBuf>,
+    body_file: Option<&PathBuf>,
     fields: &[String],
 ) -> Result<Option<String>, ApiCommandError> {
     let body = read_body(body, body_file)?;
@@ -3292,7 +3286,7 @@ fn request_body(
 }
 
 fn project_request_body(args: &ProjectsArgs) -> Result<Option<String>, ApiCommandError> {
-    let body = read_body(args.body.as_deref(), &args.body_file)?;
+    let body = read_body(args.body.as_deref(), args.body_file.as_ref())?;
     let mut object = match body {
         Some(body) => serde_json::from_str::<Value>(&body)?,
         None => Value::Object(Map::new()),
@@ -3796,11 +3790,15 @@ fn incidents_request(args: &IncidentsArgs) -> Result<WorkflowRequest, ApiCommand
                 )],
             });
         }
-        push_query_string(&mut query, "assertionId", &args.assertion_id);
-        push_query_string(&mut query, "assertionAdopterId", &args.assertion_adopter_id);
-        push_query_string(&mut query, "environment", &args.environment);
-        push_query_string(&mut query, "fromDate", &args.from_date);
-        push_query_string(&mut query, "toDate", &args.to_date);
+        push_query_string(&mut query, "assertionId", args.assertion_id.as_deref());
+        push_query_string(
+            &mut query,
+            "assertionAdopterId",
+            args.assertion_adopter_id.as_deref(),
+        );
+        push_query_string(&mut query, "environment", args.environment.as_deref());
+        push_query_string(&mut query, "fromDate", args.from_date.as_deref());
+        push_query_string(&mut query, "toDate", args.to_date.as_deref());
         let path = format!("/views/projects/{project_id}/incidents");
         return Ok(WorkflowRequest {
             method: HttpMethod::Get,
@@ -3816,8 +3814,8 @@ fn incidents_request(args: &IncidentsArgs) -> Result<WorkflowRequest, ApiCommand
     }
 
     push_query(&mut query, "network", args.network);
-    push_query_string(&mut query, "sort", &args.sort);
-    push_query_string(&mut query, "devMode", &args.dev_mode);
+    push_query_string(&mut query, "sort", args.sort.as_deref());
+    push_query_string(&mut query, "devMode", args.dev_mode.as_deref());
     Ok(WorkflowRequest {
         method: HttpMethod::Get,
         path: "/views/public/incidents".to_string(),
@@ -3839,26 +3837,22 @@ fn incidents_next_actions(
     if args.incident_id.is_some() {
         return fallback;
     }
-    first_string_field(data, &["id", "incidentId", "incident_id"])
-        .map(|incident_id| {
-            vec![
-                format!("pcl incidents --incident-id {incident_id}"),
-                "pcl projects --limit 10".to_string(),
-            ]
-        })
-        .unwrap_or(fallback)
+    first_string_field(data, &["id", "incidentId", "incident_id"]).map_or(fallback, |incident_id| {
+        vec![
+            format!("pcl incidents --incident-id {incident_id}"),
+            "pcl projects --limit 10".to_string(),
+        ]
+    })
 }
 
 fn projects_next_actions(data: &Value, fallback: Vec<String>) -> Vec<String> {
-    first_string_field(data, &["project_id", "projectId", "id"])
-        .map(|project_id| {
-            vec![
-                format!("pcl projects --project-id {project_id}"),
-                format!("pcl assertions --project-id {project_id}"),
-                format!("pcl incidents --project-id {project_id} --limit 10"),
-            ]
-        })
-        .unwrap_or(fallback)
+    first_string_field(data, &["project_id", "projectId", "id"]).map_or(fallback, |project_id| {
+        vec![
+            format!("pcl projects --project-id {project_id}"),
+            format!("pcl assertions --project-id {project_id}"),
+            format!("pcl incidents --project-id {project_id} --limit 10"),
+        ]
+    })
 }
 
 fn assertions_next_actions(
@@ -3871,18 +3865,20 @@ fn assertions_next_actions(
             data,
             &["assertion_adopter_address", "adopter_address", "address"],
         )
-        .map(|address| vec![format!("pcl assertions --adopter-address {address}")])
-        .unwrap_or(fallback);
+        .map_or(fallback, |address| {
+            vec![format!("pcl assertions --adopter-address {address}")]
+        });
     };
 
-    first_string_field(data, &["assertion_id", "assertionId", "id"])
-        .map(|assertion_id| {
+    first_string_field(data, &["assertion_id", "assertionId", "id"]).map_or(
+        fallback,
+        |assertion_id| {
             vec![
                 format!("pcl assertions --project-id {project_id} --assertion-id {assertion_id}",),
                 format!("pcl incidents --project-id {project_id} --assertion-id {assertion_id}",),
             ]
-        })
-        .unwrap_or(fallback)
+        },
+    )
 }
 
 fn first_string_field(value: &Value, keys: &[&str]) -> Option<String> {
@@ -3910,7 +3906,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
     let mut query = Vec::new();
     push_query(&mut query, "page", args.page);
     push_query(&mut query, "limit", args.limit);
-    push_query_string(&mut query, "search", &args.search);
+    push_query_string(&mut query, "search", args.search.as_deref());
     let body = project_request_body(args)?;
 
     if args.create {
@@ -4029,7 +4025,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
 }
 
 fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiCommandError> {
-    let body = request_body(args.body.as_deref(), &args.body_file, &args.field)?;
+    let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
 
     if let Some(adopter_address) = &args.adopter_address {
         let mut request = WorkflowRequest::get(
@@ -4042,8 +4038,12 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
             "adopter_address",
             adopter_address.clone(),
         );
-        push_query_string(&mut request.query, "network", &args.network);
-        push_query_string(&mut request.query, "environment", &args.environment);
+        push_query_string(&mut request.query, "network", args.network.as_deref());
+        push_query_string(
+            &mut request.query,
+            "environment",
+            args.environment.as_deref(),
+        );
         push_query(
             &mut request.query,
             "include_onchain_only",
@@ -4056,8 +4056,8 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
     let mut query = Vec::new();
     push_query(&mut query, "page", args.page);
     push_query(&mut query, "limit", args.limit);
-    push_query_string(&mut query, "assertionAdopterId", &args.adopter_id);
-    push_query_string(&mut query, "environment", &args.environment);
+    push_query_string(&mut query, "assertionAdopterId", args.adopter_id.as_deref());
+    push_query_string(&mut query, "environment", args.environment.as_deref());
 
     if args.submit {
         return Ok(workflow_with_body(
@@ -4135,9 +4135,9 @@ fn push_query<T: ToString>(query: &mut Vec<(String, String)>, name: &str, value:
     }
 }
 
-fn push_query_string(query: &mut Vec<(String, String)>, name: &str, value: &Option<String>) {
+fn push_query_string(query: &mut Vec<(String, String)>, name: &str, value: Option<&str>) {
     if let Some(value) = value {
-        query.push((name.to_string(), value.clone()));
+        query.push((name.to_string(), value.to_string()));
     }
 }
 
@@ -4248,14 +4248,14 @@ fn parse_headers(entries: &[String]) -> Result<HeaderMap, ApiCommandError> {
 
 fn read_body(
     body: Option<&str>,
-    body_file: &Option<PathBuf>,
+    body_file: Option<&PathBuf>,
 ) -> Result<Option<String>, ApiCommandError> {
     if let Some(body) = body {
         return Ok(Some(body.to_string()));
     }
 
     if let Some(path) = body_file {
-        if path == &PathBuf::from("-") {
+        if path.as_os_str() == "-" {
             let mut body = String::new();
             std::io::stdin()
                 .read_to_string(&mut body)
@@ -4341,8 +4341,7 @@ fn list_operations(
             let operation_id = operation
                 .get("operationId")
                 .and_then(Value::as_str)
-                .map(ToString::to_string)
-                .unwrap_or_else(|| synthetic_operation_id(method, path));
+                .map_or_else(|| synthetic_operation_id(method, path), ToString::to_string);
             let summary = operation
                 .get("summary")
                 .and_then(Value::as_str)
@@ -4428,8 +4427,7 @@ fn inspect_operation(
         let operation_id = operation
             .get("operationId")
             .and_then(Value::as_str)
-            .map(ToString::to_string)
-            .unwrap_or_else(|| synthetic_operation_id(method, path));
+            .map_or_else(|| synthetic_operation_id(method, path), ToString::to_string);
         return Ok(operation_manifest(
             operation_id,
             method,
@@ -4457,8 +4455,10 @@ fn inspect_operation(
             let candidate_id = candidate
                 .get("operationId")
                 .and_then(Value::as_str)
-                .map(ToString::to_string)
-                .unwrap_or_else(|| synthetic_operation_id(method, candidate_path));
+                .map_or_else(
+                    || synthetic_operation_id(method, candidate_path),
+                    ToString::to_string,
+                );
             if candidate_id == operation {
                 return Ok(operation_manifest(
                     candidate_id,
@@ -4562,8 +4562,7 @@ fn request_body_manifest(operation: &Value) -> Value {
             .unwrap_or_default(),
         "schema_type": body
             .pointer("/content/application~1json/schema")
-            .map(compact_schema_type)
-            .unwrap_or_else(|| "unknown".to_string()),
+            .map_or_else(|| "unknown".to_string(), compact_schema_type),
     })
 }
 
@@ -4651,8 +4650,7 @@ fn schema_variant_name(schema: &Value, index: usize) -> String {
         .pointer("/properties/mode/const")
         .or_else(|| schema.pointer("/properties/mode/enum/0"))
         .and_then(Value::as_str)
-        .map(ToString::to_string)
-        .unwrap_or_else(|| format!("variant_{}", index + 1))
+        .map_or_else(|| format!("variant_{}", index + 1), ToString::to_string)
 }
 
 fn compact_schema_type(schema: &Value) -> String {
@@ -4690,8 +4688,7 @@ fn template_from_schema(schema: &Value) -> Value {
             Value::Array(vec![
                 schema
                     .get("items")
-                    .map(template_from_schema)
-                    .unwrap_or(Value::String("<item>".to_string())),
+                    .map_or(Value::String("<item>".to_string()), template_from_schema),
             ])
         }
         Some("integer") | Some("number") => json!(0),
@@ -4711,8 +4708,7 @@ fn template_from_schema(schema: &Value) -> Value {
             if let Some(options) = schema.get("oneOf").and_then(Value::as_array) {
                 return options
                     .first()
-                    .map(template_from_schema)
-                    .unwrap_or(Value::String("<value>".to_string()));
+                    .map_or(Value::String("<value>".to_string()), template_from_schema);
             }
             Value::String("<value>".to_string())
         }
@@ -4748,10 +4744,12 @@ fn example_call(method: HttpMethod, path: &str, operation: &Value) -> String {
         command.push_str(" --allow-unauthenticated");
     }
     for parameter in required_query_parameters(operation) {
-        command.push_str(&format!(
+        write!(
+            command,
             " --query {}",
             shell_quote(&format!("{parameter}=<{parameter}>"))
-        ));
+        )
+        .expect("writing to String cannot fail");
     }
     if operation.get("requestBody").is_some() {
         let body = openapi_body_template(operation);
@@ -4759,7 +4757,8 @@ fn example_call(method: HttpMethod, path: &str, operation: &Value) -> String {
             command.push_str(" --body '{}'");
         } else {
             let body = serde_json::to_string(&body).unwrap_or_else(|_| "{...}".to_string());
-            command.push_str(&format!(" --body {}", shell_quote(&body)));
+            write!(command, " --body {}", shell_quote(&body))
+                .expect("writing to String cannot fail");
         }
     }
     command
@@ -4877,9 +4876,9 @@ fn required_query_parameters(operation: &Value) -> Vec<String> {
 }
 
 fn next_actions_for_operations(operations: &[OperationSummary]) -> Vec<String> {
-    operations
-        .first()
-        .map(|operation| {
+    operations.first().map_or_else(
+        || vec!["pcl api list".to_string(), "pcl api manifest".to_string()],
+        |operation| {
             if operation.requires_input {
                 vec![
                     format!("{} --json", operation.inspect_command),
@@ -4891,16 +4890,18 @@ fn next_actions_for_operations(operations: &[OperationSummary]) -> Vec<String> {
                     operation.call_command.clone(),
                 ]
             }
-        })
-        .unwrap_or_else(|| vec!["pcl api list".to_string(), "pcl api manifest".to_string()])
+        },
+    )
 }
 
 fn command_next_actions(inspected: &Value) -> Vec<String> {
     inspected
         .get("example_call")
         .and_then(Value::as_str)
-        .map(|command| vec![command.to_string()])
-        .unwrap_or_else(|| vec!["pcl api list".to_string()])
+        .map_or_else(
+            || vec!["pcl api list".to_string()],
+            |command| vec![command.to_string()],
+        )
 }
 
 fn synthetic_operation_id(method: HttpMethod, path: &str) -> String {
@@ -5867,7 +5868,10 @@ mod tests {
         let config = CliConfig::default();
         let request = WorkflowRequest::get("/health", false, Vec::new());
 
-        let error = api.call_workflow(&config, &request).await.unwrap_err();
+        let error = api
+            .call_workflow_result(&config, &request)
+            .await
+            .unwrap_err();
         let ApiCommandError::HttpStatus {
             method,
             path,
@@ -5958,7 +5962,7 @@ mod tests {
                     query: &["limit=50".to_string()],
                     header: &[],
                     body: None,
-                    body_file: &None,
+                    body_file: None,
                     require_auth: false,
                 },
             )
@@ -6012,7 +6016,7 @@ mod tests {
                     query: &query,
                     header: &header,
                     body: Some("{}"),
-                    body_file: &None,
+                    body_file: None,
                     require_auth: true,
                 },
                 None,
@@ -6108,7 +6112,7 @@ mod tests {
                     query: &[],
                     header: &[],
                     body: None,
-                    body_file: &None,
+                    body_file: None,
                     require_auth: false,
                 },
                 RawPaginationOptions {
@@ -6165,7 +6169,7 @@ mod tests {
                     query: &[],
                     header: &[],
                     body: None,
-                    body_file: &None,
+                    body_file: None,
                     require_auth: false,
                 },
                 RawPaginationOptions {
@@ -6204,7 +6208,7 @@ mod tests {
                     query: &[],
                     header: &[],
                     body: None,
-                    body_file: &None,
+                    body_file: None,
                     require_auth: false,
                 },
                 RawPaginationOptions {
@@ -6271,7 +6275,7 @@ mod tests {
                     query: &[],
                     header: &[],
                     body: None,
-                    body_file: &None,
+                    body_file: None,
                     require_auth: false,
                 },
             )
