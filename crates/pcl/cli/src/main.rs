@@ -92,11 +92,6 @@ async fn main() -> Result<()> {
         }
     };
 
-    // TODO(Odysseas): Convert these commands to return strings to print for json output
-    // We can also use something similar like the shell macro from Foundry
-    // where a global static lazy is used to signal to every print statement
-    // whether it should be a noop or print to stdout/stderr.
-
     let should_write_after_invalid_config = cli.command.should_write_after_invalid_config();
     let result = async {
         run_command(cli.command, &cli.args, &mut config, cli.args.json_output()).await?;
@@ -388,8 +383,8 @@ mod tests {
 
         assert!(output.contains("status: error"));
         assert!(output.contains("code: cli.argument_conflict"));
-        assert!(output.contains("message: |"));
-        assert!(output.contains("  Usage: pcl api projects --save"));
+        assert!(output.contains("message:"));
+        assert!(output.contains("Usage: pcl api projects --save"));
         assert!(output.contains("recoverable: true"));
         assert!(output.contains("next_actions[2]:"));
         assert!(!output.contains("Location:"));

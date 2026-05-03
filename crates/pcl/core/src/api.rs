@@ -30,7 +30,6 @@ use serde_json::{
     json,
 };
 use std::{
-    fmt::Write as _,
     fs,
     io::Read,
     path::PathBuf,
@@ -4192,147 +4191,13 @@ fn array_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a [Value]> {
 
 /// Render a JSON value as the CLI's compact TOON-style text output.
 pub fn toon_string(value: &Value) -> String {
-    let mut output = String::new();
-    write_toon(value, 0, &mut output);
-    output
-}
-
-fn write_toon(value: &Value, indent: usize, output: &mut String) {
-    match value {
-        Value::Object(object) => write_toon_object(object, indent, output),
-        Value::Array(items) => write_toon_array(items, indent, output),
-        Value::String(value) if value.contains('\n') => {
-            writeln!(output, "{}|", spaces(indent)).expect("writing to String cannot fail");
-            write_multiline_string(value, indent + 2, output);
-        }
-        _ => {
-            writeln!(output, "{}{}", spaces(indent), scalar_to_string(value))
-                .expect("writing to String cannot fail");
-        }
-    }
-}
-
-fn write_toon_object(object: &Map<String, Value>, indent: usize, output: &mut String) {
-    for (key, value) in object {
-        write_toon_field(key, value, indent, output);
-    }
-}
-
-fn write_toon_field(key: &str, value: &Value, indent: usize, output: &mut String) {
-    let prefix = spaces(indent);
-    match value {
-        Value::Object(object) => {
-            writeln!(output, "{prefix}{key}:").expect("writing to String cannot fail");
-            write_toon_object(object, indent + 2, output);
-        }
-        Value::Array(items) => write_toon_named_array(key, items, indent, output),
-        Value::String(value) if value.contains('\n') => {
-            writeln!(output, "{prefix}{key}: |").expect("writing to String cannot fail");
-            write_multiline_string(value, indent + 2, output);
-        }
-        _ => {
-            writeln!(output, "{prefix}{key}: {}", scalar_to_string(value))
-                .expect("writing to String cannot fail");
-        }
-    }
-}
-
-fn write_toon_named_array(key: &str, items: &[Value], indent: usize, output: &mut String) {
-    let prefix = spaces(indent);
-    if items.is_empty() {
-        writeln!(output, "{prefix}{key}: []").expect("writing to String cannot fail");
-        return;
-    }
-    if let Some(columns) = scalar_object_columns(items) {
-        writeln!(
-            output,
-            "{prefix}{key}[{}]{{{}}}:",
-            items.len(),
-            columns.join(",")
-        )
-        .expect("writing to String cannot fail");
-        for item in items {
-            write_table_row(item, &columns, indent + 2, output);
-        }
-        return;
-    }
-    writeln!(output, "{prefix}{key}[{}]:", items.len()).expect("writing to String cannot fail");
-    write_toon_array(items, indent + 2, output);
-}
-
-fn write_toon_array(items: &[Value], indent: usize, output: &mut String) {
-    for item in items {
-        let prefix = spaces(indent);
-        match item {
-            Value::Object(object) => {
-                writeln!(output, "{prefix}-").expect("writing to String cannot fail");
-                write_toon_object(object, indent + 2, output);
-            }
-            Value::Array(items) => {
-                writeln!(output, "{prefix}-").expect("writing to String cannot fail");
-                write_toon_array(items, indent + 2, output);
-            }
-            Value::String(value) if value.contains('\n') => {
-                writeln!(output, "{prefix}- |").expect("writing to String cannot fail");
-                write_multiline_string(value, indent + 2, output);
-            }
-            _ => {
-                writeln!(output, "{prefix}- {}", scalar_to_string(item))
-                    .expect("writing to String cannot fail");
-            }
-        }
-    }
-}
-
-fn write_multiline_string(value: &str, indent: usize, output: &mut String) {
-    let prefix = spaces(indent);
-    for line in value.lines() {
-        writeln!(output, "{prefix}{line}").expect("writing to String cannot fail");
-    }
-}
-
-fn scalar_object_columns(items: &[Value]) -> Option<Vec<String>> {
-    let object = items.first()?.as_object()?;
-    let columns = object.keys().cloned().collect::<Vec<_>>();
-    let scalar_objects = items.iter().all(|item| {
-        item.as_object().is_some_and(|object| {
-            object.keys().eq(columns.iter()) && object.values().all(is_toon_scalar)
-        })
+    let mut output = toon_format::encode_default(value).unwrap_or_else(|_| {
+        serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
     });
-    scalar_objects.then_some(columns)
-}
-
-fn write_table_row(item: &Value, columns: &[String], indent: usize, output: &mut String) {
-    let Some(object) = item.as_object() else {
-        return;
-    };
-    let row = columns
-        .iter()
-        .filter_map(|column| object.get(column).map(scalar_to_string))
-        .collect::<Vec<_>>()
-        .join(",");
-    writeln!(output, "{}{}", spaces(indent), row).expect("writing to String cannot fail");
-}
-
-fn is_toon_scalar(value: &Value) -> bool {
-    matches!(value, Value::Null | Value::Bool(_) | Value::Number(_))
-        || value
-            .as_str()
-            .is_some_and(|value| !value.contains('\n') && !value.contains(','))
-}
-
-fn scalar_to_string(value: &Value) -> String {
-    match value {
-        Value::Null => "null".to_string(),
-        Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
-        Value::String(value) => value.clone(),
-        _ => value.to_string(),
+    if !output.ends_with('\n') {
+        output.push('\n');
     }
-}
-
-fn spaces(indent: usize) -> String {
-    " ".repeat(indent)
+    output
 }
 
 fn parse_key_values(
@@ -6592,19 +6457,19 @@ mod tests {
     }
 
     #[test]
-    fn toon_table_mode_avoids_comma_containing_strings() {
-        let output = toon_string(&json!({
+    fn toon_output_round_trips_comma_containing_strings() {
+        let value = json!({
             "items": [
                 {
                     "id": "project-1",
                     "name": "Alpha, Beta"
                 }
             ]
-        }));
+        });
+        let output = toon_string(&value);
+        let decoded: Value = toon_format::decode_default(&output).unwrap();
 
-        assert!(output.contains("items[1]:"));
-        assert!(output.contains("name: Alpha, Beta"));
-        assert!(!output.contains("items[1]{"));
+        assert_eq!(decoded, value);
     }
 
     #[test]
