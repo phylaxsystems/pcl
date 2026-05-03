@@ -12,6 +12,7 @@ use color_eyre::{
     Result,
     eyre::Report,
 };
+use pcl_common::args::CliArgs;
 use pcl_core::{
     api::{
         ApiCommandError,
@@ -87,34 +88,7 @@ async fn main() -> Result<()> {
     // whether it should be a noop or print to stdout/stderr.
 
     let result = async {
-        match cli.command {
-            #[cfg(feature = "credible")]
-            Commands::Test(phorge) => {
-                phorge.run().await?;
-            }
-            Commands::Apply(apply) => {
-                apply.run(&cli.args, &config).await?;
-            }
-            Commands::Api(api) => {
-                api.run(&config, cli.args.json_output()).await?;
-            }
-            Commands::Auth(auth_cmd) => {
-                auth_cmd.run(&mut config, cli.args.json_output()).await?;
-            }
-            Commands::Config(config_cmd) => {
-                config_cmd.run(&mut config, &cli.args)?;
-            }
-            Commands::Build(build_cmd) => {
-                build_cmd.run()?;
-            }
-            #[cfg(feature = "credible")]
-            Commands::Verify(verify_cmd) => {
-                verify_cmd.run(&cli.args)?;
-            }
-            Commands::Download(download_cmd) => {
-                download_cmd.run(&cli.args, &config).await?;
-            }
-        }
+        run_command(cli.command, &cli.args, &mut config, cli.args.json_output()).await?;
         config.write_to_file(&cli.args)?;
         Ok::<_, Report>(())
     }
@@ -130,6 +104,40 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    Ok(())
+}
+
+async fn run_command(
+    command: Commands,
+    cli_args: &CliArgs,
+    config: &mut CliConfig,
+    json_output: bool,
+) -> Result<(), Report> {
+    match command {
+        #[cfg(feature = "credible")]
+        Commands::Test(phorge) => phorge.run().await?,
+        Commands::Apply(apply) => apply.run(cli_args, config).await?,
+        Commands::Api(api) => api.run(config, json_output).await?,
+        Commands::Incidents(command) => command.run(config, json_output).await?,
+        Commands::Projects(command) => command.run(config, json_output).await?,
+        Commands::Assertions(command) => command.run(config, json_output).await?,
+        Commands::Search(command) => command.run(config, json_output).await?,
+        Commands::Account(command) => command.run(config, json_output).await?,
+        Commands::Contracts(command) => command.run(config, json_output).await?,
+        Commands::Releases(command) => command.run(config, json_output).await?,
+        Commands::Deployments(command) => command.run(config, json_output).await?,
+        Commands::Access(command) => command.run(config, json_output).await?,
+        Commands::Integrations(command) => command.run(config, json_output).await?,
+        Commands::ProtocolManager(command) => command.run(config, json_output).await?,
+        Commands::Transfers(command) => command.run(config, json_output).await?,
+        Commands::Events(command) => command.run(config, json_output).await?,
+        Commands::Auth(auth_cmd) => auth_cmd.run(config, json_output).await?,
+        Commands::Config(config_cmd) => config_cmd.run(config, cli_args)?,
+        Commands::Build(build_cmd) => build_cmd.run()?,
+        #[cfg(feature = "credible")]
+        Commands::Verify(verify_cmd) => verify_cmd.run(cli_args)?,
+        Commands::Download(download_cmd) => download_cmd.run(cli_args, config).await?,
+    }
     Ok(())
 }
 

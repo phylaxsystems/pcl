@@ -208,8 +208,8 @@ impl ApiCommandError {
             Self::InvalidWorkflow { .. } => {
                 vec![
                     "pcl api manifest".to_string(),
-                    "pcl api incidents --limit 5".to_string(),
-                    "pcl api assertions --project-id <project-id>".to_string(),
+                    "pcl incidents --limit 5".to_string(),
+                    "pcl assertions --project-id <project-id>".to_string(),
                 ]
             }
             Self::Request(source)
@@ -413,83 +413,146 @@ pub struct ApiArgs {
     dry_run: bool,
 }
 
+#[derive(clap::Args, Debug)]
+struct ApiWorkflowOptions {
+    #[arg(
+        long = "api-url",
+        env = "PCL_API_URL",
+        default_value = DEFAULT_PLATFORM_URL,
+        help = "Base URL for the platform API"
+    )]
+    api_url: url::Url,
+
+    #[arg(long, help = "Do not attach the stored bearer token to API requests")]
+    allow_unauthenticated: bool,
+
+    #[arg(
+        long = "dry-run",
+        help = "Print the request plan without sending an API request"
+    )]
+    dry_run: bool,
+}
+
+impl ApiWorkflowOptions {
+    async fn run(
+        self,
+        command: ApiCommand,
+        config: &CliConfig,
+        json_output: bool,
+    ) -> Result<(), ApiCommandError> {
+        ApiArgs {
+            command,
+            api_url: self.api_url,
+            allow_unauthenticated: self.allow_unauthenticated,
+            dry_run: self.dry_run,
+        }
+        .run(config, json_output)
+        .await
+    }
+}
+
+macro_rules! top_level_workflow_command {
+    ($name:ident, $args:ty, $variant:ident, $about:literal, $after_help:literal) => {
+        #[derive(clap::Args, Debug)]
+        #[command(about = $about, after_help = $after_help)]
+        pub struct $name {
+            #[command(flatten)]
+            globals: ApiWorkflowOptions,
+            #[command(flatten)]
+            args: $args,
+        }
+
+        impl $name {
+            pub async fn run(
+                self,
+                config: &CliConfig,
+                json_output: bool,
+            ) -> Result<(), ApiCommandError> {
+                self.globals
+                    .run(ApiCommand::$variant(self.args), config, json_output)
+                    .await
+            }
+        }
+    };
+}
+
 #[derive(clap::Subcommand, Debug)]
 enum ApiCommand {
     #[command(
         about = "List or inspect incidents",
-        after_help = "Examples:\n  pcl api incidents --limit 5\n  pcl api incidents --project-id <project-id> --environment production\n  pcl api incidents --project-id <project-id> --all --limit 50 --output incidents.json\n  pcl api incidents --incident-id <incident-id>\n  pcl api incidents --incident-id <incident-id> --tx-id <tx-id>\n  pcl api incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"
+        after_help = "Examples:\n  pcl incidents --limit 5\n  pcl incidents --project-id <project-id> --environment production\n  pcl incidents --project-id <project-id> --all --limit 50 --output incidents.json\n  pcl incidents --incident-id <incident-id>\n  pcl incidents --incident-id <incident-id> --tx-id <tx-id>\n  pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"
     )]
     Incidents(IncidentsArgs),
 
     #[command(
         about = "List, inspect, create, update, save, or delete projects",
-        after_help = "Examples:\n  pcl api projects\n  pcl api projects --project-id <project-ref>\n  pcl api projects --saved --user-id <user-id>\n  pcl api projects --create --project-name demo --chain-id 1\n  pcl api projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl api projects --project-id <project-ref> --save"
+        after_help = "Examples:\n  pcl projects\n  pcl projects --project-id <project-ref>\n  pcl projects --saved --user-id <user-id>\n  pcl projects --create --project-name demo --chain-id 1\n  pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl projects --project-id <project-ref> --save"
     )]
     Projects(ProjectsArgs),
 
     #[command(
         about = "List, inspect, submit, and manage project assertions",
-        after_help = "Examples:\n  pcl api assertions --project-id <project-ref>\n  pcl api assertions --project-id <project-ref> --submitted\n  pcl api assertions --project-id <project-ref> --submit --body-file submitted-assertions.json\n  pcl api assertions --project-id <project-ref> --remove-info"
+        after_help = "Examples:\n  pcl assertions --project-id <project-ref>\n  pcl assertions --project-id <project-ref> --submitted\n  pcl assertions --project-id <project-ref> --submit --body-file submitted-assertions.json\n  pcl assertions --project-id <project-ref> --remove-info"
     )]
     Assertions(AssertionsArgs),
 
     #[command(
         about = "Search and inspect platform-wide metadata",
-        after_help = "Examples:\n  pcl api search --query settler\n  pcl api search --stats\n  pcl api search --system-status\n  pcl api search --verified-contract --address 0x... --chain-id 1"
+        after_help = "Examples:\n  pcl search --query settler\n  pcl search --stats\n  pcl search --system-status\n  pcl search --verified-contract --address 0x... --chain-id 1"
     )]
     Search(SearchArgs),
 
     #[command(
         about = "Inspect and manage current account onboarding state",
-        after_help = "Examples:\n  pcl api account\n  pcl api account --accept-terms\n  pcl api account --logout"
+        after_help = "Examples:\n  pcl account\n  pcl account --accept-terms\n  pcl account --logout"
     )]
     Account(AccountArgs),
 
     #[command(
         about = "List or manage project contracts and assertion adopters",
-        after_help = "Examples:\n  pcl api contracts --project <project-ref>\n  pcl api contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl api contracts --unassigned --manager <manager-address>\n  pcl api contracts --create --body '{...}'"
+        after_help = "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl contracts --unassigned --manager <manager-address>\n  pcl contracts --create --body '{...}'"
     )]
     Contracts(ContractsArgs),
 
     #[command(
         about = "List, inspect, create, preview, deploy, or remove releases",
-        after_help = "Examples:\n  pcl api releases --project <project-ref>\n  pcl api releases --project <project-ref> --release-id <release-id>\n  pcl api releases --project <project-ref> --preview --body-file release.json\n  pcl api releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address <signer-address>"
+        after_help = "Examples:\n  pcl releases --project <project-ref>\n  pcl releases --project <project-ref> --release-id <release-id>\n  pcl releases --project <project-ref> --preview --body-file release.json\n  pcl releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address <signer-address>"
     )]
     Releases(ReleasesArgs),
 
     #[command(
         about = "Inspect deployments and confirm deployed assertions",
-        after_help = "Examples:\n  pcl api deployments --project <project-ref>\n  pcl api deployments --project <project-ref> --confirm --body '{...}'"
+        after_help = "Examples:\n  pcl deployments --project <project-ref>\n  pcl deployments --project <project-ref> --confirm --body '{...}'"
     )]
     Deployments(DeploymentsArgs),
 
     #[command(
         about = "Manage members, roles, and invitations",
-        after_help = "Examples:\n  pcl api access --project <project-ref> --members\n  pcl api access --project <project-ref> --invite --body '{...}'\n  pcl api access --pending\n  pcl api access --token <token> --preview"
+        after_help = "Examples:\n  pcl access --project <project-ref> --members\n  pcl access --project <project-ref> --invite --body '{...}'\n  pcl access --pending\n  pcl access --token <token> --preview"
     )]
     Access(AccessArgs),
 
     #[command(
         about = "Manage Slack and PagerDuty integrations",
-        after_help = "Examples:\n  pcl api integrations --project <project-ref> --provider slack\n  pcl api integrations --project <project-ref> --provider pagerduty --configure --body '{...}'\n  pcl api integrations --project <project-ref> --provider slack --test"
+        after_help = "Examples:\n  pcl integrations --project <project-ref> --provider slack\n  pcl integrations --project <project-ref> --provider pagerduty --configure --body '{...}'\n  pcl integrations --project <project-ref> --provider slack --test"
     )]
     Integrations(IntegrationsArgs),
 
     #[command(
         about = "Manage project protocol manager settings",
-        after_help = "Examples:\n  pcl api protocol-manager --project <project-ref> --nonce --address <manager-address>\n  pcl api protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...\n  pcl api protocol-manager --project <project-ref> --set --body '{...}'"
+        after_help = "Examples:\n  pcl protocol-manager --project <project-ref> --nonce --address <manager-address>\n  pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...\n  pcl protocol-manager --project <project-ref> --set --body '{...}'"
     )]
     ProtocolManager(ProtocolManagerArgs),
 
     #[command(
         about = "Inspect or reject protocol manager transfers",
-        after_help = "Examples:\n  pcl api transfers --pending\n  pcl api transfers --transfer-id <transfer-id>\n  pcl api transfers --reject --body '{...}'"
+        after_help = "Examples:\n  pcl transfers --pending\n  pcl transfers --transfer-id <transfer-id>\n  pcl transfers --reject --body '{...}'"
     )]
     Transfers(TransfersArgs),
 
     #[command(
         about = "Inspect project events and audit logs",
-        after_help = "Examples:\n  pcl api events --project <project-ref>\n  pcl api events --project <project-ref> --audit-log"
+        after_help = "Examples:\n  pcl events --project <project-ref>\n  pcl events --project <project-ref> --audit-log"
     )]
     Events(EventsArgs),
 
@@ -1304,6 +1367,110 @@ struct EventsArgs {
     #[arg(long, help = "Environment filter")]
     environment: Option<String>,
 }
+
+top_level_workflow_command!(
+    IncidentsCommand,
+    IncidentsArgs,
+    Incidents,
+    "List, inspect, export, and retry incidents",
+    "Examples:\n  pcl incidents --limit 5\n  pcl incidents --project-id <project-id> --environment production\n  pcl incidents --project-id <project-id> --all --limit 50 --output incidents.json\n  pcl incidents --incident-id <incident-id>\n  pcl incidents --incident-id <incident-id> --tx-id <tx-id>\n  pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace\n\nCompatibility alias:\n  pcl api incidents ..."
+);
+
+top_level_workflow_command!(
+    ProjectsCommand,
+    ProjectsArgs,
+    Projects,
+    "List, inspect, create, update, save, or delete projects",
+    "Examples:\n  pcl projects\n  pcl projects --project-id <project-ref>\n  pcl projects --saved --user-id <user-id>\n  pcl projects --create --project-name demo --chain-id 1\n  pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl projects --project-id <project-ref> --save\n\nCompatibility alias:\n  pcl api projects ..."
+);
+
+top_level_workflow_command!(
+    AssertionsCommand,
+    AssertionsArgs,
+    Assertions,
+    "List, inspect, submit, and manage assertions",
+    "Examples:\n  pcl assertions --project-id <project-ref>\n  pcl assertions --adopter-address 0x... --network 1\n  pcl assertions --project-id <project-ref> --submitted\n  pcl assertions --project-id <project-ref> --submit --body-file submitted-assertions.json\n  pcl assertions --project-id <project-ref> --remove-info\n\nCompatibility alias:\n  pcl api assertions ..."
+);
+
+top_level_workflow_command!(
+    SearchCommand,
+    SearchArgs,
+    Search,
+    "Search and inspect platform-wide metadata",
+    "Examples:\n  pcl search --query settler\n  pcl search --stats\n  pcl search --system-status\n  pcl search --verified-contract --address 0x... --chain-id 1\n\nCompatibility alias:\n  pcl api search ..."
+);
+
+top_level_workflow_command!(
+    AccountCommand,
+    AccountArgs,
+    Account,
+    "Inspect and manage current account onboarding state",
+    "Examples:\n  pcl account\n  pcl account --accept-terms\n  pcl account --logout\n\nCompatibility alias:\n  pcl api account ..."
+);
+
+top_level_workflow_command!(
+    ContractsCommand,
+    ContractsArgs,
+    Contracts,
+    "List or manage project contracts and assertion adopters",
+    "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl contracts --unassigned --manager <manager-address>\n  pcl contracts --create --body-template\n\nCompatibility alias:\n  pcl api contracts ..."
+);
+
+top_level_workflow_command!(
+    ReleasesCommand,
+    ReleasesArgs,
+    Releases,
+    "List, inspect, create, preview, deploy, or remove releases",
+    "Examples:\n  pcl releases --project <project-ref>\n  pcl releases --project <project-ref> --release-id <release-id>\n  pcl releases --project <project-ref> --preview --body-file release.json\n  pcl releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address <signer-address>\n\nCompatibility alias:\n  pcl api releases ..."
+);
+
+top_level_workflow_command!(
+    DeploymentsCommand,
+    DeploymentsArgs,
+    Deployments,
+    "Inspect deployments and confirm deployed assertions",
+    "Examples:\n  pcl deployments --project <project-ref>\n  pcl deployments --project <project-ref> --confirm --body-template\n\nCompatibility alias:\n  pcl api deployments ..."
+);
+
+top_level_workflow_command!(
+    AccessCommand,
+    AccessArgs,
+    Access,
+    "Manage members, roles, and invitations",
+    "Examples:\n  pcl access --project <project-ref> --members\n  pcl access --project <project-ref> --invite --body-template\n  pcl access --pending\n  pcl access --token <token> --preview\n\nCompatibility alias:\n  pcl api access ..."
+);
+
+top_level_workflow_command!(
+    IntegrationsCommand,
+    IntegrationsArgs,
+    Integrations,
+    "Manage Slack and PagerDuty integrations",
+    "Examples:\n  pcl integrations --project <project-ref> --provider slack\n  pcl integrations --project <project-ref> --provider pagerduty --configure --body-template\n  pcl integrations --project <project-ref> --provider slack --test\n\nCompatibility alias:\n  pcl api integrations ..."
+);
+
+top_level_workflow_command!(
+    ProtocolManagerCommand,
+    ProtocolManagerArgs,
+    ProtocolManager,
+    "Manage project protocol manager settings",
+    "Examples:\n  pcl protocol-manager --project <project-ref> --nonce --address <manager-address>\n  pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...\n  pcl protocol-manager --project <project-ref> --set --body-template\n\nCompatibility alias:\n  pcl api protocol-manager ..."
+);
+
+top_level_workflow_command!(
+    TransfersCommand,
+    TransfersArgs,
+    Transfers,
+    "Inspect or reject protocol manager transfers",
+    "Examples:\n  pcl transfers --pending\n  pcl transfers --transfer-id <transfer-id>\n  pcl transfers --reject --body-template\n\nCompatibility alias:\n  pcl api transfers ..."
+);
+
+top_level_workflow_command!(
+    EventsCommand,
+    EventsArgs,
+    Events,
+    "Inspect project events and audit logs",
+    "Examples:\n  pcl events --project <project-ref>\n  pcl events --project <project-ref> --audit-log\n\nCompatibility alias:\n  pcl api events ..."
+);
 
 impl ApiArgs {
     pub async fn run(&self, config: &CliConfig, json_output: bool) -> Result<(), ApiCommandError> {
@@ -2263,8 +2430,9 @@ fn request_is_destructive(method: HttpMethod, path: &str) -> bool {
 
 fn api_manifest() -> Value {
     json!({
-        "name": "pcl api",
-        "description": "Use workflow-shaped commands for every UI/API workflow, with raw OpenAPI commands as an escape hatch.",
+        "name": "pcl",
+        "description": "Use top-level workflow commands for common UI/API workflows; use pcl api list/inspect/call as the raw OpenAPI escape hatch.",
+        "raw_api": "pcl api list | pcl api inspect | pcl api call | pcl api manifest",
         "default_output": "toon",
         "json_output": "Add --json to emit the same {status,data,error,next_actions} envelope as JSON.",
         "body_input": {
@@ -2273,7 +2441,7 @@ fn api_manifest() -> Value {
             "field_flag": "--field key=value parses JSON scalars/objects/arrays when VALUE is valid JSON, otherwise a string"
         },
         "pagination": {
-            "workflow": "Use workflow-specific --all where available, for example pcl api incidents --all --limit 50 --output incidents.json.",
+            "workflow": "Use workflow-specific --all where available, for example pcl incidents --all --limit 50 --output incidents.json.",
             "raw_call": "Use pcl api call get /path --paginate <array-field> --limit 50 --max-pages 100 --output results.json for generic GET pagination.",
             "jsonl": "Add --jsonl with --output on paginated commands to write one item per line for resumable analysis."
         },
@@ -2284,173 +2452,173 @@ fn api_manifest() -> Value {
         },
         "commands": [
             {
-                "command": "pcl api incidents [--project-id <id>] [--incident-id <id>] [--stats] [--limit <n>] [--all --output <file>]",
+                "command": "pcl incidents [--project-id <id>] [--incident-id <id>] [--stats] [--limit <n>] [--all --output <file>]",
                 "description": "List public incidents, project incidents, fetch all incident pages, inspect incident detail, incident stats, or incident trace.",
                 "output": "incident data from /views/public/incidents, /views/projects/{projectId}/incidents, /views/incidents/{incidentId}, or /projects/{project_id}/incidents/stats",
                 "actions": [
-                    {"name": "list_public", "auth": false, "method": "GET", "path": "/views/public/incidents", "optional_flags": ["--page", "--limit", "--network", "--sort", "--dev-mode", "--all", "--max-pages", "--output"], "example": "pcl api incidents --limit 5"},
-                    {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/incidents", "required_flags": ["--project"], "optional_flags": ["--page", "--limit", "--assertion-id", "--adopter-id", "--environment", "--from", "--to", "--all", "--max-pages", "--output"], "example": "pcl api incidents --project <project-ref> --all --limit 50 --output incidents.json"},
-                    {"name": "stats", "auth": true, "method": "GET", "path": "/projects/{project_id}/incidents/stats", "required_flags": ["--project"], "example": "pcl api incidents --project <project-ref> --stats"},
-                    {"name": "detail", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}", "required_flags": ["--incident-id"], "example": "pcl api incidents --incident-id <incident-id>"},
-                    {"name": "trace", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}/transactions/{txId}/trace", "required_flags": ["--incident-id", "--tx-id"], "example": "pcl api incidents --incident-id <incident-id> --tx-id <tx-id>"},
-                    {"name": "retry_trace", "auth": true, "method": "POST", "path": "/incidents/{incident_id}/transactions/{tx_id}/trace/retry", "required_flags": ["--incident-id", "--tx-id"], "body_template": "empty_object", "example": "pcl api incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"}
+                    {"name": "list_public", "auth": false, "method": "GET", "path": "/views/public/incidents", "optional_flags": ["--page", "--limit", "--network", "--sort", "--dev-mode", "--all", "--max-pages", "--output"], "example": "pcl incidents --limit 5"},
+                    {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/incidents", "required_flags": ["--project"], "optional_flags": ["--page", "--limit", "--assertion-id", "--adopter-id", "--environment", "--from", "--to", "--all", "--max-pages", "--output"], "example": "pcl incidents --project <project-ref> --all --limit 50 --output incidents.json"},
+                    {"name": "stats", "auth": true, "method": "GET", "path": "/projects/{project_id}/incidents/stats", "required_flags": ["--project"], "example": "pcl incidents --project <project-ref> --stats"},
+                    {"name": "detail", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}", "required_flags": ["--incident-id"], "example": "pcl incidents --incident-id <incident-id>"},
+                    {"name": "trace", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}/transactions/{txId}/trace", "required_flags": ["--incident-id", "--tx-id"], "example": "pcl incidents --incident-id <incident-id> --tx-id <tx-id>"},
+                    {"name": "retry_trace", "auth": true, "method": "POST", "path": "/incidents/{incident_id}/transactions/{tx_id}/trace/retry", "required_flags": ["--incident-id", "--tx-id"], "body_template": "empty_object", "example": "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"}
                 ]
             },
             {
-                "command": "pcl api projects [--project <ref>] [--saved --user-id <id>] [--create|--update|--delete|--save|--unsave|--resolve|--widget]",
+                "command": "pcl projects [--project <ref>] [--saved --user-id <id>] [--create|--update|--delete|--save|--unsave|--resolve|--widget]",
                 "description": "List, inspect, create, update, save, unsave, resolve, widget, and delete projects.",
                 "output": "project explorer, project detail, projects home, saved projects, widget, or mutation result",
                 "actions": [
-                    {"name": "explorer", "auth": false, "method": "GET", "path": "/views/projects", "example": "pcl api projects --limit 10"},
-                    {"name": "home", "auth": true, "method": "GET", "path": "/views/projects/home", "example": "pcl api projects --home"},
-                    {"name": "saved", "auth": true, "method": "GET", "path": "/projects/saved", "required_flags": ["--user-id"], "query": {"user_id": "<user-id>"}, "example": "pcl api projects --saved --user-id <user-id>"},
-                    {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project_id}", "required_flags": ["--project"], "example": "pcl api projects --project <project-ref>"},
-                    {"name": "create", "auth": true, "method": "POST", "path": "/projects", "body_template": "project_create", "required_body_fields": ["project_name", "chain_id"], "example": "pcl api projects --create --project-name demo --chain-id 1"},
-                    {"name": "update", "auth": true, "method": "PUT", "path": "/projects/{project_id}", "required_flags": ["--project"], "body_template": "project_update", "example": "pcl api projects --project <project-ref> --update --field github_url=https://github.com/org/repo"},
-                    {"name": "delete", "auth": true, "method": "DELETE", "path": "/projects/{project_id}", "required_flags": ["--project"], "example": "pcl api projects --project <project-ref> --delete"},
-                    {"name": "save", "auth": true, "method": "POST", "path": "/projects/saved", "required_flags": ["--project"], "body_template": "project_saved", "example": "pcl api projects --project <project-ref> --save"},
-                    {"name": "unsave", "auth": true, "method": "DELETE", "path": "/projects/saved", "required_flags": ["--project"], "body_template": "project_saved", "example": "pcl api projects --project <project-ref> --unsave"},
-                    {"name": "resolve", "auth": false, "method": "GET", "path": "/projects/resolve/{project_ref}", "required_flags": ["--project"], "example": "pcl api projects --project <project-ref> --resolve"},
-                    {"name": "widget", "auth": true, "method": "GET", "path": "/projects/{project_id}/widget", "required_flags": ["--project"], "example": "pcl api projects --project <project-ref> --widget"}
+                    {"name": "explorer", "auth": false, "method": "GET", "path": "/views/projects", "example": "pcl projects --limit 10"},
+                    {"name": "home", "auth": true, "method": "GET", "path": "/views/projects/home", "example": "pcl projects --home"},
+                    {"name": "saved", "auth": true, "method": "GET", "path": "/projects/saved", "required_flags": ["--user-id"], "query": {"user_id": "<user-id>"}, "example": "pcl projects --saved --user-id <user-id>"},
+                    {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project_id}", "required_flags": ["--project"], "example": "pcl projects --project <project-ref>"},
+                    {"name": "create", "auth": true, "method": "POST", "path": "/projects", "body_template": "project_create", "required_body_fields": ["project_name", "chain_id"], "example": "pcl projects --create --project-name demo --chain-id 1"},
+                    {"name": "update", "auth": true, "method": "PUT", "path": "/projects/{project_id}", "required_flags": ["--project"], "body_template": "project_update", "example": "pcl projects --project <project-ref> --update --field github_url=https://github.com/org/repo"},
+                    {"name": "delete", "auth": true, "method": "DELETE", "path": "/projects/{project_id}", "required_flags": ["--project"], "example": "pcl projects --project <project-ref> --delete"},
+                    {"name": "save", "auth": true, "method": "POST", "path": "/projects/saved", "required_flags": ["--project"], "body_template": "project_saved", "example": "pcl projects --project <project-ref> --save"},
+                    {"name": "unsave", "auth": true, "method": "DELETE", "path": "/projects/saved", "required_flags": ["--project"], "body_template": "project_saved", "example": "pcl projects --project <project-ref> --unsave"},
+                    {"name": "resolve", "auth": false, "method": "GET", "path": "/projects/resolve/{project_ref}", "required_flags": ["--project"], "example": "pcl projects --project <project-ref> --resolve"},
+                    {"name": "widget", "auth": true, "method": "GET", "path": "/projects/{project_id}/widget", "required_flags": ["--project"], "example": "pcl projects --project <project-ref> --widget"}
                 ]
             },
             {
-                "command": "pcl api assertions --project <ref> [--assertion-id <id>|--submitted|--registered|--submit|--remove-info|--remove-calldata]",
+                "command": "pcl assertions --project <ref> [--assertion-id <id>|--submitted|--registered|--submit|--remove-info|--remove-calldata]",
                 "description": "List, inspect, submit, and manage project assertion lifecycle state.",
                 "output": "assertion index/detail, submitted assertions, registered assertions, removal info/calldata, or submit result",
                 "actions": [
-                    {"name": "index", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/assertions", "required_flags": ["--project"], "example": "pcl api assertions --project <project-ref>"},
-                    {"name": "detail", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/assertions/{assertionId}", "required_flags": ["--project", "--assertion-id"], "example": "pcl api assertions --project <project-ref> --assertion-id <assertion-id>"},
-                    {"name": "adopter_lookup", "auth": false, "method": "GET", "path": "/assertions", "required_flags": ["--adopter-address"], "optional_flags": ["--network", "--environment", "--include-onchain-only"], "example": "pcl api assertions --adopter-address 0x... --network 1"},
-                    {"name": "submitted", "auth": true, "method": "GET", "path": "/projects/{project_id}/submitted-assertions", "required_flags": ["--project"], "example": "pcl api assertions --project <project-ref> --submitted"},
-                    {"name": "submit", "auth": true, "method": "POST", "path": "/projects/{project_id}/submitted-assertions", "required_flags": ["--project"], "body_template": "submitted_assertions", "required_body_fields": ["assertions"], "example": "pcl api assertions --project <project-ref> --submit --body-file submitted-assertions.json"},
-                    {"name": "registered", "auth": true, "method": "GET", "path": "/projects/{project_id}/registered-assertions", "required_flags": ["--project"], "example": "pcl api assertions --project <project-ref> --registered"},
-                    {"name": "remove_info", "auth": true, "method": "GET", "path": "/projects/{project_id}/remove-assertions-info", "required_flags": ["--project"], "example": "pcl api assertions --project <project-ref> --remove-info"},
-                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/projects/{project_id}/remove-assertions-calldata", "required_flags": ["--project"], "example": "pcl api assertions --project <project-ref> --remove-calldata"}
+                    {"name": "index", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/assertions", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref>"},
+                    {"name": "detail", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/assertions/{assertionId}", "required_flags": ["--project", "--assertion-id"], "example": "pcl assertions --project <project-ref> --assertion-id <assertion-id>"},
+                    {"name": "adopter_lookup", "auth": false, "method": "GET", "path": "/assertions", "required_flags": ["--adopter-address"], "optional_flags": ["--network", "--environment", "--include-onchain-only"], "example": "pcl assertions --adopter-address 0x... --network 1"},
+                    {"name": "submitted", "auth": true, "method": "GET", "path": "/projects/{project_id}/submitted-assertions", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref> --submitted"},
+                    {"name": "submit", "auth": true, "method": "POST", "path": "/projects/{project_id}/submitted-assertions", "required_flags": ["--project"], "body_template": "submitted_assertions", "required_body_fields": ["assertions"], "example": "pcl assertions --project <project-ref> --submit --body-file submitted-assertions.json"},
+                    {"name": "registered", "auth": true, "method": "GET", "path": "/projects/{project_id}/registered-assertions", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref> --registered"},
+                    {"name": "remove_info", "auth": true, "method": "GET", "path": "/projects/{project_id}/remove-assertions-info", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref> --remove-info"},
+                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/projects/{project_id}/remove-assertions-calldata", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref> --remove-calldata"}
                 ]
             },
             {
-                "command": "pcl api search [--query <term>] [--stats] [--system-status] [--verified-contract --address <addr> --chain-id <id>]",
+                "command": "pcl search [--query <term>] [--stats] [--system-status] [--verified-contract --address <addr> --chain-id <id>]",
                 "description": "Search projects/contracts and inspect platform metadata.",
                 "output": "search results, stats, system status, health, whitelist, or verified contract data",
                 "actions": [
-                    {"name": "query", "auth": false, "method": "GET", "path": "/search", "optional_flags": ["--query"], "example": "pcl api search --query settler"},
-                    {"name": "stats", "auth": false, "method": "GET", "path": "/stats", "example": "pcl api search --stats"},
-                    {"name": "system_status", "auth": false, "method": "GET", "path": "/system-status", "example": "pcl api search --system-status"},
-                    {"name": "health", "auth": false, "method": "GET", "path": "/health", "example": "pcl api search --health"},
-                    {"name": "whitelist", "auth": true, "method": "GET", "path": "/whitelist", "example": "pcl api search --whitelist"},
-                    {"name": "verified_contract", "auth": false, "method": "GET", "path": "/web/verified-contract", "required_flags": ["--address", "--chain-id"], "example": "pcl api search --verified-contract --address 0x... --chain-id 1"}
+                    {"name": "query", "auth": false, "method": "GET", "path": "/search", "optional_flags": ["--query"], "example": "pcl search --query settler"},
+                    {"name": "stats", "auth": false, "method": "GET", "path": "/stats", "example": "pcl search --stats"},
+                    {"name": "system_status", "auth": false, "method": "GET", "path": "/system-status", "example": "pcl search --system-status"},
+                    {"name": "health", "auth": false, "method": "GET", "path": "/health", "example": "pcl search --health"},
+                    {"name": "whitelist", "auth": true, "method": "GET", "path": "/whitelist", "example": "pcl search --whitelist"},
+                    {"name": "verified_contract", "auth": false, "method": "GET", "path": "/web/verified-contract", "required_flags": ["--address", "--chain-id"], "example": "pcl search --verified-contract --address 0x... --chain-id 1"}
                 ]
             },
             {
-                "command": "pcl api account [--me|--accept-terms|--logout]",
+                "command": "pcl account [--me|--accept-terms|--logout]",
                 "description": "Inspect authenticated web user state and perform onboarding actions.",
                 "output": "current user account state, terms acceptance result, or logout result",
                 "actions": [
-                    {"name": "me", "auth": true, "method": "GET", "path": "/web/auth/me", "example": "pcl api account"},
-                    {"name": "accept_terms", "auth": true, "method": "POST", "path": "/web/auth/accept-terms", "body_template": "empty_object", "example": "pcl api account --accept-terms"},
-                    {"name": "logout", "auth": true, "method": "POST", "path": "/web/auth/logout", "body_template": "empty_object", "example": "pcl api account --logout"}
+                    {"name": "me", "auth": true, "method": "GET", "path": "/web/auth/me", "example": "pcl account"},
+                    {"name": "accept_terms", "auth": true, "method": "POST", "path": "/web/auth/accept-terms", "body_template": "empty_object", "example": "pcl account --accept-terms"},
+                    {"name": "logout", "auth": true, "method": "POST", "path": "/web/auth/logout", "body_template": "empty_object", "example": "pcl account --logout"}
                 ]
             },
             {
-                "command": "pcl api contracts [--project <ref>] [--adopter-id <id>] [--unassigned --manager <address>] [--create --body '{...}']",
+                "command": "pcl contracts [--project <ref>] [--adopter-id <id>] [--unassigned --manager <address>] [--create --body '{...}']",
                 "description": "List and manage project contracts and assertion adopters.",
                 "output": "contract views, adopter records, assignment results, or remove calldata",
                 "actions": [
-                    {"name": "list_all", "auth": true, "method": "GET", "path": "/assertion_adopters", "example": "pcl api contracts"},
-                    {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{project}/contracts", "required_flags": ["--project"], "example": "pcl api contracts --project <project-ref>"},
-                    {"name": "detail", "auth": true, "method": "GET", "path": "/views/projects/{project}/contracts/{adopter_id}", "required_flags": ["--project", "--adopter-id"], "example": "pcl api contracts --project <project-ref> --adopter-id <adopter-id>"},
-                    {"name": "unassigned", "auth": true, "method": "GET", "path": "/assertion_adopters/no-project", "required_flags": ["--manager"], "query": {"manager": "<manager-address>"}, "example": "pcl api contracts --unassigned --manager 0x..."},
-                    {"name": "create", "auth": true, "method": "POST", "path": "/assertion_adopters", "body_template": "contracts", "example": "pcl api contracts --create --body-template"},
-                    {"name": "assign_project", "auth": true, "method": "POST", "path": "/assertion_adopters/assign-project", "body_template": "contracts_assign_project", "example": "pcl api contracts --assign-project --body-template"},
-                    {"name": "remove", "auth": true, "method": "DELETE", "path": "/projects/{project}/{aa_address}", "required_flags": ["--project", "--aa-address"], "example": "pcl api contracts --project <project-ref> --aa-address 0x... --remove"},
-                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/assertion_adopters/{aa_address}/remove-assertions-calldata", "required_flags": ["--aa-address"], "example": "pcl api contracts --aa-address 0x... --remove-calldata"}
+                    {"name": "list_all", "auth": true, "method": "GET", "path": "/assertion_adopters", "example": "pcl contracts"},
+                    {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{project}/contracts", "required_flags": ["--project"], "example": "pcl contracts --project <project-ref>"},
+                    {"name": "detail", "auth": true, "method": "GET", "path": "/views/projects/{project}/contracts/{adopter_id}", "required_flags": ["--project", "--adopter-id"], "example": "pcl contracts --project <project-ref> --adopter-id <adopter-id>"},
+                    {"name": "unassigned", "auth": true, "method": "GET", "path": "/assertion_adopters/no-project", "required_flags": ["--manager"], "query": {"manager": "<manager-address>"}, "example": "pcl contracts --unassigned --manager 0x..."},
+                    {"name": "create", "auth": true, "method": "POST", "path": "/assertion_adopters", "body_template": "contracts", "example": "pcl contracts --create --body-template"},
+                    {"name": "assign_project", "auth": true, "method": "POST", "path": "/assertion_adopters/assign-project", "body_template": "contracts_assign_project", "example": "pcl contracts --assign-project --body-template"},
+                    {"name": "remove", "auth": true, "method": "DELETE", "path": "/projects/{project}/{aa_address}", "required_flags": ["--project", "--aa-address"], "example": "pcl contracts --project <project-ref> --aa-address 0x... --remove"},
+                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/assertion_adopters/{aa_address}/remove-assertions-calldata", "required_flags": ["--aa-address"], "example": "pcl contracts --aa-address 0x... --remove-calldata"}
                 ]
             },
             {
-                "command": "pcl api releases --project <ref> [--release-id <id>] [--preview|--create|--deploy|--remove|--deploy-calldata --signer-address <address>|--remove-calldata]",
+                "command": "pcl releases --project <ref> [--release-id <id>] [--preview|--create|--deploy|--remove|--deploy-calldata --signer-address <address>|--remove-calldata]",
                 "description": "List, inspect, create, preview, deploy, and remove releases.",
                 "output": "release data, diffs, deployment confirmations, or calldata",
                 "actions": [
-                    {"name": "list", "auth": true, "method": "GET", "path": "/projects/{project}/releases", "required_flags": ["--project"], "example": "pcl api releases --project <project-ref>"},
-                    {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}", "required_flags": ["--project", "--release-id"], "example": "pcl api releases --project <project-ref> --release-id <release-id>"},
-                    {"name": "preview", "auth": true, "method": "POST", "path": "/projects/{project}/releases/preview", "required_flags": ["--project"], "body_template": "release", "example": "pcl api releases --project <project-ref> --preview --body-file release.json"},
-                    {"name": "create", "auth": true, "method": "POST", "path": "/projects/{project}/releases", "required_flags": ["--project"], "body_template": "release", "example": "pcl api releases --project <project-ref> --create --body-file release.json"},
-                    {"name": "deploy_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/deploy-calldata", "required_flags": ["--project", "--release-id", "--signer-address"], "query": {"signerAddress": "<signer-address>"}, "example": "pcl api releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address 0x..."},
-                    {"name": "deploy", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/deploy", "required_flags": ["--project", "--release-id"], "body_template": "release_deploy", "example": "pcl api releases --project <project-ref> --release-id <release-id> --deploy --body-template"},
-                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/remove-calldata", "required_flags": ["--project", "--release-id"], "example": "pcl api releases --project <project-ref> --release-id <release-id> --remove-calldata"},
-                    {"name": "remove", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/remove", "required_flags": ["--project", "--release-id"], "body_template": "release_remove", "example": "pcl api releases --project <project-ref> --release-id <release-id> --remove --body-template"}
+                    {"name": "list", "auth": true, "method": "GET", "path": "/projects/{project}/releases", "required_flags": ["--project"], "example": "pcl releases --project <project-ref>"},
+                    {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}", "required_flags": ["--project", "--release-id"], "example": "pcl releases --project <project-ref> --release-id <release-id>"},
+                    {"name": "preview", "auth": true, "method": "POST", "path": "/projects/{project}/releases/preview", "required_flags": ["--project"], "body_template": "release", "example": "pcl releases --project <project-ref> --preview --body-file release.json"},
+                    {"name": "create", "auth": true, "method": "POST", "path": "/projects/{project}/releases", "required_flags": ["--project"], "body_template": "release", "example": "pcl releases --project <project-ref> --create --body-file release.json"},
+                    {"name": "deploy_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/deploy-calldata", "required_flags": ["--project", "--release-id", "--signer-address"], "query": {"signerAddress": "<signer-address>"}, "example": "pcl releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address 0x..."},
+                    {"name": "deploy", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/deploy", "required_flags": ["--project", "--release-id"], "body_template": "release_deploy", "example": "pcl releases --project <project-ref> --release-id <release-id> --deploy --body-template"},
+                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/remove-calldata", "required_flags": ["--project", "--release-id"], "example": "pcl releases --project <project-ref> --release-id <release-id> --remove-calldata"},
+                    {"name": "remove", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/remove", "required_flags": ["--project", "--release-id"], "body_template": "release_remove", "example": "pcl releases --project <project-ref> --release-id <release-id> --remove --body-template"}
                 ]
             },
             {
-                "command": "pcl api deployments --project <ref> [--confirm --body '{...}']",
+                "command": "pcl deployments --project <ref> [--confirm --body '{...}']",
                 "description": "Inspect deployment state and confirm deployed assertions.",
                 "output": "deployment view or confirmation result",
                 "actions": [
-                    {"name": "list", "auth": true, "method": "GET", "path": "/views/projects/{project}/deployments", "required_flags": ["--project"], "example": "pcl api deployments --project <project-ref>"},
-                    {"name": "confirm", "auth": true, "method": "POST", "path": "/projects/{project}/confirm-deployment", "required_flags": ["--project"], "body_template": "deployment_confirmation", "example": "pcl api deployments --project <project-ref> --confirm --body-template"}
+                    {"name": "list", "auth": true, "method": "GET", "path": "/views/projects/{project}/deployments", "required_flags": ["--project"], "example": "pcl deployments --project <project-ref>"},
+                    {"name": "confirm", "auth": true, "method": "POST", "path": "/projects/{project}/confirm-deployment", "required_flags": ["--project"], "body_template": "deployment_confirmation", "example": "pcl deployments --project <project-ref> --confirm --body-template"}
                 ]
             },
             {
-                "command": "pcl api access [--project <ref>] [--members|--invitations|--invite|--pending|--token <token>]",
+                "command": "pcl access [--project <ref>] [--members|--invitations|--invite|--pending|--token <token>]",
                 "description": "Manage project members, roles, and invitations.",
                 "output": "member lists, invitation lists, role data, or mutation results",
                 "actions": [
-                    {"name": "members", "auth": true, "method": "GET", "path": "/projects/{project}/members", "required_flags": ["--project"], "example": "pcl api access --project <project-ref> --members"},
-                    {"name": "my_role", "auth": true, "method": "GET", "path": "/projects/{project}/my-role", "required_flags": ["--project"], "example": "pcl api access --project <project-ref> --my-role"},
-                    {"name": "invitations", "auth": true, "method": "GET", "path": "/projects/{project}/invitations", "required_flags": ["--project"], "example": "pcl api access --project <project-ref> --invitations"},
-                    {"name": "invite", "auth": true, "method": "POST", "path": "/projects/{project}/invitations", "required_flags": ["--project"], "body_template": "access_invite", "example": "pcl api access --project <project-ref> --invite --body-template"},
-                    {"name": "resend", "auth": true, "method": "POST", "path": "/projects/{project}/invitations/{invitation_id}/resend", "required_flags": ["--project", "--invitation-id"], "body_template": "empty_object", "example": "pcl api access --project <project-ref> --invitation-id <id> --resend"},
-                    {"name": "revoke", "auth": true, "method": "DELETE", "path": "/projects/{project}/invitations/{invitation_id}", "required_flags": ["--project", "--invitation-id"], "body_template": "empty_object", "example": "pcl api access --project <project-ref> --invitation-id <id> --revoke"},
-                    {"name": "update_role", "auth": true, "method": "PATCH", "path": "/projects/{project}/members/{member_user_id}", "required_flags": ["--project", "--member-user-id"], "body_template": "role_update", "example": "pcl api access --project <project-ref> --member-user-id <user-id> --update-role --body-template"},
-                    {"name": "remove", "auth": true, "method": "DELETE", "path": "/projects/{project}/members/{member_user_id}", "required_flags": ["--project", "--member-user-id"], "body_template": "empty_object", "example": "pcl api access --project <project-ref> --member-user-id <user-id> --remove"},
-                    {"name": "pending", "auth": true, "method": "GET", "path": "/invitations/pending", "example": "pcl api access --pending"},
-                    {"name": "preview", "auth": false, "method": "GET", "path": "/invitations/{token}/preview", "required_flags": ["--token"], "example": "pcl api access --token <token> --preview"},
-                    {"name": "accept", "auth": true, "method": "POST", "path": "/invitations/{token}/accept", "required_flags": ["--token"], "body_template": "empty_object", "example": "pcl api access --token <token> --accept"}
+                    {"name": "members", "auth": true, "method": "GET", "path": "/projects/{project}/members", "required_flags": ["--project"], "example": "pcl access --project <project-ref> --members"},
+                    {"name": "my_role", "auth": true, "method": "GET", "path": "/projects/{project}/my-role", "required_flags": ["--project"], "example": "pcl access --project <project-ref> --my-role"},
+                    {"name": "invitations", "auth": true, "method": "GET", "path": "/projects/{project}/invitations", "required_flags": ["--project"], "example": "pcl access --project <project-ref> --invitations"},
+                    {"name": "invite", "auth": true, "method": "POST", "path": "/projects/{project}/invitations", "required_flags": ["--project"], "body_template": "access_invite", "example": "pcl access --project <project-ref> --invite --body-template"},
+                    {"name": "resend", "auth": true, "method": "POST", "path": "/projects/{project}/invitations/{invitation_id}/resend", "required_flags": ["--project", "--invitation-id"], "body_template": "empty_object", "example": "pcl access --project <project-ref> --invitation-id <id> --resend"},
+                    {"name": "revoke", "auth": true, "method": "DELETE", "path": "/projects/{project}/invitations/{invitation_id}", "required_flags": ["--project", "--invitation-id"], "body_template": "empty_object", "example": "pcl access --project <project-ref> --invitation-id <id> --revoke"},
+                    {"name": "update_role", "auth": true, "method": "PATCH", "path": "/projects/{project}/members/{member_user_id}", "required_flags": ["--project", "--member-user-id"], "body_template": "role_update", "example": "pcl access --project <project-ref> --member-user-id <user-id> --update-role --body-template"},
+                    {"name": "remove", "auth": true, "method": "DELETE", "path": "/projects/{project}/members/{member_user_id}", "required_flags": ["--project", "--member-user-id"], "body_template": "empty_object", "example": "pcl access --project <project-ref> --member-user-id <user-id> --remove"},
+                    {"name": "pending", "auth": true, "method": "GET", "path": "/invitations/pending", "example": "pcl access --pending"},
+                    {"name": "preview", "auth": false, "method": "GET", "path": "/invitations/{token}/preview", "required_flags": ["--token"], "example": "pcl access --token <token> --preview"},
+                    {"name": "accept", "auth": true, "method": "POST", "path": "/invitations/{token}/accept", "required_flags": ["--token"], "body_template": "empty_object", "example": "pcl access --token <token> --accept"}
                 ]
             },
             {
-                "command": "pcl api integrations --project <ref> --provider <slack|pagerduty> [--configure|--test|--delete]",
+                "command": "pcl integrations --project <ref> --provider <slack|pagerduty> [--configure|--test|--delete]",
                 "description": "Manage Slack and PagerDuty integrations.",
                 "output": "integration status or mutation/test results",
                 "actions": [
-                    {"name": "get", "auth": true, "method": "GET", "path": "/projects/{project}/integrations/{provider}", "required_flags": ["--project", "--provider"], "example": "pcl api integrations --project <project-ref> --provider slack"},
-                    {"name": "configure", "auth": true, "method": "POST", "path": "/projects/{project}/integrations/{provider}", "required_flags": ["--project", "--provider"], "body_template": "slack|pagerduty", "example": "pcl api integrations --project <project-ref> --provider slack --configure --body-template"},
-                    {"name": "test", "auth": true, "method": "POST", "path": "/projects/{project}/integrations/{provider}/test", "required_flags": ["--project", "--provider"], "body_template": "slack|pagerduty", "example": "pcl api integrations --project <project-ref> --provider slack --test"},
-                    {"name": "delete", "auth": true, "method": "DELETE", "path": "/projects/{project}/integrations/{provider}", "required_flags": ["--project", "--provider"], "example": "pcl api integrations --project <project-ref> --provider slack --delete"}
+                    {"name": "get", "auth": true, "method": "GET", "path": "/projects/{project}/integrations/{provider}", "required_flags": ["--project", "--provider"], "example": "pcl integrations --project <project-ref> --provider slack"},
+                    {"name": "configure", "auth": true, "method": "POST", "path": "/projects/{project}/integrations/{provider}", "required_flags": ["--project", "--provider"], "body_template": "slack|pagerduty", "example": "pcl integrations --project <project-ref> --provider slack --configure --body-template"},
+                    {"name": "test", "auth": true, "method": "POST", "path": "/projects/{project}/integrations/{provider}/test", "required_flags": ["--project", "--provider"], "body_template": "slack|pagerduty", "example": "pcl integrations --project <project-ref> --provider slack --test"},
+                    {"name": "delete", "auth": true, "method": "DELETE", "path": "/projects/{project}/integrations/{provider}", "required_flags": ["--project", "--provider"], "example": "pcl integrations --project <project-ref> --provider slack --delete"}
                 ]
             },
             {
-                "command": "pcl api protocol-manager --project <ref> [--nonce --address <address>|--set|--clear|--transfer-calldata|--accept-calldata|--pending-transfer|--confirm-transfer]",
+                "command": "pcl protocol-manager --project <ref> [--nonce --address <address>|--set|--clear|--transfer-calldata|--accept-calldata|--pending-transfer|--confirm-transfer]",
                 "description": "Manage protocol manager transfers and calldata.",
                 "output": "manager state, nonce, calldata, pending transfer, or mutation result",
                 "actions": [
-                    {"name": "pending_transfer", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/pending-transfer", "required_flags": ["--project"], "example": "pcl api protocol-manager --project <project-ref> --pending-transfer"},
-                    {"name": "nonce", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/nonce", "required_flags": ["--project", "--address"], "optional_flags": ["--chain-id"], "query": {"address": "<address>", "chain_id": "<chain-id>"}, "example": "pcl api protocol-manager --project <project-ref> --nonce --address 0x..."},
-                    {"name": "set", "auth": true, "method": "POST", "path": "/projects/{project}/protocol-manager", "required_flags": ["--project"], "body_template": "protocol_manager_set", "example": "pcl api protocol-manager --project <project-ref> --set --body-template"},
-                    {"name": "clear", "auth": true, "method": "DELETE", "path": "/projects/{project}/protocol-manager", "required_flags": ["--project"], "body_template": "empty_object", "example": "pcl api protocol-manager --project <project-ref> --clear"},
-                    {"name": "transfer_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/transfer-calldata", "required_flags": ["--project", "--new-manager"], "query": {"new_manager": "<address>"}, "example": "pcl api protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x..."},
-                    {"name": "accept_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/accept-calldata", "required_flags": ["--project"], "example": "pcl api protocol-manager --project <project-ref> --accept-calldata"},
-                    {"name": "confirm_transfer", "auth": true, "method": "POST", "path": "/projects/{project}/protocol-manager/confirm-transfer", "required_flags": ["--project"], "body_template": "protocol_manager_confirm", "example": "pcl api protocol-manager --project <project-ref> --confirm-transfer --body-template"}
+                    {"name": "pending_transfer", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/pending-transfer", "required_flags": ["--project"], "example": "pcl protocol-manager --project <project-ref> --pending-transfer"},
+                    {"name": "nonce", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/nonce", "required_flags": ["--project", "--address"], "optional_flags": ["--chain-id"], "query": {"address": "<address>", "chain_id": "<chain-id>"}, "example": "pcl protocol-manager --project <project-ref> --nonce --address 0x..."},
+                    {"name": "set", "auth": true, "method": "POST", "path": "/projects/{project}/protocol-manager", "required_flags": ["--project"], "body_template": "protocol_manager_set", "example": "pcl protocol-manager --project <project-ref> --set --body-template"},
+                    {"name": "clear", "auth": true, "method": "DELETE", "path": "/projects/{project}/protocol-manager", "required_flags": ["--project"], "body_template": "empty_object", "example": "pcl protocol-manager --project <project-ref> --clear"},
+                    {"name": "transfer_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/transfer-calldata", "required_flags": ["--project", "--new-manager"], "query": {"new_manager": "<address>"}, "example": "pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x..."},
+                    {"name": "accept_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/accept-calldata", "required_flags": ["--project"], "example": "pcl protocol-manager --project <project-ref> --accept-calldata"},
+                    {"name": "confirm_transfer", "auth": true, "method": "POST", "path": "/projects/{project}/protocol-manager/confirm-transfer", "required_flags": ["--project"], "body_template": "protocol_manager_confirm", "example": "pcl protocol-manager --project <project-ref> --confirm-transfer --body-template"}
                 ]
             },
             {
-                "command": "pcl api transfers [--pending|--transfer-id <id>|--reject --body '{...}']",
+                "command": "pcl transfers [--pending|--transfer-id <id>|--reject --body '{...}']",
                 "description": "Inspect and reject protocol manager transfers.",
                 "output": "pending transfers, transfer detail, or reject result",
                 "actions": [
-                    {"name": "pending", "auth": true, "method": "GET", "path": "/views/transfers/pending", "example": "pcl api transfers --pending"},
-                    {"name": "detail", "auth": true, "method": "GET", "path": "/views/transfers/{transfer_id}", "required_flags": ["--transfer-id"], "example": "pcl api transfers --transfer-id <transfer-id>"},
-                    {"name": "reject", "auth": true, "method": "POST", "path": "/transfers/reject", "body_template": "transfer_reject", "example": "pcl api transfers --reject --body-template"}
+                    {"name": "pending", "auth": true, "method": "GET", "path": "/views/transfers/pending", "example": "pcl transfers --pending"},
+                    {"name": "detail", "auth": true, "method": "GET", "path": "/views/transfers/{transfer_id}", "required_flags": ["--transfer-id"], "example": "pcl transfers --transfer-id <transfer-id>"},
+                    {"name": "reject", "auth": true, "method": "POST", "path": "/transfers/reject", "body_template": "transfer_reject", "example": "pcl transfers --reject --body-template"}
                 ]
             },
             {
-                "command": "pcl api events --project <ref> [--audit-log]",
+                "command": "pcl events --project <ref> [--audit-log]",
                 "description": "Inspect project events and audit logs.",
                 "output": "event or audit log data",
                 "actions": [
-                    {"name": "events", "auth": true, "method": "GET", "path": "/views/projects/{project}/events", "required_flags": ["--project"], "optional_flags": ["--page", "--limit", "--environment"], "example": "pcl api events --project <project-ref>"},
-                    {"name": "audit_log", "auth": true, "method": "GET", "path": "/views/projects/{project}/audit-log", "required_flags": ["--project"], "optional_flags": ["--page", "--limit", "--environment"], "example": "pcl api events --project <project-ref> --audit-log"}
+                    {"name": "events", "auth": true, "method": "GET", "path": "/views/projects/{project}/events", "required_flags": ["--project"], "optional_flags": ["--page", "--limit", "--environment"], "example": "pcl events --project <project-ref>"},
+                    {"name": "audit_log", "auth": true, "method": "GET", "path": "/views/projects/{project}/audit-log", "required_flags": ["--project"], "optional_flags": ["--page", "--limit", "--environment"], "example": "pcl events --project <project-ref> --audit-log"}
                 ]
             },
             {
@@ -2479,11 +2647,11 @@ fn api_manifest() -> Value {
             },
         ],
         "examples": [
-            "pcl api incidents --limit 5",
-            "pcl api search --query settler",
-            "pcl api releases --project <project-ref>",
-            "pcl api access --project <project-ref> --members",
-            "pcl api integrations --project <project-ref> --provider slack",
+            "pcl incidents --limit 5",
+            "pcl search --query settler",
+            "pcl releases --project <project-ref>",
+            "pcl access --project <project-ref> --members",
+            "pcl integrations --project <project-ref> --provider slack",
             "pcl api list --filter incidents",
         ],
     })
@@ -2494,28 +2662,28 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
         return Ok(WorkflowRequest::get(
             "/health",
             false,
-            vec!["pcl api search --system-status".to_string()],
+            vec!["pcl search --system-status".to_string()],
         ));
     }
     if args.system_status {
         return Ok(WorkflowRequest::get(
             "/system-status",
             false,
-            vec!["pcl api search --stats".to_string()],
+            vec!["pcl search --stats".to_string()],
         ));
     }
     if args.stats {
         return Ok(WorkflowRequest::get(
             "/stats",
             false,
-            vec!["pcl api projects --limit 10".to_string()],
+            vec!["pcl projects --limit 10".to_string()],
         ));
     }
     if args.whitelist {
         return Ok(WorkflowRequest::get(
             "/whitelist",
             true,
-            vec!["pcl api projects --home".to_string()],
+            vec!["pcl projects --home".to_string()],
         ));
     }
     if args.verified_contract {
@@ -2528,7 +2696,7 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
         let mut request = WorkflowRequest::get(
             "/web/verified-contract",
             false,
-            vec!["pcl api contracts --project <project-ref>".to_string()],
+            vec!["pcl contracts --project <project-ref>".to_string()],
         );
         push_query_string_value(&mut request.query, "address", address);
         push_query(&mut request.query, "chainId", Some(chain_id));
@@ -2539,8 +2707,8 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
         "/search",
         false,
         vec![
-            "pcl api projects --project <project-ref>".to_string(),
-            "pcl api contracts --project <project-ref>".to_string(),
+            "pcl projects --project <project-ref>".to_string(),
+            "pcl contracts --project <project-ref>".to_string(),
         ],
     );
     push_query_string(&mut request.query, "query", &args.query);
@@ -2555,10 +2723,7 @@ fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, ApiCommandErro
             "/web/auth/accept-terms",
             true,
             body.or_else(|| Some(json!({}).to_string())),
-            vec![
-                "pcl api account".to_string(),
-                "pcl api projects --home".to_string(),
-            ],
+            vec!["pcl account".to_string(), "pcl projects --home".to_string()],
         ));
     }
     if args.logout {
@@ -2574,8 +2739,8 @@ fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, ApiCommandErro
         "/web/auth/me",
         true,
         vec![
-            "pcl api account --accept-terms".to_string(),
-            "pcl api projects --home".to_string(),
+            "pcl account --accept-terms".to_string(),
+            "pcl projects --home".to_string(),
         ],
     ))
 }
@@ -2588,7 +2753,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
             "/assertion_adopters",
             true,
             body,
-            vec!["pcl api contracts --unassigned --manager <manager-address>".to_string()],
+            vec!["pcl contracts --unassigned --manager <manager-address>".to_string()],
         ));
     }
     if args.assign_project {
@@ -2597,7 +2762,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
             "/assertion_adopters/assign-project",
             true,
             body,
-            vec!["pcl api contracts --project <project-ref>".to_string()],
+            vec!["pcl contracts --project <project-ref>".to_string()],
         ));
     }
     if args.unassigned {
@@ -2605,7 +2770,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
         let mut request = WorkflowRequest::get(
             "/assertion_adopters/no-project",
             true,
-            vec!["pcl api contracts --assign-project --body '{...}'".to_string()],
+            vec!["pcl contracts --assign-project --body '{...}'".to_string()],
         );
         push_query_string_value(&mut request.query, "manager", manager);
         return Ok(request);
@@ -2615,7 +2780,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
         return Ok(WorkflowRequest::get(
             format!("/assertion_adopters/{address}/remove-assertions-calldata"),
             true,
-            vec!["pcl api releases --project <project-ref>".to_string()],
+            vec!["pcl releases --project <project-ref>".to_string()],
         ));
     }
     if args.remove {
@@ -2626,7 +2791,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
             format!("/projects/{project}/{address}"),
             true,
             body,
-            vec![format!("pcl api contracts --project {project}")],
+            vec![format!("pcl contracts --project {project}")],
         ));
     }
     if let Some(project) = &args.project {
@@ -2634,14 +2799,14 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
             return Ok(WorkflowRequest::get(
                 format!("/views/projects/{project}/contracts/{adopter_id}"),
                 true,
-                vec![format!("pcl api contracts --project {project}")],
+                vec![format!("pcl contracts --project {project}")],
             ));
         }
         return Ok(WorkflowRequest::get(
             format!("/views/projects/{project}/contracts"),
             true,
             vec![format!(
-                "pcl api contracts --project {project} --adopter-id <adopter-id>"
+                "pcl contracts --project {project} --adopter-id <adopter-id>"
             )],
         ));
     }
@@ -2649,7 +2814,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
     Ok(WorkflowRequest::get(
         "/assertion_adopters",
         true,
-        vec!["pcl api contracts --unassigned --manager <manager-address>".to_string()],
+        vec!["pcl contracts --unassigned --manager <manager-address>".to_string()],
     ))
 }
 
@@ -2663,7 +2828,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
             true,
             body,
             vec![format!(
-                "pcl api releases --project {project} --create --body-file release.json"
+                "pcl releases --project {project} --create --body-file release.json"
             )],
         ));
     }
@@ -2673,7 +2838,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
             format!("/projects/{project}/releases"),
             true,
             body,
-            vec![format!("pcl api releases --project {project}")],
+            vec![format!("pcl releases --project {project}")],
         ));
     }
     if args.deploy || args.remove || args.deploy_calldata || args.remove_calldata {
@@ -2685,7 +2850,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
                 true,
                 body,
                 vec![format!(
-                    "pcl api releases --project {project} --release-id {release_id}"
+                    "pcl releases --project {project} --release-id {release_id}"
                 )],
             ));
         }
@@ -2695,7 +2860,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
                 format!("/projects/{project}/releases/{release_id}/remove"),
                 true,
                 body,
-                vec![format!("pcl api releases --project {project}")],
+                vec![format!("pcl releases --project {project}")],
             ));
         }
         if args.deploy_calldata {
@@ -2704,7 +2869,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
                 format!("/projects/{project}/releases/{release_id}/deploy-calldata"),
                 true,
                 vec![format!(
-                    "pcl api releases --project {project} --release-id {release_id} --deploy"
+                    "pcl releases --project {project} --release-id {release_id} --deploy"
                 )],
             );
             push_query_string_value(&mut request.query, "signerAddress", signer_address);
@@ -2714,7 +2879,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
             format!("/projects/{project}/releases/{release_id}/remove-calldata"),
             true,
             vec![format!(
-                "pcl api releases --project {project} --release-id {release_id} --remove"
+                "pcl releases --project {project} --release-id {release_id} --remove"
             )],
         ));
     }
@@ -2723,7 +2888,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
             format!("/projects/{project}/releases"),
             true,
             vec![format!(
-                "pcl api releases --project {project} --release-id <release-id>"
+                "pcl releases --project {project} --release-id <release-id>"
             )],
         ));
     };
@@ -2732,11 +2897,9 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
         true,
         vec![
             format!(
-                "pcl api releases --project {project} --release-id {release_id} --deploy-calldata --signer-address <signer-address>"
+                "pcl releases --project {project} --release-id {release_id} --deploy-calldata --signer-address <signer-address>"
             ),
-            format!(
-                "pcl api releases --project {project} --release-id {release_id} --remove-calldata"
-            ),
+            format!("pcl releases --project {project} --release-id {release_id} --remove-calldata"),
         ],
     ))
 }
@@ -2750,13 +2913,13 @@ fn deployments_request(args: &DeploymentsArgs) -> Result<WorkflowRequest, ApiCom
             format!("/projects/{project}/confirm-deployment"),
             true,
             body,
-            vec![format!("pcl api deployments --project {project}")],
+            vec![format!("pcl deployments --project {project}")],
         ));
     }
     Ok(WorkflowRequest::get(
         format!("/views/projects/{project}/deployments"),
         true,
-        vec![format!("pcl api releases --project {project}")],
+        vec![format!("pcl releases --project {project}")],
     ))
 }
 
@@ -2766,7 +2929,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
         return Ok(WorkflowRequest::get(
             "/invitations/pending",
             true,
-            vec!["pcl api access --token <token> --accept".to_string()],
+            vec!["pcl access --token <token> --accept".to_string()],
         ));
     }
     if args.accept || args.preview {
@@ -2777,20 +2940,20 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
                 format!("/invitations/{token}/accept"),
                 true,
                 body,
-                vec!["pcl api projects --home".to_string()],
+                vec!["pcl projects --home".to_string()],
             ));
         }
         return Ok(WorkflowRequest::get(
             format!("/invitations/{token}/preview"),
             false,
-            vec![format!("pcl api access --token {token} --accept")],
+            vec![format!("pcl access --token {token} --accept")],
         ));
     }
     if let Some(token) = &args.token {
         return Ok(WorkflowRequest::get(
             format!("/invitations/{token}/preview"),
             false,
-            vec![format!("pcl api access --token {token} --accept")],
+            vec![format!("pcl access --token {token} --accept")],
         ));
     }
     let project = required_arg(args.project.as_deref(), "--project")?;
@@ -2798,7 +2961,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
         return Ok(WorkflowRequest::get(
             format!("/projects/{project}/my-role"),
             true,
-            vec![format!("pcl api access --project {project} --members")],
+            vec![format!("pcl access --project {project} --members")],
         ));
     }
     if args.invite {
@@ -2807,7 +2970,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
             format!("/projects/{project}/invitations"),
             true,
             body,
-            vec![format!("pcl api access --project {project} --invitations")],
+            vec![format!("pcl access --project {project} --invitations")],
         ));
     }
     if args.resend || args.revoke {
@@ -2818,7 +2981,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
                 format!("/projects/{project}/invitations/{invitation_id}/resend"),
                 true,
                 body,
-                vec![format!("pcl api access --project {project} --invitations")],
+                vec![format!("pcl access --project {project} --invitations")],
             ));
         }
         return Ok(workflow_with_body(
@@ -2826,7 +2989,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
             format!("/projects/{project}/invitations/{invitation_id}"),
             true,
             body,
-            vec![format!("pcl api access --project {project} --invitations")],
+            vec![format!("pcl access --project {project} --invitations")],
         ));
     }
     if args.update_role || args.remove {
@@ -2837,7 +3000,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
                 format!("/projects/{project}/members/{member_user_id}"),
                 true,
                 body,
-                vec![format!("pcl api access --project {project} --members")],
+                vec![format!("pcl access --project {project} --members")],
             ));
         }
         return Ok(workflow_with_body(
@@ -2845,7 +3008,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
             format!("/projects/{project}/members/{member_user_id}"),
             true,
             body,
-            vec![format!("pcl api access --project {project} --members")],
+            vec![format!("pcl access --project {project} --members")],
         ));
     }
     if args.invitations {
@@ -2853,7 +3016,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
             format!("/projects/{project}/invitations"),
             true,
             vec![format!(
-                "pcl api access --project {project} --invite --body '{{...}}'"
+                "pcl access --project {project} --invite --body '{{...}}'"
             )],
         ));
     }
@@ -2861,8 +3024,8 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
         format!("/projects/{project}/members"),
         true,
         vec![
-            format!("pcl api access --project {project} --my-role"),
-            format!("pcl api access --project {project} --invitations"),
+            format!("pcl access --project {project} --my-role"),
+            format!("pcl access --project {project} --invitations"),
         ],
     ))
 }
@@ -2884,7 +3047,7 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
             true,
             body,
             vec![format!(
-                "pcl api integrations --project {project} --provider {provider}"
+                "pcl integrations --project {project} --provider {provider}"
             )],
         ));
     }
@@ -2895,7 +3058,7 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
             true,
             body,
             vec![format!(
-                "pcl api integrations --project {project} --provider {provider}"
+                "pcl integrations --project {project} --provider {provider}"
             )],
         ));
     }
@@ -2906,7 +3069,7 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
             true,
             body,
             vec![format!(
-                "pcl api integrations --project {project} --provider slack"
+                "pcl integrations --project {project} --provider slack"
             )],
         ));
     }
@@ -2914,9 +3077,9 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
         base,
         true,
         vec![
-            format!("pcl api integrations --project {project} --provider {provider} --test"),
+            format!("pcl integrations --project {project} --provider {provider} --test"),
             format!(
-                "pcl api integrations --project {project} --provider {provider} --configure --body '{{...}}'"
+                "pcl integrations --project {project} --provider {provider} --configure --body '{{...}}'"
             ),
         ],
     ))
@@ -2934,7 +3097,7 @@ fn protocol_manager_request(
             format!("{base}/nonce"),
             true,
             vec![format!(
-                "pcl api protocol-manager --project {project} --set --body '{{...}}'"
+                "pcl protocol-manager --project {project} --set --body '{{...}}'"
             )],
         );
         push_query_string_value(&mut request.query, "address", address);
@@ -2948,7 +3111,7 @@ fn protocol_manager_request(
             true,
             body,
             vec![format!(
-                "pcl api protocol-manager --project {project} --pending-transfer"
+                "pcl protocol-manager --project {project} --pending-transfer"
             )],
         ));
     }
@@ -2959,7 +3122,7 @@ fn protocol_manager_request(
             true,
             body,
             vec![format!(
-                "pcl api protocol-manager --project {project} --nonce --address <manager-address>"
+                "pcl protocol-manager --project {project} --nonce --address <manager-address>"
             )],
         ));
     }
@@ -2969,7 +3132,7 @@ fn protocol_manager_request(
             format!("{base}/transfer-calldata"),
             true,
             vec![format!(
-                "pcl api protocol-manager --project {project} --set --body '{{...}}'"
+                "pcl protocol-manager --project {project} --set --body '{{...}}'"
             )],
         );
         push_query_string_value(&mut request.query, "new_manager", new_manager);
@@ -2980,7 +3143,7 @@ fn protocol_manager_request(
             format!("{base}/accept-calldata"),
             true,
             vec![format!(
-                "pcl api protocol-manager --project {project} --confirm-transfer --body '{{...}}'"
+                "pcl protocol-manager --project {project} --confirm-transfer --body '{{...}}'"
             )],
         ));
     }
@@ -2991,7 +3154,7 @@ fn protocol_manager_request(
             true,
             body,
             vec![format!(
-                "pcl api protocol-manager --project {project} --pending-transfer"
+                "pcl protocol-manager --project {project} --pending-transfer"
             )],
         ));
     }
@@ -2999,11 +3162,9 @@ fn protocol_manager_request(
         format!("{base}/pending-transfer"),
         true,
         vec![
+            format!("pcl protocol-manager --project {project} --nonce --address <manager-address>"),
             format!(
-                "pcl api protocol-manager --project {project} --nonce --address <manager-address>"
-            ),
-            format!(
-                "pcl api protocol-manager --project {project} --transfer-calldata --new-manager <manager-address>"
+                "pcl protocol-manager --project {project} --transfer-calldata --new-manager <manager-address>"
             ),
         ],
     ))
@@ -3017,20 +3178,20 @@ fn transfers_request(args: &TransfersArgs) -> Result<WorkflowRequest, ApiCommand
             "/transfers/reject",
             true,
             body,
-            vec!["pcl api transfers --pending".to_string()],
+            vec!["pcl transfers --pending".to_string()],
         ));
     }
     if let Some(transfer_id) = &args.transfer_id {
         return Ok(WorkflowRequest::get(
             format!("/views/transfers/{transfer_id}"),
             true,
-            vec!["pcl api transfers --pending".to_string()],
+            vec!["pcl transfers --pending".to_string()],
         ));
     }
     Ok(WorkflowRequest::get(
         "/views/transfers/pending",
         true,
-        vec!["pcl api transfers --transfer-id <transfer-id>".to_string()],
+        vec!["pcl transfers --transfer-id <transfer-id>".to_string()],
     ))
 }
 
@@ -3039,16 +3200,13 @@ fn events_request(args: &EventsArgs) -> WorkflowRequest {
         WorkflowRequest::get(
             format!("/views/projects/{}/audit-log", args.project),
             true,
-            vec![format!("pcl api events --project {}", args.project)],
+            vec![format!("pcl events --project {}", args.project)],
         )
     } else {
         WorkflowRequest::get(
             format!("/views/projects/{}/events", args.project),
             true,
-            vec![format!(
-                "pcl api events --project {} --audit-log",
-                args.project
-            )],
+            vec![format!("pcl events --project {} --audit-log", args.project)],
         )
     };
     push_query(&mut request.query, "page", args.page);
@@ -3551,7 +3709,7 @@ fn incidents_request(args: &IncidentsArgs) -> Result<WorkflowRequest, ApiCommand
                 body: None,
                 require_auth: true,
                 next_actions: vec![format!(
-                    "pcl api incidents --incident-id {incident_id} --tx-id {tx_id}"
+                    "pcl incidents --incident-id {incident_id} --tx-id {tx_id}"
                 )],
             });
         }
@@ -3561,7 +3719,7 @@ fn incidents_request(args: &IncidentsArgs) -> Result<WorkflowRequest, ApiCommand
             format!("/views/incidents/{incident_id}")
         };
         let next_actions = vec![
-            "pcl api incidents --limit 5".to_string(),
+            "pcl incidents --limit 5".to_string(),
             format!("pcl api inspect get {}", path),
         ];
         return Ok(WorkflowRequest {
@@ -3584,7 +3742,7 @@ fn incidents_request(args: &IncidentsArgs) -> Result<WorkflowRequest, ApiCommand
                 body: None,
                 require_auth: true,
                 next_actions: vec![format!(
-                    "pcl api incidents --project-id {project_id} --limit 10"
+                    "pcl incidents --project-id {project_id} --limit 10"
                 )],
             });
         }
@@ -3601,8 +3759,8 @@ fn incidents_request(args: &IncidentsArgs) -> Result<WorkflowRequest, ApiCommand
             body: None,
             require_auth: true,
             next_actions: vec![
-                format!("pcl api assertions --project-id {project_id}"),
-                "pcl api incidents --limit 5".to_string(),
+                format!("pcl assertions --project-id {project_id}"),
+                "pcl incidents --limit 5".to_string(),
             ],
         });
     }
@@ -3617,8 +3775,8 @@ fn incidents_request(args: &IncidentsArgs) -> Result<WorkflowRequest, ApiCommand
         body: None,
         require_auth: false,
         next_actions: vec![
-            "pcl api incidents --project-id <project-id> --limit 10".to_string(),
-            "pcl api projects --limit 10".to_string(),
+            "pcl incidents --project-id <project-id> --limit 10".to_string(),
+            "pcl projects --limit 10".to_string(),
         ],
     })
 }
@@ -3634,8 +3792,8 @@ fn incidents_next_actions(
     first_string_field(data, &["id", "incidentId", "incident_id"])
         .map(|incident_id| {
             vec![
-                format!("pcl api incidents --incident-id {incident_id}"),
-                "pcl api projects --limit 10".to_string(),
+                format!("pcl incidents --incident-id {incident_id}"),
+                "pcl projects --limit 10".to_string(),
             ]
         })
         .unwrap_or(fallback)
@@ -3645,9 +3803,9 @@ fn projects_next_actions(data: &Value, fallback: Vec<String>) -> Vec<String> {
     first_string_field(data, &["project_id", "projectId", "id"])
         .map(|project_id| {
             vec![
-                format!("pcl api projects --project-id {project_id}"),
-                format!("pcl api assertions --project-id {project_id}"),
-                format!("pcl api incidents --project-id {project_id} --limit 10"),
+                format!("pcl projects --project-id {project_id}"),
+                format!("pcl assertions --project-id {project_id}"),
+                format!("pcl incidents --project-id {project_id} --limit 10"),
             ]
         })
         .unwrap_or(fallback)
@@ -3663,19 +3821,15 @@ fn assertions_next_actions(
             data,
             &["assertion_adopter_address", "adopter_address", "address"],
         )
-        .map(|address| vec![format!("pcl api assertions --adopter-address {address}")])
+        .map(|address| vec![format!("pcl assertions --adopter-address {address}")])
         .unwrap_or(fallback);
     };
 
     first_string_field(data, &["assertion_id", "assertionId", "id"])
         .map(|assertion_id| {
             vec![
-                format!(
-                    "pcl api assertions --project-id {project_id} --assertion-id {assertion_id}",
-                ),
-                format!(
-                    "pcl api incidents --project-id {project_id} --assertion-id {assertion_id}",
-                ),
+                format!("pcl assertions --project-id {project_id} --assertion-id {assertion_id}",),
+                format!("pcl incidents --project-id {project_id} --assertion-id {assertion_id}",),
             ]
         })
         .unwrap_or(fallback)
@@ -3715,7 +3869,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
             "/projects",
             true,
             body,
-            vec!["pcl api projects --home".to_string()],
+            vec!["pcl projects --home".to_string()],
         ));
     }
 
@@ -3727,8 +3881,8 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
             body: None,
             require_auth: true,
             next_actions: vec![
-                "pcl api account".to_string(),
-                "pcl api projects --saved --user-id <user-id>".to_string(),
+                "pcl account".to_string(),
+                "pcl projects --saved --user-id <user-id>".to_string(),
             ],
         });
     }
@@ -3741,7 +3895,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
             query,
             body: None,
             require_auth: true,
-            next_actions: vec!["pcl api projects --home".to_string()],
+            next_actions: vec!["pcl projects --home".to_string()],
         });
     }
     if args.project_id.is_none()
@@ -3757,14 +3911,14 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
                 query,
                 body: None,
                 require_auth: false,
-                next_actions: vec![format!("pcl api projects --project-id {project_id}")],
+                next_actions: vec![format!("pcl projects --project-id {project_id}")],
             });
         }
         if args.widget {
             return Ok(WorkflowRequest::get(
                 format!("/projects/{project_id}/widget"),
                 true,
-                vec![format!("pcl api projects --project-id {project_id}")],
+                vec![format!("pcl projects --project-id {project_id}")],
             ));
         }
         if args.save || args.unsave {
@@ -3777,10 +3931,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
                 "/projects/saved",
                 true,
                 Some(json!({ "project_id": project_id }).to_string()),
-                vec![
-                    "pcl api account".to_string(),
-                    "pcl api projects --home".to_string(),
-                ],
+                vec!["pcl account".to_string(), "pcl projects --home".to_string()],
             ));
         }
         if args.update {
@@ -3789,7 +3940,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
                 format!("/projects/{project_id}"),
                 true,
                 body,
-                vec![format!("pcl api projects --project-id {project_id}")],
+                vec![format!("pcl projects --project-id {project_id}")],
             ));
         }
         if args.delete {
@@ -3798,7 +3949,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
                 format!("/projects/{project_id}"),
                 true,
                 body,
-                vec!["pcl api projects --home".to_string()],
+                vec!["pcl projects --home".to_string()],
             ));
         }
         return Ok(WorkflowRequest {
@@ -3808,8 +3959,8 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
             body: None,
             require_auth: true,
             next_actions: vec![
-                format!("pcl api assertions --project-id {project_id}"),
-                format!("pcl api incidents --project-id {project_id} --limit 10"),
+                format!("pcl assertions --project-id {project_id}"),
+                format!("pcl incidents --project-id {project_id} --limit 10"),
             ],
         });
     }
@@ -3821,8 +3972,8 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
         body: None,
         require_auth: false,
         next_actions: vec![
-            "pcl api projects --project-id <project-id>".to_string(),
-            "pcl api incidents --limit 5".to_string(),
+            "pcl projects --project-id <project-id>".to_string(),
+            "pcl incidents --limit 5".to_string(),
         ],
     })
 }
@@ -3834,7 +3985,7 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
         let mut request = WorkflowRequest::get(
             "/assertions",
             false,
-            vec!["pcl api contracts --project <project-ref>".to_string()],
+            vec!["pcl contracts --project <project-ref>".to_string()],
         );
         push_query_string_value(
             &mut request.query,
@@ -3865,7 +4016,7 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
             true,
             body,
             vec![format!(
-                "pcl api assertions --project-id {project_id} --submitted"
+                "pcl assertions --project-id {project_id} --submitted"
             )],
         ));
     }
@@ -3874,7 +4025,7 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
             format!("/projects/{project_id}/submitted-assertions"),
             true,
             vec![format!(
-                "pcl api assertions --project-id {project_id} --registered"
+                "pcl assertions --project-id {project_id} --registered"
             )],
         ));
     }
@@ -3882,7 +4033,7 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
         return Ok(WorkflowRequest::get(
             format!("/projects/{project_id}/registered-assertions"),
             true,
-            vec![format!("pcl api assertions --project-id {project_id}")],
+            vec![format!("pcl assertions --project-id {project_id}")],
         ));
     }
     if args.remove_info {
@@ -3890,7 +4041,7 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
             format!("/projects/{project_id}/remove-assertions-info"),
             true,
             vec![format!(
-                "pcl api assertions --project-id {project_id} --remove-calldata"
+                "pcl assertions --project-id {project_id} --remove-calldata"
             )],
         ));
     }
@@ -3898,7 +4049,7 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
         return Ok(WorkflowRequest::get(
             format!("/projects/{project_id}/remove-assertions-calldata"),
             true,
-            vec![format!("pcl api releases --project {project_id}")],
+            vec![format!("pcl releases --project {project_id}")],
         ));
     }
 
@@ -3910,7 +4061,7 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
             body: None,
             require_auth: true,
             next_actions: vec![format!(
-                "pcl api incidents --project-id {project_id} --assertion-id {assertion_id}",
+                "pcl incidents --project-id {project_id} --assertion-id {assertion_id}",
             )],
         });
     }
@@ -3922,8 +4073,8 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
         body: None,
         require_auth: true,
         next_actions: vec![
-            format!("pcl api incidents --project-id {project_id} --limit 10"),
-            format!("pcl api assertions --project-id {project_id} --assertion-id <assertion-id>"),
+            format!("pcl incidents --project-id {project_id} --limit 10"),
+            format!("pcl assertions --project-id {project_id} --assertion-id <assertion-id>"),
         ],
     })
 }
@@ -5443,11 +5594,7 @@ mod tests {
         let output = api
             .run_workflow(
                 &config,
-                WorkflowRequest::get(
-                    "/health",
-                    false,
-                    vec!["pcl api search --health".to_string()],
-                ),
+                WorkflowRequest::get("/health", false, vec!["pcl search --health".to_string()]),
             )
             .await
             .unwrap();
@@ -6716,9 +6863,9 @@ mod tests {
         assert_eq!(
             next_actions,
             vec![
-                "pcl api projects --project-id project-1",
-                "pcl api assertions --project-id project-1",
-                "pcl api incidents --project-id project-1 --limit 10",
+                "pcl projects --project-id project-1",
+                "pcl assertions --project-id project-1",
+                "pcl incidents --project-id project-1 --limit 10",
             ]
         );
     }

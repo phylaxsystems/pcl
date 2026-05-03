@@ -4,7 +4,22 @@ use pcl_common::args::CliArgs;
 use pcl_core::verify::VerifyArgs;
 use pcl_core::{
     DEFAULT_PLATFORM_URL,
-    api::ApiArgs,
+    api::{
+        AccessCommand,
+        AccountCommand,
+        ApiArgs,
+        AssertionsCommand,
+        ContractsCommand,
+        DeploymentsCommand,
+        EventsCommand,
+        IncidentsCommand,
+        IntegrationsCommand,
+        ProjectsCommand,
+        ProtocolManagerCommand,
+        ReleasesCommand,
+        SearchCommand,
+        TransfersCommand,
+    },
     apply::ApplyArgs,
     auth::AuthCommand,
     config::ConfigArgs,
@@ -54,6 +69,32 @@ pub enum Commands {
     Apply(ApplyArgs),
     #[command(name = "api")]
     Api(ApiArgs),
+    #[command(name = "incidents")]
+    Incidents(IncidentsCommand),
+    #[command(name = "projects")]
+    Projects(ProjectsCommand),
+    #[command(name = "assertions")]
+    Assertions(AssertionsCommand),
+    #[command(name = "search")]
+    Search(SearchCommand),
+    #[command(name = "account")]
+    Account(AccountCommand),
+    #[command(name = "contracts")]
+    Contracts(ContractsCommand),
+    #[command(name = "releases")]
+    Releases(ReleasesCommand),
+    #[command(name = "deployments")]
+    Deployments(DeploymentsCommand),
+    #[command(name = "access")]
+    Access(AccessCommand),
+    #[command(name = "integrations")]
+    Integrations(IntegrationsCommand),
+    #[command(name = "protocol-manager")]
+    ProtocolManager(ProtocolManagerCommand),
+    #[command(name = "transfers")]
+    Transfers(TransfersCommand),
+    #[command(name = "events")]
+    Events(EventsCommand),
     Auth(AuthCommand),
     #[command(about = "Manage configuration")]
     Config(ConfigArgs),
@@ -130,6 +171,43 @@ mod tests {
         .unwrap();
         assert!(matches!(cli.command, Commands::Api(_)));
         assert!(cli.args.json);
+    }
+
+    #[test]
+    fn parses_top_level_workflow_commands() {
+        let incidents = Cli::try_parse_from([
+            "pcl",
+            "incidents",
+            "--project-id",
+            "project-1",
+            "--all",
+            "--limit",
+            "50",
+        ])
+        .unwrap();
+        assert!(matches!(incidents.command, Commands::Incidents(_)));
+
+        let projects = Cli::try_parse_from([
+            "pcl",
+            "projects",
+            "--dry-run",
+            "--create",
+            "--project-name",
+            "demo",
+            "--chain-id",
+            "1",
+        ])
+        .unwrap();
+        assert!(matches!(projects.command, Commands::Projects(_)));
+
+        let manager = Cli::try_parse_from([
+            "pcl",
+            "protocol-manager",
+            "--confirm-transfer",
+            "--body-template",
+        ])
+        .unwrap();
+        assert!(matches!(manager.command, Commands::ProtocolManager(_)));
     }
 
     #[test]

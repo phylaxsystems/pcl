@@ -416,7 +416,7 @@ impl AuthCommand {
             "next_actions": if token_expired {
                 json!(["pcl auth login", "pcl auth logout"])
             } else {
-                json!(["pcl api account", "pcl api projects --home"])
+                json!(["pcl account", "pcl projects --home"])
             },
         }))
     }

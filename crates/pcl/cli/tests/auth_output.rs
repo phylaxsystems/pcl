@@ -271,3 +271,112 @@ fn api_dry_run_auth_metadata_keeps_required_separate_from_attachment() {
         false
     );
 }
+
+#[test]
+fn top_level_project_workflow_matches_api_alias() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_valid_auth_config(temp_dir.path());
+
+    let api_output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "api",
+            "--api-url",
+            "http://127.0.0.1:9",
+            "--dry-run",
+            "projects",
+            "--create",
+            "--project-name",
+            "demo",
+            "--chain-id",
+            "1",
+        ])
+        .output()
+        .expect("run pcl api projects dry-run");
+
+    let top_level_output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "projects",
+            "--api-url",
+            "http://127.0.0.1:9",
+            "--dry-run",
+            "--create",
+            "--project-name",
+            "demo",
+            "--chain-id",
+            "1",
+        ])
+        .output()
+        .expect("run pcl projects dry-run");
+
+    assert!(
+        api_output.status.success(),
+        "api alias failed: {}",
+        String::from_utf8_lossy(&api_output.stderr)
+    );
+    assert!(
+        top_level_output.status.success(),
+        "top-level workflow failed: {}",
+        String::from_utf8_lossy(&top_level_output.stderr)
+    );
+    let api_envelope: serde_json::Value =
+        serde_json::from_slice(&api_output.stdout).expect("api json envelope");
+    let top_level_envelope: serde_json::Value =
+        serde_json::from_slice(&top_level_output.stdout).expect("top-level json envelope");
+    assert_eq!(top_level_envelope["status"], "ok");
+    assert_eq!(top_level_envelope["data"], api_envelope["data"]);
+}
+
+#[test]
+fn top_level_public_incidents_workflow_matches_api_alias() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+
+    let api_output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "api",
+            "--dry-run",
+            "incidents",
+            "--limit",
+            "5",
+        ])
+        .output()
+        .expect("run pcl api incidents dry-run");
+
+    let top_level_output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "incidents",
+            "--dry-run",
+            "--limit",
+            "5",
+        ])
+        .output()
+        .expect("run pcl incidents dry-run");
+
+    assert!(
+        api_output.status.success(),
+        "api alias failed: {}",
+        String::from_utf8_lossy(&api_output.stderr)
+    );
+    assert!(
+        top_level_output.status.success(),
+        "top-level workflow failed: {}",
+        String::from_utf8_lossy(&top_level_output.stderr)
+    );
+    let api_envelope: serde_json::Value =
+        serde_json::from_slice(&api_output.stdout).expect("api json envelope");
+    let top_level_envelope: serde_json::Value =
+        serde_json::from_slice(&top_level_output.stdout).expect("top-level json envelope");
+    assert_eq!(top_level_envelope["status"], "ok");
+    assert_eq!(top_level_envelope["data"], api_envelope["data"]);
+}
