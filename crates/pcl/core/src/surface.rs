@@ -1158,7 +1158,19 @@ fn llms_guide() -> Value {
             "Use pcl api list/inspect/call as the raw OpenAPI escape hatch.",
             "Treat every output as an envelope with status, data, error, and next_actions.",
             "Use JSONL export artifacts for long investigations.",
-            "Use request IDs from errors and pcl requests for audit trails."
+            "Use request IDs from errors and pcl requests for audit trails.",
+            "Prefer CLI contracts over MCP, browser automation, or scraped help text."
+        ],
+        "consumption_order": [
+            "pcl --llms",
+            "pcl doctor",
+            "pcl whoami",
+            "pcl workflows",
+            "pcl schema list",
+            "pcl api manifest --json",
+            "top-level workflow commands",
+            "pcl api inspect <operation-id> --json",
+            "pcl api call <method> <path> --json"
         ],
         "orientation": [
             {
@@ -1192,8 +1204,34 @@ fn llms_guide() -> Value {
         "output_contract": {
             "default": "TOON envelope",
             "json": "Pass --json for pretty JSON envelopes.",
+            "envelope_fields": ["status", "data", "error", "next_actions", "schema_version", "pcl_version"],
             "errors": "Parser, auth, config, validation, network, and API failures return structured envelopes and nonzero exit codes.",
+            "error_fields": ["error.code", "error.message", "error.recoverable", "error.http.status", "error.request_id"],
             "long_running": "Export commands write JSONL artifacts, error files, checkpoints, and job records."
+        },
+        "mutation_safety": {
+            "order": ["--body-template", "--dry-run", "typed flags", "--field key=value", "--body-file body.json"],
+            "body_templates": "Print payload contracts before writes; choose a concrete body variant when body_variants is returned.",
+            "dry_run": "Use dry-run request plans before destructive project, assertion, release, access, integration, transfer, or protocol-manager operations."
+        },
+        "raw_api": {
+            "inspect_first": "Use pcl api inspect <operation-id> --json before unfamiliar calls.",
+            "query_strings": "pcl api call accepts both /path?key=value and repeated --query key=value.",
+            "public_endpoints": "Use --allow-unauthenticated for public raw calls so stale local tokens are not required.",
+            "pagination": "Use --paginate <array-field> --limit <n> --max-pages <n> and optionally --jsonl --output <file> for generic GET pagination."
+        },
+        "jobs_and_artifacts": {
+            "export": "pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --checkpoint checkpoint.json --resume --continue-on-error --json",
+            "inspect": ["pcl jobs list --json", "pcl jobs status <job-id> --json", "pcl jobs resume <job-id> --json", "pcl artifacts list --json"],
+            "state_fields": ["job_id", "resume_command", "artifacts.out", "artifacts.errors", "artifacts.checkpoint"]
+        },
+        "provenance": {
+            "preserve": ["request_id", "project_id", "incident_id", "transaction_hash", "trace_id", "artifact_path", "command"],
+            "request_log": "pcl requests list --json"
+        },
+        "agent_files": {
+            "repo_instructions": "AGENTS.md",
+            "readme_section": "README.md#agent-consumption-guide"
         },
     })
 }
@@ -1563,6 +1601,7 @@ mod tests {
 
         assert_eq!(guide["default_output"], "toon");
         assert_eq!(guide["no_mcp_required"], true);
+        assert_eq!(guide["agent_files"]["repo_instructions"], "AGENTS.md");
         assert!(
             guide["command_surfaces"]["discovery"]
                 .as_array()
@@ -1571,11 +1610,25 @@ mod tests {
                 .any(|command| command == "pcl --llms")
         );
         assert!(
+            guide["consumption_order"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|command| command == "pcl api manifest --json")
+        );
+        assert!(
             guide["command_surfaces"]["state"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .any(|command| command == "pcl jobs")
+        );
+        assert!(
+            guide["mutation_safety"]["order"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|step| step == "--dry-run")
         );
     }
 

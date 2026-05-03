@@ -29,7 +29,7 @@ brew install phylax/pcl/phylax
 | `pcl test` | Run assertion tests |
 | `pcl verify` | Verify assertions locally before deployment |
 
-## Agentic API Access
+## Agent Consumption Guide
 
 Top-level workflow commands expose the platform API as structured CLI operations for agents and scripts.
 `pcl api` remains the raw discovery and escape-hatch surface for uncovered endpoints.
@@ -40,6 +40,39 @@ pass `--json` for the same machine-readable envelope as JSON. Successes and erro
 from auth, validation, and parser failures without scraping prose diagnostics.
 `pcl auth status` also reports token validity, expiry, and platform URL; expired stored tokens return
 a nonzero structured error so agents do not mistake stale credentials for a working login.
+Repository-local agent instructions also live in [AGENTS.md](AGENTS.md).
+
+### Consumption Contract
+
+Agents should start with the CLI, not MCP or browser flows:
+
+1. `pcl --llms` for the current CLI-native agent guide.
+2. `pcl doctor` and `pcl whoami` for readiness and token truthfulness.
+3. `pcl workflows`, `pcl schema list`, and `pcl api manifest --json` for discovery.
+4. Top-level workflow commands for normal work.
+5. `pcl api list`, `pcl api inspect`, and `pcl api call` for raw OpenAPI fallback.
+
+Every machine-facing command is an envelope. With `--json`, expect:
+
+```json
+{
+  "status": "ok",
+  "data": {},
+  "next_actions": [],
+  "schema_version": "pcl.envelope.v1",
+  "pcl_version": "..."
+}
+```
+
+Errors use `status: "error"` with `error.code`, `error.recoverable`, optional `error.http`,
+top-level metadata, and `next_actions`. Do not scrape prose diagnostics.
+
+### Safety And Resumability
+
+Use `--dry-run` before writes and `--body-template` before constructing mutation payloads.
+Prefer typed flags, then `--field key=value`, then `--body-file` for nested payloads.
+For long investigations, prefer JSONL exports, checkpoint files, and `pcl jobs` instead of rebuilding
+pagination or retry state manually.
 
 ```bash
 # Print an agent-readable command manifest
@@ -94,6 +127,12 @@ pcl jobs resume <job-id>
 pcl artifacts list
 pcl requests list --limit 20
 
+# Recover long-running local jobs
+pcl jobs path
+pcl jobs list --json
+pcl jobs status <job-id> --json
+pcl jobs resume <job-id> --json
+
 # Ask for valid mutation bodies before writing
 pcl projects --body-template
 pcl assertions --project-id <project-ref> --body-template
@@ -116,6 +155,13 @@ pcl api call get /views/projects/<project-id>/assertions
 pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json
 pcl api call post /web/auth/logout --body '{}'
 ```
+
+### Provenance
+
+When an agent reports a derived result, preserve the command, artifact path, request ID, project ID,
+incident ID, transaction hash, and trace context that produced it. `pcl requests list --json` recovers
+recent request IDs and HTTP statuses; export outputs include `job_id`, `resume_command`, checkpoint,
+output, and error file paths.
 
 ## Development
 
