@@ -66,6 +66,16 @@ struct ExportPageResponse {
 }
 
 #[derive(Debug, thiserror::Error)]
+enum ExportPageError {
+    #[error("Request failed after {attempts} attempts: {source}")]
+    Request {
+        attempts: u64,
+        #[source]
+        source: reqwest::Error,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum ProductSurfaceError {
     #[error("Run `pcl auth login` first")]
     NoAuthToken,
@@ -89,6 +99,15 @@ pub enum ProductSurfaceError {
     #[error("Request failed: {0}")]
     Request(#[from] reqwest::Error),
 
+    #[error("Request failed after {attempts} attempts for GET {path} page {page}: {source}")]
+    ExportRequest {
+        path: String,
+        page: u64,
+        attempts: u64,
+        #[source]
+        source: reqwest::Error,
+    },
+
     #[error("Request failed with status {status} for {method} {path}")]
     HttpStatus {
         method: &'static str,
@@ -107,7 +126,7 @@ impl ProductSurfaceError {
             Self::InvalidInput(_) => "input.invalid",
             Self::Io { .. } => "io.failed",
             Self::Json(_) => "json.failed",
-            Self::Request(_) => "network.request_failed",
+            Self::Request(_) | Self::ExportRequest { .. } => "network.request_failed",
             Self::HttpStatus { status, .. } => {
                 match *status {
                     401 => "auth.unauthorized",
@@ -125,6 +144,23 @@ impl ProductSurfaceError {
         error.insert("code".to_string(), json!(self.code()));
         error.insert("message".to_string(), json!(self.to_string()));
         error.insert("recoverable".to_string(), json!(self.recoverable()));
+        if let Self::ExportRequest {
+            path,
+            page,
+            attempts,
+            ..
+        } = self
+        {
+            error.insert(
+                "export".to_string(),
+                json!({
+                    "path": path,
+                    "page": page,
+                    "attempts": attempts,
+                }),
+            );
+        }
+
         if let Self::HttpStatus {
             method,
             path,
@@ -169,6 +205,14 @@ impl ProductSurfaceError {
             Self::Io { .. } => vec!["pcl artifacts path".to_string()],
             Self::Json(_) => vec!["Retry with --json to inspect the envelope".to_string()],
             Self::Request(_) => vec!["pcl doctor".to_string(), "Check --api-url".to_string()],
+            Self::ExportRequest { .. } => {
+                vec![
+                    "pcl doctor".to_string(),
+                    "Check --api-url".to_string(),
+                    "Retry the export with --resume".to_string(),
+                    "pcl jobs list".to_string(),
+                ]
+            }
             Self::HttpStatus {
                 status: 401 | 403, ..
             } => vec!["pcl auth login".to_string(), "pcl whoami".to_string()],
@@ -826,7 +870,54 @@ async fn export_incidents(
             query.push(("environment".to_string(), environment.clone()));
         }
 
-        let response = fetch_export_page(&client, url, &query, args.max_retries).await?;
+        let response = match fetch_export_page(&client, url, &query, args.max_retries).await {
+            Ok(response) => response,
+            Err(ExportPageError::Request { attempts, source }) => {
+                retries_attempted += attempts.saturating_sub(1);
+                errors_written += 1;
+                log_request(cli_args, "export", "GET", &path, 0, None);
+                write_jsonl(
+                    &mut error_file,
+                    &json!({
+                        "page": page,
+                        "path": path.clone(),
+                        "status": null,
+                        "request_id": null,
+                        "attempts": attempts,
+                        "error": {
+                            "code": "network.request_failed",
+                            "message": source.to_string(),
+                        },
+                    }),
+                )?;
+                append_job_record(
+                    cli_args,
+                    &with_job_stats(
+                        job_record(
+                            &job_id,
+                            "incident_export",
+                            "failed",
+                            &resume_command,
+                            &out,
+                            &errors,
+                            &checkpoint,
+                        ),
+                        incident_export_stats(
+                            pages_fetched,
+                            incidents_written,
+                            errors_written,
+                            retries_attempted,
+                        ),
+                    ),
+                )?;
+                return Err(ProductSurfaceError::ExportRequest {
+                    path,
+                    page,
+                    attempts,
+                    source,
+                });
+            }
+        };
         let status = response.status;
         let request_id = response.request_id;
         let body = response.body;
@@ -858,14 +949,22 @@ async fn export_incidents(
             }
             append_job_record(
                 cli_args,
-                &job_record(
-                    &job_id,
-                    "incident_export",
-                    "failed",
-                    &resume_command,
-                    &out,
-                    &errors,
-                    &checkpoint,
+                &with_job_stats(
+                    job_record(
+                        &job_id,
+                        "incident_export",
+                        "failed",
+                        &resume_command,
+                        &out,
+                        &errors,
+                        &checkpoint,
+                    ),
+                    incident_export_stats(
+                        pages_fetched,
+                        incidents_written,
+                        errors_written,
+                        retries_attempted,
+                    ),
                 ),
             )?;
             return Err(ProductSurfaceError::HttpStatus {
@@ -889,16 +988,29 @@ async fn export_incidents(
             break;
         }
     }
+    let final_status = if errors_written == 0 {
+        "completed"
+    } else {
+        "completed_with_errors"
+    };
     append_job_record(
         cli_args,
-        &job_record(
-            &job_id,
-            "incident_export",
-            "completed",
-            &resume_command,
-            &out,
-            &errors,
-            &checkpoint,
+        &with_job_stats(
+            job_record(
+                &job_id,
+                "incident_export",
+                final_status,
+                &resume_command,
+                &out,
+                &errors,
+                &checkpoint,
+            ),
+            incident_export_stats(
+                pages_fetched,
+                incidents_written,
+                errors_written,
+                retries_attempted,
+            ),
         ),
     )?;
 
@@ -1063,6 +1175,27 @@ fn job_record(
             "errors": errors,
             "checkpoint": checkpoint,
         },
+    })
+}
+
+fn with_job_stats(mut record: Value, stats: Value) -> Value {
+    if let Some(object) = record.as_object_mut() {
+        object.insert("stats".to_string(), stats);
+    }
+    record
+}
+
+fn incident_export_stats(
+    pages_fetched: u64,
+    incidents_written: u64,
+    errors_written: u64,
+    retries_attempted: u64,
+) -> Value {
+    json!({
+        "pages_fetched": pages_fetched,
+        "incidents_written": incidents_written,
+        "errors_written": errors_written,
+        "retries_attempted": retries_attempted,
     })
 }
 
@@ -1460,7 +1593,7 @@ async fn fetch_export_page(
     url: url::Url,
     query: &[(String, String)],
     max_retries: u64,
-) -> Result<ExportPageResponse, ProductSurfaceError> {
+) -> Result<ExportPageResponse, ExportPageError> {
     let max_attempts = max_retries.saturating_add(1);
     for attempt in 1..=max_attempts {
         let result = client.get(url.clone()).query(query).send().await;
@@ -1474,7 +1607,12 @@ async fn fetch_export_page(
                     .and_then(|value| value.to_str().ok())
                     .unwrap_or_default()
                     .to_string();
-                let bytes = response.bytes().await?;
+                let bytes = response.bytes().await.map_err(|source| {
+                    ExportPageError::Request {
+                        attempts: attempt,
+                        source,
+                    }
+                })?;
                 let body = response_body_value(&content_type, &bytes);
                 if status.is_success()
                     || !should_retry_export_status(status.as_u16())
@@ -1490,16 +1628,17 @@ async fn fetch_export_page(
             }
             Err(error) => {
                 if attempt == max_attempts || !should_retry_export_error(&error) {
-                    return Err(ProductSurfaceError::Request(error));
+                    return Err(ExportPageError::Request {
+                        attempts: attempt,
+                        source: error,
+                    });
                 }
             }
         }
         sleep(export_retry_delay(attempt)).await;
     }
 
-    Err(ProductSurfaceError::InvalidInput(
-        "export retry loop ended without a result".to_string(),
-    ))
+    unreachable!("export retry loop must return a response or error")
 }
 
 fn should_retry_export_status(status: u16) -> bool {
@@ -1648,6 +1787,7 @@ mod tests {
     use super::*;
     use mockito::Matcher;
     use pcl_common::args::CliArgs;
+    use std::net::TcpListener;
     use tempfile::tempdir;
 
     #[test]
@@ -1855,5 +1995,124 @@ mod tests {
         let lines = fs::read_to_string(out).unwrap();
         assert!(lines.contains(r#""id":"i1""#));
         assert_eq!(fs::read_to_string(errors).unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn incident_export_records_failed_job_after_network_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let api_url = format!("http://{}", listener.local_addr().unwrap())
+            .parse()
+            .unwrap();
+        drop(listener);
+
+        let temp = tempdir().unwrap();
+        let cli_args = CliArgs {
+            config_dir: Some(temp.path().join("config")),
+            ..Default::default()
+        };
+        let out = temp.path().join("incidents.jsonl");
+        let errors = temp.path().join("errors.jsonl");
+        let checkpoint = temp.path().join("checkpoint.json");
+        let args = ExportIncidentsArgs {
+            project_id: None,
+            environment: None,
+            page: 1,
+            limit: 50,
+            max_pages: 1,
+            out: Some(out.clone()),
+            errors: Some(errors.clone()),
+            checkpoint: Some(checkpoint.clone()),
+            resume: false,
+            continue_on_error: false,
+            max_retries: 0,
+            dry_run: false,
+            api_url,
+            allow_unauthenticated: true,
+        };
+
+        let error = export_incidents(&args, &CliConfig::default(), &cli_args, true)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ProductSurfaceError::ExportRequest {
+                page: 1,
+                attempts: 1,
+                ..
+            }
+        ));
+
+        let error_lines = fs::read_to_string(errors).unwrap();
+        assert!(error_lines.contains(r#""code":"network.request_failed""#));
+        assert!(error_lines.contains(r#""attempts":1"#));
+
+        let job_id = incident_export_job_id(&args, &checkpoint);
+        let job = find_job(&cli_args, &job_id).unwrap();
+        assert_eq!(job["status"], "failed");
+        assert_eq!(job["stats"]["pages_fetched"], 0);
+        assert_eq!(job["stats"]["incidents_written"], 0);
+        assert_eq!(job["stats"]["errors_written"], 1);
+        assert_eq!(job["stats"]["retries_attempted"], 0);
+    }
+
+    #[tokio::test]
+    async fn incident_export_marks_continue_on_error_jobs_partial() {
+        let mut server = mockito::Server::new_async().await;
+        let query = Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("limit".into(), "50".into()),
+        ]);
+        let failure = server
+            .mock("GET", "/api/v1/views/public/incidents")
+            .match_query(query)
+            .with_status(500)
+            .with_header("content-type", "application/json")
+            .with_header("x-request-id", "req_export_partial")
+            .with_body(r#"{"message":"temporary"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let temp = tempdir().unwrap();
+        let cli_args = CliArgs {
+            config_dir: Some(temp.path().join("config")),
+            ..Default::default()
+        };
+        let out = temp.path().join("incidents.jsonl");
+        let errors = temp.path().join("errors.jsonl");
+        let checkpoint = temp.path().join("checkpoint.json");
+        let args = ExportIncidentsArgs {
+            project_id: None,
+            environment: None,
+            page: 1,
+            limit: 50,
+            max_pages: 1,
+            out: Some(out),
+            errors: Some(errors.clone()),
+            checkpoint: Some(checkpoint.clone()),
+            resume: false,
+            continue_on_error: true,
+            max_retries: 0,
+            dry_run: false,
+            api_url: server.url().parse().unwrap(),
+            allow_unauthenticated: true,
+        };
+
+        export_incidents(&args, &CliConfig::default(), &cli_args, true)
+            .await
+            .unwrap();
+
+        failure.assert_async().await;
+        let error_lines = fs::read_to_string(errors).unwrap();
+        assert!(error_lines.contains(r#""status":500"#));
+        assert!(error_lines.contains("req_export_partial"));
+
+        let job_id = incident_export_job_id(&args, &checkpoint);
+        let job = find_job(&cli_args, &job_id).unwrap();
+        assert_eq!(job["status"], "completed_with_errors");
+        assert_eq!(job["stats"]["pages_fetched"], 0);
+        assert_eq!(job["stats"]["incidents_written"], 0);
+        assert_eq!(job["stats"]["errors_written"], 1);
+        assert_eq!(job["stats"]["retries_attempted"], 0);
     }
 }
