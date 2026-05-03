@@ -7,6 +7,10 @@ on:
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "deny.toml"
+      - "Makefile"
+      - "rust-toolchain.toml"
+      - "rustfmt.toml"
       - ".github/workflows/ci.yml"
   pull_request:
     branches: [main]
@@ -14,6 +18,10 @@ on:
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "deny.toml"
+      - "Makefile"
+      - "rust-toolchain.toml"
+      - "rustfmt.toml"
       - ".github/workflows/ci.yml"
   workflow_dispatch:
     inputs:
@@ -42,3 +50,12 @@ jobs:
       use-nextest: true
       enable-sccache: true
       sccache-backend: "local"
+
+  rust-advisories:
+    name: Rust Advisory Audit
+    runs-on: phylax-self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories

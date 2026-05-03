@@ -7,6 +7,8 @@ The CLI for the [Credible Layer](https://phylax.systems).
 Use this section when you are installing PCL, building assertions, deploying projects, or investigating platform state interactively.
 The CLI is organized around the jobs people usually do in the Credible Layer: write assertions, verify them, ship them, and inspect what happened after deployment.
 
+For repository development, see [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [CHANGELOG.md](CHANGELOG.md).
+
 ### Install
 
 ```bash

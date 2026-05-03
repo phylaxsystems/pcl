@@ -13,6 +13,8 @@ pcl whoami
 pcl api manifest --json
 ```
 
+When changing this repository, run `make ci` before handing work back. It sets `PCL_AUTH_NO_BROWSER=1` for tests so auth flows do not open a browser.
+
 Use `--json` whenever you need stable machine parsing. Without `--json`, PCL emits compact TOON envelopes by default.
 
 ## Output Contract

@@ -576,3 +576,64 @@ fn agent_product_surfaces_emit_json_envelopes() {
         );
     }
 }
+
+#[test]
+fn default_error_output_is_structured_toon_envelope() {
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args(["api", "call", "get", "health"])
+        .output()
+        .expect("run pcl api call");
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "unexpected stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+    assert!(stderr.contains("status: error"), "{stderr}");
+    assert!(stderr.contains("code: input.invalid_path"), "{stderr}");
+    assert!(stderr.contains("next_actions[2]:"), "{stderr}");
+    assert!(
+        stderr.contains("schema_version: pcl.envelope.v1"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn api_manifest_json_exposes_agent_contract_fields() {
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args(["--json", "api", "manifest"])
+        .output()
+        .expect("run pcl api manifest");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok");
+    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+
+    let commands = envelope["data"]["commands"]
+        .as_array()
+        .expect("commands array");
+    let incidents = commands
+        .iter()
+        .find(|command| {
+            command["command"]
+                .as_str()
+                .is_some_and(|command| command.starts_with("pcl incidents "))
+        })
+        .expect("incidents manifest entry");
+    let actions = incidents["actions"].as_array().expect("actions array");
+    assert!(actions.iter().any(|action| {
+        action["name"] == "retry_trace"
+            && action["method"] == "POST"
+            && action["required_flags"]
+                .as_array()
+                .is_some_and(|flags| flags.iter().any(|flag| flag == "--tx-id"))
+    }));
+}

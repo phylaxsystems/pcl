@@ -10,6 +10,7 @@ use foundry_cli::opts::{
 use std::path::PathBuf;
 
 use crate::{
+    DEFAULT_ASSERTION_CONTRACTS_DIR,
     compile::compile,
     error::PhoundryError,
 };
@@ -25,6 +26,15 @@ pub struct BuildArgs {
         help = "Root directory of the project"
     )]
     pub root: Option<PathBuf>,
+
+    /// Directory containing assertion contracts, relative to root unless absolute
+    #[clap(
+        long,
+        value_hint = ValueHint::DirPath,
+        default_value = DEFAULT_ASSERTION_CONTRACTS_DIR,
+        help = "Directory containing assertion contracts"
+    )]
+    pub contracts: PathBuf,
 }
 
 impl BuildArgs {
@@ -38,9 +48,7 @@ impl BuildArgs {
         let build_cmd = BuildOpts {
             project_paths: ProjectPathOpts {
                 root: self.root.clone(),
-                // FIXME(Odysseas): this essentially hard-codes the location of the assertions to live in
-                // assertions/src
-                contracts: Some(PathBuf::from("assertions/src")),
+                contracts: Some(self.contracts.clone()),
                 ..Default::default()
             },
             ..Default::default()
@@ -142,9 +150,16 @@ contract InvalidContract {
 
     #[test]
     fn test_build_args_new() {
-        let args = BuildArgs { root: None };
+        let args = BuildArgs {
+            root: None,
+            contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
+        };
 
         assert!(args.root.is_none());
+        assert_eq!(
+            args.contracts,
+            PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR)
+        );
     }
 
     #[test]
@@ -152,6 +167,7 @@ contract InvalidContract {
         let root_path = PathBuf::from("/test/path");
         let args = BuildArgs {
             root: Some(root_path.clone()),
+            contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
         };
 
         assert_eq!(args.root, Some(root_path));
@@ -163,6 +179,7 @@ contract InvalidContract {
 
         let args = BuildArgs {
             root: Some(project_root),
+            contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
         };
 
         let result = args.run();
@@ -180,6 +197,7 @@ contract InvalidContract {
 
         let args = BuildArgs {
             root: Some(project_root),
+            contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
         };
 
         let result = args.run();
@@ -198,6 +216,7 @@ contract InvalidContract {
 
         let args = BuildArgs {
             root: Some(nonexistent_path),
+            contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
         };
 
         let result = args.run();
@@ -214,6 +233,7 @@ contract InvalidContract {
 
         let args = BuildArgs {
             root: Some(project_root),
+            contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
         };
 
         let result = args.run();
