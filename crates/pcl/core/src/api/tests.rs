@@ -6,6 +6,11 @@ use chrono::{
 };
 use clap::Parser;
 use mockito::Matcher;
+use std::path::Path;
+
+fn test_request_log_path() -> &'static Path {
+    Path::new("/tmp/pcl-test-requests.jsonl")
+}
 
 fn assertions_args(project_id: Option<&str>) -> AssertionsArgs {
     AssertionsArgs {
@@ -519,7 +524,17 @@ async fn paginates_incident_list_workflows() {
     let request = WorkflowRequest::get("/views/public/incidents", false, Vec::new());
 
     let data = api
-        .call_workflow_paginated(&CliConfig::default(), request, "incidents", 1, 2, 5)
+        .call_workflow_paginated(
+            &CliConfig::default(),
+            request,
+            WorkflowPaginationOptions {
+                item_field: "incidents",
+                start_page: 1,
+                limit: 2,
+                max_pages: 5,
+            },
+            test_request_log_path(),
+        )
         .await
         .unwrap();
 
@@ -541,7 +556,17 @@ async fn incident_workflow_pagination_rejects_zero_limit() {
     let request = WorkflowRequest::get("/views/public/incidents", false, Vec::new());
 
     let error = api
-        .call_workflow_paginated(&CliConfig::default(), request, "incidents", 1, 0, 5)
+        .call_workflow_paginated(
+            &CliConfig::default(),
+            request,
+            WorkflowPaginationOptions {
+                item_field: "incidents",
+                start_page: 1,
+                limit: 0,
+                max_pages: 5,
+            },
+            test_request_log_path(),
+        )
         .await
         .unwrap_err();
 
@@ -584,6 +609,7 @@ async fn public_workflows_do_not_attach_expired_stored_tokens() {
         .run_workflow(
             &config,
             WorkflowRequest::get("/health", false, vec!["pcl search --health".to_string()]),
+            test_request_log_path(),
         )
         .await
         .unwrap();
@@ -611,6 +637,7 @@ async fn dry_run_projects_and_assertions_do_not_execute_requests() {
                 chain_id: Some(1),
                 ..projects_args()
             },
+            test_request_log_path(),
         )
         .await
         .unwrap();
@@ -628,6 +655,7 @@ async fn dry_run_projects_and_assertions_do_not_execute_requests() {
                 body: Some(r#"{"assertions":[]}"#.to_string()),
                 ..assertions_args(None)
             },
+            test_request_log_path(),
         )
         .await
         .unwrap();
@@ -941,7 +969,7 @@ async fn workflow_http_errors_include_response_body() {
     let request = WorkflowRequest::get("/health", false, Vec::new());
 
     let error = api
-        .call_workflow_result(&config, &request)
+        .call_workflow_result(&config, &request, test_request_log_path())
         .await
         .unwrap_err();
     let ApiCommandError::HttpStatus {
@@ -988,7 +1016,7 @@ async fn workflow_success_envelopes_include_request_provenance() {
     let request = WorkflowRequest::get("/health", false, vec!["next".to_string()]);
 
     let envelope = api
-        .run_workflow(&CliConfig::default(), request)
+        .run_workflow(&CliConfig::default(), request, test_request_log_path())
         .await
         .unwrap();
 
@@ -1037,6 +1065,7 @@ async fn raw_api_call_accepts_inline_query_strings() {
                 body_file: None,
                 require_auth: false,
             },
+            test_request_log_path(),
         )
         .await
         .unwrap();
@@ -1195,6 +1224,7 @@ async fn raw_api_call_paginates_any_array_response() {
                 limit_param: "limit",
                 max_pages: 5,
             },
+            test_request_log_path(),
         )
         .await
         .unwrap();
@@ -1252,6 +1282,7 @@ async fn raw_api_call_pagination_supports_custom_param_names() {
                 limit_param: "per_page",
                 max_pages: 1,
             },
+            test_request_log_path(),
         )
         .await
         .unwrap();
@@ -1291,6 +1322,7 @@ async fn raw_api_call_pagination_rejects_non_get_requests() {
                 limit_param: "limit",
                 max_pages: 100,
             },
+            test_request_log_path(),
         )
         .await
         .unwrap_err();
@@ -1350,6 +1382,7 @@ async fn raw_api_call_errors_include_request_id() {
                 body_file: None,
                 require_auth: false,
             },
+            test_request_log_path(),
         )
         .await
         .unwrap_err();

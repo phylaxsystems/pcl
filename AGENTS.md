@@ -33,6 +33,8 @@ Every agent-facing command should be treated as an envelope:
 
 Errors use the same shape with `status: "error"` and an `error` object. Do not parse prose diagnostics. Check `error.code`, `error.recoverable`, `error.http.status`, `error.request_id`, and `next_actions`.
 
+Fresh `pcl auth login --json` emits JSONL progress events: first `event: auth.login_instructions`, then a terminal envelope with `terminal: true`. Treat only the terminal event as the final login result. Existing valid auth still returns a single JSON envelope.
+
 ## Discovery Order
 
 Prefer the surfaces in this order:

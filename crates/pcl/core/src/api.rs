@@ -15,6 +15,7 @@ use clap::{
     ArgGroup,
     ValueEnum,
 };
+use pcl_common::args::CliArgs;
 use reqwest::header::{
     HeaderMap,
     HeaderName,
@@ -30,7 +31,10 @@ use std::{
     fmt::Write as _,
     fs,
     io::Read,
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
     str::FromStr,
 };
 
@@ -435,6 +439,7 @@ impl ApiWorkflowOptions {
         self,
         command: ApiCommand,
         config: &CliConfig,
+        cli_args: &CliArgs,
         json_output: bool,
     ) -> Result<(), ApiCommandError> {
         ApiArgs {
@@ -443,7 +448,7 @@ impl ApiWorkflowOptions {
             allow_unauthenticated: self.allow_unauthenticated,
             dry_run: self.dry_run,
         }
-        .run(config, json_output)
+        .run(config, cli_args, json_output)
         .await
     }
 }
@@ -463,10 +468,16 @@ macro_rules! top_level_workflow_command {
             pub async fn run(
                 self,
                 config: &CliConfig,
+                cli_args: &CliArgs,
                 json_output: bool,
             ) -> Result<(), ApiCommandError> {
                 self.globals
-                    .run(ApiCommand::$variant(self.args), config, json_output)
+                    .run(
+                        ApiCommand::$variant(self.args),
+                        config,
+                        cli_args,
+                        json_output,
+                    )
                     .await
             }
         }
@@ -724,6 +735,14 @@ struct RawPaginationOptions<'a> {
     limit: u64,
     page_param: &'a str,
     limit_param: &'a str,
+    max_pages: u64,
+}
+
+#[derive(Clone, Copy)]
+struct WorkflowPaginationOptions<'a> {
+    item_field: &'a str,
+    start_page: u64,
+    limit: u64,
     max_pages: u64,
 }
 
@@ -1470,22 +1489,30 @@ top_level_workflow_command!(
 );
 
 impl ApiArgs {
-    pub async fn run(&self, config: &CliConfig, json_output: bool) -> Result<(), ApiCommandError> {
+    pub async fn run(
+        &self,
+        config: &CliConfig,
+        cli_args: &CliArgs,
+        json_output: bool,
+    ) -> Result<(), ApiCommandError> {
+        let request_log_path = crate::request_log::request_log_path_for_args(cli_args);
         match &self.command {
             ApiCommand::Incidents(args) => {
-                let output = self.run_incidents(config, args).await?;
+                let output = self.run_incidents(config, args, &request_log_path).await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Projects(args) => {
-                let output = self.run_projects(config, args).await?;
+                let output = self.run_projects(config, args, &request_log_path).await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Assertions(args) => {
-                let output = self.run_assertions(config, args).await?;
+                let output = self.run_assertions(config, args, &request_log_path).await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Search(args) => {
-                let output = self.run_workflow(config, search_request(args)?).await?;
+                let output = self
+                    .run_workflow(config, search_request(args)?, &request_log_path)
+                    .await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Account(args) => {
@@ -1494,7 +1521,9 @@ impl ApiArgs {
                     print_output(&output, json_output)?;
                     return Ok(());
                 }
-                let output = self.run_workflow(config, account_request(args)?).await?;
+                let output = self
+                    .run_workflow(config, account_request(args)?, &request_log_path)
+                    .await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Contracts(args) => {
@@ -1503,7 +1532,9 @@ impl ApiArgs {
                     print_output(&output, json_output)?;
                     return Ok(());
                 }
-                let output = self.run_workflow(config, contracts_request(args)?).await?;
+                let output = self
+                    .run_workflow(config, contracts_request(args)?, &request_log_path)
+                    .await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Releases(args) => {
@@ -1512,7 +1543,9 @@ impl ApiArgs {
                     print_output(&output, json_output)?;
                     return Ok(());
                 }
-                let output = self.run_workflow(config, releases_request(args)?).await?;
+                let output = self
+                    .run_workflow(config, releases_request(args)?, &request_log_path)
+                    .await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Deployments(args) => {
@@ -1522,7 +1555,7 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, deployments_request(args)?)
+                    .run_workflow(config, deployments_request(args)?, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -1532,7 +1565,9 @@ impl ApiArgs {
                     print_output(&output, json_output)?;
                     return Ok(());
                 }
-                let output = self.run_workflow(config, access_request(args)?).await?;
+                let output = self
+                    .run_workflow(config, access_request(args)?, &request_log_path)
+                    .await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Integrations(args) => {
@@ -1542,7 +1577,7 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, integrations_request(args)?)
+                    .run_workflow(config, integrations_request(args)?, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -1553,7 +1588,7 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, protocol_manager_request(args)?)
+                    .run_workflow(config, protocol_manager_request(args)?, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -1563,11 +1598,15 @@ impl ApiArgs {
                     print_output(&output, json_output)?;
                     return Ok(());
                 }
-                let output = self.run_workflow(config, transfers_request(args)?).await?;
+                let output = self
+                    .run_workflow(config, transfers_request(args)?, &request_log_path)
+                    .await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Events(args) => {
-                let output = self.run_workflow(config, events_request(args)).await?;
+                let output = self
+                    .run_workflow(config, events_request(args), &request_log_path)
+                    .await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Manifest => {
@@ -1649,7 +1688,9 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let (mut response, next_actions) = if let Some(pagination) = pagination {
-                    let response = self.call_api_paginated(config, input, pagination).await?;
+                    let response = self
+                        .call_api_paginated(config, input, pagination, &request_log_path)
+                        .await?;
                     (
                         response,
                         vec![
@@ -1660,7 +1701,7 @@ impl ApiArgs {
                         ],
                     )
                 } else {
-                    let response = self.call_api(config, input).await?;
+                    let response = self.call_api(config, input, &request_log_path).await?;
                     (
                         response,
                         vec![
@@ -1697,6 +1738,7 @@ impl ApiArgs {
         config: &CliConfig,
         input: ApiRequestInput<'_>,
         pagination: RawPaginationOptions<'_>,
+        request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         if input.method.openapi_key() != "get" {
             return Err(ApiCommandError::InvalidWorkflow {
@@ -1760,6 +1802,7 @@ impl ApiArgs {
             let bytes = response.bytes().await?;
             let body = response_body_value(&content_type, &bytes);
             write_request_log(
+                request_log_path,
                 "raw_paginated",
                 input.method.as_str(),
                 &path,
@@ -1820,6 +1863,7 @@ impl ApiArgs {
         &self,
         config: &CliConfig,
         args: &IncidentsArgs,
+        request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         let request = incidents_request(args)?;
         if args.jsonl && args.output.is_none() {
@@ -1848,10 +1892,13 @@ impl ApiArgs {
                 .call_workflow_paginated(
                     config,
                     request.clone(),
-                    "incidents",
-                    args.page.unwrap_or(1),
-                    args.limit.unwrap_or(50),
-                    args.max_pages.unwrap_or(100),
+                    WorkflowPaginationOptions {
+                        item_field: "incidents",
+                        start_page: args.page.unwrap_or(1),
+                        limit: args.limit.unwrap_or(50),
+                        max_pages: args.max_pages.unwrap_or(100),
+                    },
+                    request_log_path,
                 )
                 .await?;
             if let Some(path) = &args.output {
@@ -1877,7 +1924,9 @@ impl ApiArgs {
                 "next_actions": next_actions,
             }));
         }
-        let result = self.call_workflow_result(config, &request).await?;
+        let result = self
+            .call_workflow_result(config, &request, request_log_path)
+            .await?;
         let next_actions = incidents_next_actions(&result.body, args, request.next_actions);
         Ok(workflow_success_envelope(result, next_actions))
     }
@@ -1886,6 +1935,7 @@ impl ApiArgs {
         &self,
         config: &CliConfig,
         args: &ProjectsArgs,
+        request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         if args.body_template {
             return Ok(template_envelope(project_body_template(args)));
@@ -1894,7 +1944,9 @@ impl ApiArgs {
         if self.dry_run {
             return Ok(dry_run_envelope(self.workflow_request_plan(&request, None)));
         }
-        let result = self.call_workflow_result(config, &request).await?;
+        let result = self
+            .call_workflow_result(config, &request, request_log_path)
+            .await?;
         let next_actions = projects_next_actions(&result.body, request.next_actions);
         Ok(workflow_success_envelope(result, next_actions))
     }
@@ -1903,6 +1955,7 @@ impl ApiArgs {
         &self,
         config: &CliConfig,
         args: &AssertionsArgs,
+        request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         if args.body_template {
             return Ok(template_envelope(assertions_body_template(args)));
@@ -1911,7 +1964,9 @@ impl ApiArgs {
         if self.dry_run {
             return Ok(dry_run_envelope(self.workflow_request_plan(&request, None)));
         }
-        let result = self.call_workflow_result(config, &request).await?;
+        let result = self
+            .call_workflow_result(config, &request, request_log_path)
+            .await?;
         let next_actions = assertions_next_actions(&result.body, args, request.next_actions);
         Ok(workflow_success_envelope(result, next_actions))
     }
@@ -1920,11 +1975,14 @@ impl ApiArgs {
         &self,
         config: &CliConfig,
         request: WorkflowRequest,
+        request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         if self.dry_run {
             return Ok(dry_run_envelope(self.workflow_request_plan(&request, None)));
         }
-        let result = self.call_workflow_result(config, &request).await?;
+        let result = self
+            .call_workflow_result(config, &request, request_log_path)
+            .await?;
         Ok(workflow_success_envelope(result, request.next_actions))
     }
 
@@ -2022,6 +2080,7 @@ impl ApiArgs {
         &self,
         config: &CliConfig,
         input: ApiRequestInput<'_>,
+        request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         let (path, mut query) = split_path_and_inline_query(input.path)?;
         query.extend(parse_key_values("query", input.query)?);
@@ -2067,6 +2126,7 @@ impl ApiArgs {
         let bytes = response.bytes().await?;
         let body = response_body_value(&content_type, &bytes);
         write_request_log(
+            request_log_path,
             "raw",
             input.method.as_str(),
             &path,
@@ -2103,6 +2163,7 @@ impl ApiArgs {
         &self,
         config: &CliConfig,
         request: &WorkflowRequest,
+        request_log_path: &Path,
     ) -> Result<WorkflowCallResult, ApiCommandError> {
         let path = self.normalize_project_path(config, &request.path).await?;
         let url = self.api_url(&path)?;
@@ -2128,6 +2189,7 @@ impl ApiArgs {
         let bytes = response.bytes().await?;
         let body = response_body_value(&content_type, &bytes);
         write_request_log(
+            request_log_path,
             "workflow",
             request.method.as_str(),
             &path,
@@ -2166,22 +2228,20 @@ impl ApiArgs {
         &self,
         config: &CliConfig,
         request: WorkflowRequest,
-        item_field: &str,
-        start_page: u64,
-        limit: u64,
-        max_pages: u64,
+        pagination: WorkflowPaginationOptions<'_>,
+        request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         if request.method.openapi_key() != "get" {
             return Err(ApiCommandError::InvalidWorkflow {
                 message: "--all is only supported for GET list workflows".to_string(),
             });
         }
-        if limit == 0 {
+        if pagination.limit == 0 {
             return Err(ApiCommandError::InvalidWorkflow {
                 message: "--limit must be greater than zero".to_string(),
             });
         }
-        if max_pages == 0 {
+        if pagination.max_pages == 0 {
             return Err(ApiCommandError::InvalidWorkflow {
                 message: "--max-pages must be greater than zero".to_string(),
             });
@@ -2191,16 +2251,25 @@ impl ApiArgs {
         let mut pages_fetched = 0_u64;
         let mut last_page_count = 0_usize;
 
-        for offset in 0..max_pages {
-            let page = start_page + offset;
+        for offset in 0..pagination.max_pages {
+            let page = pagination.start_page + offset;
             let mut page_request = request.clone();
             upsert_query(&mut page_request.query, "page", page.to_string());
-            upsert_query(&mut page_request.query, "limit", limit.to_string());
-            let data = self.call_workflow_result(config, &page_request).await?.body;
-            let page_items = extract_paginated_items(&data, item_field).ok_or_else(|| {
+            upsert_query(
+                &mut page_request.query,
+                "limit",
+                pagination.limit.to_string(),
+            );
+            let data = self
+                .call_workflow_result(config, &page_request, request_log_path)
+                .await?
+                .body;
+            let page_items =
+                extract_paginated_items(&data, pagination.item_field).ok_or_else(|| {
                 ApiCommandError::InvalidWorkflow {
                     message: format!(
-                        "Could not find an array at `{item_field}` or common pagination fields in response"
+                        "Could not find an array at `{}` or common pagination fields in response",
+                        pagination.item_field
                     ),
                 }
             })?;
@@ -2208,7 +2277,7 @@ impl ApiArgs {
             pages_fetched += 1;
             items.extend(page_items);
 
-            if last_page_count < usize::try_from(limit).unwrap_or(usize::MAX) {
+            if last_page_count < usize::try_from(pagination.limit).unwrap_or(usize::MAX) {
                 break;
             }
         }
@@ -2218,9 +2287,9 @@ impl ApiArgs {
             "items": items,
             "count": count,
             "pages_fetched": pages_fetched,
-            "start_page": start_page,
-            "limit": limit,
-            "max_pages": max_pages,
+            "start_page": pagination.start_page,
+            "limit": pagination.limit,
+            "max_pages": pagination.max_pages,
             "last_page_count": last_page_count,
         }))
     }
@@ -2368,21 +2437,31 @@ fn request_id_from_headers(headers: &HeaderMap) -> Option<String> {
     })
 }
 
-fn write_request_log(kind: &str, method: &str, path: &str, status: u16, request_id: Option<&str>) {
+fn write_request_log(
+    request_log_path: &Path,
+    kind: &str,
+    method: &str,
+    path: &str,
+    status: u16,
+    request_id: Option<&str>,
+) {
     #[cfg(not(test))]
     {
-        let _ = crate::request_log::append_request_record(&json!({
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-            "kind": kind,
-            "method": method,
-            "path": path,
-            "status": status,
-            "success": (200..=299).contains(&status),
-            "request_id": request_id,
-        }));
+        let _ = crate::request_log::append_request_record_at(
+            request_log_path,
+            &json!({
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "kind": kind,
+                "method": method,
+                "path": path,
+                "status": status,
+                "success": (200..=299).contains(&status),
+                "request_id": request_id,
+            }),
+        );
     }
     #[cfg(test)]
-    let _ = (kind, method, path, status, request_id);
+    let _ = (request_log_path, kind, method, path, status, request_id);
 }
 
 fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {

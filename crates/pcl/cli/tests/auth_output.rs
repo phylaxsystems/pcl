@@ -578,6 +578,71 @@ fn agent_product_surfaces_emit_json_envelopes() {
 }
 
 #[test]
+fn api_request_logs_respect_config_dir() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let config_dir = temp_dir.path().to_str().expect("utf-8 temp path");
+    let mut server = mockito::Server::new();
+    let health = server
+        .mock("GET", "/api/v1/health")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-config-dir")
+        .with_body(r#"{"healthy":true}"#)
+        .expect(1)
+        .create();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            config_dir,
+            "--json",
+            "api",
+            "--api-url",
+            &server.url(),
+            "--allow-unauthenticated",
+            "call",
+            "get",
+            "/health",
+        ])
+        .output()
+        .expect("run pcl api call");
+
+    assert!(
+        output.status.success(),
+        "api call failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    health.assert();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args(["--config-dir", config_dir, "--json", "requests", "list"])
+        .output()
+        .expect("run pcl requests list");
+
+    assert!(
+        output.status.success(),
+        "requests list failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json envelope");
+    assert_eq!(
+        envelope["data"]["request_log"],
+        temp_dir.path().join("requests.jsonl").display().to_string()
+    );
+    assert!(
+        envelope["data"]["records"]
+            .as_array()
+            .is_some_and(|records| {
+                records
+                    .iter()
+                    .any(|record| record["request_id"] == "req-config-dir")
+            }),
+        "{envelope}"
+    );
+}
+
+#[test]
 fn default_error_output_is_structured_toon_envelope() {
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
         .args(["api", "call", "get", "health"])

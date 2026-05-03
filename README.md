@@ -161,6 +161,8 @@ Errors use `status: "error"` with:
 
 Default output is TOON for compact agent consumption. Use `--json` when you need strict JSON parsing. Do not parse colored or human prose output as a control plane.
 
+`pcl auth login --json` is the one streaming exception: a fresh login emits JSONL events because the command must print device-login instructions and then wait for verification. Read each line as an envelope and trust only the event with `terminal: true` as the final result. If credentials are already valid, `pcl auth login --json` returns a single normal envelope.
+
 ### Discovery Commands
 
 ```bash

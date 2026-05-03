@@ -50,9 +50,20 @@ use std::{
         PathBuf,
     },
 };
+use tokio::time::{
+    Duration,
+    sleep,
+};
 
 const ARTIFACT_DIR_ENV: &str = "PCL_ARTIFACT_DIR";
 const JOBS_FILE_ENV: &str = "PCL_JOBS_FILE";
+
+struct ExportPageResponse {
+    status: reqwest::StatusCode,
+    request_id: Option<String>,
+    body: Value,
+    attempts: u64,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProductSurfaceError {
@@ -329,12 +340,6 @@ struct ExportIncidentsArgs {
     project_id: Option<String>,
     #[arg(long, help = "Filter by environment")]
     environment: Option<String>,
-    #[arg(
-        long,
-        value_delimiter = ',',
-        help = "Requested related data to include"
-    )]
-    include: Vec<String>,
     #[arg(long, default_value_t = 1, help = "Starting page")]
     page: u64,
     #[arg(long, default_value_t = 50, help = "Items per page")]
@@ -354,7 +359,7 @@ struct ExportIncidentsArgs {
     #[arg(
         long,
         default_value_t = 3,
-        help = "Reserved retry budget in export metadata"
+        help = "Retry transient page fetch failures before recording an export error"
     )]
     max_retries: u64,
     #[arg(long, help = "Print the export plan without fetching data")]
@@ -392,7 +397,7 @@ impl DoctorArgs {
             json!({
                 "name": "request_log",
                 "status": "ok",
-                "path": request_log::request_log_path().display().to_string(),
+                "path": request_log::request_log_path_for_args(cli_args).display().to_string(),
             }),
             json!({
                 "name": "artifacts",
@@ -524,12 +529,25 @@ impl ArtifactsArgs {
 impl RequestsArgs {
     pub fn run(&self, json_output: bool) -> Result<(), ProductSurfaceError> {
         let path = request_log::request_log_path();
+        self.run_with_path(&path, json_output)
+    }
+
+    pub fn run_with_cli_args(
+        &self,
+        cli_args: &CliArgs,
+        json_output: bool,
+    ) -> Result<(), ProductSurfaceError> {
+        let path = request_log::request_log_path_for_args(cli_args);
+        self.run_with_path(&path, json_output)
+    }
+
+    fn run_with_path(&self, path: &Path, json_output: bool) -> Result<(), ProductSurfaceError> {
         let data = match &self.command {
             Some(RequestsCommand::Path) => json!({ "request_log": path }),
             Some(RequestsCommand::Clear) => {
-                let deleted = request_log::clear_request_log().map_err(|source| {
+                let deleted = request_log::clear_request_log_at(path).map_err(|source| {
                     ProductSurfaceError::Io {
-                        path: path.clone(),
+                        path: path.to_path_buf(),
                         source,
                     }
                 })?;
@@ -540,12 +558,13 @@ impl RequestsArgs {
                     Some(RequestsCommand::List { limit }) => *limit,
                     _ => 20,
                 };
-                let records = request_log::read_request_records(limit).map_err(|source| {
-                    ProductSurfaceError::Io {
-                        path: path.clone(),
-                        source,
-                    }
-                })?;
+                let records =
+                    request_log::read_request_records_at(path, limit).map_err(|source| {
+                        ProductSurfaceError::Io {
+                            path: path.to_path_buf(),
+                            source,
+                        }
+                    })?;
                 json!({ "request_log": path, "records": records })
             }
         };
@@ -778,6 +797,7 @@ async fn export_incidents(
     let mut pages_fetched = 0_u64;
     let mut incidents_written = 0_u64;
     let mut errors_written = 0_u64;
+    let mut retries_attempted = 0_u64;
     append_job_record(
         cli_args,
         &job_record(
@@ -806,18 +826,13 @@ async fn export_incidents(
             query.push(("environment".to_string(), environment.clone()));
         }
 
-        let response = client.get(url).query(&query).send().await?;
-        let status = response.status();
-        let request_id = request_id_from_headers(response.headers());
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_string();
-        let bytes = response.bytes().await?;
-        let body = response_body_value(&content_type, &bytes);
+        let response = fetch_export_page(&client, url, &query, args.max_retries).await?;
+        let status = response.status;
+        let request_id = response.request_id;
+        let body = response.body;
+        retries_attempted += response.attempts.saturating_sub(1);
         log_request(
+            cli_args,
             "export",
             "GET",
             &path,
@@ -834,7 +849,8 @@ async fn export_incidents(
                     "path": path,
                     "status": status.as_u16(),
                     "request_id": request_id,
-                    "body": body,
+                    "attempts": response.attempts,
+                    "body": body.clone(),
                 }),
             )?;
             if args.continue_on_error {
@@ -899,8 +915,7 @@ async fn export_incidents(
                 "pages_fetched": pages_fetched,
                 "incidents_written": incidents_written,
                 "errors_written": errors_written,
-                "include_requested": args.include,
-                "include_note": "incident export currently writes incident list records; use pcl incidents trace/detail commands for per-incident enrichment",
+                "retries_attempted": retries_attempted,
             },
             "next_actions": [
                 "pcl artifacts list",
@@ -1100,10 +1115,6 @@ fn incident_export_resume_command(
         parts.push("--environment".to_string());
         parts.push(shell_word(environment));
     }
-    if !args.include.is_empty() {
-        parts.push("--include".to_string());
-        parts.push(shell_word(args.include.join(",")));
-    }
     if args.continue_on_error {
         parts.push("--continue-on-error".to_string());
     }
@@ -1201,6 +1212,9 @@ fn llms_guide() -> Value {
         "output_contract": {
             "default": "TOON envelope",
             "json": "Pass --json for pretty JSON envelopes.",
+            "jsonl_exceptions": {
+                "pcl auth login --json": "Fresh login emits JSONL progress events and a final event with terminal=true. Already-authenticated login returns one envelope."
+            },
             "envelope_fields": ["status", "data", "error", "next_actions", "schema_version", "pcl_version"],
             "errors": "Parser, auth, config, validation, network, and API failures return structured envelopes and nonzero exit codes.",
             "error_fields": ["error.code", "error.message", "error.recoverable", "error.http.status", "error.request_id"],
@@ -1399,7 +1413,6 @@ fn export_plan(args: &ExportIncidentsArgs, out: &Path, errors: &Path, checkpoint
         "export": "incidents",
         "project_id": args.project_id,
         "environment": args.environment,
-        "include_requested": args.include,
         "out": out,
         "errors": errors,
         "checkpoint": checkpoint,
@@ -1440,6 +1453,68 @@ fn default_headers(
         headers.insert(reqwest::header::AUTHORIZATION, value);
     }
     Ok(headers)
+}
+
+async fn fetch_export_page(
+    client: &reqwest::Client,
+    url: url::Url,
+    query: &[(String, String)],
+    max_retries: u64,
+) -> Result<ExportPageResponse, ProductSurfaceError> {
+    let max_attempts = max_retries.saturating_add(1);
+    for attempt in 1..=max_attempts {
+        let result = client.get(url.clone()).query(query).send().await;
+        match result {
+            Ok(response) => {
+                let status = response.status();
+                let request_id = request_id_from_headers(response.headers());
+                let content_type = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                let bytes = response.bytes().await?;
+                let body = response_body_value(&content_type, &bytes);
+                if status.is_success()
+                    || !should_retry_export_status(status.as_u16())
+                    || attempt == max_attempts
+                {
+                    return Ok(ExportPageResponse {
+                        status,
+                        request_id,
+                        body,
+                        attempts: attempt,
+                    });
+                }
+            }
+            Err(error) => {
+                if attempt == max_attempts || !should_retry_export_error(&error) {
+                    return Err(ProductSurfaceError::Request(error));
+                }
+            }
+        }
+        sleep(export_retry_delay(attempt)).await;
+    }
+
+    Err(ProductSurfaceError::InvalidInput(
+        "export retry loop ended without a result".to_string(),
+    ))
+}
+
+fn should_retry_export_status(status: u16) -> bool {
+    status == 429 || (500..=599).contains(&status)
+}
+
+fn should_retry_export_error(error: &reqwest::Error) -> bool {
+    error.is_connect() || error.is_timeout()
+}
+
+fn export_retry_delay(attempt: u64) -> Duration {
+    let exponent = attempt.saturating_sub(1).min(5);
+    let shift = u32::try_from(exponent).unwrap_or(5);
+    let multiplier = 1_u64.checked_shl(shift).unwrap_or(32);
+    Duration::from_millis(250_u64.saturating_mul(multiplier))
 }
 
 fn build_api_url(base: &url::Url, path: &str) -> Result<url::Url, ProductSurfaceError> {
@@ -1545,21 +1620,33 @@ fn read_checkpoint_page(path: &Path) -> Option<u64> {
         .as_u64()
 }
 
-fn log_request(kind: &str, method: &str, path: &str, status: u16, request_id: Option<&str>) {
-    let _ = request_log::append_request_record(&json!({
-        "timestamp": Utc::now().to_rfc3339(),
-        "kind": kind,
-        "method": method,
-        "path": path,
-        "status": status,
-        "success": (200..=299).contains(&status),
-        "request_id": request_id,
-    }));
+fn log_request(
+    cli_args: &CliArgs,
+    kind: &str,
+    method: &str,
+    path: &str,
+    status: u16,
+    request_id: Option<&str>,
+) {
+    let request_log_path = request_log::request_log_path_for_args(cli_args);
+    let _ = request_log::append_request_record_at(
+        &request_log_path,
+        &json!({
+            "timestamp": Utc::now().to_rfc3339(),
+            "kind": kind,
+            "method": method,
+            "path": path,
+            "status": status,
+            "success": (200..=299).contains(&status),
+            "request_id": request_id,
+        }),
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mockito::Matcher;
     use pcl_common::args::CliArgs;
     use tempfile::tempdir;
 
@@ -1682,7 +1769,6 @@ mod tests {
         let args = ExportIncidentsArgs {
             project_id: Some("project one".to_string()),
             environment: Some("production".to_string()),
-            include: vec!["transactions".to_string(), "traces".to_string()],
             page: 1,
             limit: 50,
             max_pages: 10,
@@ -1708,5 +1794,66 @@ mod tests {
         assert!(command.contains("'project one'"));
         assert!(command.contains("'/tmp/pcl artifacts/incidents.jsonl'"));
         assert!(command.contains("--continue-on-error"));
+    }
+
+    #[tokio::test]
+    async fn incident_export_retries_transient_page_failures() {
+        let mut server = mockito::Server::new_async().await;
+        let query = Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("limit".into(), "50".into()),
+        ]);
+        let transient = server
+            .mock("GET", "/api/v1/views/public/incidents")
+            .match_query(query.clone())
+            .with_status(500)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"message":"temporary"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let success = server
+            .mock("GET", "/api/v1/views/public/incidents")
+            .match_query(query)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"incidents":[{"id":"i1"}]}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let temp = tempdir().unwrap();
+        let cli_args = CliArgs {
+            config_dir: Some(temp.path().join("config")),
+            ..Default::default()
+        };
+        let out = temp.path().join("incidents.jsonl");
+        let errors = temp.path().join("errors.jsonl");
+        let checkpoint = temp.path().join("checkpoint.json");
+        let args = ExportIncidentsArgs {
+            project_id: None,
+            environment: None,
+            page: 1,
+            limit: 50,
+            max_pages: 1,
+            out: Some(out.clone()),
+            errors: Some(errors.clone()),
+            checkpoint: Some(checkpoint),
+            resume: false,
+            continue_on_error: false,
+            max_retries: 1,
+            dry_run: false,
+            api_url: server.url().parse().unwrap(),
+            allow_unauthenticated: true,
+        };
+
+        export_incidents(&args, &CliConfig::default(), &cli_args, true)
+            .await
+            .unwrap();
+
+        transient.assert_async().await;
+        success.assert_async().await;
+        let lines = fs::read_to_string(out).unwrap();
+        assert!(lines.contains(r#""id":"i1""#));
+        assert_eq!(fs::read_to_string(errors).unwrap(), "");
     }
 }
