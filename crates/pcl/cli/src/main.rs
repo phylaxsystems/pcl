@@ -91,6 +91,7 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         }
     };
+    config.normalize_auth_expiry_from_access_token();
 
     let should_write_after_invalid_config = cli.command.should_write_after_invalid_config();
     let result = async {
@@ -211,7 +212,7 @@ fn auth_error_envelope(err: &AuthError) -> Value {
                     },
                 },
                 "next_actions": [
-                    "pcl auth login",
+                    "pcl auth login --force",
                     "pcl auth logout",
                 ],
             }))
@@ -419,6 +420,6 @@ mod tests {
         assert_eq!(envelope["status"], "error");
         assert_eq!(envelope["error"]["code"], "auth.expired_token");
         assert_eq!(envelope["error"]["auth"]["token_valid"], false);
-        assert_eq!(envelope["next_actions"][0], "pcl auth login");
+        assert_eq!(envelope["next_actions"][0], "pcl auth login --force");
     }
 }

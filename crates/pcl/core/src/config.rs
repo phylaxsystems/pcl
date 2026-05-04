@@ -38,6 +38,7 @@ const LEGACY_CONFIG_DIR: &str = ".pcl";
 const CONFIG_DIR_NAME: &str = "pcl";
 /// Configuration file name
 pub const CONFIG_FILE: &str = "config.toml";
+pub const AUTH_EXPIRES_SOON_SECONDS: i64 = 300;
 
 /// Main configuration structure for PCL
 ///
@@ -108,6 +109,24 @@ impl ConfigArgs {
 }
 
 impl CliConfig {
+    /// Updates stored auth expiry from the JWT `exp` claim when available.
+    ///
+    /// Older CLI versions stored the short device-login session expiry here,
+    /// which made valid tokens look expired after only a few minutes.
+    pub fn normalize_auth_expiry_from_access_token(&mut self) -> bool {
+        let Some(auth) = &mut self.auth else {
+            return false;
+        };
+        let Some(token_expires_at) = auth.access_token_expires_at() else {
+            return false;
+        };
+        if auth.expires_at == token_expires_at {
+            return false;
+        }
+        auth.expires_at = token_expires_at;
+        true
+    }
+
     /// Returns the path to the active config file for the supplied CLI arguments.
     pub fn config_file_path(cli_args: &CliArgs) -> PathBuf {
         cli_args
@@ -361,6 +380,7 @@ fn config_auth_value(config: &CliConfig) -> Value {
             "refresh_token_present": false,
             "token_valid": false,
             "token_expired": false,
+            "expires_soon": false,
             "expired": false,
             "expires_at": null,
             "seconds_remaining": null,
@@ -371,6 +391,7 @@ fn config_auth_value(config: &CliConfig) -> Value {
     let now = Utc::now();
     let seconds_remaining = (auth.expires_at - now).num_seconds();
     let token_expired = auth.expires_at <= now;
+    let expires_soon = !token_expired && seconds_remaining <= AUTH_EXPIRES_SOON_SECONDS;
     json!({
         "authenticated": true,
         "user": auth.display_name(),
@@ -381,6 +402,7 @@ fn config_auth_value(config: &CliConfig) -> Value {
         "refresh_token_present": !auth.refresh_token.is_empty(),
         "token_valid": !token_expired,
         "token_expired": token_expired,
+        "expires_soon": expires_soon,
         "expired": token_expired,
         "expires_at": auth.expires_at.to_rfc3339(),
         "seconds_remaining": seconds_remaining,
@@ -440,6 +462,10 @@ pub struct UserAuth {
 }
 
 impl UserAuth {
+    pub fn access_token_expires_at(&self) -> Option<DateTime<Utc>> {
+        access_token_expires_at(&self.access_token)
+    }
+
     /// Returns the best available display name for this user.
     pub fn display_name(&self) -> String {
         if let Some(addr) = &self.wallet_address
@@ -455,6 +481,47 @@ impl UserAuth {
         }
         "unknown".to_string()
     }
+}
+
+pub fn access_token_expires_at(token: &str) -> Option<DateTime<Utc>> {
+    let payload = token.split('.').nth(1)?;
+    let payload = decode_base64_url(payload)?;
+    let payload: Value = serde_json::from_slice(&payload).ok()?;
+    let exp = payload.get("exp").and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|exp| i64::try_from(exp).ok()))
+    })?;
+    DateTime::from_timestamp(exp, 0)
+}
+
+fn decode_base64_url(input: &str) -> Option<Vec<u8>> {
+    let mut output = Vec::new();
+    let mut buffer = 0u32;
+    let mut bits = 0u8;
+
+    for byte in input.bytes() {
+        if byte == b'=' {
+            break;
+        }
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            _ => return None,
+        };
+        buffer = (buffer << 6) | u32::from(value);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            output.push(((buffer >> bits) & 0xff) as u8);
+            buffer &= (1 << bits) - 1;
+        }
+    }
+
+    Some(output)
 }
 
 impl fmt::Display for UserAuth {
@@ -643,6 +710,43 @@ mod tests {
             user_id: None,
         };
         assert_eq!(bare.display_name(), "unknown");
+    }
+
+    #[test]
+    fn extracts_expiry_from_jwt_access_token() {
+        let auth = UserAuth {
+            access_token: "e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig".to_string(),
+            refresh_token: String::new(),
+            expires_at: DateTime::from_timestamp(0, 0).unwrap(),
+            wallet_address: None,
+            email: None,
+            user_id: None,
+        };
+
+        assert_eq!(
+            auth.access_token_expires_at(),
+            DateTime::from_timestamp(4102444800, 0)
+        );
+    }
+
+    #[test]
+    fn normalizes_legacy_device_session_expiry_from_access_token_exp() {
+        let mut config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig".to_string(),
+                refresh_token: "refresh".to_string(),
+                expires_at: DateTime::from_timestamp(1, 0).unwrap(),
+                wallet_address: None,
+                email: None,
+                user_id: None,
+            }),
+        };
+
+        assert!(config.normalize_auth_expiry_from_access_token());
+        assert_eq!(
+            config.auth.unwrap().expires_at,
+            DateTime::from_timestamp(4102444800, 0).unwrap()
+        );
     }
 
     #[test]

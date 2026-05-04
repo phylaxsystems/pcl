@@ -138,7 +138,9 @@ pub enum AuthError {
     InvalidSession(String),
 
     /// Error when the locally stored access token has expired
-    #[error("Stored auth token for {user} expired at {expires_at}. Run `pcl auth login` again.")]
+    #[error(
+        "Stored auth token for {user} expired at {expires_at}. Run `pcl auth login --force` again."
+    )]
     StoredTokenExpired {
         user: String,
         expires_at: DateTime<Utc>,

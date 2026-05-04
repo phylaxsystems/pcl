@@ -93,6 +93,8 @@ pcl whoami --json
 
 Do not treat a stored token as valid unless `token_valid` is true and `expired` is false. Public endpoints should be called with `--allow-unauthenticated` when using raw `pcl api call`.
 
+`expires_soon: true` means the access token has five minutes or less remaining. Use `pcl auth login --force --json` to renew interactively before starting a long job. `pcl auth logout` attempts remote logout first, then clears local credentials; use `pcl auth logout --local` only when you explicitly want local cleanup.
+
 ## Provenance
 
 When reporting results, preserve:

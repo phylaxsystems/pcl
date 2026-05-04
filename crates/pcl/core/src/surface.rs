@@ -12,6 +12,7 @@ use crate::{
         with_envelope_metadata,
     },
     config::{
+        AUTH_EXPIRES_SOON_SECONDS,
         CliConfig,
         UserAuth,
     },
@@ -1353,6 +1354,12 @@ fn llms_guide() -> Value {
             "error_fields": ["error.code", "error.message", "error.recoverable", "error.http.status", "error.request_id"],
             "long_running": "Export commands write JSONL artifacts, error files, checkpoints, and job records."
         },
+        "auth_behavior": {
+            "expiry_source": "Stored token expiry is normalized from the access-token JWT exp claim when available.",
+            "expires_soon": "true when five minutes or less remain; renew before long-running work.",
+            "renew_command": "pcl auth login --force --json",
+            "logout": "pcl auth logout attempts remote revocation before local cleanup; pass --local for local-only cleanup."
+        },
         "mutation_safety": {
             "order": ["--body-template", "--dry-run", "typed flags", "--field key=value", "--body-file body.json"],
             "body_templates": "Print payload contracts before writes; choose a concrete body variant when body_variants is returned.",
@@ -1424,11 +1431,13 @@ fn auth_value(auth: Option<&UserAuth>) -> Value {
             "authenticated": false,
             "token_present": false,
             "token_valid": false,
+            "expires_soon": false,
             "expired": false,
         });
     };
     let seconds_remaining = (auth.expires_at - Utc::now()).num_seconds();
     let expired = auth.expires_at <= Utc::now();
+    let expires_soon = !expired && seconds_remaining <= AUTH_EXPIRES_SOON_SECONDS;
     json!({
         "authenticated": true,
         "user": auth.display_name(),
@@ -1437,6 +1446,7 @@ fn auth_value(auth: Option<&UserAuth>) -> Value {
         "email": auth.email.as_deref(),
         "token_present": !auth.access_token.is_empty(),
         "token_valid": !expired,
+        "expires_soon": expires_soon,
         "expired": expired,
         "expires_at": auth.expires_at.to_rfc3339(),
         "seconds_remaining": seconds_remaining,

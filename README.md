@@ -124,6 +124,9 @@ API commands default to compact TOON-style envelopes with `status`, `data`, and 
 pass `--json` for the same machine-readable envelope as JSON. Successes and errors use the same shape, so agents can recover from auth, validation, and parser failures without scraping prose diagnostics.
 `pcl auth status` also reports token validity, expiry, and platform URL; expired stored tokens return
 a nonzero structured error so agents do not mistake stale credentials for a working login.
+When `expires_soon` is true, renew before long-running work with `pcl auth login --force --json`.
+`pcl auth logout` revokes the platform session when possible before deleting local credentials;
+use `pcl auth logout --local` for local-only cleanup.
 Repository-local agent instructions also live in [AGENTS.md](AGENTS.md).
 
 ### Start Here

@@ -5,8 +5,10 @@ use crate::{
         with_envelope_metadata,
     },
     config::{
+        AUTH_EXPIRES_SOON_SECONDS,
         CliConfig,
         UserAuth,
+        access_token_expires_at,
     },
     error::AuthError,
 };
@@ -23,6 +25,12 @@ use dapp_api_client::generated::client::{
 use indicatif::{
     ProgressBar,
     ProgressStyle,
+};
+use reqwest::header::{
+    AUTHORIZATION,
+    HeaderMap,
+    HeaderName,
+    HeaderValue,
 };
 use serde_json::{
     Value,
@@ -62,16 +70,28 @@ pub enum AuthSubcommands {
     /// Login to PCL
     #[command(
         long_about = "Initiates the login process. Opens a browser window for authentication.",
-        after_help = "Example: pcl auth login"
+        after_help = "Examples:\n  pcl auth login\n  pcl auth login --force"
     )]
-    Login,
+    Login {
+        #[arg(
+            long,
+            help = "Start a fresh login even when the stored token is still valid"
+        )]
+        force: bool,
+    },
 
     /// Logout from PCL
     #[command(
-        long_about = "Removes stored authentication credentials.",
-        after_help = "Example: pcl auth logout"
+        long_about = "Revokes the server session when possible and removes stored authentication credentials.",
+        after_help = "Examples:\n  pcl auth logout\n  pcl auth logout --local"
     )]
-    Logout,
+    Logout {
+        #[arg(
+            long,
+            help = "Only remove local credentials; do not call the platform logout endpoint"
+        )]
+        local: bool,
+    },
 
     /// Check current authentication status
     #[command(
@@ -82,11 +102,27 @@ pub enum AuthSubcommands {
 }
 
 impl AuthCommand {
+    pub fn can_run_without_valid_config(&self) -> bool {
+        matches!(
+            self.command,
+            AuthSubcommands::Login { .. } | AuthSubcommands::Logout { .. }
+        )
+    }
+
     /// Execute the authentication command
     pub async fn run(&self, config: &mut CliConfig, json_output: bool) -> Result<(), AuthError> {
         match &self.command {
-            AuthSubcommands::Login => self.login(config, json_output).await,
-            AuthSubcommands::Logout => {
+            AuthSubcommands::Login { force } => self.login(config, json_output, *force).await,
+            AuthSubcommands::Logout { local } => {
+                let logout = if *local {
+                    json!({
+                        "attempted": false,
+                        "success": null,
+                        "mode": "local",
+                    })
+                } else {
+                    self.remote_logout(config).await
+                };
                 Self::logout(config);
                 Self::print_output(
                     &json!({
@@ -94,6 +130,8 @@ impl AuthCommand {
                         "data": {
                             "authenticated": false,
                             "platform_url": self.auth_url.as_str(),
+                            "local_credentials_removed": true,
+                            "remote_logout": logout,
                         },
                         "next_actions": ["pcl auth login"],
                     }),
@@ -106,15 +144,22 @@ impl AuthCommand {
     }
 
     /// Initiate the login process and wait for user authentication
-    async fn login(&self, config: &mut CliConfig, json_output: bool) -> Result<(), AuthError> {
+    async fn login(
+        &self,
+        config: &mut CliConfig,
+        json_output: bool,
+        force: bool,
+    ) -> Result<(), AuthError> {
         let mut expired_auth = None;
         if let Some(auth) = &config.auth {
-            if auth.expires_at > chrono::Utc::now() {
+            if auth.expires_at > chrono::Utc::now() && !force {
                 Self::print_output(&self.status_envelope(config), json_output)?;
                 return Ok(());
             }
-            expired_auth = Some(auth.expires_at);
-            if !json_output {
+            if auth.expires_at <= chrono::Utc::now() {
+                expired_auth = Some(auth.expires_at);
+            }
+            if auth.expires_at <= chrono::Utc::now() && !json_output {
                 println!(
                     "{} Stored auth token expired at {}. Starting a fresh login.",
                     "⚠️".yellow(),
@@ -283,6 +328,7 @@ impl AuthCommand {
                 let token = status.token.ok_or_else(|| {
                     AuthError::InvalidAuthData("Verified but missing access token".to_string())
                 })?;
+                let token_expires_at = access_token_expires_at(&token);
                 let refresh_token = status.refresh_token.ok_or_else(|| {
                     AuthError::InvalidAuthData("Verified but missing refresh token".to_string())
                 })?;
@@ -301,7 +347,7 @@ impl AuthCommand {
                 config.auth = Some(UserAuth {
                     access_token: token,
                     refresh_token,
-                    expires_at: auth_response.expires_at,
+                    expires_at: token_expires_at.unwrap_or(auth_response.expires_at),
                     user_id: Some(user_id),
                     wallet_address,
                     email: status.email,
@@ -322,6 +368,71 @@ impl AuthCommand {
             spinner.finish_with_message("❌ Authentication timed out");
         }
         Err(AuthError::Timeout(MAX_RETRIES))
+    }
+
+    async fn remote_logout(&self, config: &CliConfig) -> Value {
+        let Some(auth) = &config.auth else {
+            return json!({
+                "attempted": false,
+                "success": null,
+                "reason": "not_authenticated",
+            });
+        };
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("api-version"),
+            HeaderValue::from_static("1"),
+        );
+        let auth_header = match HeaderValue::from_str(&format!("Bearer {}", auth.access_token)) {
+            Ok(value) => value,
+            Err(error) => {
+                return json!({
+                    "attempted": false,
+                    "success": false,
+                    "error": format!("Invalid stored auth token header: {error}"),
+                });
+            }
+        };
+        headers.insert(AUTHORIZATION, auth_header);
+
+        let mut url = self.auth_url.clone();
+        url.set_path("/api/v1/web/auth/logout");
+        url.set_query(None);
+        let client = match reqwest::Client::builder().default_headers(headers).build() {
+            Ok(client) => client,
+            Err(error) => {
+                return json!({
+                    "attempted": false,
+                    "success": false,
+                    "error": error.to_string(),
+                });
+            }
+        };
+        let response = match client.post(url).json(&json!({})).send().await {
+            Ok(response) => response,
+            Err(error) => {
+                return json!({
+                    "attempted": true,
+                    "success": false,
+                    "error": error.to_string(),
+                });
+            }
+        };
+        let status = response.status();
+        let request_id = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .map(ToOwned::to_owned);
+        let body = response.text().await.ok();
+        json!({
+            "attempted": true,
+            "success": status.is_success(),
+            "http_status": status.as_u16(),
+            "request_id": request_id,
+            "body": body,
+        })
     }
 
     /// Check authentication status using the generated client.
@@ -383,6 +494,7 @@ impl AuthCommand {
                     "token_present": false,
                     "token_valid": false,
                     "token_expired": false,
+                    "expires_soon": false,
                     "expired": false,
                     "seconds_remaining": null,
                     "expires_in_seconds": null,
@@ -395,6 +507,7 @@ impl AuthCommand {
         let now = chrono::Utc::now();
         let token_expired = auth.expires_at <= now;
         let seconds_remaining = (auth.expires_at - now).num_seconds();
+        let expires_soon = !token_expired && seconds_remaining <= AUTH_EXPIRES_SOON_SECONDS;
         with_envelope_metadata(json!({
             "status": "ok",
             "data": {
@@ -407,6 +520,7 @@ impl AuthCommand {
                 "refresh_token_present": !auth.refresh_token.is_empty(),
                 "token_valid": !token_expired,
                 "token_expired": token_expired,
+                "expires_soon": expires_soon,
                 "expired": token_expired,
                 "expires_at": auth.expires_at.to_rfc3339(),
                 "seconds_remaining": seconds_remaining,
@@ -414,7 +528,9 @@ impl AuthCommand {
                 "platform_url": self.auth_url.as_str(),
             },
             "next_actions": if token_expired {
-                json!(["pcl auth login", "pcl auth logout"])
+                json!(["pcl auth login --force", "pcl auth logout"])
+            } else if expires_soon {
+                json!(["pcl auth login --force", "pcl account"])
             } else {
                 json!(["pcl account", "pcl projects --home"])
             },
@@ -480,7 +596,7 @@ mod tests {
     #[test]
     fn test_display_login_instructions() {
         let cmd = AuthCommand {
-            command: AuthSubcommands::Login,
+            command: AuthSubcommands::Login { force: false },
             auth_url: "https://app.phylax.systems".parse().unwrap(),
         };
         let auth_response: GetCliAuthCodeResponse =
@@ -496,7 +612,7 @@ mod tests {
     #[test]
     fn test_login_instructions_envelope_is_structured() {
         let cmd = AuthCommand {
-            command: AuthSubcommands::Login,
+            command: AuthSubcommands::Login { force: false },
             auth_url: "https://app.phylax.systems".parse().unwrap(),
         };
         let auth_response: GetCliAuthCodeResponse =
@@ -726,7 +842,7 @@ mod tests {
         ])
         .unwrap();
 
-        let result = cmd.login(&mut config, false).await;
+        let result = cmd.login(&mut config, false, false).await;
         assert!(result.is_ok());
         assert_eq!(
             config.auth.as_ref().unwrap().wallet_address,

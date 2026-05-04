@@ -154,6 +154,9 @@ impl Commands {
             Self::Config(config) if config.can_run_without_valid_config()
         ) || matches!(
             self,
+            Self::Auth(auth) if auth.can_run_without_valid_config()
+        ) || matches!(
+            self,
             Self::Doctor(_)
                 | Self::Workflows(_)
                 | Self::Artifacts(_)
@@ -167,6 +170,7 @@ impl Commands {
 
     pub fn should_write_after_invalid_config(&self) -> bool {
         matches!(self, Self::Config(config) if config.can_run_without_valid_config())
+            || matches!(self, Self::Auth(auth) if auth.can_run_without_valid_config())
     }
 }
 

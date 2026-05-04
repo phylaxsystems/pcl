@@ -16,6 +16,19 @@ email = "agent@example.com"
     .expect("write test config");
 }
 
+fn write_legacy_short_expiry_jwt_config(config_dir: &std::path::Path) {
+    fs::write(
+        config_dir.join("config.toml"),
+        r#"[auth]
+access_token = "e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig"
+refresh_token = "refresh-token"
+expires_at = 1
+email = "agent@example.com"
+"#,
+    )
+    .expect("write legacy test config");
+}
+
 #[test]
 fn auth_login_json_with_existing_auth_outputs_json_envelope() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
@@ -51,6 +64,37 @@ fn auth_login_json_with_existing_auth_outputs_json_envelope() {
     assert_eq!(envelope["data"]["authenticated"], true);
     assert_eq!(envelope["data"]["email"], "agent@example.com");
     assert_eq!(envelope["data"]["token_valid"], true);
+}
+
+#[test]
+fn auth_status_json_normalizes_legacy_short_expiry_from_jwt_exp() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_legacy_short_expiry_jwt_config(temp_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "status",
+        ])
+        .output()
+        .expect("run pcl auth status");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok");
+    assert_eq!(envelope["data"]["token_valid"], true);
+    assert_eq!(envelope["data"]["expires_at"], "2100-01-01T00:00:00+00:00");
+
+    let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
+    assert!(config.contains("expires_at = 4102444800"));
 }
 
 #[test]
@@ -126,6 +170,148 @@ fn auth_login_json_fresh_flow_outputs_pending_and_terminal_events() {
     assert!(config.contains("access_token = \"test-token\""));
     auth_code.assert();
     auth_status.assert();
+}
+
+#[test]
+fn auth_login_force_starts_fresh_flow_even_with_existing_auth() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_valid_auth_config(temp_dir.path());
+    let mut server = mockito::Server::new();
+    let auth_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2099-12-31T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create();
+    let auth_status = server
+        .mock("GET", "/api/v1/cli/auth/status")
+        .match_query(mockito::Matcher::AllOf(vec![
+            mockito::Matcher::UrlEncoded(
+                "session_id".into(),
+                "550e8400-e29b-41d4-a716-446655440000".into(),
+            ),
+            mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"verified":true,"user_id":"550e8400-e29b-41d4-a716-446655440000","token":"e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig","refresh_token":"new-refresh-token","email":"agent@example.com"}"#,
+        )
+        .expect(1)
+        .create();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "login",
+            "--force",
+        ])
+        .output()
+        .expect("run pcl auth login --force");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2, "expected JSONL auth events: {stdout}");
+    let terminal: serde_json::Value = serde_json::from_str(lines[1]).expect("terminal event");
+    assert_eq!(terminal["event"], "auth.login_complete");
+    assert_eq!(terminal["data"]["expires_at"], "2100-01-01T00:00:00+00:00");
+    let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
+    assert!(config.contains("access_token = \"e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig\""));
+    assert!(config.contains("expires_at = 4102444800"));
+    auth_code.assert();
+    auth_status.assert();
+}
+
+#[test]
+fn auth_logout_json_revokes_remote_then_clears_local_config() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_valid_auth_config(temp_dir.path());
+    let mut server = mockito::Server::new();
+    let logout = server
+        .mock("POST", "/api/v1/web/auth/logout")
+        .match_header("authorization", "Bearer test-token")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req_test_logout")
+        .with_body(r#"{"ok":true}"#)
+        .expect(1)
+        .create();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "logout",
+        ])
+        .output()
+        .expect("run pcl auth logout");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok");
+    assert_eq!(envelope["data"]["authenticated"], false);
+    assert_eq!(envelope["data"]["remote_logout"]["attempted"], true);
+    assert_eq!(envelope["data"]["remote_logout"]["success"], true);
+    assert_eq!(
+        envelope["data"]["remote_logout"]["request_id"],
+        "req_test_logout"
+    );
+    let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
+    assert!(!config.contains("[auth]"));
+    logout.assert();
+}
+
+#[test]
+fn auth_logout_local_can_repair_invalid_config() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let config_path = temp_dir.path().join("config.toml");
+    fs::write(&config_path, "not = [toml\n").expect("write invalid config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "logout",
+            "--local",
+        ])
+        .output()
+        .expect("run pcl auth logout --local");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok");
+    assert_eq!(envelope["data"]["remote_logout"]["attempted"], false);
+    assert_eq!(fs::read_to_string(config_path).expect("read config"), "");
 }
 
 #[test]
