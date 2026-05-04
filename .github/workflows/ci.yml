@@ -50,13 +50,4 @@ jobs:
       use-nextest: true
       enable-sccache: true
       sccache-backend: "local"
-
-  rust-advisories:
-    name: Rust Advisory Audit
-    runs-on: phylax-self-hosted
-    steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check advisories
-          use-git-cli: true
+      deny-checks: advisories
