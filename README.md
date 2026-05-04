@@ -124,7 +124,12 @@ API commands default to compact TOON-style envelopes with `status`, `data`, and 
 pass `--json` for the same machine-readable envelope as JSON. Successes and errors use the same shape, so agents can recover from auth, validation, and parser failures without scraping prose diagnostics.
 `pcl auth status` also reports token validity, expiry, and platform URL; expired stored tokens return
 a nonzero structured error so agents do not mistake stale credentials for a working login.
-When `expires_soon` is true, renew before long-running work with `pcl auth login --force --json`.
+For preflight checks, prefer `pcl auth ensure --json`: it returns `status: ok` when auth is usable,
+or one `status: action_required` envelope with `device_url`, `code`, `device_secret`, and `poll_command`
+when user login is needed. `pcl auth refresh --json` is safe to call, but the current platform API has
+no refresh endpoint; when refresh is unavailable it returns the same login challenge shape.
+When `expires_soon` is true, renew before long-running work with `pcl auth ensure --force --json`
+or `pcl auth login --no-wait --json`.
 `pcl auth logout` revokes the platform session when possible before deleting local credentials;
 use `pcl auth logout --local` for local-only cleanup.
 Repository-local agent instructions also live in [AGENTS.md](AGENTS.md).
@@ -164,7 +169,7 @@ Errors use `status: "error"` with:
 
 Default output is TOON for compact agent consumption. Use `--json` when you need strict JSON parsing. Do not parse colored or human prose output as a control plane.
 
-`pcl auth login --json` is the one streaming exception: a fresh login emits JSONL events because the command must print device-login instructions and then wait for verification. Read each line as an envelope and trust only the event with `terminal: true` as the final result. If credentials are already valid, `pcl auth login --json` returns a single normal envelope.
+`pcl auth login --json` is the one streaming exception: a fresh login emits JSONL events because the command must print device-login instructions and then wait for verification. Read each line as an envelope and trust only the event with `terminal: true` as the final result. If credentials are already valid, `pcl auth login --json` returns a single normal envelope. For a single-envelope login flow, use `pcl auth ensure --json` or `pcl auth login --no-wait --json`, then run `data.poll_command`.
 
 ### Discovery Commands
 
@@ -172,6 +177,7 @@ Default output is TOON for compact agent consumption. Use `--json` when you need
 pcl --llms
 pcl --json --llms
 pcl doctor --json
+pcl auth ensure --json
 pcl whoami --json
 pcl workflows --json
 pcl workflows show incident-investigation --json

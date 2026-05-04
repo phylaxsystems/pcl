@@ -1317,7 +1317,7 @@ fn llms_guide() -> Value {
         "orientation": [
             {
                 "goal": "Check local readiness and auth truthfulness",
-                "commands": ["pcl doctor", "pcl whoami", "pcl auth status --json"]
+                "commands": ["pcl doctor", "pcl auth ensure --json", "pcl whoami", "pcl auth status --json"]
             },
             {
                 "goal": "Discover available workflows",
@@ -1347,7 +1347,7 @@ fn llms_guide() -> Value {
             "default": "TOON envelope",
             "json": "Pass --json for pretty JSON envelopes.",
             "jsonl_exceptions": {
-                "pcl auth login --json": "Fresh login emits JSONL progress events and a final event with terminal=true. Already-authenticated login returns one envelope."
+                "pcl auth login --json": "Fresh login emits JSONL progress events and a final event with terminal=true. Already-authenticated login returns one envelope. Use pcl auth ensure --json or pcl auth login --no-wait --json for single-envelope auth challenges."
             },
             "envelope_fields": ["status", "data", "error", "next_actions", "schema_version", "pcl_version"],
             "errors": "Parser, auth, config, validation, network, and API failures return structured envelopes and nonzero exit codes.",
@@ -1356,8 +1356,12 @@ fn llms_guide() -> Value {
         },
         "auth_behavior": {
             "expiry_source": "Stored token expiry is normalized from the access-token JWT exp claim when available.",
+            "ensure_command": "pcl auth ensure --json",
             "expires_soon": "true when five minutes or less remain; renew before long-running work.",
-            "renew_command": "pcl auth login --force --json",
+            "renew_command": "pcl auth ensure --force --json",
+            "single_envelope_login": "pcl auth login --no-wait --json returns status=action_required with device_url, code, device_secret, and poll_command.",
+            "poll_command": "pcl auth poll --session-id <uuid> --device-secret <secret> --json",
+            "refresh_command": "pcl auth refresh --json is safe, but returns a login challenge until the platform exposes a refresh endpoint.",
             "logout": "pcl auth logout attempts remote revocation before local cleanup; pass --local for local-only cleanup."
         },
         "mutation_safety": {

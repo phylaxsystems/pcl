@@ -9,6 +9,7 @@ Run these first:
 ```bash
 pcl --llms
 pcl doctor
+pcl auth ensure --json
 pcl whoami
 pcl api manifest --json
 ```
@@ -88,12 +89,15 @@ Use:
 
 ```bash
 pcl auth status --json
+pcl auth ensure --json
 pcl whoami --json
 ```
 
 Do not treat a stored token as valid unless `token_valid` is true and `expired` is false. Public endpoints should be called with `--allow-unauthenticated` when using raw `pcl api call`.
 
-`expires_soon: true` means the access token has five minutes or less remaining. Use `pcl auth login --force --json` to renew interactively before starting a long job. `pcl auth logout` attempts remote logout first, then clears local credentials; use `pcl auth logout --local` only when you explicitly want local cleanup.
+Use `pcl auth ensure --json` before long workflows. It returns `status: ok` when auth is usable, or one `status: action_required` envelope with `device_url`, `code`, `device_secret`, and `poll_command` when user login is needed. Run `poll_command` until it returns `status: ok` or `status: error`.
+
+`expires_soon: true` means the access token has five minutes or less remaining. `pcl auth refresh --json` is safe to call, but the current platform API has no refresh endpoint; when refresh is unavailable it returns the same login challenge shape. `pcl auth login --no-wait --json` also returns a single challenge envelope. `pcl auth logout` attempts remote logout first, then clears local credentials; use `pcl auth logout --local` only when you explicitly want local cleanup.
 
 ## Provenance
 
