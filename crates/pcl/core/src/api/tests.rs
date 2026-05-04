@@ -1634,6 +1634,16 @@ fn variant_body_templates_return_variant_specific_next_actions() {
 #[test]
 fn manifest_lists_structured_actions_for_every_workflow() {
     let manifest = api_manifest();
+    assert_eq!(manifest["default_output"], "toon");
+    assert_eq!(
+        manifest["output_modes"]["toon"],
+        "Default compact machine-readable envelope; explicit form is --format toon."
+    );
+    assert!(
+        manifest["output_modes"]["json"]
+            .as_str()
+            .is_some_and(|value| value.contains("--format json"))
+    );
     let commands = manifest["commands"].as_array().unwrap();
     for command_name in [
         "incidents",

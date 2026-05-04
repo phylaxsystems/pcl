@@ -121,7 +121,9 @@ Top-level workflow commands expose the platform API as structured CLI operations
 The CLI is designed around the platform workflows documented in the [Phylax docs](https://docs.phylax.systems):
 projects, assertions, transparency views, deployment state, integrations, and incidents.
 API commands default to compact TOON-style envelopes with `status`, `data`, and `next_actions`;
-pass `--json` for the same machine-readable envelope as JSON. Successes and errors use the same shape, so agents can recover from auth, validation, and parser failures without scraping prose diagnostics.
+use `--format toon` to pin that default explicitly, or pass `--json` / `--format json`
+for the same machine-readable envelope as JSON. Successes and errors use the same shape,
+so agents can recover from auth, validation, and parser failures without scraping prose diagnostics.
 `pcl auth status` also reports token validity, expiry, and platform URL; expired stored tokens return
 a nonzero structured error so agents do not mistake stale credentials for a working login.
 For preflight checks, prefer `pcl auth ensure --json`: it returns `status: ok` when auth is usable,
@@ -133,6 +135,8 @@ or `pcl auth login --no-wait --json`.
 `pcl auth logout` revokes the platform session when possible before deleting local credentials;
 use `pcl auth logout --local` for local-only cleanup.
 Repository-local agent instructions also live in [AGENTS.md](AGENTS.md).
+The core discovery commands in this section are exercised by `make agent-smoke`, which is part of
+`make ci`, so README/agent guidance should not drift from the CLI contract.
 
 ### Start Here
 
@@ -167,7 +171,9 @@ Errors use `status: "error"` with:
 - optional `request_id`
 - `next_actions`
 
-Default output is TOON for compact agent consumption. Use `--json` when you need strict JSON parsing. Do not parse colored or human prose output as a control plane.
+Default output is TOON for compact agent consumption. Use `--format toon` when a script needs
+to make that contract explicit. Use `--json` or `--format json` when you need strict JSON parsing.
+Do not parse colored or human prose output as a control plane.
 
 `pcl auth login --json` is the one streaming exception: a fresh login emits JSONL events because the command must print device-login instructions and then wait for verification. Read each line as an envelope and trust only the event with `terminal: true` as the final result. If credentials are already valid, `pcl auth login --json` returns a single normal envelope. For a single-envelope login flow, use `pcl auth ensure --json` or `pcl auth login --no-wait --json`, then run `data.poll_command`.
 
@@ -176,6 +182,7 @@ Default output is TOON for compact agent consumption. Use `--json` when you need
 ```bash
 pcl --llms
 pcl --json --llms
+pcl --format json --llms
 pcl doctor --json
 pcl auth ensure --json
 pcl whoami --json

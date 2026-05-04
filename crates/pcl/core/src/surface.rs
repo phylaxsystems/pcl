@@ -476,6 +476,7 @@ impl DoctorArgs {
                     "checks": checks,
                     "default_output": "toon",
                     "json_output_flag": "--json",
+                    "format_flag": "--format toon|json",
                     "api_url": self.api_url.as_str(),
                 },
                 "next_actions": [
@@ -1294,6 +1295,11 @@ fn llms_guide() -> Value {
         "purpose": "CLI-native control surface for Credible Layer API investigation and assertion workflows.",
         "default_output": "toon",
         "json_flag": "--json",
+        "format_flag": "--format toon|json",
+        "output_modes": {
+            "toon": "Default compact machine-readable envelope; preferred for agent context efficiency.",
+            "json": "Use --json or --format json when strict JSON tooling is required."
+        },
         "no_mcp_required": true,
         "principles": [
             "Use top-level workflow commands first.",
@@ -1345,7 +1351,8 @@ fn llms_guide() -> Value {
         },
         "output_contract": {
             "default": "TOON envelope",
-            "json": "Pass --json for pretty JSON envelopes.",
+            "toon": "Pass --format toon explicitly when you need to pin the default contract.",
+            "json": "Pass --json or --format json for pretty JSON envelopes.",
             "jsonl_exceptions": {
                 "pcl auth login --json": "Fresh login emits JSONL progress events and a final event with terminal=true. Already-authenticated login returns one envelope. Use pcl auth ensure --json or pcl auth login --no-wait --json for single-envelope auth challenges."
             },
@@ -1838,6 +1845,7 @@ mod tests {
         let guide = llms_guide();
 
         assert_eq!(guide["default_output"], "toon");
+        assert_eq!(guide["format_flag"], "--format toon|json");
         assert_eq!(guide["no_mcp_required"], true);
         assert_eq!(guide["agent_files"]["repo_instructions"], "AGENTS.md");
         assert!(

@@ -1,6 +1,6 @@
-.PHONY: ci fmt-check clippy test doc diff-check audit regenerate regenerate-dev
+.PHONY: ci fmt-check clippy test doc diff-check agent-smoke audit regenerate regenerate-dev
 
-ci: fmt-check clippy test doc diff-check
+ci: fmt-check clippy test doc agent-smoke diff-check
 
 fmt-check:
 	cargo fmt --all -- --check
@@ -16,6 +16,9 @@ doc:
 
 diff-check:
 	git diff --check
+
+agent-smoke:
+	PCL_AUTH_NO_BROWSER=1 scripts/agent-smoke.sh
 
 audit:
 	cargo deny --all-features check advisories

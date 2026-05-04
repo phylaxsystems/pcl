@@ -2541,7 +2541,11 @@ pub fn api_manifest() -> Value {
         "raw_api": "pcl api list | pcl api inspect | pcl api call | pcl api manifest",
         "llms": "pcl --llms | pcl llms",
         "default_output": "toon",
-        "json_output": "Add --json to emit the same {status,data,error,next_actions} envelope as JSON.",
+        "output_modes": {
+            "default": "toon",
+            "toon": "Default compact machine-readable envelope; explicit form is --format toon.",
+            "json": "Pass --json or --format json for the same {status,data,error,next_actions} envelope as JSON."
+        },
         "body_input": {
             "preferred": "Use typed flags when available, then --field key=value, then --body-file for nested payloads.",
             "template_flag": "--body-template",

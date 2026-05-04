@@ -297,10 +297,30 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    args.into_iter().any(|arg| {
+    let mut saw_output_flag = false;
+    for arg in args {
         let arg = arg.as_ref();
-        arg == OsStr::new("--json") || arg == OsStr::new("-j")
-    })
+        if arg == OsStr::new("--json") || arg == OsStr::new("-j") {
+            return true;
+        }
+        if saw_output_flag {
+            saw_output_flag = false;
+            if arg == OsStr::new("json") {
+                return true;
+            }
+            continue;
+        }
+        if arg == OsStr::new("--format") {
+            saw_output_flag = true;
+            continue;
+        }
+        if let Some(value) = arg.to_str().and_then(|arg| arg.strip_prefix("--format="))
+            && value == "json"
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn wants_llms_output<I, S>(args: I) -> bool
@@ -350,6 +370,9 @@ mod tests {
     fn detects_json_flag_before_successful_parse() {
         assert!(wants_json_output(["pcl", "--json", "api"]));
         assert!(wants_json_output(["pcl", "api", "projects", "-j"]));
+        assert!(wants_json_output(["pcl", "--format", "json", "api"]));
+        assert!(wants_json_output(["pcl", "--format=json", "api"]));
+        assert!(!wants_json_output(["pcl", "--format", "toon", "api"]));
         assert!(!wants_json_output(["pcl", "api", "projects"]));
     }
 

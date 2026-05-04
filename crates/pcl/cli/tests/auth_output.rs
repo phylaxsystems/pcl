@@ -1167,3 +1167,129 @@ fn api_manifest_json_exposes_agent_contract_fields() {
                 .is_some_and(|flags| flags.iter().any(|flag| flag == "--tx-id"))
     }));
 }
+
+#[test]
+fn format_json_global_flag_emits_json_envelope_without_json_shorthand() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_valid_auth_config(temp_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--format",
+            "json",
+            "doctor",
+            "--offline",
+        ])
+        .output()
+        .expect("run pcl doctor");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok");
+    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+}
+
+#[test]
+fn format_toon_global_flag_emits_default_toon_envelope() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_valid_auth_config(temp_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--format",
+            "toon",
+            "doctor",
+            "--offline",
+        ])
+        .output()
+        .expect("run pcl doctor");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    assert!(stdout.starts_with("status: ok\n"), "{stdout}");
+    assert!(
+        stdout.contains("schema_version: pcl.envelope.v1"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn parser_errors_honor_format_json_before_successful_parse() {
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args(["--format", "json", "api", "projects", "--save", "--unsave"])
+        .output()
+        .expect("run pcl parser error");
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "unexpected stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("json error envelope");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["code"], "cli.argument_conflict");
+    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+}
+
+#[test]
+fn api_call_accepts_inline_query_string_under_format_json() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let mut server = mockito::Server::new();
+    let health = server
+        .mock("GET", "/api/v1/health")
+        .match_query(mockito::Matcher::UrlEncoded("limit".into(), "5".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-inline-query")
+        .with_body(r#"{"healthy":true}"#)
+        .expect(1)
+        .create();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--format",
+            "json",
+            "api",
+            "--api-url",
+            &server.url(),
+            "--allow-unauthenticated",
+            "call",
+            "get",
+            "/health?limit=5",
+        ])
+        .output()
+        .expect("run pcl api call");
+
+    assert!(
+        output.status.success(),
+        "api call failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok");
+    assert_eq!(envelope["data"]["request"]["query"][0]["name"], "limit");
+    assert_eq!(envelope["data"]["request"]["query"][0]["value"], "5");
+    assert_eq!(
+        envelope["data"]["response"]["request_id"],
+        "req-inline-query"
+    );
+    health.assert();
+}

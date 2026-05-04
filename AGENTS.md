@@ -14,9 +14,9 @@ pcl whoami
 pcl api manifest --json
 ```
 
-When changing this repository, run `make ci` before handing work back. It sets `PCL_AUTH_NO_BROWSER=1` for tests so auth flows do not open a browser.
+When changing this repository, run `make ci` before handing work back. It sets `PCL_AUTH_NO_BROWSER=1` for tests so auth flows do not open a browser, and it runs `make agent-smoke` to verify the documented agent discovery path.
 
-Use `--json` whenever you need stable machine parsing. Without `--json`, PCL emits compact TOON envelopes by default.
+Use TOON whenever possible; it is the default compact machine-readable envelope and is cheaper for agents to consume. Use `--format toon` to pin that default explicitly. Use `--json` or `--format json` when a downstream tool needs JSON.
 
 ## Output Contract
 
@@ -33,6 +33,13 @@ Every agent-facing command should be treated as an envelope:
 ```
 
 Errors use the same shape with `status: "error"` and an `error` object. Do not parse prose diagnostics. Check `error.code`, `error.recoverable`, `error.http.status`, `error.request_id`, and `next_actions`.
+
+Output mode rules:
+
+- default: TOON envelope
+- explicit TOON: `--format toon`
+- JSON: `--json` or `--format json`
+- JSONL exception: fresh `pcl auth login --json` streams events and marks the final event with `terminal: true`
 
 Fresh `pcl auth login --json` emits JSONL progress events: first `event: auth.login_instructions`, then a terminal envelope with `terminal: true`. Treat only the terminal event as the final login result. Existing valid auth still returns a single JSON envelope.
 
