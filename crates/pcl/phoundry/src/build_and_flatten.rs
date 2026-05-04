@@ -29,7 +29,10 @@ use std::{
     path::PathBuf,
 };
 
-use crate::error::PhoundryError;
+use crate::{
+    DEFAULT_ASSERTION_CONTRACTS_DIR,
+    error::PhoundryError,
+};
 
 /// Output from building and flattening a Solidity contract.
 /// Contains the compiler version used and the flattened source code.
@@ -133,6 +136,15 @@ pub struct BuildAndFlattenArgs {
     /// Name of the assertion contract to build and flatten
     #[clap(help = "Name of the assertion contract to build and flatten")]
     pub assertion_contract: String,
+
+    /// Directory containing assertion contracts, relative to root unless absolute
+    #[clap(
+        long,
+        value_hint = ValueHint::DirPath,
+        default_value = DEFAULT_ASSERTION_CONTRACTS_DIR,
+        help = "Directory containing assertion contracts"
+    )]
+    pub contracts: PathBuf,
 }
 
 impl BuildAndFlattenArgs {
@@ -242,9 +254,7 @@ impl BuildAndFlattenArgs {
         let build_opts = BuildOpts {
             project_paths: ProjectPathOpts {
                 root: self.root.clone(),
-                // FIXME(Odysseas): this essentially hard-codes the location of the assertions to live in
-                // assertions/src
-                contracts: Some(PathBuf::from("assertions/src")),
+                contracts: Some(self.contracts.clone()),
                 ..Default::default()
             },
             ..Default::default()
@@ -359,10 +369,15 @@ contract TestContract {
         let args = BuildAndFlattenArgs {
             root: None,
             assertion_contract: "TestContract".to_string(),
+            contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
         };
 
         assert_eq!(args.assertion_contract, "TestContract");
         assert!(args.root.is_none());
+        assert_eq!(
+            args.contracts,
+            PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR)
+        );
     }
 
     #[test]
@@ -412,6 +427,7 @@ contract TestContract {
         let args = BuildAndFlattenArgs {
             root: Some(project_root),
             assertion_contract: "TestContract".to_string(),
+            contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
         };
 
         let result = args.run();

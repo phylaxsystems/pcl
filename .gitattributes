@@ -1,0 +1,2 @@
+crates/dapp-api-client/src/generated/** linguist-generated=true
+crates/dapp-api-client/openapi/** linguist-generated=true

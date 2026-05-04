@@ -1,4 +1,8 @@
 use crate::credible_config::CredibleConfigError;
+use chrono::{
+    DateTime,
+    Utc,
+};
 use dapp_api_client::generated::client::{
     Error as ApiError,
     types::GetCliAuthStatusResponse,
@@ -104,6 +108,10 @@ pub enum ConfigError {
     #[error("Failed to serialize config file: {0}")]
     SerializeError(#[source] toml::ser::Error),
 
+    /// Error when serializing structured CLI output fails
+    #[error("Failed to serialize JSON output: {0}")]
+    JsonError(#[source] serde_json::Error),
+
     /// Error when attempting an operation that requires authentication
     /// but no authentication token is present in the config
     #[error("No Authentication Token Found")]
@@ -128,6 +136,16 @@ pub enum AuthError {
     /// Error when the auth session is no longer valid
     #[error("Invalid session: {0}. Please run `pcl auth login` again.")]
     InvalidSession(String),
+
+    /// Error when the locally stored access token has expired
+    #[error(
+        "Stored auth token for {user} expired at {expires_at}. Run `pcl auth login --force` again."
+    )]
+    StoredTokenExpired {
+        user: String,
+        expires_at: DateTime<Utc>,
+        platform_url: String,
+    },
 
     /// Error when the session has expired server-side
     #[error("Session expired. Please run `pcl auth login` to start a new session.")]

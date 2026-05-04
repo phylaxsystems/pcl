@@ -7,6 +7,13 @@ on:
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "deny.toml"
+      - "Makefile"
+      - "AGENTS.md"
+      - "README.md"
+      - "scripts/**"
+      - "rust-toolchain.toml"
+      - "rustfmt.toml"
       - ".github/workflows/ci.yml"
   pull_request:
     branches: [main]
@@ -14,6 +21,13 @@ on:
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "deny.toml"
+      - "Makefile"
+      - "AGENTS.md"
+      - "README.md"
+      - "scripts/**"
+      - "rust-toolchain.toml"
+      - "rustfmt.toml"
       - ".github/workflows/ci.yml"
   workflow_dispatch:
     inputs:
@@ -42,3 +56,30 @@ jobs:
       use-nextest: true
       enable-sccache: true
       sccache-backend: "local"
+
+  rust-advisories:
+    name: Rust Advisory Audit
+    runs-on: phylax-self-hosted
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        run: rustup toolchain install "$RUST_NIGHTLY_VERSION" --profile minimal --no-self-update
+      - name: Install cargo-deny
+        run: cargo +nightly-2026-01-07 install cargo-deny --version 0.19.2 --locked
+      - name: Run advisory audit
+        run: cargo +nightly-2026-01-07 deny --all-features check advisories
+
+  agent-smoke:
+    name: Agent CLI Smoke
+    runs-on: phylax-self-hosted
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
+      PCL_AUTH_NO_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        run: rustup toolchain install "$RUST_NIGHTLY_VERSION" --profile minimal --no-self-update
+      - name: Run agent smoke contract
+        run: make agent-smoke
