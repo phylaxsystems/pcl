@@ -32,7 +32,7 @@ default = []
 regenerate = []
 
 [package.metadata.cargo-shear]
-ignored = ["anyhow", "openapiv3", "progenitor"]
+ignored = ["anyhow", "openapiv3", "prettyplease", "progenitor", "syn"]
 
 [build-dependencies]
 reqwest = { workspace = true, features = ["blocking", "json"] }

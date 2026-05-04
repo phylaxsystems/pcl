@@ -18,7 +18,7 @@ diff-check:
 	git diff --check
 
 audit:
-	cargo deny check advisories
+	cargo deny --all-features check advisories
 
 # Regenerate dapp-api-client from latest OpenAPI spec
 regenerate:
