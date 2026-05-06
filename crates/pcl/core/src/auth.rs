@@ -38,14 +38,17 @@ use serde_json::{
 };
 use tokio::time::{
     Duration,
+    Instant,
     sleep,
 };
 use uuid::Uuid;
 
-/// Interval between authentication status checks
-const POLL_INTERVAL: Duration = Duration::from_secs(2);
-/// Maximum number of retry attempts (5 minutes worth of 2-second intervals)
-const MAX_RETRIES: u32 = 150;
+/// Initial interval between authentication status checks.
+const INITIAL_POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// Maximum interval between authentication status checks.
+const MAX_POLL_INTERVAL: Duration = Duration::from_secs(10);
+/// Overall polling budget, matching the previous 150 x 2s behavior.
+const POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Authentication commands for the PCL CLI
 #[derive(clap::Parser)]
@@ -99,7 +102,7 @@ pub enum AuthSubcommands {
     /// Poll a pending device-login session once
     #[command(
         long_about = "Checks a device-login session once and stores credentials if verification completed.",
-        after_help = "Example: pcl auth poll --session-id <uuid> --device-secret <secret> --json"
+        after_help = "Example: pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --json"
     )]
     Poll {
         #[arg(
@@ -109,6 +112,8 @@ pub enum AuthSubcommands {
         session_id: Uuid,
         #[arg(long, help = "Device-login secret from auth ensure/login --no-wait")]
         device_secret: String,
+        #[arg(long, help = "Device-login expiry from auth ensure/login --no-wait")]
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
     },
 
     /// Refresh auth when possible, or return a login challenge when refresh is unavailable
@@ -167,9 +172,16 @@ impl AuthCommand {
             AuthSubcommands::Poll {
                 session_id,
                 device_secret,
+                expires_at,
             } => {
-                self.poll(config, json_output, session_id, device_secret)
-                    .await
+                self.poll(
+                    config,
+                    json_output,
+                    session_id,
+                    device_secret,
+                    expires_at.to_owned(),
+                )
+                .await
             }
             AuthSubcommands::Refresh { force } => self.refresh(config, json_output, *force).await,
             AuthSubcommands::Logout { local } => {
@@ -443,10 +455,11 @@ impl AuthCommand {
     fn poll_command(&self, auth_response: &GetCliAuthCodeResponse, json_output: bool) -> String {
         let json_flag = if json_output { " --json" } else { "" };
         format!(
-            "pcl auth --auth-url {} poll --session-id {} --device-secret {}{}",
+            "pcl auth --auth-url {} poll --session-id {} --device-secret {} --expires-at {}{}",
             shell_quote(self.auth_url.as_str()),
             auth_response.session_id,
             shell_quote(&auth_response.device_secret),
+            shell_quote(&auth_response.expires_at.to_rfc3339()),
             json_flag
         )
     }
@@ -479,7 +492,9 @@ impl AuthCommand {
         spinner.enable_steady_tick(Duration::from_millis(80));
         spinner.set_message("Waiting for authentication...");
 
-        for _ in 0..MAX_RETRIES {
+        let deadline = Instant::now() + POLL_TIMEOUT;
+        let mut attempts = 0_u32;
+        loop {
             // Stop polling once the session has expired
             if chrono::Utc::now() >= auth_response.expires_at {
                 if json_output {
@@ -501,7 +516,12 @@ impl AuthCommand {
                 // Transient errors — keep polling
                 Err(AuthError::ServerError(_) | AuthError::StatusRequestFailed(_)) => {
                     spinner.tick();
-                    sleep(POLL_INTERVAL).await;
+                    attempts =
+                        Self::sleep_before_next_poll(deadline, attempts, &auth_response.session_id)
+                            .await
+                            .inspect_err(|error| {
+                                finish_timeout_if_needed(&spinner, json_output, error);
+                            })?;
                     continue;
                 }
                 // Terminal errors — stop immediately
@@ -529,15 +549,12 @@ impl AuthCommand {
             }
 
             spinner.tick();
-            sleep(POLL_INTERVAL).await;
+            attempts = Self::sleep_before_next_poll(deadline, attempts, &auth_response.session_id)
+                .await
+                .inspect_err(|error| {
+                    finish_timeout_if_needed(&spinner, json_output, error);
+                })?;
         }
-
-        if json_output {
-            spinner.finish_and_clear();
-        } else {
-            spinner.finish_with_message("❌ Authentication timed out");
-        }
-        Err(AuthError::Timeout(MAX_RETRIES))
     }
 
     async fn poll(
@@ -546,10 +563,15 @@ impl AuthCommand {
         json_output: bool,
         session_id: &Uuid,
         device_secret: &str,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AuthError> {
         let status = Self::check_auth_status(&self.api_client(), device_secret, session_id).await?;
         if status.verified {
-            update_config_from_verified_status(config, status, chrono::Utc::now())?;
+            update_config_from_verified_status(
+                config,
+                status,
+                expires_at.unwrap_or_else(default_poll_fallback_expires_at),
+            )?;
             let mut output = self.status_envelope(config);
             if let Some(object) = output.as_object_mut() {
                 object.insert("event".to_string(), json!("auth.login_complete"));
@@ -654,6 +676,20 @@ impl AuthCommand {
             .await
             .map(dapp_api_client::generated::client::ResponseValue::into_inner)
             .map_err(AuthError::from)
+    }
+
+    async fn sleep_before_next_poll(
+        deadline: Instant,
+        attempts: u32,
+        session_id: &Uuid,
+    ) -> Result<u32, AuthError> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(AuthError::Timeout(attempts));
+        }
+        let delay = std::cmp::min(poll_backoff_delay(attempts, session_id), remaining);
+        sleep(delay).await;
+        Ok(attempts.saturating_add(1))
     }
 
     /// Display success message after authentication
@@ -768,6 +804,42 @@ impl AuthCommand {
         );
         Ok(())
     }
+}
+
+fn finish_timeout_if_needed(spinner: &ProgressBar, json_output: bool, error: &AuthError) {
+    if !matches!(error, AuthError::Timeout(_)) {
+        return;
+    }
+    if json_output {
+        spinner.finish_and_clear();
+    } else {
+        spinner.finish_with_message("❌ Authentication timed out");
+    }
+}
+
+fn default_poll_fallback_expires_at() -> chrono::DateTime<chrono::Utc> {
+    let seconds = i64::try_from(POLL_TIMEOUT.as_secs()).unwrap_or(i64::MAX);
+    chrono::Utc::now() + chrono::Duration::seconds(seconds)
+}
+
+fn poll_backoff_delay(attempts: u32, session_id: &Uuid) -> Duration {
+    let multiplier = 1_u32.checked_shl(attempts.min(3)).unwrap_or(8);
+    let base = std::cmp::min(
+        INITIAL_POLL_INTERVAL.saturating_mul(multiplier),
+        MAX_POLL_INTERVAL,
+    );
+    std::cmp::min(
+        base.saturating_add(poll_jitter(attempts, session_id)),
+        MAX_POLL_INTERVAL,
+    )
+}
+
+fn poll_jitter(attempts: u32, session_id: &Uuid) -> Duration {
+    let seed = session_id
+        .as_u128()
+        .wrapping_add(u128::from(attempts).wrapping_mul(0x9e37_79b9_7f4a_7c15_u128));
+    let millis = u64::try_from(seed % 250).unwrap_or(0);
+    Duration::from_millis(millis)
 }
 
 #[derive(Clone, Copy)]
@@ -933,6 +1005,14 @@ mod tests {
         assert_eq!(
             output["data"]["previous_token_expired_at"],
             "2020-01-01T00:00:00+00:00"
+        );
+        assert!(
+            output["data"]["poll_command"]
+                .as_str()
+                .is_some_and(|command| {
+                    command.contains("--expires-at")
+                        && command.contains("2024-12-31T00:00:00+00:00")
+                })
         );
     }
 

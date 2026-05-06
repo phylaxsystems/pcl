@@ -30,16 +30,13 @@ use serde_json::{
     Value,
     json,
 };
+use sha2::{
+    Digest,
+    Sha256,
+};
 use std::{
-    collections::{
-        HashSet,
-        hash_map::DefaultHasher,
-    },
+    collections::HashSet,
     fs,
-    hash::{
-        Hash,
-        Hasher,
-    },
     io::{
         BufRead,
         BufReader,
@@ -492,6 +489,12 @@ impl DoctorArgs {
 
 impl WhoamiArgs {
     pub fn run(&self, config: &CliConfig, json_output: bool) -> Result<(), ProductSurfaceError> {
+        if let Some(auth) = &config.auth
+            && auth.expires_at <= Utc::now()
+        {
+            return Err(ProductSurfaceError::ExpiredAuthToken(auth.expires_at));
+        }
+
         print_output(
             &json!({
                 "status": "ok",
@@ -844,6 +847,7 @@ async fn export_incidents(
     let mut incidents_written = 0_u64;
     let mut errors_written = 0_u64;
     let mut retries_attempted = 0_u64;
+    let mut log_warnings = 0_u64;
     append_job_record(
         cli_args,
         &job_record(
@@ -877,7 +881,9 @@ async fn export_incidents(
             Err(ExportPageError::Request { attempts, source }) => {
                 retries_attempted += attempts.saturating_sub(1);
                 errors_written += 1;
-                log_request(cli_args, "export", "GET", &path, 0, None);
+                if log_request(cli_args, "export", "GET", &path, 0, None) {
+                    log_warnings += 1;
+                }
                 write_jsonl(
                     &mut error_file,
                     &json!({
@@ -892,6 +898,7 @@ async fn export_incidents(
                         },
                     }),
                 )?;
+                flush_jsonl_writer(&mut error_file, &errors)?;
                 append_job_record(
                     cli_args,
                     &with_job_stats(
@@ -909,6 +916,7 @@ async fn export_incidents(
                             incidents_written,
                             errors_written,
                             retries_attempted,
+                            log_warnings,
                         ),
                     ),
                 )?;
@@ -924,14 +932,16 @@ async fn export_incidents(
         let request_id = response.request_id;
         let body = response.body;
         retries_attempted += response.attempts.saturating_sub(1);
-        log_request(
+        if log_request(
             cli_args,
             "export",
             "GET",
             &path,
             status.as_u16(),
             request_id.as_deref(),
-        );
+        ) {
+            log_warnings += 1;
+        }
 
         if !status.is_success() {
             errors_written += 1;
@@ -947,8 +957,10 @@ async fn export_incidents(
                 }),
             )?;
             if args.continue_on_error {
+                flush_jsonl_writer(&mut error_file, &errors)?;
                 continue;
             }
+            flush_jsonl_writer(&mut error_file, &errors)?;
             append_job_record(
                 cli_args,
                 &with_job_stats(
@@ -966,6 +978,7 @@ async fn export_incidents(
                         incidents_written,
                         errors_written,
                         retries_attempted,
+                        log_warnings,
                     ),
                 ),
             )?;
@@ -985,11 +998,14 @@ async fn export_incidents(
             incidents_written += 1;
         }
         pages_fetched += 1;
+        flush_jsonl_writer(&mut out_file, &out)?;
         write_checkpoint(&checkpoint, page + 1, incidents_written)?;
         if page_count < usize::try_from(args.limit).unwrap_or(usize::MAX) {
             break;
         }
     }
+    flush_jsonl_writer(&mut out_file, &out)?;
+    flush_jsonl_writer(&mut error_file, &errors)?;
     let final_status = if errors_written == 0 {
         "completed"
     } else {
@@ -1012,6 +1028,7 @@ async fn export_incidents(
                 incidents_written,
                 errors_written,
                 retries_attempted,
+                log_warnings,
             ),
         ),
     )?;
@@ -1030,6 +1047,7 @@ async fn export_incidents(
                 "incidents_written": incidents_written,
                 "errors_written": errors_written,
                 "retries_attempted": retries_attempted,
+                "log_warnings": log_warnings,
             },
             "next_actions": [
                 "pcl artifacts list",
@@ -1090,6 +1108,7 @@ fn append_job_record(cli_args: &CliArgs, record: &Value) -> Result<(), ProductSu
             source,
         }
     })?;
+    flush_jsonl_writer(&mut file, &path)?;
     Ok(())
 }
 
@@ -1192,25 +1211,43 @@ fn incident_export_stats(
     incidents_written: u64,
     errors_written: u64,
     retries_attempted: u64,
+    log_warnings: u64,
 ) -> Value {
     json!({
         "pages_fetched": pages_fetched,
         "incidents_written": incidents_written,
         "errors_written": errors_written,
         "retries_attempted": retries_attempted,
+        "log_warnings": log_warnings,
     })
 }
 
 fn incident_export_job_id(args: &ExportIncidentsArgs, checkpoint: &Path) -> String {
-    let mut hasher = DefaultHasher::new();
-    "incident_export".hash(&mut hasher);
-    args.project_id.hash(&mut hasher);
-    args.environment.hash(&mut hasher);
-    args.page.hash(&mut hasher);
-    args.limit.hash(&mut hasher);
-    args.max_pages.hash(&mut hasher);
-    checkpoint.hash(&mut hasher);
-    format!("incident-export-{:016x}", hasher.finish())
+    let mut hasher = Sha256::new();
+    hash_component(&mut hasher, "incident_export");
+    hash_optional_component(&mut hasher, args.project_id.as_deref());
+    hash_optional_component(&mut hasher, args.environment.as_deref());
+    hash_component(&mut hasher, &args.page.to_string());
+    hash_component(&mut hasher, &args.limit.to_string());
+    hash_component(&mut hasher, &args.max_pages.to_string());
+    hash_component(&mut hasher, &checkpoint.to_string_lossy());
+    format!("incident-export-{:x}", hasher.finalize())
+}
+
+fn hash_optional_component(hasher: &mut Sha256, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hash_component(hasher, "some");
+            hash_component(hasher, value);
+        }
+        None => hash_component(hasher, "none"),
+    }
+}
+
+fn hash_component(hasher: &mut Sha256, value: &str) {
+    let length = u64::try_from(value.len()).unwrap_or(u64::MAX);
+    hasher.update(length.to_be_bytes());
+    hasher.update(value.as_bytes());
 }
 
 fn incident_export_resume_command(
@@ -1354,7 +1391,7 @@ fn llms_guide() -> Value {
             "toon": "Pass --format toon explicitly when you need to pin the default contract.",
             "json": "Pass --json or --format json for pretty JSON envelopes.",
             "jsonl_exceptions": {
-                "pcl auth login --json": "Fresh login emits JSONL progress events and a final event with terminal=true. Already-authenticated login returns one envelope. Use pcl auth ensure --json or pcl auth login --no-wait --json for single-envelope auth challenges."
+                "pcl auth login --json": "Fresh login emits JSONL progress events and a final event with terminal=true. Already-authenticated login, including --no-wait, returns one auth-status envelope instead of a challenge. Use pcl auth ensure --json or pcl auth login --no-wait --force --json when a fresh challenge is required."
             },
             "envelope_fields": ["status", "data", "error", "next_actions", "schema_version", "pcl_version"],
             "errors": "Parser, auth, config, validation, network, and API failures return structured envelopes and nonzero exit codes.",
@@ -1366,20 +1403,20 @@ fn llms_guide() -> Value {
             "ensure_command": "pcl auth ensure --json",
             "expires_soon": "true when five minutes or less remain; renew before long-running work.",
             "renew_command": "pcl auth ensure --force --json",
-            "single_envelope_login": "pcl auth login --no-wait --json returns status=action_required with device_url, code, device_secret, and poll_command.",
-            "poll_command": "pcl auth poll --session-id <uuid> --device-secret <secret> --json",
+            "single_envelope_login": "pcl auth login --no-wait --force --json returns status=action_required with device_url, code, device_secret, expires_at, and poll_command.",
+            "poll_command": "pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --json",
             "refresh_command": "pcl auth refresh --json is safe, but returns a login challenge until the platform exposes a refresh endpoint.",
             "logout": "pcl auth logout attempts remote revocation before local cleanup; pass --local for local-only cleanup."
         },
         "mutation_safety": {
             "order": ["--body-template", "--dry-run", "typed flags", "--field key=value", "--body-file body.json"],
             "body_templates": "Print payload contracts before writes; choose a concrete body variant when body_variants is returned.",
-            "dry_run": "Use dry-run request plans before destructive project, assertion, release, access, integration, transfer, or protocol-manager operations."
+            "dry_run": "Use dry-run request plans before destructive project, assertion, release, access, integration, transfer, or protocol-manager operations. Dry-run is a planner, not an enforced confirmation gate."
         },
         "raw_api": {
             "inspect_first": "Use pcl api inspect <operation-id> --json before unfamiliar calls.",
             "query_strings": "pcl api call accepts both /path?key=value and repeated --query key=value.",
-            "public_endpoints": "Use --allow-unauthenticated for public raw calls so stale local tokens are not required.",
+            "public_endpoints": "Known public raw calls do not attach stored tokens; --allow-unauthenticated remains the explicit opt-out for other public endpoints.",
             "pagination": "Use --paginate <array-field> --limit <n> --max-pages <n> and optionally --jsonl --output <file> for generic GET pagination."
         },
         "jobs_and_artifacts": {
@@ -1402,7 +1439,11 @@ fn list_artifacts(dir: &Path, limit: usize) -> Result<Vec<Value>, ProductSurface
     if !dir.exists() {
         return Ok(Vec::new());
     }
-    let mut entries = fs::read_dir(dir)
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut entries: Vec<Value> = Vec::new();
+    for entry in fs::read_dir(dir)
         .map_err(|source| {
             ProductSurfaceError::Io {
                 path: dir.to_path_buf(),
@@ -1410,22 +1451,36 @@ fn list_artifacts(dir: &Path, limit: usize) -> Result<Vec<Value>, ProductSurface
             }
         })?
         .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let metadata = entry.metadata().ok()?;
-            if !metadata.is_file() {
-                return None;
-            }
-            Some(json!({
-                "path": entry.path(),
-                "bytes": metadata.len(),
-                "modified": metadata.modified().ok()
-                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|duration| duration.as_secs()),
-            }))
-        })
-        .collect::<Vec<_>>();
-    entries.truncate(limit);
+    {
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        entries.push(json!({
+            "path": entry.path(),
+            "bytes": metadata.len(),
+            "modified": metadata.modified().ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs()),
+        }));
+        sort_artifact_entries(&mut entries);
+        entries.truncate(limit);
+    }
     Ok(entries)
+}
+
+fn sort_artifact_entries(entries: &mut [Value]) {
+    entries.sort_by(|left, right| {
+        let left_modified = left.get("modified").and_then(Value::as_u64);
+        let right_modified = right.get("modified").and_then(Value::as_u64);
+        let left_path = left.get("path").map_or_else(String::new, Value::to_string);
+        let right_path = right.get("path").map_or_else(String::new, Value::to_string);
+        right_modified
+            .cmp(&left_modified)
+            .then_with(|| left_path.cmp(&right_path))
+    });
 }
 
 fn auth_check_status(auth: Option<&UserAuth>) -> &'static str {
@@ -1442,12 +1497,14 @@ fn auth_value(auth: Option<&UserAuth>) -> Value {
             "authenticated": false,
             "token_present": false,
             "token_valid": false,
+            "token_expired": false,
             "expires_soon": false,
             "expired": false,
         });
     };
-    let seconds_remaining = (auth.expires_at - Utc::now()).num_seconds();
-    let expired = auth.expires_at <= Utc::now();
+    let now = Utc::now();
+    let seconds_remaining = (auth.expires_at - now).num_seconds();
+    let expired = auth.expires_at <= now;
     let expires_soon = !expired && seconds_remaining <= AUTH_EXPIRES_SOON_SECONDS;
     json!({
         "authenticated": true,
@@ -1457,6 +1514,7 @@ fn auth_value(auth: Option<&UserAuth>) -> Value {
         "email": auth.email.as_deref(),
         "token_present": !auth.access_token.is_empty(),
         "token_valid": !expired,
+        "token_expired": expired,
         "expires_soon": expires_soon,
         "expired": expired,
         "expires_at": auth.expires_at.to_rfc3339(),
@@ -1751,19 +1809,41 @@ fn write_jsonl(writer: &mut BufWriter<fs::File>, value: &Value) -> Result<(), Pr
     })
 }
 
+fn flush_jsonl_writer(
+    writer: &mut BufWriter<fs::File>,
+    path: &Path,
+) -> Result<(), ProductSurfaceError> {
+    writer.flush().map_err(|source| {
+        ProductSurfaceError::Io {
+            path: path.to_path_buf(),
+            source,
+        }
+    })?;
+    writer.get_ref().sync_all().map_err(|source| {
+        ProductSurfaceError::Io {
+            path: path.to_path_buf(),
+            source,
+        }
+    })
+}
+
 fn write_checkpoint(
     path: &Path,
     next_page: u64,
     items_written: u64,
 ) -> Result<(), ProductSurfaceError> {
-    fs::write(
-        path,
-        serde_json::to_vec_pretty(&json!({
-            "next_page": next_page,
-            "items_written": items_written,
-            "updated_at": Utc::now().to_rfc3339(),
-        }))?,
-    )
+    let mut file = fs::File::create(path).map_err(|source| {
+        ProductSurfaceError::Io {
+            path: path.to_path_buf(),
+            source,
+        }
+    })?;
+    file.write_all(&serde_json::to_vec_pretty(&json!({
+        "next_page": next_page,
+        "items_written": items_written,
+        "updated_at": Utc::now().to_rfc3339(),
+    }))?)
+    .and_then(|()| file.sync_all())
     .map_err(|source| {
         ProductSurfaceError::Io {
             path: path.to_path_buf(),
@@ -1787,9 +1867,9 @@ fn log_request(
     path: &str,
     status: u16,
     request_id: Option<&str>,
-) {
+) -> bool {
     let request_log_path = request_log::request_log_path_for_args(cli_args);
-    let _ = request_log::append_request_record_at(
+    request_log::append_request_record_at(
         &request_log_path,
         &json!({
             "timestamp": Utc::now().to_rfc3339(),
@@ -1800,7 +1880,8 @@ fn log_request(
             "success": (200..=299).contains(&status),
             "request_id": request_id,
         }),
-    );
+    )
+    .is_err()
 }
 
 #[cfg(test)]
@@ -1819,6 +1900,24 @@ mod tests {
             }),
         };
         assert!(args.run(true).is_ok());
+    }
+
+    #[test]
+    fn whoami_errors_on_expired_auth() {
+        let args = WhoamiArgs { offline: false };
+        let config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "expired-token".to_string(),
+                refresh_token: "refresh-token".to_string(),
+                expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
+                user_id: None,
+                wallet_address: None,
+                email: Some("agent@example.com".to_string()),
+            }),
+        };
+
+        let error = args.run(&config, true).unwrap_err();
+        assert!(matches!(error, ProductSurfaceError::ExpiredAuthToken(_)));
     }
 
     #[test]

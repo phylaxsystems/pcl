@@ -620,6 +620,54 @@ async fn public_workflows_do_not_attach_expired_stored_tokens() {
 }
 
 #[tokio::test]
+async fn public_raw_calls_do_not_attach_expired_stored_tokens() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("GET", "/api/v1/views/public/incidents")
+        .match_header("authorization", Matcher::Missing)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"incidents":[]}"#)
+        .create_async()
+        .await;
+    let api = ApiArgs {
+        command: ApiCommand::Manifest,
+        api_url: server.url().parse().unwrap(),
+        allow_unauthenticated: false,
+        dry_run: false,
+    };
+    let config = CliConfig {
+        auth: Some(UserAuth {
+            access_token: "expired-token".to_string(),
+            refresh_token: "refresh-token".to_string(),
+            expires_at: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+            user_id: None,
+            wallet_address: None,
+            email: Some("agent@example.com".to_string()),
+        }),
+    };
+
+    let input = ApiRequestInput {
+        method: HttpMethod::Get,
+        path: "/views/public/incidents",
+        query: &[],
+        header: &[],
+        body: None,
+        body_file: None,
+        require_auth: api
+            .raw_call_requires_auth(HttpMethod::Get, "/views/public/incidents")
+            .unwrap(),
+    };
+    let output = api
+        .call_api(&config, input, test_request_log_path())
+        .await
+        .unwrap();
+
+    assert_eq!(output["response"]["status"], 200);
+    mock.assert_async().await;
+}
+
+#[tokio::test]
 async fn dry_run_projects_and_assertions_do_not_execute_requests() {
     let api = ApiArgs {
         command: ApiCommand::Manifest,

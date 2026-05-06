@@ -53,6 +53,7 @@ pub fn append_request_record_at(path: &Path, record: &Value) -> std::io::Result<
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     serde_json::to_writer(&mut file, record)?;
     file.write_all(b"\n")?;
+    file.sync_all()?;
     Ok(())
 }
 

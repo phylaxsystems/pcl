@@ -1670,7 +1670,7 @@ impl ApiArgs {
                     header,
                     body: body.as_deref(),
                     body_file: body_file.as_ref(),
-                    require_auth: !self.allow_unauthenticated,
+                    require_auth: self.raw_call_requires_auth(*method, path)?,
                 };
                 let pagination = paginate.as_ref().map(|item_field| {
                     RawPaginationOptions {
@@ -1767,7 +1767,7 @@ impl ApiArgs {
         let headers = parse_headers(input.header)?;
         let client = self.http_client(
             config,
-            !self.allow_unauthenticated,
+            input.require_auth && !self.allow_unauthenticated,
             input.require_auth && !self.allow_unauthenticated,
         )?;
 
@@ -2069,6 +2069,18 @@ impl ApiArgs {
         })
     }
 
+    fn raw_call_requires_auth(
+        &self,
+        method: HttpMethod,
+        path: &str,
+    ) -> Result<bool, ApiCommandError> {
+        if self.allow_unauthenticated {
+            return Ok(false);
+        }
+        let (path, _) = split_path_and_inline_query(path)?;
+        Ok(!public_raw_call_path(method, &path))
+    }
+
     async fn fetch_openapi(&self, config: &CliConfig) -> Result<Value, ApiCommandError> {
         let url = self.api_url("/openapi")?;
         let request = self.http_client(config, false, false)?.get(url);
@@ -2090,7 +2102,7 @@ impl ApiArgs {
 
         let client = self.http_client(
             config,
-            !self.allow_unauthenticated,
+            input.require_auth && !self.allow_unauthenticated,
             input.require_auth && !self.allow_unauthenticated,
         )?;
         let mut request = client.request(input.method.reqwest(), url).headers(headers);
@@ -2368,7 +2380,7 @@ impl ApiArgs {
         );
 
         if attach_auth && let Some(auth) = &config.auth {
-            if require_auth && auth.expires_at <= chrono::Utc::now() {
+            if auth.expires_at <= chrono::Utc::now() {
                 return Err(ApiCommandError::ExpiredAuthToken(auth.expires_at));
             }
 
@@ -2557,9 +2569,13 @@ pub fn api_manifest() -> Value {
             "jsonl": "Add --jsonl with --output on paginated commands to write one item per line for resumable analysis."
         },
         "auth": {
-            "default": "Stored bearer token is attached to API calls.",
+            "default": "Stored bearer token is attached only when the selected operation requires auth; known public raw paths do not attach stale local tokens.",
             "public_endpoints": "Workflow commands use public view endpoints without requiring login when possible.",
             "login_command": "pcl auth login",
+        },
+        "safety": {
+            "dry_run": "Optional planning mode: add --dry-run before writes to inspect the request. Re-run without --dry-run only when ready to execute.",
+            "destructive_detection": "Request plans flag likely destructive paths, but raw api call does not enforce a confirmation gate."
         },
         "product_surfaces": [
             {"command": "pcl --llms | pcl llms", "description": "Print the CLI-native LLM usage guide; use --json for JSON."},

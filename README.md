@@ -225,6 +225,7 @@ pcl search --query settler --json
 ### Mutation Rules
 
 Use `--dry-run` before writes and `--body-template` before constructing mutation payloads.
+`--dry-run` is a planning mode, not an enforced confirmation gate; rerunning without it executes the request.
 Prefer typed flags, then `--field key=value`, then `--body-file` for nested payloads.
 
 ```bash
@@ -246,6 +247,7 @@ For complex bodies:
 ### Raw API Fallback
 
 Call any endpoint below `/api/v1`. Query strings and repeated `--query` flags are both valid.
+Known public raw paths do not attach stored tokens by default; pass `--allow-unauthenticated` when you need to force no auth on another public endpoint.
 
 ```bash
 pcl api list --filter integrations --json

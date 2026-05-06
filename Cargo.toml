@@ -39,6 +39,7 @@ colored = "3"
 tempfile = { version = "3.23.0" }
 url = "2.5.7"
 uuid = { version = "1.23", features = ["serde", "v4"] }
+sha2 = "0.10"
 
 # alloy core
 alloy-primitives = { version = "1.5.1", features = ["getrandom"] }

@@ -354,7 +354,9 @@ fn clap_error_code(kind: ErrorKind) -> &'static str {
         ErrorKind::InvalidValue => "cli.invalid_value",
         ErrorKind::InvalidSubcommand => "cli.invalid_subcommand",
         ErrorKind::MissingRequiredArgument => "cli.missing_required_argument",
-        ErrorKind::MissingSubcommand => "cli.missing_subcommand",
+        ErrorKind::MissingSubcommand | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+            "cli.missing_subcommand"
+        }
         ErrorKind::DisplayHelp => "cli.help",
         ErrorKind::DisplayVersion => "cli.version",
         _ => "cli.parse_error",
@@ -381,6 +383,12 @@ mod tests {
         assert!(wants_llms_output(["pcl", "--llms"]));
         assert!(wants_llms_output(["pcl", "--json", "--llms"]));
         assert!(!wants_llms_output(["pcl", "llms"]));
+    }
+
+    #[test]
+    fn classifies_missing_subcommand_help_as_missing_subcommand() {
+        let err = Cli::command().try_get_matches_from(["pcl"]).unwrap_err();
+        assert_eq!(clap_error_code(err.kind()), "cli.missing_subcommand");
     }
 
     #[test]

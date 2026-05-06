@@ -166,6 +166,12 @@ fn auth_ensure_json_without_auth_outputs_login_challenge() {
             .expect("poll command")
             .contains("pcl auth --auth-url")
     );
+    assert!(
+        envelope["data"]["poll_command"]
+            .as_str()
+            .expect("poll command")
+            .contains("--expires-at")
+    );
     auth_code.assert();
 }
 
@@ -425,7 +431,7 @@ fn auth_poll_json_verified_stores_auth_and_returns_terminal_envelope() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"verified":true,"user_id":"550e8400-e29b-41d4-a716-446655440000","token":"e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig","refresh_token":"new-refresh-token","email":"agent@example.com"}"#,
+            r#"{"verified":true,"user_id":"550e8400-e29b-41d4-a716-446655440000","token":"opaque-token","refresh_token":"new-refresh-token","email":"agent@example.com"}"#,
         )
         .expect(1)
         .create();
@@ -443,6 +449,8 @@ fn auth_poll_json_verified_stores_auth_and_returns_terminal_envelope() {
             "550e8400-e29b-41d4-a716-446655440000",
             "--device-secret",
             "test_secret",
+            "--expires-at",
+            "2030-01-01T00:00:00Z",
         ])
         .output()
         .expect("run pcl auth poll");
@@ -459,8 +467,14 @@ fn auth_poll_json_verified_stores_auth_and_returns_terminal_envelope() {
     assert_eq!(envelope["terminal"], true);
     assert_eq!(envelope["data"]["authenticated"], true);
     let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
-    assert!(config.contains("access_token = \"e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig\""));
-    assert!(config.contains("expires_at = 4102444800"));
+    assert!(
+        config.contains("access_token = \"opaque-token\""),
+        "config did not contain expected token:\n{config}"
+    );
+    assert!(
+        config.contains("expires_at = 1893456000"),
+        "config did not contain fallback expiry:\n{config}"
+    );
     auth_status.assert();
 }
 
@@ -748,6 +762,7 @@ fn completions_can_run_with_invalid_config_without_overwriting_file() {
     let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
     assert!(stdout.contains("_pcl"));
     assert!(stdout.contains("complete"));
+    assert!(!stdout.contains("--config-dir"));
 
     let json_output = Command::new(env!("CARGO_BIN_EXE_pcl"))
         .args([
@@ -771,7 +786,7 @@ fn completions_can_run_with_invalid_config_without_overwriting_file() {
     assert!(
         envelope["data"]["script"]
             .as_str()
-            .is_some_and(|script| script.contains("_pcl"))
+            .is_some_and(|script| script.contains("_pcl") && !script.contains("--config-dir"))
     );
     assert_eq!(
         fs::read_to_string(config_path).expect("read invalid config"),

@@ -45,10 +45,7 @@ use pcl_phoundry::build::BuildArgs;
 #[cfg(feature = "credible")]
 use pcl_phoundry::phorge_test::PhorgeTest;
 use serde_json::json;
-use std::{
-    io,
-    sync::OnceLock,
-};
+use std::sync::OnceLock;
 
 fn version_message() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
@@ -183,11 +180,8 @@ pub struct CompletionsArgs {
 
 impl CompletionsArgs {
     pub fn run(&self, json_output: bool) -> Result<(), serde_json::Error> {
-        let mut command = Cli::command();
+        let script = completion_script(self.shell);
         if json_output {
-            let mut script = Vec::new();
-            clap_complete::generate(self.shell, &mut command, "pcl", &mut script);
-            let script = String::from_utf8_lossy(&script).to_string();
             let envelope = with_envelope_metadata(json!({
                 "status": "ok",
                 "data": {
@@ -201,10 +195,44 @@ impl CompletionsArgs {
             }));
             println!("{}", serde_json::to_string_pretty(&envelope)?);
         } else {
-            clap_complete::generate(self.shell, &mut command, "pcl", &mut io::stdout());
+            print!("{script}");
         }
         Ok(())
     }
+}
+
+fn completion_script(shell: Shell) -> String {
+    let mut command = Cli::command();
+    let mut script = Vec::new();
+    clap_complete::generate(shell, &mut command, "pcl", &mut script);
+    strip_hidden_completion_options(&String::from_utf8_lossy(&script))
+}
+
+fn strip_hidden_completion_options(script: &str) -> String {
+    let mut lines = Vec::new();
+    let mut skipped_bash_case_lines = 0_u8;
+    for line in script.lines() {
+        if skipped_bash_case_lines > 0 {
+            skipped_bash_case_lines -= 1;
+            continue;
+        }
+        if line.trim_start().starts_with("--config-dir)") {
+            skipped_bash_case_lines = 3;
+            continue;
+        }
+        if line.contains("'--config-dir") || line.contains("-l config-dir") {
+            continue;
+        }
+        lines.push(
+            line.replace(" --config-dir", "")
+                .replace(" config-dir=", ""),
+        );
+    }
+    let mut output = lines.join("\n");
+    if script.ends_with('\n') {
+        output.push('\n');
+    }
+    output
 }
 
 #[cfg(test)]
