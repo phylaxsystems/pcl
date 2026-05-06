@@ -1,0 +1,93 @@
+name: Regenerate dapp-api-client
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # daily at 8am UTC
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - .github/workflows/regenerate-dapp-client.yaml
+      - scripts/dapp-client-diff-summary.py
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regenerate:
+    name: Regenerate dapp-api-client
+    runs-on: phylax-self-hosted
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Regenerate client from latest OpenAPI spec
+        run: make regenerate
+
+      - name: Check for changes
+        id: diff
+        run: |
+          git diff --quiet crates/dapp-api-client/ && echo "changed=false" >> "$GITHUB_OUTPUT" || echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce allowed file set
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          allowed='^crates/dapp-api-client/src/generated/(client|mod)\.rs$'
+          unexpected=$(git diff --name-only crates/dapp-api-client/ | grep -vE "$allowed" || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::Regeneration touched unexpected files. If expected, update the allow-list in .github/workflows/regenerate-dapp-client.yaml:"
+            echo "$unexpected"
+            exit 1
+          fi
+
+      - name: Show generated code diff stat
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          stat=$(git diff --stat crates/dapp-api-client/src/generated/)
+          echo "$stat"
+          {
+            echo "## Generated code diff"
+            echo ""
+            echo '```'
+            echo "$stat"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-python@v6
+        if: steps.diff.outputs.changed == 'true'
+        with:
+          python-version: "3.13"
+
+      - name: Generate client diff summary
+        id: summary
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          summary=$(python3 scripts/dapp-client-diff-summary.py)
+          {
+            echo 'body<<SUMMARY_EOF'
+            echo "$summary"
+            echo 'SUMMARY_EOF'
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Client API surface changes"
+            echo ""
+            echo "$summary"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create or update PR
+        if: steps.diff.outputs.changed == 'true' && github.event_name != 'pull_request'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+          branch: bot/regenerate-dapp-client
+          title: "chore: regenerate dapp-api-client from latest OpenAPI spec"
+          commit-message: "chore: regenerate dapp-api-client from latest OpenAPI spec"
+          add-paths: crates/dapp-api-client/
+          body: |
+            Automated daily update — the upstream OpenAPI spec has produced changes in the generated client.
+
+            ## API surface changes
+
+            ${{ steps.summary.outputs.body }}
+
+            Review `crates/dapp-api-client/src/generated/client.rs` in the Files tab for the full diff.
