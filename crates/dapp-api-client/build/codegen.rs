@@ -4,6 +4,7 @@
 //! This module contains all the functions for generating client code from the `OpenAPI` spec,
 //! including spec transformations and fixes.
 
+use anyhow::Context;
 use std::path::PathBuf;
 
 pub fn generate_client_code() -> anyhow::Result<()> {
@@ -55,9 +56,13 @@ pub fn generate_client_code() -> anyhow::Result<()> {
     // Generate the client code
     let tokens = generator.generate_tokens(&spec)?;
 
+    // Pretty-print so regeneration diffs are reviewable line-by-line.
+    let syntax_tree: syn::File =
+        syn::parse2(tokens).context("Failed to parse generated tokens as a Rust file")?;
+    let formatted = prettyplease::unparse(&syntax_tree);
+
     // Write to file
     let output_path = out_dir.join("client.rs");
-    let content = tokens.to_string();
 
     // Wrap the generated code with allow attributes to suppress warnings
     // Use @generated comment which some tools recognize as a marker for generated code
@@ -69,11 +74,9 @@ pub fn generate_client_code() -> anyhow::Result<()> {
 #![allow(irrefutable_let_patterns)]
 #![allow(warnings)]
 
-{content}
-"
+{formatted}"
     );
 
-    // Write without formatting for now
     std::fs::write(&output_path, wrapped_content)?;
 
     println!(
