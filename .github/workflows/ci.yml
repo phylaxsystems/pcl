@@ -65,6 +65,8 @@ jobs:
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: true
       PCL_AUTH_NO_BROWSER: "1"
+      RUSTC_WRAPPER: ""
+      SCCACHE_DISABLE: "1"
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust toolchain
