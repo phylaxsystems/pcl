@@ -57,6 +57,7 @@ jobs:
       enable-sccache: true
       sccache-backend: "local"
       deny-checks: "advisories"
+      deny-preinstalled: true
 
   agent-smoke:
     name: Agent CLI Smoke
