@@ -150,7 +150,7 @@ async fn run_command(
         Commands::Llms(command) => command.run(json_output)?,
         Commands::Jobs(command) => command.run(cli_args, json_output)?,
         Commands::Completions(command) => command.run(json_output)?,
-        Commands::Auth(auth_cmd) => auth_cmd.run(config, json_output).await?,
+        Commands::Auth(auth_cmd) => auth_cmd.run(config, cli_args, json_output).await?,
         Commands::Config(config_cmd) => config_cmd.run(config, cli_args)?,
         Commands::Build(build_cmd) => build_cmd.run()?,
         #[cfg(feature = "credible")]
@@ -186,6 +186,10 @@ fn error_envelope(err: &Report) -> Value {
 }
 
 fn auth_error_envelope(err: &AuthError) -> Value {
+    if let Some(envelope) = auth_refresh_error_envelope(err) {
+        return envelope;
+    }
+
     match err {
         AuthError::StoredTokenExpired {
             user,
@@ -212,6 +216,7 @@ fn auth_error_envelope(err: &AuthError) -> Value {
                     },
                 },
                 "next_actions": [
+                    "pcl auth refresh --json",
                     "pcl auth login --force",
                     "pcl auth logout",
                 ],
@@ -244,7 +249,14 @@ fn auth_error_envelope(err: &AuthError) -> Value {
         | AuthError::ServerError(_)
         | AuthError::Timeout(_)
         | AuthError::InvalidAuthData(_)
-        | AuthError::ConfigError(_) => {
+        | AuthError::ConfigError(_)
+        | AuthError::NoRefreshableSession
+        | AuthError::MissingRefreshToken
+        | AuthError::RefreshRejected { .. }
+        | AuthError::RefreshRateLimited { .. }
+        | AuthError::RefreshServerError { .. }
+        | AuthError::RefreshRequestFailed(_)
+        | AuthError::RefreshLockTimeout => {
             with_envelope_metadata(json!({
                 "status": "error",
                 "error": {
@@ -255,6 +267,96 @@ fn auth_error_envelope(err: &AuthError) -> Value {
                 "next_actions": ["pcl auth login"],
             }))
         }
+    }
+}
+
+fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
+    match err {
+        AuthError::NoRefreshableSession | AuthError::MissingRefreshToken => {
+            Some(with_envelope_metadata(json!({
+                "status": "error",
+                "error": {
+                    "code": "auth.refresh_unavailable",
+                    "message": err.to_string(),
+                    "recoverable": true,
+                },
+                "next_actions": ["pcl auth login --force"],
+            })))
+        }
+        AuthError::RefreshRejected {
+            status,
+            code,
+            request_id,
+            message,
+        } => {
+            Some(with_envelope_metadata(json!({
+                "status": "error",
+                "error": {
+                    "code": "auth.invalid_refresh_token",
+                    "message": err.to_string(),
+                    "recoverable": true,
+                    "http": {
+                        "status": status,
+                        "request_id": request_id,
+                    },
+                    "platform_code": code,
+                    "request_id": request_id,
+                    "details": message,
+                },
+                "next_actions": ["pcl auth login --force"],
+            })))
+        }
+        AuthError::RefreshRateLimited {
+            retry_after_seconds,
+            request_id,
+            message,
+        } => {
+            Some(with_envelope_metadata(json!({
+                "status": "error",
+                "error": {
+                    "code": "auth.refresh_rate_limited",
+                    "message": err.to_string(),
+                    "recoverable": true,
+                    "retry_after_seconds": retry_after_seconds,
+                    "request_id": request_id,
+                    "details": message,
+                },
+                "next_actions": ["Wait for error.retry_after_seconds, then retry pcl auth refresh --json"],
+            })))
+        }
+        AuthError::RefreshServerError {
+            status,
+            request_id,
+            message,
+        } => {
+            Some(with_envelope_metadata(json!({
+                "status": "error",
+                "error": {
+                    "code": "auth.refresh_server_error",
+                    "message": err.to_string(),
+                    "recoverable": true,
+                    "http": {
+                        "status": status,
+                        "request_id": request_id,
+                    },
+                    "request_id": request_id,
+                    "details": message,
+                },
+                "next_actions": ["Retry pcl auth refresh --json once before logging in again"],
+            })))
+        }
+        AuthError::RefreshRequestFailed(_) | AuthError::RefreshLockTimeout => {
+            Some(with_envelope_metadata(json!({
+                "status": "error",
+                "error": {
+                    "code": "auth.refresh_failed",
+                    "message": err.to_string(),
+                    "recoverable": true,
+                },
+                "next_actions": ["Retry pcl auth refresh --json", "pcl auth login --force"],
+            })))
+        }
+        _ => None,
     }
 }
 
@@ -451,6 +553,7 @@ mod tests {
         assert_eq!(envelope["status"], "error");
         assert_eq!(envelope["error"]["code"], "auth.expired_token");
         assert_eq!(envelope["error"]["auth"]["token_valid"], false);
-        assert_eq!(envelope["next_actions"][0], "pcl auth login --force");
+        assert_eq!(envelope["next_actions"][0], "pcl auth refresh --json");
+        assert_eq!(envelope["next_actions"][1], "pcl auth login --force");
     }
 }

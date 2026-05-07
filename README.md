@@ -128,8 +128,11 @@ so agents can recover from auth, validation, and parser failures without scrapin
 a nonzero structured error so agents do not mistake stale credentials for a working login.
 For preflight checks, prefer `pcl auth ensure --json`: it returns `status: ok` when auth is usable,
 or one `status: action_required` envelope with `device_url`, `code`, `device_secret`, and `poll_command`
-when user login is needed. `pcl auth refresh --json` is safe to call, but the current platform API has
-no refresh endpoint; when refresh is unavailable it returns the same login challenge shape.
+when user login is needed. `pcl auth refresh --json` is safe to call and rotates the stored CLI
+refresh token when available; if the refresh token is missing or rejected,
+it returns the same login challenge shape.
+Auth commands use `--auth-url`/`PCL_AUTH_URL` when set, otherwise they follow `PCL_API_URL`
+before falling back to the production app URL.
 When `expires_soon` is true, renew before long-running work with `pcl auth ensure --force --json`
 or `pcl auth login --no-wait --json`.
 `pcl auth logout` revokes the platform session when possible before deleting local credentials;

@@ -6,6 +6,7 @@ use chrono::{
 };
 use clap::Parser;
 use mockito::Matcher;
+use pcl_common::args::CliArgs;
 use std::path::Path;
 
 fn test_request_log_path() -> &'static Path {
@@ -91,6 +92,9 @@ fn contracts_args() -> ContractsArgs {
         adopter_id: None,
         aa_address: None,
         manager: None,
+        network: None,
+        environment: None,
+        assertion_ids: Vec::new(),
         unassigned: false,
         create: false,
         assign_project: false,
@@ -458,6 +462,65 @@ fn builds_project_incident_stats_workflow_request() {
 }
 
 #[test]
+fn incident_detail_and_trace_require_auth() {
+    let detail = incidents_request(&IncidentsArgs {
+        project_id: None,
+        incident_id: Some("incident-1".to_string()),
+        tx_id: None,
+        assertion_id: None,
+        assertion_adopter_id: None,
+        environment: None,
+        from_date: None,
+        to_date: None,
+        page: None,
+        limit: None,
+        network: None,
+        sort: None,
+        dev_mode: None,
+        stats: false,
+        retry_trace: false,
+        all: false,
+        max_pages: None,
+        output: None,
+        jsonl: false,
+    })
+    .unwrap();
+    assert_eq!(detail.path, "/views/incidents/incident-1");
+    assert!(detail.require_auth);
+
+    let trace = incidents_request(&IncidentsArgs {
+        tx_id: Some("tx-1".to_string()),
+        ..IncidentsArgs {
+            project_id: None,
+            incident_id: Some("incident-1".to_string()),
+            tx_id: None,
+            assertion_id: None,
+            assertion_adopter_id: None,
+            environment: None,
+            from_date: None,
+            to_date: None,
+            page: None,
+            limit: None,
+            network: None,
+            sort: None,
+            dev_mode: None,
+            stats: false,
+            retry_trace: false,
+            all: false,
+            max_pages: None,
+            output: None,
+            jsonl: false,
+        }
+    })
+    .unwrap();
+    assert_eq!(
+        trace.path,
+        "/views/incidents/incident-1/transactions/tx-1/trace"
+    );
+    assert!(trace.require_auth);
+}
+
+#[test]
 fn builds_incident_trace_retry_request() {
     let request = incidents_request(&IncidentsArgs {
         project_id: None,
@@ -522,10 +585,13 @@ async fn paginates_incident_list_workflows() {
         dry_run: false,
     };
     let request = WorkflowRequest::get("/views/public/incidents", false, Vec::new());
+    let mut config = CliConfig::default();
+    let cli_args = CliArgs::default();
 
     let data = api
         .call_workflow_paginated(
-            &CliConfig::default(),
+            &mut config,
+            &cli_args,
             request,
             WorkflowPaginationOptions {
                 item_field: "incidents",
@@ -554,10 +620,13 @@ async fn incident_workflow_pagination_rejects_zero_limit() {
         dry_run: false,
     };
     let request = WorkflowRequest::get("/views/public/incidents", false, Vec::new());
+    let mut config = CliConfig::default();
+    let cli_args = CliArgs::default();
 
     let error = api
         .call_workflow_paginated(
-            &CliConfig::default(),
+            &mut config,
+            &cli_args,
             request,
             WorkflowPaginationOptions {
                 item_field: "incidents",
@@ -594,11 +663,12 @@ async fn public_workflows_do_not_attach_expired_stored_tokens() {
         allow_unauthenticated: false,
         dry_run: false,
     };
-    let config = CliConfig {
+    let mut config = CliConfig {
         auth: Some(UserAuth {
             access_token: "expired-token".to_string(),
             refresh_token: "refresh-token".to_string(),
             expires_at: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+            refresh_expires_at: None,
             user_id: None,
             wallet_address: None,
             email: Some("agent@example.com".to_string()),
@@ -607,7 +677,8 @@ async fn public_workflows_do_not_attach_expired_stored_tokens() {
 
     let output = api
         .run_workflow(
-            &config,
+            &mut config,
+            &CliArgs::default(),
             WorkflowRequest::get("/health", false, vec!["pcl search --health".to_string()]),
             test_request_log_path(),
         )
@@ -636,11 +707,12 @@ async fn public_raw_calls_do_not_attach_expired_stored_tokens() {
         allow_unauthenticated: false,
         dry_run: false,
     };
-    let config = CliConfig {
+    let mut config = CliConfig {
         auth: Some(UserAuth {
             access_token: "expired-token".to_string(),
             refresh_token: "refresh-token".to_string(),
             expires_at: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+            refresh_expires_at: None,
             user_id: None,
             wallet_address: None,
             email: Some("agent@example.com".to_string()),
@@ -659,12 +731,88 @@ async fn public_raw_calls_do_not_attach_expired_stored_tokens() {
             .unwrap(),
     };
     let output = api
-        .call_api(&config, input, test_request_log_path())
+        .call_api(
+            &mut config,
+            &CliArgs::default(),
+            input,
+            test_request_log_path(),
+        )
         .await
         .unwrap();
 
     assert_eq!(output["response"]["status"], 200);
     mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn authenticated_workflow_retries_once_after_refresh_on_401() {
+    let mut server = mockito::Server::new_async().await;
+    let first_attempt = server
+        .mock("GET", "/api/v1/web/auth/me")
+        .match_header("authorization", "Bearer old_access")
+        .with_status(401)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"code":"TOKEN_EXPIRED","error":"expired"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let refresh = server
+        .mock("POST", "/api/v1/auth/refresh")
+        .match_body(Matcher::Json(json!({ "refresh_token": "old_refresh" })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"token":"new_access","refresh_token":"new_refresh","expires_at":"2030-01-01T00:00:00Z","refresh_expires_at":"2030-02-01T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create_async()
+        .await;
+    let retry = server
+        .mock("GET", "/api/v1/web/auth/me")
+        .match_header("authorization", "Bearer new_access")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-after-refresh")
+        .with_body(r#"{"email":"agent@example.com"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let api = ApiArgs {
+        command: ApiCommand::Manifest,
+        api_url: server.url().parse().unwrap(),
+        allow_unauthenticated: false,
+        dry_run: false,
+    };
+    let temp_dir = tempfile::tempdir().unwrap();
+    let cli_args = CliArgs {
+        config_dir: Some(temp_dir.path().to_path_buf()),
+        ..Default::default()
+    };
+    let mut config = CliConfig {
+        auth: Some(UserAuth {
+            access_token: "old_access".to_string(),
+            refresh_token: "old_refresh".to_string(),
+            expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+            refresh_expires_at: None,
+            user_id: None,
+            wallet_address: None,
+            email: Some("agent@example.com".to_string()),
+        }),
+    };
+    config.write_to_file(&cli_args).unwrap();
+    let request = WorkflowRequest::get("/web/auth/me", true, Vec::new());
+
+    let result = api
+        .call_workflow_result(&mut config, &cli_args, &request, test_request_log_path())
+        .await
+        .unwrap();
+
+    assert_eq!(result.body["email"], "agent@example.com");
+    assert_eq!(result.request["retried_after_refresh"], true);
+    assert_eq!(config.auth.as_ref().unwrap().refresh_token, "new_refresh");
+    first_attempt.assert_async().await;
+    refresh.assert_async().await;
+    retry.assert_async().await;
 }
 
 #[tokio::test]
@@ -675,10 +823,13 @@ async fn dry_run_projects_and_assertions_do_not_execute_requests() {
         allow_unauthenticated: false,
         dry_run: true,
     };
+    let mut config = CliConfig::default();
+    let cli_args = CliArgs::default();
 
     let project_output = api
         .run_projects(
-            &CliConfig::default(),
+            &mut config,
+            &cli_args,
             &ProjectsArgs {
                 create: true,
                 project_name: Some("Demo".to_string()),
@@ -696,7 +847,8 @@ async fn dry_run_projects_and_assertions_do_not_execute_requests() {
 
     let assertion_output = api
         .run_assertions(
-            &CliConfig::default(),
+            &mut config,
+            &cli_args,
             &AssertionsArgs {
                 project_id: Some("project-1".to_string()),
                 submit: true,
@@ -864,6 +1016,40 @@ fn contracts_unassigned_require_and_send_manager() {
 }
 
 #[test]
+fn contracts_remove_calldata_requires_and_sends_assertion_ids() {
+    let error = contracts_request(&ContractsArgs {
+        remove_calldata: true,
+        aa_address: Some("0xabc".to_string()),
+        ..contracts_args()
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("--assertion-id is required"));
+
+    let request = contracts_request(&ContractsArgs {
+        remove_calldata: true,
+        aa_address: Some("0xabc".to_string()),
+        network: Some("31337".to_string()),
+        environment: Some("production".to_string()),
+        assertion_ids: vec!["assertion-1".to_string(), "assertion-2".to_string()],
+        ..contracts_args()
+    })
+    .unwrap();
+    assert_eq!(
+        request.path,
+        "/assertion_adopters/0xabc/remove-assertions-calldata"
+    );
+    assert_eq!(
+        request.query,
+        vec![
+            ("network".to_string(), "31337".to_string()),
+            ("environment".to_string(), "production".to_string()),
+            ("assertion_ids".to_string(), "assertion-1".to_string()),
+            ("assertion_ids".to_string(), "assertion-2".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn release_deploy_calldata_requires_and_sends_signer_address() {
     let error = releases_request(&ReleasesArgs {
         release_id: Some("release-1".to_string()),
@@ -1013,11 +1199,16 @@ async fn workflow_http_errors_include_response_body() {
         allow_unauthenticated: true,
         dry_run: false,
     };
-    let config = CliConfig::default();
+    let mut config = CliConfig::default();
     let request = WorkflowRequest::get("/health", false, Vec::new());
 
     let error = api
-        .call_workflow_result(&config, &request, test_request_log_path())
+        .call_workflow_result(
+            &mut config,
+            &CliArgs::default(),
+            &request,
+            test_request_log_path(),
+        )
         .await
         .unwrap_err();
     let ApiCommandError::HttpStatus {
@@ -1062,9 +1253,15 @@ async fn workflow_success_envelopes_include_request_provenance() {
         dry_run: false,
     };
     let request = WorkflowRequest::get("/health", false, vec!["next".to_string()]);
+    let mut config = CliConfig::default();
 
     let envelope = api
-        .run_workflow(&CliConfig::default(), request, test_request_log_path())
+        .run_workflow(
+            &mut config,
+            &CliArgs::default(),
+            request,
+            test_request_log_path(),
+        )
         .await
         .unwrap();
 
@@ -1100,10 +1297,12 @@ async fn raw_api_call_accepts_inline_query_strings() {
         allow_unauthenticated: true,
         dry_run: false,
     };
+    let mut config = CliConfig::default();
 
     let response = api
         .call_api(
-            &CliConfig::default(),
+            &mut config,
+            &CliArgs::default(),
             ApiRequestInput {
                 method: HttpMethod::Get,
                 path: "/projects/project-1/incidents?environment=production",
@@ -1251,10 +1450,12 @@ async fn raw_api_call_paginates_any_array_response() {
         allow_unauthenticated: true,
         dry_run: false,
     };
+    let mut config = CliConfig::default();
 
     let response = api
         .call_api_paginated(
-            &CliConfig::default(),
+            &mut config,
+            &CliArgs::default(),
             ApiRequestInput {
                 method: HttpMethod::Get,
                 path: "/views/public/incidents?environment=production",
@@ -1309,10 +1510,12 @@ async fn raw_api_call_pagination_supports_custom_param_names() {
         allow_unauthenticated: true,
         dry_run: false,
     };
+    let mut config = CliConfig::default();
 
     let response = api
         .call_api_paginated(
-            &CliConfig::default(),
+            &mut config,
+            &CliArgs::default(),
             ApiRequestInput {
                 method: HttpMethod::Get,
                 path: "/custom",
@@ -1349,10 +1552,12 @@ async fn raw_api_call_pagination_rejects_non_get_requests() {
         allow_unauthenticated: true,
         dry_run: false,
     };
+    let mut config = CliConfig::default();
 
     let error = api
         .call_api_paginated(
-            &CliConfig::default(),
+            &mut config,
+            &CliArgs::default(),
             ApiRequestInput {
                 method: HttpMethod::Post,
                 path: "/views/public/incidents",
@@ -1417,10 +1622,12 @@ async fn raw_api_call_errors_include_request_id() {
         allow_unauthenticated: true,
         dry_run: false,
     };
+    let mut config = CliConfig::default();
 
     let error = api
         .call_api(
-            &CliConfig::default(),
+            &mut config,
+            &CliArgs::default(),
             ApiRequestInput {
                 method: HttpMethod::Get,
                 path: "/health",

@@ -25,6 +25,7 @@ use serde_json::{
 
 use std::{
     fmt,
+    io::Write,
     path::{
         Path,
         PathBuf,
@@ -167,9 +168,39 @@ impl CliConfig {
         let config_file = config_dir.join(CONFIG_FILE);
         Self::ensure_writable_file(&config_file)?;
 
-        // Serialize and write config
+        // Serialize and write config atomically so access/refresh tokens never
+        // land on disk as a partially-written pair.
         let config_str = toml::to_string(self).map_err(ConfigError::SerializeError)?;
-        std::fs::write(config_file, config_str).map_err(ConfigError::WriteError)?;
+        let temp_file = config_dir.join(format!(
+            ".{CONFIG_FILE}.{}.{}.tmp",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp_file)
+                .map_err(ConfigError::WriteError)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&temp_file, std::fs::Permissions::from_mode(0o600))
+                    .map_err(ConfigError::WriteError)?;
+            }
+            file.write_all(config_str.as_bytes())
+                .map_err(ConfigError::WriteError)?;
+            file.sync_all().map_err(ConfigError::WriteError)?;
+        }
+        std::fs::rename(&temp_file, &config_file).map_err(|error| {
+            let _ = std::fs::remove_file(&temp_file);
+            ConfigError::WriteError(error)
+        })?;
+        if let Some(parent) = config_file.parent()
+            && let Ok(parent_file) = std::fs::File::open(parent)
+        {
+            let _ = parent_file.sync_all();
+        }
         Ok(())
     }
 
@@ -378,6 +409,8 @@ fn config_auth_value(config: &CliConfig) -> Value {
             "authenticated": false,
             "token_present": false,
             "refresh_token_present": false,
+            "refresh_expires_at": null,
+            "refresh_seconds_remaining": null,
             "token_valid": false,
             "token_expired": false,
             "expires_soon": false,
@@ -392,6 +425,9 @@ fn config_auth_value(config: &CliConfig) -> Value {
     let seconds_remaining = (auth.expires_at - now).num_seconds();
     let token_expired = auth.expires_at <= now;
     let expires_soon = !token_expired && seconds_remaining <= AUTH_EXPIRES_SOON_SECONDS;
+    let refresh_seconds_remaining = auth
+        .refresh_expires_at
+        .map(|expires_at| (expires_at - now).num_seconds());
     json!({
         "authenticated": true,
         "user": auth.display_name(),
@@ -400,6 +436,8 @@ fn config_auth_value(config: &CliConfig) -> Value {
         "email": auth.email.as_deref(),
         "token_present": !auth.access_token.is_empty(),
         "refresh_token_present": !auth.refresh_token.is_empty(),
+        "refresh_expires_at": auth.refresh_expires_at.map(|expires_at| expires_at.to_rfc3339()),
+        "refresh_seconds_remaining": refresh_seconds_remaining,
         "token_valid": !token_expired,
         "token_expired": token_expired,
         "expires_soon": expires_soon,
@@ -450,6 +488,13 @@ pub struct UserAuth {
     /// Token expiration timestamp
     #[serde(with = "chrono::serde::ts_seconds")]
     pub expires_at: DateTime<Utc>,
+    /// Refresh token sliding expiration timestamp, when returned by the platform.
+    #[serde(
+        default,
+        with = "chrono::serde::ts_seconds_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub refresh_expires_at: Option<DateTime<Utc>>,
     /// Platform user ID (UUID), used for API calls that require it
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_id: Option<Uuid>,
@@ -596,6 +641,7 @@ mod tests {
                 access_token: "test_access".to_string(),
                 refresh_token: "test_refresh".to_string(),
                 expires_at: fixed_timestamp,
+                refresh_expires_at: None,
                 user_id: None,
                 wallet_address: None,
                 email: None,
@@ -645,6 +691,7 @@ mod tests {
             access_token: "test_access".to_string(),
             refresh_token: "test_refresh".to_string(),
             expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(), // 2022-12-31 16:00:00 UTC
+            refresh_expires_at: None,
             user_id: None,
             wallet_address: None,
             email: Some("test@example.com".to_string()),
@@ -666,6 +713,7 @@ mod tests {
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
+            refresh_expires_at: None,
             wallet_address: Some(Address::from_slice(&[1; 20])),
             email: Some("test@example.com".to_string()),
             user_id: Some(Uuid::nil()),
@@ -680,6 +728,7 @@ mod tests {
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
+            refresh_expires_at: None,
             wallet_address: None,
             email: Some("test@example.com".to_string()),
             user_id: Some(Uuid::nil()),
@@ -691,6 +740,7 @@ mod tests {
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
+            refresh_expires_at: None,
             wallet_address: None,
             email: None,
             user_id: Some(Uuid::nil()),
@@ -705,6 +755,7 @@ mod tests {
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
+            refresh_expires_at: None,
             wallet_address: None,
             email: None,
             user_id: None,
@@ -718,6 +769,7 @@ mod tests {
             access_token: "e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig".to_string(),
             refresh_token: String::new(),
             expires_at: DateTime::from_timestamp(0, 0).unwrap(),
+            refresh_expires_at: None,
             wallet_address: None,
             email: None,
             user_id: None,
@@ -736,6 +788,7 @@ mod tests {
                 access_token: "e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig".to_string(),
                 refresh_token: "refresh".to_string(),
                 expires_at: DateTime::from_timestamp(1, 0).unwrap(),
+                refresh_expires_at: None,
                 wallet_address: None,
                 email: None,
                 user_id: None,
@@ -765,6 +818,7 @@ mod tests {
                 access_token: "test".to_string(),
                 refresh_token: "test".to_string(),
                 expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
+                refresh_expires_at: None,
                 user_id: None,
                 wallet_address: None,
                 email: None,
@@ -788,6 +842,7 @@ mod tests {
                 access_token: "secret-access".to_string(),
                 refresh_token: "secret-refresh".to_string(),
                 expires_at: Utc::now() + chrono::Duration::minutes(10),
+                refresh_expires_at: None,
                 user_id: Some(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()),
                 wallet_address: None,
                 email: Some("test@example.com".to_string()),
@@ -858,6 +913,7 @@ mod tests {
             access_token: "test_access".to_string(),
             refresh_token: "test_refresh".to_string(),
             expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
+            refresh_expires_at: Some(DateTime::from_timestamp(1675094400, 0).unwrap()),
             user_id: Some(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()),
             wallet_address: Some(Address::from_slice(&[0; 20])),
             email: Some("test@example.com".to_string()),

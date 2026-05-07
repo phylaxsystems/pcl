@@ -1405,7 +1405,7 @@ fn llms_guide() -> Value {
             "renew_command": "pcl auth ensure --force --json",
             "single_envelope_login": "pcl auth login --no-wait --force --json returns status=action_required with device_url, code, device_secret, expires_at, and poll_command.",
             "poll_command": "pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --json",
-            "refresh_command": "pcl auth refresh --json is safe, but returns a login challenge until the platform exposes a refresh endpoint.",
+            "refresh_command": "pcl auth refresh --json rotates the stored refresh token when available; if the refresh token is missing or rejected, it returns a login challenge.",
             "logout": "pcl auth logout attempts remote revocation before local cleanup; pass --local for local-only cleanup."
         },
         "mutation_safety": {
@@ -1910,6 +1910,7 @@ mod tests {
                 access_token: "expired-token".to_string(),
                 refresh_token: "refresh-token".to_string(),
                 expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
+                refresh_expires_at: None,
                 user_id: None,
                 wallet_address: None,
                 email: Some("agent@example.com".to_string()),

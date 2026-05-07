@@ -147,6 +147,49 @@ pub enum AuthError {
         platform_url: String,
     },
 
+    /// Error when there are no stored credentials that can be refreshed.
+    #[error("No refreshable CLI session found. Run `pcl auth login`.")]
+    NoRefreshableSession,
+
+    /// Error when the stored refresh token is missing or empty.
+    #[error("Stored CLI session is missing a refresh token. Run `pcl auth login --force`.")]
+    MissingRefreshToken,
+
+    /// Error when the platform rejected the refresh token.
+    #[error("Stored CLI session expired or was already rotated. Run `pcl auth login --force`.")]
+    RefreshRejected {
+        status: u16,
+        code: Option<String>,
+        request_id: Option<String>,
+        message: Option<String>,
+    },
+
+    /// Error when the platform rate-limits token refresh.
+    #[error("Token refresh was rate limited. Retry after {retry_after_seconds:?} seconds.")]
+    RefreshRateLimited {
+        retry_after_seconds: Option<u64>,
+        request_id: Option<String>,
+        message: Option<String>,
+    },
+
+    /// Error when refresh failed due to a server-side issue.
+    #[error("Token refresh failed with server status {status}. Try again later.")]
+    RefreshServerError {
+        status: u16,
+        request_id: Option<String>,
+        message: Option<String>,
+    },
+
+    /// Error when refresh failed due to local transport or response issues.
+    #[error(
+        "Token refresh request failed. Please check your connection and try again.\nError: {0}"
+    )]
+    RefreshRequestFailed(String),
+
+    /// Error when another local process is holding the refresh lock too long.
+    #[error("Timed out waiting for another PCL process to finish refreshing auth.")]
+    RefreshLockTimeout,
+
     /// Error when the session has expired server-side
     #[error("Session expired. Please run `pcl auth login` to start a new session.")]
     SessionExpired,

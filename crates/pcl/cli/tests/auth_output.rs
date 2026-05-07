@@ -158,7 +158,7 @@ fn auth_ensure_json_without_auth_outputs_login_challenge() {
     assert_eq!(envelope["data"]["state"], "login_required");
     assert_eq!(envelope["data"]["reason"], "missing_auth");
     assert_eq!(envelope["data"]["requires_user"], true);
-    assert_eq!(envelope["data"]["refresh_supported"], false);
+    assert_eq!(envelope["data"]["refresh_supported"], true);
     assert_eq!(envelope["data"]["device_secret"], "test_secret");
     assert!(
         envelope["data"]["poll_command"]
@@ -172,6 +172,47 @@ fn auth_ensure_json_without_auth_outputs_login_challenge() {
             .expect("poll command")
             .contains("--expires-at")
     );
+    auth_code.assert();
+}
+
+#[test]
+fn auth_refresh_json_without_auth_outputs_login_challenge() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let mut server = mockito::Server::new();
+    let auth_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2099-12-31T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "refresh",
+        ])
+        .output()
+        .expect("run pcl auth refresh");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "action_required");
+    assert_eq!(envelope["data"]["reason"], "missing_auth");
+    assert_eq!(envelope["data"]["refresh_supported"], true);
+    assert_eq!(envelope["data"]["device_secret"], "test_secret");
     auth_code.assert();
 }
 
@@ -200,7 +241,7 @@ fn auth_refresh_json_with_valid_auth_reports_noop_single_envelope() {
     let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
     assert_eq!(envelope["status"], "ok");
     assert_eq!(envelope["data"]["refreshed"], false);
-    assert_eq!(envelope["data"]["refresh_supported"], false);
+    assert_eq!(envelope["data"]["refresh_supported"], true);
     assert_eq!(envelope["data"]["reason"], "token_still_valid");
 }
 
@@ -273,6 +314,59 @@ fn auth_login_no_wait_json_outputs_single_challenge() {
     let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
     assert_eq!(envelope["status"], "action_required");
     assert!(envelope["data"]["poll_command"].as_str().is_some());
+    auth_code.assert();
+}
+
+#[test]
+fn auth_login_no_wait_uses_pcl_api_url_when_auth_url_is_unset() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let mut server = mockito::Server::new();
+    let auth_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2099-12-31T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .env("PCL_API_URL", server.url())
+        .env_remove("PCL_AUTH_URL")
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "login",
+            "--no-wait",
+        ])
+        .output()
+        .expect("run pcl auth login --no-wait with PCL_API_URL");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "action_required");
+    let expected_device_prefix = format!("{}/device?", server.url());
+    assert!(
+        envelope["data"]["device_url"]
+            .as_str()
+            .expect("device_url string")
+            .starts_with(&expected_device_prefix)
+    );
+    assert!(
+        envelope["data"]["poll_command"]
+            .as_str()
+            .expect("poll_command string")
+            .contains(&format!("--auth-url {}", server.url()))
+    );
     auth_code.assert();
 }
 

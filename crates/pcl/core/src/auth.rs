@@ -10,7 +10,10 @@ use crate::{
         UserAuth,
         access_token_expires_at,
     },
-    error::AuthError,
+    error::{
+        AuthError,
+        ConfigError,
+    },
 };
 use alloy_primitives::Address;
 use color_eyre::Result;
@@ -26,15 +29,24 @@ use indicatif::{
     ProgressBar,
     ProgressStyle,
 };
+use pcl_common::args::CliArgs;
 use reqwest::header::{
     AUTHORIZATION,
+    CONTENT_TYPE,
     HeaderMap,
     HeaderName,
     HeaderValue,
+    RETRY_AFTER,
 };
+use serde::Deserialize;
 use serde_json::{
     Value,
     json,
+};
+use std::{
+    fs::OpenOptions,
+    io::Write,
+    path::PathBuf,
 };
 use tokio::time::{
     Duration,
@@ -49,6 +61,34 @@ const INITIAL_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_POLL_INTERVAL: Duration = Duration::from_secs(10);
 /// Overall polling budget, matching the previous 150 x 2s behavior.
 const POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// Maximum time to wait for another local CLI process to finish rotating auth.
+const REFRESH_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
+/// Poll interval while waiting on the local refresh lock.
+const REFRESH_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+#[derive(Debug)]
+pub struct RefreshOutcome {
+    pub refreshed: bool,
+    pub reason: &'static str,
+    pub request_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RefreshResponse {
+    token: String,
+    refresh_token: String,
+    expires_at: chrono::DateTime<chrono::Utc>,
+    refresh_expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+struct RefreshErrorDetails {
+    code: Option<String>,
+    message: Option<String>,
+}
+
+struct RefreshLock {
+    path: PathBuf,
+}
 
 /// Authentication commands for the PCL CLI
 #[derive(clap::Parser)]
@@ -61,10 +101,9 @@ pub struct AuthCommand {
         short = 'u',
         long = "auth-url",
         env = "PCL_AUTH_URL",
-        default_value = DEFAULT_PLATFORM_URL,
-        help = "Base URL for authentication service"
+        help = "Base URL for authentication service. Defaults to PCL_AUTH_URL, then PCL_API_URL, then the production app URL"
     )]
-    pub auth_url: url::Url,
+    pub auth_url: Option<url::Url>,
 }
 
 /// Available authentication subcommands
@@ -118,7 +157,7 @@ pub enum AuthSubcommands {
 
     /// Refresh auth when possible, or return a login challenge when refresh is unavailable
     #[command(
-        long_about = "Refreshes auth non-interactively when the platform exposes refresh support; otherwise returns a structured login challenge.",
+        long_about = "Refreshes auth non-interactively by rotating the stored CLI refresh token; returns a structured login challenge when no refreshable session exists.",
         after_help = "Example: pcl auth refresh --json"
     )]
     Refresh {
@@ -162,10 +201,31 @@ impl AuthCommand {
         )
     }
 
+    fn effective_auth_url(&self) -> url::Url {
+        if let Some(auth_url) = &self.auth_url {
+            return auth_url.clone();
+        }
+        if let Ok(api_url) = std::env::var("PCL_API_URL")
+            && let Ok(parsed) = api_url.parse()
+        {
+            return parsed;
+        }
+        DEFAULT_PLATFORM_URL
+            .parse()
+            .expect("default platform URL is valid")
+    }
+
     /// Execute the authentication command
-    pub async fn run(&self, config: &mut CliConfig, json_output: bool) -> Result<(), AuthError> {
+    pub async fn run(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        json_output: bool,
+    ) -> Result<(), AuthError> {
         match &self.command {
-            AuthSubcommands::Ensure { force } => self.ensure(config, json_output, *force).await,
+            AuthSubcommands::Ensure { force } => {
+                self.ensure(config, cli_args, json_output, *force).await
+            }
             AuthSubcommands::Login { force, no_wait } => {
                 self.login(config, json_output, *force, *no_wait).await
             }
@@ -183,7 +243,9 @@ impl AuthCommand {
                 )
                 .await
             }
-            AuthSubcommands::Refresh { force } => self.refresh(config, json_output, *force).await,
+            AuthSubcommands::Refresh { force } => {
+                self.refresh(config, cli_args, json_output, *force).await
+            }
             AuthSubcommands::Logout { local } => {
                 let logout = if *local {
                     json!({
@@ -200,7 +262,7 @@ impl AuthCommand {
                         "status": "ok",
                         "data": {
                             "authenticated": false,
-                            "platform_url": self.auth_url.as_str(),
+                            "platform_url": self.effective_auth_url().as_str(),
                             "local_credentials_removed": true,
                             "remote_logout": logout,
                         },
@@ -216,10 +278,12 @@ impl AuthCommand {
 
     async fn ensure(
         &self,
-        config: &CliConfig,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
         json_output: bool,
         force: bool,
     ) -> Result<(), AuthError> {
+        let mut refresh_challenge_reason = None;
         if !force && let Some(auth) = &config.auth {
             let now = chrono::Utc::now();
             let seconds_remaining = (auth.expires_at - now).num_seconds();
@@ -229,7 +293,26 @@ impl AuthCommand {
             }
         }
 
-        let reason = auth_challenge_reason(config, force);
+        if config
+            .auth
+            .as_ref()
+            .is_some_and(|auth| !auth.refresh_token.trim().is_empty())
+        {
+            match refresh_stored_auth(config, &self.effective_auth_url(), cli_args, force).await {
+                Ok(outcome) => {
+                    Self::print_output(&Self::refresh_envelope(config, &outcome), json_output)?;
+                    return Ok(());
+                }
+                Err(AuthError::RefreshRejected { .. }) => {
+                    refresh_challenge_reason = Some(AuthChallengeReason::InvalidRefresh);
+                }
+                Err(AuthError::NoRefreshableSession | AuthError::MissingRefreshToken) => {}
+                Err(error) => return Err(error),
+            }
+        }
+
+        let reason =
+            refresh_challenge_reason.unwrap_or_else(|| auth_challenge_reason(config, force));
         let auth_response = Self::request_auth_code(&self.api_client()).await?;
         Self::print_output(
             &self.login_challenge_envelope(&auth_response, reason),
@@ -239,7 +322,8 @@ impl AuthCommand {
 
     async fn refresh(
         &self,
-        config: &CliConfig,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
         json_output: bool,
         force: bool,
     ) -> Result<(), AuthError> {
@@ -250,14 +334,16 @@ impl AuthCommand {
                 Self::print_output(
                     &json!({
                         "status": "ok",
-                        "data": {
+                            "data": {
                             "refreshed": false,
-                            "refresh_supported": false,
+                            "refresh_supported": true,
                             "reason": "token_still_valid",
                             "authenticated": true,
                             "expires_at": auth.expires_at.to_rfc3339(),
                             "seconds_remaining": seconds_remaining,
                             "expires_in_seconds": seconds_remaining,
+                            "refresh_expires_at": auth.refresh_expires_at.map(|expires_at| expires_at.to_rfc3339()),
+                            "refresh_seconds_remaining": auth.refresh_expires_at.map(|expires_at| (expires_at - now).num_seconds()),
                         },
                         "next_actions": ["pcl account", "pcl projects --home"],
                     }),
@@ -267,12 +353,21 @@ impl AuthCommand {
             }
         }
 
+        let mut refresh_challenge_reason = None;
+        match refresh_stored_auth(config, &self.effective_auth_url(), cli_args, force).await {
+            Ok(outcome) => {
+                Self::print_output(&Self::refresh_envelope(config, &outcome), json_output)?;
+                return Ok(());
+            }
+            Err(AuthError::RefreshRejected { .. }) => {
+                refresh_challenge_reason = Some(AuthChallengeReason::InvalidRefresh);
+            }
+            Err(AuthError::NoRefreshableSession | AuthError::MissingRefreshToken) => {}
+            Err(error) => return Err(error),
+        }
+
         let auth_response = Self::request_auth_code(&self.api_client()).await?;
-        let reason = if config.auth.is_some() {
-            AuthChallengeReason::RefreshUnsupported
-        } else {
-            AuthChallengeReason::Missing
-        };
+        let reason = refresh_challenge_reason.unwrap_or(AuthChallengeReason::Missing);
         Self::print_output(
             &self.login_challenge_envelope(&auth_response, reason),
             json_output,
@@ -344,7 +439,7 @@ impl AuthCommand {
 
     // Helper to create a new API client with the base URL set
     fn api_client(&self) -> GeneratedClient {
-        let mut base = self.auth_url.clone();
+        let mut base = self.effective_auth_url();
         base.set_path("/api/v1");
         GeneratedClient::new(base.as_str())
     }
@@ -362,7 +457,7 @@ impl AuthCommand {
 
     /// Display login URL and code to the user, attempting to open the browser automatically
     fn display_login_instructions(&self, auth_response: &GetCliAuthCodeResponse) {
-        let mut device_url = self.auth_url.clone();
+        let mut device_url = self.effective_auth_url();
         device_url.set_path("/device");
         device_url
             .query_pairs_mut()
@@ -390,7 +485,7 @@ impl AuthCommand {
         auth_response: &GetCliAuthCodeResponse,
         previous_token_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Value {
-        let mut device_url = self.auth_url.clone();
+        let mut device_url = self.effective_auth_url();
         device_url.set_path("/device");
         device_url
             .query_pairs_mut()
@@ -424,7 +519,7 @@ impl AuthCommand {
         auth_response: &GetCliAuthCodeResponse,
         reason: AuthChallengeReason,
     ) -> Value {
-        let mut device_url = self.auth_url.clone();
+        let mut device_url = self.effective_auth_url();
         device_url.set_path("/device");
         device_url
             .query_pairs_mut()
@@ -435,8 +530,8 @@ impl AuthCommand {
                 "state": "login_required",
                 "reason": reason.as_str(),
                 "requires_user": true,
-                "refresh_supported": false,
-                "refresh_attempted": false,
+                "refresh_supported": true,
+                "refresh_attempted": reason.refresh_attempted(),
                 "device_url": device_url.as_str(),
                 "code": auth_response.code.as_str(),
                 "session_id": auth_response.session_id.to_string(),
@@ -452,11 +547,57 @@ impl AuthCommand {
         }))
     }
 
+    fn refresh_envelope(config: &CliConfig, outcome: &RefreshOutcome) -> Value {
+        let Some(auth) = &config.auth else {
+            return with_envelope_metadata(json!({
+                "status": "action_required",
+                "data": {
+                    "state": "login_required",
+                    "reason": "missing_auth",
+                    "refresh_supported": true,
+                    "refresh_attempted": true,
+                    "authenticated": false,
+                },
+                "next_actions": ["pcl auth login"],
+            }));
+        };
+        let now = chrono::Utc::now();
+        let seconds_remaining = (auth.expires_at - now).num_seconds();
+        let refresh_seconds_remaining = auth
+            .refresh_expires_at
+            .map(|expires_at| (expires_at - now).num_seconds());
+        with_envelope_metadata(json!({
+            "status": "ok",
+            "data": {
+                "state": "authenticated",
+                "authenticated": true,
+                "user": auth.display_name(),
+                "user_id": auth.user_id.map(|id| id.to_string()),
+                "wallet_address": auth.wallet_address.map(|address| address.to_string()),
+                "email": auth.email.as_deref(),
+                "refreshed": outcome.refreshed,
+                "refresh_supported": true,
+                "refresh_attempted": outcome.refreshed,
+                "reason": outcome.reason,
+                "request_id": outcome.request_id,
+                "token_present": !auth.access_token.is_empty(),
+                "refresh_token_present": !auth.refresh_token.is_empty(),
+                "expires_at": auth.expires_at.to_rfc3339(),
+                "seconds_remaining": seconds_remaining,
+                "expires_in_seconds": seconds_remaining,
+                "refresh_expires_at": auth.refresh_expires_at.map(|expires_at| expires_at.to_rfc3339()),
+                "refresh_seconds_remaining": refresh_seconds_remaining,
+            },
+            "next_actions": ["pcl account", "pcl projects --home"],
+        }))
+    }
+
     fn poll_command(&self, auth_response: &GetCliAuthCodeResponse, json_output: bool) -> String {
         let json_flag = if json_output { " --json" } else { "" };
+        let auth_url = self.effective_auth_url();
         format!(
             "pcl auth --auth-url {} poll --session-id {} --device-secret {} --expires-at {}{}",
-            shell_quote(self.auth_url.as_str()),
+            shell_quote(auth_url.as_str()),
             auth_response.session_id,
             shell_quote(&auth_response.device_secret),
             shell_quote(&auth_response.expires_at.to_rfc3339()),
@@ -626,7 +767,7 @@ impl AuthCommand {
         };
         headers.insert(AUTHORIZATION, auth_header);
 
-        let mut url = self.auth_url.clone();
+        let mut url = self.effective_auth_url();
         url.set_path("/api/v1/web/auth/logout");
         url.set_query(None);
         let client = match reqwest::Client::builder().default_headers(headers).build() {
@@ -678,6 +819,25 @@ impl AuthCommand {
             .map_err(AuthError::from)
     }
 
+    async fn refresh_request(
+        auth_url: &url::Url,
+        refresh_token: &str,
+    ) -> Result<reqwest::Response, AuthError> {
+        let mut url = auth_url.clone();
+        url.set_path("/api/v1/auth/refresh");
+        url.set_query(None);
+        reqwest::Client::new()
+            .post(url)
+            .header(
+                HeaderName::from_static("api-version"),
+                HeaderValue::from_static("1"),
+            )
+            .json(&json!({ "refresh_token": refresh_token }))
+            .send()
+            .await
+            .map_err(|error| AuthError::RefreshRequestFailed(error.to_string()))
+    }
+
     async fn sleep_before_next_poll(
         deadline: Instant,
         attempts: u32,
@@ -723,7 +883,7 @@ impl AuthCommand {
             return Err(AuthError::StoredTokenExpired {
                 user: auth.display_name(),
                 expires_at: auth.expires_at,
-                platform_url: self.auth_url.as_str().to_string(),
+                platform_url: self.effective_auth_url().as_str().to_string(),
             });
         }
 
@@ -739,11 +899,14 @@ impl AuthCommand {
                     "token_present": false,
                     "token_valid": false,
                     "token_expired": false,
+                    "refresh_token_present": false,
+                    "refresh_expires_at": null,
+                    "refresh_seconds_remaining": null,
                     "expires_soon": false,
                     "expired": false,
                     "seconds_remaining": null,
                     "expires_in_seconds": null,
-                    "platform_url": self.auth_url.as_str(),
+                    "platform_url": self.effective_auth_url().as_str(),
                 },
                 "next_actions": ["pcl auth login"],
             }));
@@ -753,6 +916,9 @@ impl AuthCommand {
         let token_expired = auth.expires_at <= now;
         let seconds_remaining = (auth.expires_at - now).num_seconds();
         let expires_soon = !token_expired && seconds_remaining <= AUTH_EXPIRES_SOON_SECONDS;
+        let refresh_seconds_remaining = auth
+            .refresh_expires_at
+            .map(|expires_at| (expires_at - now).num_seconds());
         with_envelope_metadata(json!({
             "status": "ok",
             "data": {
@@ -763,6 +929,8 @@ impl AuthCommand {
                 "email": auth.email.as_deref(),
                 "token_present": !auth.access_token.is_empty(),
                 "refresh_token_present": !auth.refresh_token.is_empty(),
+                "refresh_expires_at": auth.refresh_expires_at.map(|expires_at| expires_at.to_rfc3339()),
+                "refresh_seconds_remaining": refresh_seconds_remaining,
                 "token_valid": !token_expired,
                 "token_expired": token_expired,
                 "expires_soon": expires_soon,
@@ -770,12 +938,12 @@ impl AuthCommand {
                 "expires_at": auth.expires_at.to_rfc3339(),
                 "seconds_remaining": seconds_remaining,
                 "expires_in_seconds": seconds_remaining,
-                "platform_url": self.auth_url.as_str(),
+                "platform_url": self.effective_auth_url().as_str(),
             },
             "next_actions": if token_expired {
-                json!(["pcl auth login --force", "pcl auth logout"])
+                json!(["pcl auth refresh --json", "pcl auth login --force", "pcl auth logout"])
             } else if expires_soon {
-                json!(["pcl auth login --force", "pcl account"])
+                json!(["pcl auth refresh --json", "pcl account"])
             } else {
                 json!(["pcl account", "pcl projects --home"])
             },
@@ -804,6 +972,222 @@ impl AuthCommand {
         );
         Ok(())
     }
+}
+
+pub async fn refresh_stored_auth(
+    config: &mut CliConfig,
+    auth_url: &url::Url,
+    cli_args: &CliArgs,
+    force: bool,
+) -> Result<RefreshOutcome, AuthError> {
+    let _lock = RefreshLock::acquire(cli_args).await?;
+    let mut disk_config = CliConfig::read_from_file(cli_args).map_err(AuthError::ConfigError)?;
+    disk_config.normalize_auth_expiry_from_access_token();
+    if disk_config.auth.is_some() || config.auth.is_none() {
+        *config = disk_config;
+    }
+
+    let auth = config
+        .auth
+        .as_ref()
+        .ok_or(AuthError::NoRefreshableSession)?;
+    let now = chrono::Utc::now();
+    let seconds_remaining = (auth.expires_at - now).num_seconds();
+    if !force && auth.expires_at > now && seconds_remaining > AUTH_EXPIRES_SOON_SECONDS {
+        return Ok(RefreshOutcome {
+            refreshed: false,
+            reason: "token_still_valid",
+            request_id: None,
+        });
+    }
+    if auth.refresh_token.trim().is_empty() {
+        return Err(AuthError::MissingRefreshToken);
+    }
+
+    let user_id = auth.user_id;
+    let wallet_address = auth.wallet_address;
+    let email = auth.email.clone();
+    let refresh_token = auth.refresh_token.clone();
+    let response = AuthCommand::refresh_request(auth_url, &refresh_token).await?;
+    let status = response.status();
+    let request_id = request_id_from_headers(response.headers());
+
+    match status.as_u16() {
+        200 => {
+            let body = response
+                .json::<RefreshResponse>()
+                .await
+                .map_err(|error| AuthError::InvalidAuthData(error.to_string()))?;
+            persist_refreshed_auth(
+                config,
+                cli_args,
+                body,
+                user_id,
+                wallet_address,
+                email,
+                request_id,
+            )
+        }
+        401 | 404 => {
+            let details = refresh_error_details(response).await;
+            config.auth = None;
+            config
+                .write_to_file(cli_args)
+                .map_err(AuthError::ConfigError)?;
+            Err(AuthError::RefreshRejected {
+                status: status.as_u16(),
+                code: details.code.or_else(|| {
+                    (status.as_u16() == 404).then(|| "REFRESH_ENDPOINT_NOT_FOUND".to_string())
+                }),
+                request_id,
+                message: details.message,
+            })
+        }
+        429 => {
+            let retry_after_seconds = response
+                .headers()
+                .get(RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok());
+            let details = refresh_error_details(response).await;
+            Err(AuthError::RefreshRateLimited {
+                retry_after_seconds,
+                request_id,
+                message: details.message,
+            })
+        }
+        500..=599 => {
+            let details = refresh_error_details(response).await;
+            Err(AuthError::RefreshServerError {
+                status: status.as_u16(),
+                request_id,
+                message: details.message,
+            })
+        }
+        _ => {
+            let details = refresh_error_details(response).await;
+            Err(AuthError::InvalidAuthData(format!(
+                "Refresh endpoint returned HTTP {}{}",
+                status.as_u16(),
+                details
+                    .message
+                    .map(|message| format!(": {message}"))
+                    .unwrap_or_default()
+            )))
+        }
+    }
+}
+
+fn persist_refreshed_auth(
+    config: &mut CliConfig,
+    cli_args: &CliArgs,
+    body: RefreshResponse,
+    user_id: Option<Uuid>,
+    wallet_address: Option<Address>,
+    email: Option<String>,
+    request_id: Option<String>,
+) -> Result<RefreshOutcome, AuthError> {
+    config.auth = Some(UserAuth {
+        access_token: body.token,
+        refresh_token: body.refresh_token,
+        expires_at: body.expires_at,
+        refresh_expires_at: Some(body.refresh_expires_at),
+        user_id,
+        wallet_address,
+        email,
+    });
+    config
+        .write_to_file(cli_args)
+        .map_err(AuthError::ConfigError)?;
+    Ok(RefreshOutcome {
+        refreshed: true,
+        reason: "refreshed",
+        request_id,
+    })
+}
+
+impl RefreshLock {
+    async fn acquire(cli_args: &CliArgs) -> Result<Self, AuthError> {
+        let path = CliConfig::config_file_path(cli_args).with_extension("toml.lock");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| AuthError::ConfigError(ConfigError::WriteError(error)))?;
+        }
+        let deadline = Instant::now() + REFRESH_LOCK_TIMEOUT;
+        loop {
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut file) => {
+                    let _ = writeln!(
+                        file,
+                        "pid={} acquired_at={}",
+                        std::process::id(),
+                        chrono::Utc::now().to_rfc3339()
+                    );
+                    let _ = file.sync_all();
+                    return Ok(Self { path });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if Instant::now() >= deadline {
+                        return Err(AuthError::RefreshLockTimeout);
+                    }
+                    sleep(REFRESH_LOCK_POLL_INTERVAL).await;
+                }
+                Err(error) => {
+                    return Err(AuthError::ConfigError(ConfigError::WriteError(error)));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for RefreshLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+async fn refresh_error_details(response: reqwest::Response) -> RefreshErrorDetails {
+    let content_type = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return RefreshErrorDetails {
+                code: None,
+                message: Some(error.to_string()),
+            };
+        }
+    };
+    if content_type.contains("application/json")
+        && let Ok(body) = serde_json::from_slice::<Value>(&bytes)
+    {
+        return RefreshErrorDetails {
+            code: body
+                .get("code")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            message: body
+                .get("error")
+                .or_else(|| body.get("message"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+        };
+    }
+    RefreshErrorDetails {
+        code: None,
+        message: String::from_utf8(bytes.to_vec()).ok(),
+    }
+}
+
+fn request_id_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned)
 }
 
 fn finish_timeout_if_needed(spinner: &ProgressBar, json_output: bool, error: &AuthError) {
@@ -848,7 +1232,7 @@ enum AuthChallengeReason {
     Expired,
     ExpiresSoon,
     Forced,
-    RefreshUnsupported,
+    InvalidRefresh,
 }
 
 impl AuthChallengeReason {
@@ -858,8 +1242,12 @@ impl AuthChallengeReason {
             Self::Expired => "expired_token",
             Self::ExpiresSoon => "expires_soon",
             Self::Forced => "forced_login",
-            Self::RefreshUnsupported => "refresh_unsupported",
+            Self::InvalidRefresh => "invalid_refresh_token",
         }
+    }
+
+    fn refresh_attempted(self) -> bool {
+        matches!(self, Self::InvalidRefresh)
     }
 }
 
@@ -904,6 +1292,7 @@ fn update_config_from_verified_status(
         access_token: token,
         refresh_token,
         expires_at: token_expires_at.unwrap_or(fallback_expires_at),
+        refresh_expires_at: None,
         user_id: Some(user_id),
         wallet_address,
         email: status.email,
@@ -930,7 +1319,10 @@ mod tests {
         Utc,
     };
     use clap::Parser;
-    use mockito::Server;
+    use mockito::{
+        Matcher,
+        Server,
+    };
     use uuid::Uuid;
 
     fn create_test_config() -> CliConfig {
@@ -939,6 +1331,7 @@ mod tests {
                 access_token: "test_token".to_string(),
                 refresh_token: "test_refresh".to_string(),
                 expires_at: Utc.with_ymd_and_hms(2099, 12, 31, 0, 0, 0).unwrap(),
+                refresh_expires_at: None,
                 user_id: Some(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()),
                 wallet_address: Some(
                     "0x1234567890123456789012345678901234567890"
@@ -954,6 +1347,27 @@ mod tests {
         r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2024-12-31T00:00:00Z"}"#
     }
 
+    fn test_cli_args(config_dir: &std::path::Path) -> CliArgs {
+        CliArgs {
+            config_dir: Some(config_dir.to_path_buf()),
+            ..Default::default()
+        }
+    }
+
+    fn expired_refreshable_config() -> CliConfig {
+        CliConfig {
+            auth: Some(UserAuth {
+                access_token: "old_access".to_string(),
+                refresh_token: "old_refresh".to_string(),
+                expires_at: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+                refresh_expires_at: None,
+                user_id: Some(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()),
+                wallet_address: None,
+                email: Some("agent@example.com".to_string()),
+            }),
+        }
+    }
+
     #[test]
     fn test_display_login_instructions() {
         let cmd = AuthCommand {
@@ -961,7 +1375,7 @@ mod tests {
                 force: false,
                 no_wait: false,
             },
-            auth_url: "https://app.phylax.systems".parse().unwrap(),
+            auth_url: Some("https://app.phylax.systems".parse().unwrap()),
         };
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
@@ -980,7 +1394,7 @@ mod tests {
                 force: false,
                 no_wait: false,
             },
-            auth_url: "https://app.phylax.systems".parse().unwrap(),
+            auth_url: Some("https://app.phylax.systems".parse().unwrap()),
         };
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
@@ -1043,6 +1457,143 @@ mod tests {
         let response = result.unwrap();
         assert_eq!(*response.code, "123456");
         mock.assert();
+    }
+
+    #[tokio::test]
+    async fn refresh_stored_auth_rotates_and_persists_new_token_pair() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/v1/auth/refresh")
+            .match_header("authorization", Matcher::Missing)
+            .match_header("content-type", Matcher::Regex("application/json.*".to_string()))
+            .match_body(Matcher::Json(json!({ "refresh_token": "old_refresh" })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_header("x-request-id", "req_refresh_ok")
+            .with_body(
+                r#"{"token":"new_access","refresh_token":"new_refresh","expires_at":"2030-01-01T00:00:00Z","refresh_expires_at":"2030-02-01T00:00:00Z"}"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cli_args = test_cli_args(temp_dir.path());
+        let mut config = expired_refreshable_config();
+        config.write_to_file(&cli_args).unwrap();
+
+        let outcome = refresh_stored_auth(
+            &mut config,
+            &server.url().parse().unwrap(),
+            &cli_args,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.refreshed);
+        assert_eq!(outcome.request_id.as_deref(), Some("req_refresh_ok"));
+        let auth = config.auth.as_ref().unwrap();
+        assert_eq!(auth.access_token, "new_access");
+        assert_eq!(auth.refresh_token, "new_refresh");
+        assert_eq!(auth.email.as_deref(), Some("agent@example.com"));
+        assert_eq!(
+            auth.refresh_expires_at.unwrap(),
+            Utc.with_ymd_and_hms(2030, 2, 1, 0, 0, 0).unwrap()
+        );
+        let persisted = CliConfig::read_from_file(&cli_args).unwrap();
+        assert_eq!(
+            persisted.auth.as_ref().unwrap().refresh_token,
+            "new_refresh"
+        );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn invalid_refresh_token_clears_local_credentials() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/v1/auth/refresh")
+            .with_status(401)
+            .with_header("content-type", "application/json")
+            .with_header("x-request-id", "req_refresh_invalid")
+            .with_body(r#"{"code":"INVALID_REFRESH_TOKEN","error":"invalid refresh"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cli_args = test_cli_args(temp_dir.path());
+        let mut config = expired_refreshable_config();
+        config.write_to_file(&cli_args).unwrap();
+
+        let error = refresh_stored_auth(
+            &mut config,
+            &server.url().parse().unwrap(),
+            &cli_args,
+            false,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, AuthError::RefreshRejected { .. }));
+        if let AuthError::RefreshRejected {
+            status,
+            code,
+            request_id,
+            message,
+        } = error
+        {
+            assert_eq!(status, 401);
+            assert_eq!(code.as_deref(), Some("INVALID_REFRESH_TOKEN"));
+            assert_eq!(request_id.as_deref(), Some("req_refresh_invalid"));
+            assert_eq!(message.as_deref(), Some("invalid refresh"));
+        }
+        assert!(config.auth.is_none());
+        assert!(CliConfig::read_from_file(&cli_args).unwrap().auth.is_none());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn missing_refresh_endpoint_returns_refresh_rejected_and_clears_credentials() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/v1/auth/refresh")
+            .with_status(404)
+            .with_header("content-type", "application/json")
+            .with_header("x-request-id", "req_refresh_missing")
+            .with_body(r#"{"error":"Not Found"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cli_args = test_cli_args(temp_dir.path());
+        let mut config = expired_refreshable_config();
+        config.write_to_file(&cli_args).unwrap();
+
+        let error = refresh_stored_auth(
+            &mut config,
+            &server.url().parse().unwrap(),
+            &cli_args,
+            false,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, AuthError::RefreshRejected { .. }));
+        if let AuthError::RefreshRejected {
+            status,
+            code,
+            request_id,
+            message,
+        } = error
+        {
+            assert_eq!(status, 404);
+            assert_eq!(code.as_deref(), Some("REFRESH_ENDPOINT_NOT_FOUND"));
+            assert_eq!(request_id.as_deref(), Some("req_refresh_missing"));
+            assert_eq!(message.as_deref(), Some("Not Found"));
+        }
+        assert!(config.auth.is_none());
+        assert!(CliConfig::read_from_file(&cli_args).unwrap().auth.is_none());
+        mock.assert_async().await;
     }
 
     #[tokio::test]

@@ -9,7 +9,9 @@
 
 use crate::{
     DEFAULT_PLATFORM_URL,
+    auth::refresh_stored_auth,
     config::CliConfig,
+    error::AuthError,
 };
 use clap::{
     ArgGroup,
@@ -58,9 +60,12 @@ pub enum ApiCommandError {
     NoAuthToken,
 
     #[error(
-        "Stored auth token expired at {0}. Run `pcl auth login` again, or pass `--allow-unauthenticated` for public endpoints."
+        "Stored auth token expired at {0}. Run `pcl auth refresh --json` or `pcl auth login` again, or pass `--allow-unauthenticated` for public endpoints."
     )]
     ExpiredAuthToken(chrono::DateTime<chrono::Utc>),
+
+    #[error("Failed to refresh stored auth before retrying the API request: {0}")]
+    AuthRefresh(#[source] AuthError),
 
     #[error("Invalid {kind} `{input}`. Expected KEY=VALUE.")]
     InvalidKeyValue { kind: &'static str, input: String },
@@ -132,6 +137,7 @@ impl ApiCommandError {
         match self {
             Self::NoAuthToken => "auth.no_token",
             Self::ExpiredAuthToken(_) => "auth.expired_token",
+            Self::AuthRefresh(_) => "auth.refresh_failed",
             Self::InvalidKeyValue { .. } => "input.invalid_key_value",
             Self::InvalidHeaderName { .. } => "input.invalid_header_name",
             Self::InvalidHeaderValue { .. } => "input.invalid_header_value",
@@ -171,8 +177,9 @@ impl ApiCommandError {
 
     pub fn next_actions(&self) -> Vec<String> {
         match self {
-            Self::NoAuthToken | Self::ExpiredAuthToken(_) => {
+            Self::NoAuthToken | Self::ExpiredAuthToken(_) | Self::AuthRefresh(_) => {
                 vec![
+                    "pcl auth refresh --json".to_string(),
                     "pcl auth login".to_string(),
                     "pcl api list --allow-unauthenticated --json".to_string(),
                 ]
@@ -228,6 +235,7 @@ impl ApiCommandError {
                 status: 401 | 403, ..
             } => {
                 vec![
+                    "pcl auth refresh --json".to_string(),
                     "pcl auth login".to_string(),
                     "Use --allow-unauthenticated only for public endpoints".to_string(),
                 ]
@@ -293,7 +301,9 @@ impl ApiCommandError {
 
     pub fn suggested_next_actions(&self) -> Vec<&'static str> {
         match self {
-            Self::NoAuthToken | Self::ExpiredAuthToken(_) => vec!["login", "retry"],
+            Self::NoAuthToken | Self::ExpiredAuthToken(_) | Self::AuthRefresh(_) => {
+                vec!["refresh_or_login", "retry"]
+            }
             Self::InvalidKeyValue { .. }
             | Self::InvalidHeaderName { .. }
             | Self::InvalidHeaderValue { .. }
@@ -306,7 +316,7 @@ impl ApiCommandError {
             Self::OutputFile { .. } => vec!["fix_output_path", "retry"],
             Self::HttpStatus {
                 status: 401 | 403, ..
-            } => vec!["login", "retry"],
+            } => vec!["refresh_or_login", "retry"],
             Self::HttpStatus {
                 status: 400 | 422, ..
             } => vec!["inspect_operation", "fix_request", "retry"],
@@ -438,7 +448,7 @@ impl ApiWorkflowOptions {
     async fn run(
         self,
         command: ApiCommand,
-        config: &CliConfig,
+        config: &mut CliConfig,
         cli_args: &CliArgs,
         json_output: bool,
     ) -> Result<(), ApiCommandError> {
@@ -467,7 +477,7 @@ macro_rules! top_level_workflow_command {
         impl $name {
             pub async fn run(
                 self,
-                config: &CliConfig,
+                config: &mut CliConfig,
                 cli_args: &CliArgs,
                 json_output: bool,
             ) -> Result<(), ApiCommandError> {
@@ -726,6 +736,15 @@ struct ApiRequestInput<'a> {
     body: Option<&'a str>,
     body_file: Option<&'a PathBuf>,
     require_auth: bool,
+}
+
+struct PreparedApiRequest<'a> {
+    attach_auth: bool,
+    method: HttpMethod,
+    url: &'a url::Url,
+    headers: &'a HeaderMap,
+    query: &'a [(String, String)],
+    body: Option<&'a Value>,
 }
 
 #[derive(Clone, Copy)]
@@ -1069,6 +1088,18 @@ struct ContractsArgs {
     aa_address: Option<String>,
     #[arg(long, help = "Manager address for --unassigned")]
     manager: Option<String>,
+    #[arg(long, help = "Network/chain ID for adopter calldata requests")]
+    network: Option<String>,
+    #[arg(long, help = "Environment for adopter calldata requests")]
+    environment: Option<String>,
+    #[arg(
+        long = "assertion-id",
+        alias = "assertion_id",
+        alias = "assertion-ids",
+        alias = "assertion_ids",
+        help = "Assertion ID to include in --remove-calldata; repeat for multiple assertions"
+    )]
+    assertion_ids: Vec<String>,
     #[arg(long, help = "List unassigned assertion adopters")]
     unassigned: bool,
     #[arg(long, help = "Create an assertion adopter")]
@@ -1491,27 +1522,33 @@ top_level_workflow_command!(
 impl ApiArgs {
     pub async fn run(
         &self,
-        config: &CliConfig,
+        config: &mut CliConfig,
         cli_args: &CliArgs,
         json_output: bool,
     ) -> Result<(), ApiCommandError> {
         let request_log_path = crate::request_log::request_log_path_for_args(cli_args);
         match &self.command {
             ApiCommand::Incidents(args) => {
-                let output = self.run_incidents(config, args, &request_log_path).await?;
+                let output = self
+                    .run_incidents(config, cli_args, args, &request_log_path)
+                    .await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Projects(args) => {
-                let output = self.run_projects(config, args, &request_log_path).await?;
+                let output = self
+                    .run_projects(config, cli_args, args, &request_log_path)
+                    .await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Assertions(args) => {
-                let output = self.run_assertions(config, args, &request_log_path).await?;
+                let output = self
+                    .run_assertions(config, cli_args, args, &request_log_path)
+                    .await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Search(args) => {
                 let output = self
-                    .run_workflow(config, search_request(args)?, &request_log_path)
+                    .run_workflow(config, cli_args, search_request(args)?, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -1522,7 +1559,7 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, account_request(args)?, &request_log_path)
+                    .run_workflow(config, cli_args, account_request(args)?, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -1533,7 +1570,12 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, contracts_request(args)?, &request_log_path)
+                    .run_workflow(
+                        config,
+                        cli_args,
+                        contracts_request(args)?,
+                        &request_log_path,
+                    )
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -1544,7 +1586,7 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, releases_request(args)?, &request_log_path)
+                    .run_workflow(config, cli_args, releases_request(args)?, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -1555,7 +1597,12 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, deployments_request(args)?, &request_log_path)
+                    .run_workflow(
+                        config,
+                        cli_args,
+                        deployments_request(args)?,
+                        &request_log_path,
+                    )
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -1566,7 +1613,7 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, access_request(args)?, &request_log_path)
+                    .run_workflow(config, cli_args, access_request(args)?, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -1577,7 +1624,12 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, integrations_request(args)?, &request_log_path)
+                    .run_workflow(
+                        config,
+                        cli_args,
+                        integrations_request(args)?,
+                        &request_log_path,
+                    )
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -1588,7 +1640,12 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, protocol_manager_request(args)?, &request_log_path)
+                    .run_workflow(
+                        config,
+                        cli_args,
+                        protocol_manager_request(args)?,
+                        &request_log_path,
+                    )
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -1599,13 +1656,18 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, transfers_request(args)?, &request_log_path)
+                    .run_workflow(
+                        config,
+                        cli_args,
+                        transfers_request(args)?,
+                        &request_log_path,
+                    )
                     .await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Events(args) => {
                 let output = self
-                    .run_workflow(config, events_request(args), &request_log_path)
+                    .run_workflow(config, cli_args, events_request(args), &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -1689,7 +1751,7 @@ impl ApiArgs {
                 }
                 let (mut response, next_actions) = if let Some(pagination) = pagination {
                     let response = self
-                        .call_api_paginated(config, input, pagination, &request_log_path)
+                        .call_api_paginated(config, cli_args, input, pagination, &request_log_path)
                         .await?;
                     (
                         response,
@@ -1701,7 +1763,9 @@ impl ApiArgs {
                         ],
                     )
                 } else {
-                    let response = self.call_api(config, input, &request_log_path).await?;
+                    let response = self
+                        .call_api(config, cli_args, input, &request_log_path)
+                        .await?;
                     (
                         response,
                         vec![
@@ -1735,7 +1799,8 @@ impl ApiArgs {
 
     async fn call_api_paginated(
         &self,
-        config: &CliConfig,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
         input: ApiRequestInput<'_>,
         pagination: RawPaginationOptions<'_>,
         request_log_path: &Path,
@@ -1765,6 +1830,8 @@ impl ApiArgs {
         base_query.extend(parse_key_values("query", input.query)?);
         let url = self.api_url(&path)?;
         let headers = parse_headers(input.header)?;
+        self.ensure_request_auth(config, cli_args, input.require_auth)
+            .await?;
         let client = self.http_client(
             config,
             input.require_auth && !self.allow_unauthenticated,
@@ -1861,7 +1928,8 @@ impl ApiArgs {
 
     async fn run_incidents(
         &self,
-        config: &CliConfig,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
         args: &IncidentsArgs,
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
@@ -1891,6 +1959,7 @@ impl ApiArgs {
             let mut data = self
                 .call_workflow_paginated(
                     config,
+                    cli_args,
                     request.clone(),
                     WorkflowPaginationOptions {
                         item_field: "incidents",
@@ -1925,7 +1994,7 @@ impl ApiArgs {
             }));
         }
         let result = self
-            .call_workflow_result(config, &request, request_log_path)
+            .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
         let next_actions = incidents_next_actions(&result.body, args, request.next_actions);
         Ok(workflow_success_envelope(result, next_actions))
@@ -1933,7 +2002,8 @@ impl ApiArgs {
 
     async fn run_projects(
         &self,
-        config: &CliConfig,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
         args: &ProjectsArgs,
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
@@ -1945,7 +2015,7 @@ impl ApiArgs {
             return Ok(dry_run_envelope(self.workflow_request_plan(&request, None)));
         }
         let result = self
-            .call_workflow_result(config, &request, request_log_path)
+            .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
         let next_actions = projects_next_actions(&result.body, request.next_actions);
         Ok(workflow_success_envelope(result, next_actions))
@@ -1953,7 +2023,8 @@ impl ApiArgs {
 
     async fn run_assertions(
         &self,
-        config: &CliConfig,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
         args: &AssertionsArgs,
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
@@ -1965,7 +2036,7 @@ impl ApiArgs {
             return Ok(dry_run_envelope(self.workflow_request_plan(&request, None)));
         }
         let result = self
-            .call_workflow_result(config, &request, request_log_path)
+            .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
         let next_actions = assertions_next_actions(&result.body, args, request.next_actions);
         Ok(workflow_success_envelope(result, next_actions))
@@ -1973,7 +2044,8 @@ impl ApiArgs {
 
     async fn run_workflow(
         &self,
-        config: &CliConfig,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
         request: WorkflowRequest,
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
@@ -1981,7 +2053,7 @@ impl ApiArgs {
             return Ok(dry_run_envelope(self.workflow_request_plan(&request, None)));
         }
         let result = self
-            .call_workflow_result(config, &request, request_log_path)
+            .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
         Ok(workflow_success_envelope(result, request.next_actions))
     }
@@ -2090,7 +2162,8 @@ impl ApiArgs {
 
     async fn call_api(
         &self,
-        config: &CliConfig,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
         input: ApiRequestInput<'_>,
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
@@ -2099,27 +2172,30 @@ impl ApiArgs {
         let url = self.api_url(&path)?;
         let headers = parse_headers(input.header)?;
         let body = read_body(input.body, input.body_file)?;
+        let requires_auth = input.require_auth && !self.allow_unauthenticated;
+        self.ensure_request_auth(config, cli_args, input.require_auth)
+            .await?;
 
-        let client = self.http_client(
-            config,
-            input.require_auth && !self.allow_unauthenticated,
-            input.require_auth && !self.allow_unauthenticated,
-        )?;
-        let mut request = client.request(input.method.reqwest(), url).headers(headers);
-
-        if !query.is_empty() {
-            request = request.query(&query);
-        }
-
-        if let Some(body) = body {
-            let json_body: Value = serde_json::from_str(&body)?;
-            request = request.json(&json_body);
-        }
-
-        let response = request.send().await?;
-        let status = response.status();
+        let json_body = body
+            .as_deref()
+            .map(serde_json::from_str::<Value>)
+            .transpose()?;
+        let mut response = self
+            .send_api_request(
+                config,
+                PreparedApiRequest {
+                    attach_auth: requires_auth,
+                    method: input.method,
+                    url: &url,
+                    headers: &headers,
+                    query: &query,
+                    body: json_body.as_ref(),
+                },
+            )
+            .await?;
+        let mut status = response.status();
         let request_id = request_id_from_headers(response.headers());
-        let headers = response
+        let response_headers = response
             .headers()
             .iter()
             .filter_map(|(name, value)| {
@@ -2136,7 +2212,7 @@ impl ApiArgs {
             .unwrap_or_default()
             .to_string();
         let bytes = response.bytes().await?;
-        let body = response_body_value(&content_type, &bytes);
+        let mut body = response_body_value(&content_type, &bytes);
         write_request_log(
             request_log_path,
             "raw",
@@ -2145,6 +2221,76 @@ impl ApiArgs {
             status.as_u16(),
             request_id.as_deref(),
         );
+        if status.as_u16() == 401 && requires_auth {
+            refresh_stored_auth(config, &self.api_url, cli_args, true)
+                .await
+                .map_err(ApiCommandError::AuthRefresh)?;
+            response = self
+                .send_api_request(
+                    config,
+                    PreparedApiRequest {
+                        attach_auth: requires_auth,
+                        method: input.method,
+                        url: &url,
+                        headers: &headers,
+                        query: &query,
+                        body: json_body.as_ref(),
+                    },
+                )
+                .await?;
+            status = response.status();
+            let retry_request_id = request_id_from_headers(response.headers());
+            let retry_headers = response
+                .headers()
+                .iter()
+                .filter_map(|(name, value)| {
+                    value
+                        .to_str()
+                        .ok()
+                        .map(|value| (name.as_str().to_string(), json!(value)))
+                })
+                .collect::<serde_json::Map<_, _>>();
+            let retry_content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            let retry_bytes = response.bytes().await?;
+            body = response_body_value(&retry_content_type, &retry_bytes);
+            write_request_log(
+                request_log_path,
+                "raw_retry_after_refresh",
+                input.method.as_str(),
+                &path,
+                status.as_u16(),
+                retry_request_id.as_deref(),
+            );
+            if !status.is_success() {
+                return Err(ApiCommandError::HttpStatus {
+                    method: input.method.as_str(),
+                    path,
+                    status: status.as_u16(),
+                    request_id: retry_request_id,
+                    body: Box::new(body),
+                });
+            }
+            return Ok(json!({
+                "request": {
+                    "method": input.method.as_str(),
+                    "path": path,
+                    "query": query_pairs_value(&query),
+                    "retried_after_refresh": true,
+                },
+                "response": {
+                    "status": status.as_u16(),
+                    "success": status.is_success(),
+                    "request_id": retry_request_id,
+                    "headers": retry_headers,
+                    "body": body,
+                }
+            }));
+        }
         if !status.is_success() {
             return Err(ApiCommandError::HttpStatus {
                 method: input.method.as_str(),
@@ -2165,7 +2311,7 @@ impl ApiArgs {
                 "status": status.as_u16(),
                 "success": status.is_success(),
                 "request_id": request_id,
-                "headers": headers,
+                "headers": response_headers,
                 "body": body,
             }
         }))
@@ -2173,25 +2319,26 @@ impl ApiArgs {
 
     async fn call_workflow_result(
         &self,
-        config: &CliConfig,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
         request: &WorkflowRequest,
         request_log_path: &Path,
     ) -> Result<WorkflowCallResult, ApiCommandError> {
         let path = self.normalize_project_path(config, &request.path).await?;
         let url = self.api_url(&path)?;
         let requires_auth = request.require_auth && !self.allow_unauthenticated;
-        let client = self.http_client(config, requires_auth, requires_auth)?;
-        let mut builder = client.request(request.method.reqwest(), url);
-        if !request.query.is_empty() {
-            builder = builder.query(&request.query);
-        }
-        if let Some(body) = &request.body {
-            let json_body = self.normalize_request_body(config, &path, body).await?;
-            builder = builder.json(&json_body);
-        }
-        let response = builder.send().await?;
-        let status = response.status();
-        let request_id = request_id_from_headers(response.headers());
+        self.ensure_request_auth(config, cli_args, request.require_auth)
+            .await?;
+        let json_body = if let Some(body) = &request.body {
+            Some(self.normalize_request_body(config, &path, body).await?)
+        } else {
+            None
+        };
+        let mut response = self
+            .send_workflow_request(config, request, &url, json_body.as_ref())
+            .await?;
+        let mut status = response.status();
+        let mut request_id = request_id_from_headers(response.headers());
         let content_type = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
@@ -2199,7 +2346,7 @@ impl ApiArgs {
             .unwrap_or_default()
             .to_string();
         let bytes = response.bytes().await?;
-        let body = response_body_value(&content_type, &bytes);
+        let mut body = response_body_value(&content_type, &bytes);
         write_request_log(
             request_log_path,
             "workflow",
@@ -2208,6 +2355,34 @@ impl ApiArgs {
             status.as_u16(),
             request_id.as_deref(),
         );
+        let mut retried_after_refresh = false;
+        if status.as_u16() == 401 && requires_auth {
+            refresh_stored_auth(config, &self.api_url, cli_args, true)
+                .await
+                .map_err(ApiCommandError::AuthRefresh)?;
+            response = self
+                .send_workflow_request(config, request, &url, json_body.as_ref())
+                .await?;
+            status = response.status();
+            request_id = request_id_from_headers(response.headers());
+            let retry_content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            let retry_bytes = response.bytes().await?;
+            body = response_body_value(&retry_content_type, &retry_bytes);
+            retried_after_refresh = true;
+            write_request_log(
+                request_log_path,
+                "workflow_retry_after_refresh",
+                request.method.as_str(),
+                &path,
+                status.as_u16(),
+                request_id.as_deref(),
+            );
+        }
         if !status.is_success() {
             return Err(ApiCommandError::HttpStatus {
                 method: request.method.as_str(),
@@ -2226,6 +2401,7 @@ impl ApiArgs {
                 "auth": self.auth_plan(request.require_auth),
                 "side_effecting": request.method != HttpMethod::Get,
                 "destructive": request_is_destructive(request.method, &request.path),
+                "retried_after_refresh": retried_after_refresh,
             }),
             response: json!({
                 "status": status.as_u16(),
@@ -2238,7 +2414,8 @@ impl ApiArgs {
 
     async fn call_workflow_paginated(
         &self,
-        config: &CliConfig,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
         request: WorkflowRequest,
         pagination: WorkflowPaginationOptions<'_>,
         request_log_path: &Path,
@@ -2273,7 +2450,7 @@ impl ApiArgs {
                 pagination.limit.to_string(),
             );
             let data = self
-                .call_workflow_result(config, &page_request, request_log_path)
+                .call_workflow_result(config, cli_args, &page_request, request_log_path)
                 .await?
                 .body;
             let page_items =
@@ -2365,6 +2542,65 @@ impl ApiArgs {
                     message: format!("Could not resolve project reference `{project_ref}`"),
                 }
             })
+    }
+
+    async fn ensure_request_auth(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        require_auth: bool,
+    ) -> Result<(), ApiCommandError> {
+        if self.allow_unauthenticated || !require_auth {
+            return Ok(());
+        }
+        let Some(auth) = &config.auth else {
+            return Err(ApiCommandError::NoAuthToken);
+        };
+        let now = chrono::Utc::now();
+        let seconds_remaining = (auth.expires_at - now).num_seconds();
+        if auth.expires_at <= now || seconds_remaining <= crate::config::AUTH_EXPIRES_SOON_SECONDS {
+            refresh_stored_auth(config, &self.api_url, cli_args, false)
+                .await
+                .map_err(ApiCommandError::AuthRefresh)?;
+        }
+        Ok(())
+    }
+
+    async fn send_api_request(
+        &self,
+        config: &CliConfig,
+        request: PreparedApiRequest<'_>,
+    ) -> Result<reqwest::Response, ApiCommandError> {
+        let client = self.http_client(config, request.attach_auth, request.attach_auth)?;
+        let mut builder = client
+            .request(request.method.reqwest(), request.url.clone())
+            .headers(request.headers.clone());
+        if !request.query.is_empty() {
+            builder = builder.query(request.query);
+        }
+        if let Some(body) = request.body {
+            builder = builder.json(body);
+        }
+        Ok(builder.send().await?)
+    }
+
+    async fn send_workflow_request(
+        &self,
+        config: &CliConfig,
+        request: &WorkflowRequest,
+        url: &url::Url,
+        body: Option<&Value>,
+    ) -> Result<reqwest::Response, ApiCommandError> {
+        let requires_auth = request.require_auth && !self.allow_unauthenticated;
+        let client = self.http_client(config, requires_auth, requires_auth)?;
+        let mut builder = client.request(request.method.reqwest(), url.clone());
+        if !request.query.is_empty() {
+            builder = builder.query(&request.query);
+        }
+        if let Some(body) = body {
+            builder = builder.json(body);
+        }
+        Ok(builder.send().await?)
     }
 
     fn http_client(
@@ -2574,7 +2810,7 @@ pub fn api_manifest() -> Value {
             "login_command": "pcl auth login",
         },
         "safety": {
-            "dry_run": "Optional planning mode: add --dry-run before writes to inspect the request. Re-run without --dry-run only when ready to execute.",
+            "dry_run": "Optional planning mode: add --dry-run to workflow commands before write flags, for example `pcl projects --dry-run --create ...`. Re-run without --dry-run only when ready to execute.",
             "destructive_detection": "Request plans flag likely destructive paths, but raw api call does not enforce a confirmation gate."
         },
         "product_surfaces": [
@@ -2598,8 +2834,8 @@ pub fn api_manifest() -> Value {
                     {"name": "list_public", "auth": false, "method": "GET", "path": "/views/public/incidents", "optional_flags": ["--page", "--limit", "--network", "--sort", "--dev-mode", "--all", "--max-pages", "--output"], "example": "pcl incidents --limit 5"},
                     {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/incidents", "required_flags": ["--project"], "optional_flags": ["--page", "--limit", "--assertion-id", "--adopter-id", "--environment", "--from", "--to", "--all", "--max-pages", "--output"], "example": "pcl incidents --project <project-ref> --all --limit 50 --output incidents.json"},
                     {"name": "stats", "auth": true, "method": "GET", "path": "/projects/{project_id}/incidents/stats", "required_flags": ["--project"], "example": "pcl incidents --project <project-ref> --stats"},
-                    {"name": "detail", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}", "required_flags": ["--incident-id"], "example": "pcl incidents --incident-id <incident-id>"},
-                    {"name": "trace", "auth": false, "method": "GET", "path": "/views/incidents/{incidentId}/transactions/{txId}/trace", "required_flags": ["--incident-id", "--tx-id"], "example": "pcl incidents --incident-id <incident-id> --tx-id <tx-id>"},
+                    {"name": "detail", "auth": true, "method": "GET", "path": "/views/incidents/{incidentId}", "required_flags": ["--incident-id"], "example": "pcl incidents --incident-id <incident-id>"},
+                    {"name": "trace", "auth": true, "method": "GET", "path": "/views/incidents/{incidentId}/transactions/{txId}/trace", "required_flags": ["--incident-id", "--tx-id"], "example": "pcl incidents --incident-id <incident-id> --tx-id <invalidating-transaction-id>"},
                     {"name": "retry_trace", "auth": true, "method": "POST", "path": "/incidents/{incident_id}/transactions/{tx_id}/trace/retry", "required_flags": ["--incident-id", "--tx-id"], "body_template": "empty_object", "example": "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"}
                 ]
             },
@@ -2671,7 +2907,7 @@ pub fn api_manifest() -> Value {
                     {"name": "create", "auth": true, "method": "POST", "path": "/assertion_adopters", "body_template": "contracts", "example": "pcl contracts --create --body-template"},
                     {"name": "assign_project", "auth": true, "method": "POST", "path": "/assertion_adopters/assign-project", "body_template": "contracts_assign_project", "example": "pcl contracts --assign-project --body-template"},
                     {"name": "remove", "auth": true, "method": "DELETE", "path": "/projects/{project}/{aa_address}", "required_flags": ["--project", "--aa-address"], "example": "pcl contracts --project <project-ref> --aa-address 0x... --remove"},
-                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/assertion_adopters/{aa_address}/remove-assertions-calldata", "required_flags": ["--aa-address"], "example": "pcl contracts --aa-address 0x... --remove-calldata"}
+                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/assertion_adopters/{aa_address}/remove-assertions-calldata", "required_flags": ["--aa-address", "--assertion-id"], "optional_flags": ["--network", "--environment"], "query": {"assertion_ids": "<assertion-id>", "network": "<chain-id>", "environment": "production|staging"}, "example": "pcl contracts --aa-address 0x... --remove-calldata --network 1 --assertion-id 0x..."}
                 ]
             },
             {
@@ -2916,11 +3152,26 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
     }
     if args.remove_calldata {
         let address = required_arg(args.aa_address.as_deref(), "--aa-address")?;
-        return Ok(WorkflowRequest::get(
+        if args.assertion_ids.is_empty() {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: "--assertion-id is required for --remove-calldata".to_string(),
+            });
+        }
+        let mut request = WorkflowRequest::get(
             format!("/assertion_adopters/{address}/remove-assertions-calldata"),
             true,
             vec!["pcl releases --project <project-ref>".to_string()],
-        ));
+        );
+        push_query_string(&mut request.query, "network", args.network.as_deref());
+        push_query_string(
+            &mut request.query,
+            "environment",
+            args.environment.as_deref(),
+        );
+        for assertion_id in &args.assertion_ids {
+            push_query_string_value(&mut request.query, "assertion_ids", assertion_id.clone());
+        }
+        return Ok(request);
     }
     if args.remove {
         let project = required_arg(args.project.as_deref(), "--project")?;
@@ -3870,7 +4121,7 @@ fn incidents_request(args: &IncidentsArgs) -> Result<WorkflowRequest, ApiCommand
             path,
             query,
             body: None,
-            require_auth: false,
+            require_auth: true,
             next_actions,
         });
     }
