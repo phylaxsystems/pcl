@@ -30,5 +30,3 @@ credible = ["pcl-phoundry/credible", "pcl-core/credible"]
 full = ["credible"]
 
 [build-dependencies]
-vergen-gix = { version = "9", features = ["build", "cargo", "rustc", "si"] }
-anyhow = "1"
