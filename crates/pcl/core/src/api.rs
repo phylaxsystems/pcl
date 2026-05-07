@@ -5557,84 +5557,84 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
     let normalized_path = normalize_path_placeholders(path);
     match (method, normalized_path.as_str()) {
         (HttpMethod::Get, "/cli/auth/code") => {
-            vec![special_workflow(
+            single_special_workflow(
                 "auth",
                 "login_challenge",
                 "pcl auth login --no-wait --force --json",
                 "Device-login challenge is exposed as a structured auth command.",
-            )]
+            )
         }
         (HttpMethod::Get, "/cli/auth/status") => {
-            vec![special_workflow(
+            single_special_workflow(
                 "auth",
                 "poll",
                 "pcl auth poll --session-id <session-id> --device-secret <secret> --expires-at <rfc3339> --json",
                 "Polling is handled by the auth command returned in data.poll_command.",
-            )]
+            )
         }
         (HttpMethod::Post, "/cli/auth/verify") => {
-            vec![special_workflow(
+            single_special_workflow(
                 "auth",
                 "verify",
                 "pcl auth login --force --json",
                 "The login command owns verification and stores the resulting credentials.",
-            )]
+            )
         }
         (HttpMethod::Post, "/auth/refresh") => {
-            vec![special_workflow(
+            single_special_workflow(
                 "auth",
                 "refresh",
                 "pcl auth refresh --json",
                 "Refresh rotation is exposed as a structured auth command.",
-            )]
+            )
         }
         (HttpMethod::Get, "/openapi") => {
-            vec![special_workflow(
+            single_special_workflow(
                 "api",
                 "manifest",
                 "pcl api manifest --json",
                 "Use the CLI manifest/list/inspect surfaces for discovery instead of raw OpenAPI retrieval.",
-            )]
+            )
         }
         (HttpMethod::Get, "/projects") => {
-            vec![special_workflow(
+            single_special_workflow(
                 "projects",
                 "explorer",
                 "pcl projects --limit 10",
                 "Project exploration uses the normalized project view endpoint.",
-            )]
+            )
         }
         (HttpMethod::Get, "/public/incidents") => {
-            vec![special_workflow(
+            single_special_workflow(
                 "incidents",
                 "list_public",
                 "pcl incidents --limit 5",
                 "Public incident listing uses the normalized incident view endpoint.",
-            )]
+            )
         }
         (HttpMethod::Get, "/projects/{}/incidents") => {
-            vec![special_workflow(
+            single_special_workflow(
                 "incidents",
                 "list_project",
                 "pcl incidents --project <project-ref> --limit 50",
                 "Project incident listing uses the normalized incident view endpoint.",
-            )]
+            )
         }
         (HttpMethod::Get, "/incidents/{}") => {
-            vec![special_workflow(
+            single_special_workflow(
                 "incidents",
                 "detail",
                 "pcl incidents --incident-id <incident-id>",
                 "Incident detail uses the normalized incident view endpoint.",
-            )]
+            )
         }
         (HttpMethod::Get, "/incidents/{}/transactions/{}/trace") => {
-            vec![special_workflow(
+            single_special_workflow(
                 "incidents",
                 "trace",
                 "pcl incidents --incident-id <incident-id> --tx-id <tx-id>",
                 "Incident traces use the normalized incident view endpoint.",
-            )]
+            )
         }
         (HttpMethod::Get, "/projects/{}/submitted-assertions") => {
             vec![
@@ -5653,15 +5653,19 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             ]
         }
         (HttpMethod::Post, "/projects/{}/submitted-assertions") => {
-            vec![special_workflow(
+            single_special_workflow(
                 "releases",
                 "create",
                 "pcl apply --json",
                 "Submitting assertions is now represented by creating a release through pcl apply or pcl releases.",
-            )]
+            )
         }
         _ => Vec::new(),
     }
+}
+
+fn single_special_workflow(workflow: &str, action: &str, example: &str, note: &str) -> Vec<Value> {
+    vec![special_workflow(workflow, action, example, note)]
 }
 
 fn special_workflow(workflow: &str, action: &str, example: &str, note: &str) -> Value {
@@ -5711,41 +5715,9 @@ fn raw_api_use(
         });
     }
 
-    let normalized_path = normalize_path_placeholders(path);
-    let (policy, reason) = match (method, normalized_path.as_str()) {
-        (_, "/projects/{}/submitted-assertions") => {
-            (
-                "superseded",
-                "Submitted assertions were removed from the product workflow; use releases and registered assertions instead.",
-            )
-        }
-        (HttpMethod::Get, "/projects")
-        | (HttpMethod::Get, "/public/incidents")
-        | (HttpMethod::Get, "/projects/{}/incidents")
-        | (HttpMethod::Get, "/incidents/{}")
-        | (HttpMethod::Get, "/incidents/{}/transactions/{}/trace") => {
-            (
-                "legacy_view",
-                "A normalized view/workflow command should be used for normal product work.",
-            )
-        }
-        (HttpMethod::Get, "/openapi") => {
-            (
-                "discovery",
-                "Prefer pcl api manifest/list/inspect for agent-readable discovery.",
-            )
-        }
-        _ => {
-            (
-                "debug_escape_hatch",
-                "No first-class workflow is advertised; inspect first and preserve request IDs when using raw calls.",
-            )
-        }
-    };
-
     json!({
-        "policy": policy,
-        "reason": reason,
+        "policy": "debug_escape_hatch",
+        "reason": "No first-class workflow is advertised; inspect first and preserve request IDs when using raw calls.",
     })
 }
 

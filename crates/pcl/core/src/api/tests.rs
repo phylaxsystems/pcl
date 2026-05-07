@@ -1538,6 +1538,50 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
 }
 
 #[test]
+fn raw_api_policy_classifies_only_real_raw_fallbacks() {
+    let assert_policy = |method, path, operation, has_workflow, policy| {
+        assert_eq!(
+            raw_api_use(method, path, &operation, has_workflow)["policy"],
+            policy
+        );
+    };
+    let browser_bridge = json!({
+        "parameters": [
+            {"name": "authorization", "in": "header", "required": true}
+        ]
+    });
+
+    assert_policy(
+        HttpMethod::Post,
+        "/backtesting/events",
+        json!({}),
+        false,
+        "internal_service",
+    );
+    assert_policy(
+        HttpMethod::Post,
+        "/web/auth/bootstrap-session",
+        browser_bridge,
+        false,
+        "browser_session_bridge",
+    );
+    assert_policy(
+        HttpMethod::Get,
+        "/new-endpoint",
+        json!({}),
+        false,
+        "debug_escape_hatch",
+    );
+    assert_policy(
+        HttpMethod::Get,
+        "/public/incidents",
+        json!({}),
+        true,
+        "prefer_workflow",
+    );
+}
+
+#[test]
 fn protocol_manager_nonce_requires_and_sends_address() {
     let error = protocol_manager_request(&ProtocolManagerArgs {
         nonce: true,
