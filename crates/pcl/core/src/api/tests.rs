@@ -281,8 +281,32 @@ fn public_openapi_call_commands_opt_out_of_local_auth() {
         "pcl api call get /projects --allow-unauthenticated"
     );
     assert_eq!(
+        example_call(HttpMethod::Get, "/cli/auth/code", &health),
+        "pcl api call get /cli/auth/code --allow-unauthenticated"
+    );
+    assert_eq!(
+        example_call(HttpMethod::Get, "/cli/auth/status", &health),
+        "pcl api call get /cli/auth/status --allow-unauthenticated"
+    );
+    assert_eq!(
         example_call(HttpMethod::Post, "/projects", &json!({"requestBody": {}})),
         "pcl api call post /projects --body '{}'"
+    );
+    assert_eq!(
+        example_call(
+            HttpMethod::Post,
+            "/cli/auth/verify",
+            &json!({"requestBody": {}})
+        ),
+        "pcl api call post /cli/auth/verify --allow-unauthenticated --body '{}'"
+    );
+    assert_eq!(
+        example_call(
+            HttpMethod::Post,
+            "/auth/refresh",
+            &json!({"requestBody": {}})
+        ),
+        "pcl api call post /auth/refresh --allow-unauthenticated --body '{}'"
     );
 
     let public_incidents = json!({
@@ -844,6 +868,15 @@ async fn dry_run_projects_and_assertions_do_not_execute_requests() {
     assert_eq!(project_output["data"]["dry_run"], true);
     assert_eq!(project_output["data"]["request"]["method"], "POST");
     assert_eq!(project_output["data"]["request"]["path"], "/projects");
+    assert_eq!(
+        project_output["data"]["request"]["auth"]["stored_token_present"],
+        false
+    );
+    assert_eq!(
+        project_output["data"]["request"]["auth"]["will_attach_stored_token"],
+        false
+    );
+    assert_eq!(project_output["next_actions"][0], "pcl auth ensure --json");
 
     let assertion_output = api
         .run_assertions(
@@ -1355,6 +1388,7 @@ fn raw_api_dry_run_plans_request_without_auth_or_network() {
     };
     let query = vec!["force=true".to_string()];
     let header = vec!["x-test=yes".to_string()];
+    let config = CliConfig::default();
 
     let plan = api
         .raw_call_plan(
@@ -1368,6 +1402,7 @@ fn raw_api_dry_run_plans_request_without_auth_or_network() {
                 require_auth: true,
             },
             None,
+            &config,
         )
         .unwrap();
 
@@ -1384,6 +1419,8 @@ fn raw_api_dry_run_plans_request_without_auth_or_network() {
     );
     assert_eq!(plan["request"]["body"], json!({}));
     assert_eq!(plan["request"]["auth"]["required"], true);
+    assert_eq!(plan["request"]["auth"]["stored_token_present"], false);
+    assert_eq!(plan["request"]["auth"]["will_attach_stored_token"], false);
     assert_eq!(plan["request"]["side_effecting"], true);
     assert_eq!(plan["request"]["destructive"], true);
 }
@@ -1404,13 +1441,26 @@ fn workflow_dry_run_plans_destructive_requests() {
         require_auth: true,
         next_actions: Vec::new(),
     };
+    let config = CliConfig {
+        auth: Some(UserAuth {
+            access_token: "access-token".to_string(),
+            refresh_token: "refresh-token".to_string(),
+            expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+            refresh_expires_at: None,
+            user_id: None,
+            wallet_address: None,
+            email: None,
+        }),
+    };
 
-    let plan = api.workflow_request_plan(&request, None);
+    let plan = api.workflow_request_plan(&request, None, &config);
 
     assert_eq!(plan["dry_run"], true);
     assert_eq!(plan["valid"], true);
     assert_eq!(plan["request"]["method"], "DELETE");
     assert_eq!(plan["request"]["path"], "/projects/project-1");
+    assert_eq!(plan["request"]["auth"]["stored_token_present"], true);
+    assert_eq!(plan["request"]["auth"]["stored_token_valid"], true);
     assert_eq!(plan["request"]["auth"]["will_attach_stored_token"], true);
     assert_eq!(plan["request"]["side_effecting"], true);
     assert_eq!(plan["request"]["destructive"], true);
@@ -1672,6 +1722,61 @@ async fn raw_api_call_errors_include_request_id() {
             .any(|action| action.contains("req-123"))
     );
     mock.assert_async().await;
+}
+
+#[test]
+fn mutating_server_errors_mark_outcome_ambiguous() {
+    let error = ApiCommandError::HttpStatus {
+        method: "POST",
+        path: "/projects".to_string(),
+        status: 500,
+        request_id: Some("req-create-project".to_string()),
+        body: Box::new(json!({"message": "created but failed after commit"})),
+    };
+    let envelope = error.json_envelope();
+
+    assert_eq!(envelope["outcome_ambiguous"], true);
+    assert_eq!(envelope["error"]["mutation"]["side_effecting"], true);
+    assert_eq!(envelope["error"]["mutation"]["outcome_ambiguous"], true);
+    assert_eq!(
+        envelope["suggested_next_actions"],
+        json!(["reconcile_mutation", "contact_platform_with_request_id"])
+    );
+    assert!(
+        error
+            .next_actions()
+            .first()
+            .is_some_and(|action| action.contains("Do not retry immediately"))
+    );
+}
+
+#[test]
+fn forbidden_errors_preserve_permission_context() {
+    let error = ApiCommandError::HttpStatus {
+        method: "GET",
+        path: "/system-status".to_string(),
+        status: 403,
+        request_id: Some("req-disabled".to_string()),
+        body: Box::new(json!({"error": "System status checks are temporarily disabled"})),
+    };
+    let envelope = error.json_envelope();
+
+    assert_eq!(
+        envelope["suggested_next_actions"],
+        json!(["check_permissions", "inspect_response_body"])
+    );
+    assert!(
+        error
+            .next_actions()
+            .iter()
+            .any(|action| action.contains("API-provided reason"))
+    );
+    assert!(
+        !error
+            .next_actions()
+            .iter()
+            .any(|action| action == "pcl auth refresh --json")
+    );
 }
 
 #[test]

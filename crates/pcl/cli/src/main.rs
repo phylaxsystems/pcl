@@ -253,6 +253,7 @@ fn auth_error_envelope(err: &AuthError) -> Value {
         | AuthError::NoRefreshableSession
         | AuthError::MissingRefreshToken
         | AuthError::RefreshRejected { .. }
+        | AuthError::RefreshEndpointNotFound { .. }
         | AuthError::RefreshRateLimited { .. }
         | AuthError::RefreshServerError { .. }
         | AuthError::RefreshRequestFailed(_)
@@ -306,6 +307,16 @@ fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
                 "next_actions": ["pcl auth login --force"],
             })))
         }
+        AuthError::RefreshEndpointNotFound {
+            request_id,
+            message,
+        } => {
+            Some(auth_refresh_endpoint_not_found_envelope(
+                err,
+                request_id.as_ref(),
+                message.as_ref(),
+            ))
+        }
         AuthError::RefreshRateLimited {
             retry_after_seconds,
             request_id,
@@ -358,6 +369,29 @@ fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
         }
         _ => None,
     }
+}
+
+fn auth_refresh_endpoint_not_found_envelope(
+    err: &AuthError,
+    request_id: Option<&String>,
+    message: Option<&String>,
+) -> Value {
+    with_envelope_metadata(json!({
+        "status": "error",
+        "error": {
+            "code": "auth.refresh_unavailable",
+            "message": err.to_string(),
+            "recoverable": true,
+            "http": {
+                "status": 404,
+                "request_id": request_id,
+            },
+            "platform_code": "REFRESH_ENDPOINT_NOT_FOUND",
+            "request_id": request_id,
+            "details": message,
+        },
+        "next_actions": ["pcl auth login --force"],
+    }))
 }
 
 fn unix_timestamp_now() -> i64 {

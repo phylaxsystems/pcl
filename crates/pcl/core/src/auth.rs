@@ -1028,7 +1028,7 @@ pub async fn refresh_stored_auth(
                 request_id,
             )
         }
-        401 | 404 => {
+        401 => {
             let details = refresh_error_details(response).await;
             config.auth = None;
             config
@@ -1036,9 +1036,14 @@ pub async fn refresh_stored_auth(
                 .map_err(AuthError::ConfigError)?;
             Err(AuthError::RefreshRejected {
                 status: status.as_u16(),
-                code: details.code.or_else(|| {
-                    (status.as_u16() == 404).then(|| "REFRESH_ENDPOINT_NOT_FOUND".to_string())
-                }),
+                code: details.code,
+                request_id,
+                message: details.message,
+            })
+        }
+        404 => {
+            let details = refresh_error_details(response).await;
+            Err(AuthError::RefreshEndpointNotFound {
                 request_id,
                 message: details.message,
             })
@@ -1553,7 +1558,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_refresh_endpoint_returns_refresh_rejected_and_clears_credentials() {
+    async fn missing_refresh_endpoint_keeps_local_credentials() {
         let mut server = Server::new_async().await;
         let mock = server
             .mock("POST", "/api/v1/auth/refresh")
@@ -1578,21 +1583,17 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert!(matches!(error, AuthError::RefreshRejected { .. }));
-        if let AuthError::RefreshRejected {
-            status,
-            code,
+        assert!(matches!(error, AuthError::RefreshEndpointNotFound { .. }));
+        if let AuthError::RefreshEndpointNotFound {
             request_id,
             message,
         } = error
         {
-            assert_eq!(status, 404);
-            assert_eq!(code.as_deref(), Some("REFRESH_ENDPOINT_NOT_FOUND"));
             assert_eq!(request_id.as_deref(), Some("req_refresh_missing"));
             assert_eq!(message.as_deref(), Some("Not Found"));
         }
-        assert!(config.auth.is_none());
-        assert!(CliConfig::read_from_file(&cli_args).unwrap().auth.is_none());
+        assert!(config.auth.is_some());
+        assert!(CliConfig::read_from_file(&cli_args).unwrap().auth.is_some());
         mock.assert_async().await;
     }
 

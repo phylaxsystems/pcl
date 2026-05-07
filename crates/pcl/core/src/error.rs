@@ -164,6 +164,13 @@ pub enum AuthError {
         message: Option<String>,
     },
 
+    /// Error when the platform does not expose the CLI refresh endpoint.
+    #[error("Token refresh endpoint was not found on the platform. Run `pcl auth login --force`.")]
+    RefreshEndpointNotFound {
+        request_id: Option<String>,
+        message: Option<String>,
+    },
+
     /// Error when the platform rate-limits token refresh.
     #[error("Token refresh was rate limited. Retry after {retry_after_seconds:?} seconds.")]
     RefreshRateLimited {

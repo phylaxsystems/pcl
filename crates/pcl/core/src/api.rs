@@ -231,13 +231,20 @@ impl ApiCommandError {
                     "Use --allow-unauthenticated only for public endpoints".to_string(),
                 ]
             }
-            Self::HttpStatus {
-                status: 401 | 403, ..
-            } => {
+            Self::HttpStatus { status: 401, .. } => {
                 vec![
                     "pcl auth refresh --json".to_string(),
                     "pcl auth login".to_string(),
                     "Use --allow-unauthenticated only for public endpoints".to_string(),
+                ]
+            }
+            Self::HttpStatus { status: 403, .. } => {
+                vec![
+                    "Read error.http.body for the API-provided reason".to_string(),
+                    "Check whether the endpoint is enabled and your user has permission"
+                        .to_string(),
+                    "Use --allow-unauthenticated only for endpoints documented as public"
+                        .to_string(),
                 ]
             }
             Self::HttpStatus {
@@ -263,15 +270,29 @@ impl ApiCommandError {
                 ]
             }
             Self::HttpStatus {
-                status: 500..=599,
+                method,
+                status: status @ 500..=599,
                 request_id,
+                path,
                 ..
             } => {
-                let mut actions = vec![
-                    "Retry the same command once; server errors can be transient".to_string(),
-                    "pcl api manifest --json".to_string(),
-                    "Read error.http.body for API-provided failure details".to_string(),
-                ];
+                let mut actions = if mutation_outcome_ambiguous(method, *status) {
+                    vec![
+                        format!(
+                            "Do not retry immediately; inspect the target resource for {} {} to confirm whether the mutation applied",
+                            method.to_ascii_lowercase(),
+                            path
+                        ),
+                        "pcl requests list --json".to_string(),
+                        "Read error.http.body for API-provided failure details".to_string(),
+                    ]
+                } else {
+                    vec![
+                        "Retry the same command once; server errors can be transient".to_string(),
+                        "pcl api manifest --json".to_string(),
+                        "Read error.http.body for API-provided failure details".to_string(),
+                    ]
+                };
                 if let Some(request_id) = request_id {
                     actions.push(format!(
                         "Include request_id {request_id} when reporting this server error"
@@ -314,14 +335,22 @@ impl ApiCommandError {
             Self::Request(_) | Self::Url(_) => vec!["check_network", "retry"],
             Self::BodyFile { .. } | Self::Stdin(_) => vec!["fix_body_input", "retry"],
             Self::OutputFile { .. } => vec!["fix_output_path", "retry"],
-            Self::HttpStatus {
-                status: 401 | 403, ..
-            } => vec!["refresh_or_login", "retry"],
+            Self::HttpStatus { status: 401, .. } => vec!["refresh_or_login", "retry"],
+            Self::HttpStatus { status: 403, .. } => {
+                vec!["check_permissions", "inspect_response_body"]
+            }
             Self::HttpStatus {
                 status: 400 | 422, ..
             } => vec!["inspect_operation", "fix_request", "retry"],
             Self::HttpStatus { status: 404, .. } => vec!["inspect_manifest", "check_ids"],
             Self::HttpStatus { status: 429, .. } => vec!["retry_later", "reduce_request_rate"],
+            Self::HttpStatus {
+                method,
+                status: status @ 500..=599,
+                ..
+            } if mutation_outcome_ambiguous(method, *status) => {
+                vec!["reconcile_mutation", "contact_platform_with_request_id"]
+            }
             Self::HttpStatus {
                 status: 500..=599, ..
             } => {
@@ -349,6 +378,7 @@ impl ApiCommandError {
             body,
         } = self
         {
+            let outcome_ambiguous = mutation_outcome_ambiguous(method, *status);
             if let Some(request_id) = request_id {
                 error.insert("request_id".to_string(), json!(request_id));
             }
@@ -360,6 +390,13 @@ impl ApiCommandError {
                     "status": status,
                     "request_id": request_id,
                     "body": body.as_ref(),
+                }),
+            );
+            error.insert(
+                "mutation".to_string(),
+                json!({
+                    "side_effecting": method_side_effecting(method),
+                    "outcome_ambiguous": outcome_ambiguous,
                 }),
             );
         }
@@ -385,6 +422,10 @@ impl ApiCommandError {
             object.insert("method".to_string(), json!(method));
             object.insert("path".to_string(), json!(path));
             object.insert("request_id".to_string(), json!(request_id));
+            object.insert(
+                "outcome_ambiguous".to_string(),
+                json!(mutation_outcome_ambiguous(method, *status)),
+            );
         }
 
         with_envelope_metadata(envelope)
@@ -713,6 +754,14 @@ impl HttpMethod {
             Self::Delete => reqwest::Method::DELETE,
         }
     }
+}
+
+fn method_side_effecting(method: &str) -> bool {
+    !method.eq_ignore_ascii_case("GET") && !method.eq_ignore_ascii_case("HEAD")
+}
+
+fn mutation_outcome_ambiguous(method: &str, status: u16) -> bool {
+    method_side_effecting(method) && status >= 500
 }
 
 #[derive(Debug, Serialize)]
@@ -1745,7 +1794,7 @@ impl ApiArgs {
                     }
                 });
                 if self.dry_run {
-                    let output = dry_run_envelope(self.raw_call_plan(input, pagination)?);
+                    let output = dry_run_envelope(self.raw_call_plan(input, pagination, config)?);
                     print_output(&output, json_output)?;
                     return Ok(());
                 }
@@ -1952,7 +2001,7 @@ impl ApiArgs {
                 })
             });
             return Ok(dry_run_envelope(
-                self.workflow_request_plan(&request, pagination),
+                self.workflow_request_plan(&request, pagination, config),
             ));
         }
         if args.all {
@@ -2012,7 +2061,9 @@ impl ApiArgs {
         }
         let request = projects_request(args)?;
         if self.dry_run {
-            return Ok(dry_run_envelope(self.workflow_request_plan(&request, None)));
+            return Ok(dry_run_envelope(
+                self.workflow_request_plan(&request, None, config),
+            ));
         }
         let result = self
             .call_workflow_result(config, cli_args, &request, request_log_path)
@@ -2033,7 +2084,9 @@ impl ApiArgs {
         }
         let request = assertions_request(args)?;
         if self.dry_run {
-            return Ok(dry_run_envelope(self.workflow_request_plan(&request, None)));
+            return Ok(dry_run_envelope(
+                self.workflow_request_plan(&request, None, config),
+            ));
         }
         let result = self
             .call_workflow_result(config, cli_args, &request, request_log_path)
@@ -2050,7 +2103,9 @@ impl ApiArgs {
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         if self.dry_run {
-            return Ok(dry_run_envelope(self.workflow_request_plan(&request, None)));
+            return Ok(dry_run_envelope(
+                self.workflow_request_plan(&request, None, config),
+            ));
         }
         let result = self
             .call_workflow_result(config, cli_args, &request, request_log_path)
@@ -2058,7 +2113,12 @@ impl ApiArgs {
         Ok(workflow_success_envelope(result, request.next_actions))
     }
 
-    fn workflow_request_plan(&self, request: &WorkflowRequest, pagination: Option<Value>) -> Value {
+    fn workflow_request_plan(
+        &self,
+        request: &WorkflowRequest,
+        pagination: Option<Value>,
+        config: &CliConfig,
+    ) -> Value {
         let body = request.body.as_deref().map_or(Ok(Value::Null), |body| {
             serde_json::from_str(body).map_err(ApiCommandError::Json)
         });
@@ -2085,7 +2145,7 @@ impl ApiArgs {
                 "path": request.path.as_str(),
                 "query": query_pairs_value(&request.query),
                 "body": body,
-                "auth": self.auth_plan(request.require_auth),
+                "auth": self.auth_plan(request.require_auth, config),
                 "side_effecting": request.method != HttpMethod::Get,
                 "destructive": destructive,
                 "project_resolution": "not_performed",
@@ -2098,6 +2158,7 @@ impl ApiArgs {
         &self,
         input: ApiRequestInput<'_>,
         pagination: Option<RawPaginationOptions<'_>>,
+        config: &CliConfig,
     ) -> Result<Value, ApiCommandError> {
         let (path, mut query) = split_path_and_inline_query(input.path)?;
         query.extend(parse_key_values("query", input.query)?);
@@ -2116,7 +2177,7 @@ impl ApiArgs {
                 "query": query_pairs_value(&query),
                 "headers": query_pairs_value(&header),
                 "body": body.unwrap_or(Value::Null),
-                "auth": self.auth_plan(input.require_auth),
+                "auth": self.auth_plan(input.require_auth, config),
                 "side_effecting": input.method != HttpMethod::Get,
                 "destructive": destructive,
             },
@@ -2132,11 +2193,23 @@ impl ApiArgs {
         }))
     }
 
-    fn auth_plan(&self, require_auth: bool) -> Value {
-        let will_attach_stored_token = require_auth && !self.allow_unauthenticated;
+    fn auth_plan(&self, require_auth: bool, config: &CliConfig) -> Value {
+        let now = chrono::Utc::now();
+        let stored_token_present = config
+            .auth
+            .as_ref()
+            .is_some_and(|auth| !auth.access_token.trim().is_empty());
+        let stored_token_valid = config
+            .auth
+            .as_ref()
+            .is_some_and(|auth| !auth.access_token.trim().is_empty() && auth.expires_at > now);
+        let will_attach_stored_token =
+            require_auth && !self.allow_unauthenticated && stored_token_valid;
         json!({
             "required": require_auth,
             "will_attach_stored_token": will_attach_stored_token,
+            "stored_token_present": stored_token_present,
+            "stored_token_valid": stored_token_valid,
             "allow_unauthenticated": self.allow_unauthenticated,
         })
     }
@@ -2398,7 +2471,7 @@ impl ApiArgs {
                 "method": request.method.as_str(),
                 "path": path,
                 "query": query_pairs_value(&request.query),
-                "auth": self.auth_plan(request.require_auth),
+                "auth": self.auth_plan(request.require_auth, config),
                 "side_effecting": request.method != HttpMethod::Get,
                 "destructive": request_is_destructive(request.method, &request.path),
                 "retried_after_refresh": retried_after_refresh,
@@ -2753,14 +2826,35 @@ fn ok_envelope(data: Value) -> Value {
 }
 
 fn dry_run_envelope(data: Value) -> Value {
-    with_envelope_metadata(json!({
-        "status": "ok",
-        "data": data,
-        "next_actions": [
+    let auth_required = data
+        .pointer("/request/auth/required")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let allow_unauthenticated = data
+        .pointer("/request/auth/allow_unauthenticated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let stored_token_valid = data
+        .pointer("/request/auth/stored_token_valid")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let next_actions = if auth_required && !allow_unauthenticated && !stored_token_valid {
+        vec![
+            "pcl auth ensure --json",
+            "Authenticate before removing --dry-run",
+            "Use --body-template when constructing mutation bodies",
+        ]
+    } else {
+        vec![
             "Remove --dry-run to execute this request",
             "Use --json to consume this plan programmatically",
             "Use --body-template when constructing mutation bodies",
-        ],
+        ]
+    };
+    with_envelope_metadata(json!({
+        "status": "ok",
+        "data": data,
+        "next_actions": next_actions,
     }))
 }
 
@@ -5126,6 +5220,8 @@ fn public_raw_call_path(method: HttpMethod, path: &str) -> bool {
     match method {
         HttpMethod::Get => {
             path == "/health"
+                || path == "/cli/auth/code"
+                || path == "/cli/auth/status"
                 || path == "/openapi"
                 || path == "/projects"
                 || path == "/public/incidents"
@@ -5141,7 +5237,9 @@ fn public_raw_call_path(method: HttpMethod, path: &str) -> bool {
                 || path.starts_with("/web/verified-contract")
                 || (path.starts_with("/invitations/") && path.ends_with("/preview"))
         }
-        HttpMethod::Post => path.starts_with("/enforcer/"),
+        HttpMethod::Post => {
+            path == "/auth/refresh" || path == "/cli/auth/verify" || path.starts_with("/enforcer/")
+        }
         HttpMethod::Put | HttpMethod::Patch | HttpMethod::Delete => false,
     }
 }
