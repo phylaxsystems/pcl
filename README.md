@@ -23,7 +23,7 @@ pcl doctor
 pcl whoami
 ```
 
-`pcl doctor` checks local configuration and platform connectivity. `pcl whoami` prints the account and platform context the CLI will use.
+`pcl doctor` checks local configuration, platform connectivity, and CLI auth endpoint support. `pcl whoami` prints the account and platform context the CLI will use.
 
 ### Daily Workflow
 
@@ -62,6 +62,7 @@ When a workflow is not yet first-class, use the raw API surface:
 pcl api list --filter incidents
 pcl api inspect get_views_projects_project_id_incidents
 pcl api call get /views/projects/<project-id>/incidents --query environment=production
+pcl api coverage --json
 ```
 
 ### Command Map
@@ -73,12 +74,12 @@ pcl api call get /views/projects/<project-id>/incidents --query environment=prod
 | `pcl incidents`, `pcl projects`, `pcl assertions` | Natural platform workflow commands |
 | `pcl account`, `pcl contracts`, `pcl releases`, `pcl deployments` | Account, contract, release, and deployment workflows |
 | `pcl access`, `pcl integrations`, `pcl protocol-manager`, `pcl transfers`, `pcl events`, `pcl search` | Access control, integrations, protocol manager, transfer, audit, and search workflows |
-| `pcl doctor`, `pcl whoami` | Diagnose local/API readiness and inspect identity state |
+| `pcl doctor`, `pcl whoami` | Diagnose local/API readiness, target auth capability, and identity state |
 | `pcl workflows`, `pcl schema` | Agent-facing workflow recipes and command/action schemas |
 | `pcl --llms`, `pcl llms` | Print the CLI-native LLM usage guide |
 | `pcl export`, `pcl jobs`, `pcl artifacts`, `pcl requests` | Export JSONL artifacts and inspect local jobs, artifacts, and request logs |
 | `pcl completions` | Generate shell completion scripts |
-| `pcl api` | Discover, inspect, and call raw platform API endpoints |
+| `pcl api` | Discover, inspect, call, and audit raw platform API endpoints |
 | `pcl auth` | Authenticate with the Credible Layer platform |
 | `pcl config` | Manage CLI configuration |
 | `pcl download` | Download assertion source code for a protocol |
@@ -135,8 +136,8 @@ Auth commands use `--auth-url`/`PCL_AUTH_URL` when set, otherwise they follow `P
 before falling back to the production app URL.
 When `expires_soon` is true, renew before long-running work with `pcl auth ensure --force --json`
 or `pcl auth login --no-wait --json`.
-`pcl auth logout` revokes the platform session when possible before deleting local credentials;
-use `pcl auth logout --local` for local-only cleanup.
+`pcl auth logout` attempts remote logout first, then clears local credentials. Use
+`pcl auth logout --local` only when you explicitly want local cleanup.
 Repository-local agent instructions also live in [AGENTS.md](AGENTS.md).
 The core discovery commands in this section are exercised by `make agent-smoke`, which is part of
 `make ci`, so README/agent guidance should not drift from the CLI contract.
@@ -149,7 +150,7 @@ Start with CLI-native discovery. Do not scrape human help text unless the struct
 2. `pcl doctor` and `pcl whoami` for readiness and token truthfulness.
 3. `pcl workflows`, `pcl schema list`, and `pcl api manifest --json` for discovery.
 4. Top-level workflow commands for normal work.
-5. `pcl api list`, `pcl api inspect`, and `pcl api call` for raw OpenAPI fallback.
+5. `pcl api list`, `pcl api inspect`, `pcl api call`, and `pcl api coverage` for raw OpenAPI fallback.
 
 ### Output Contract
 
@@ -212,7 +213,6 @@ pcl projects --create --project-name demo --chain-id 1 --dry-run --json
 pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo --dry-run --json
 pcl assertions --project-id <project-ref> --json
 pcl assertions --adopter-address 0x... --network 1 --json
-pcl assertions --project-id <project-ref> --submitted --json
 pcl account --json
 pcl contracts --project <project-ref> --json
 pcl releases --project <project-ref> --json
@@ -263,6 +263,8 @@ pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow
 pcl api call get /views/projects/<project-id>/assertions
 pcl api call post /web/auth/logout --body '{}'
 ```
+
+`pcl api inspect` reports auth metadata and required header placeholders so generated examples are executable for endpoints such as browser-session bootstrap. Raw API calls record `operation_id` in request history when it can be resolved from OpenAPI; use `pcl api coverage --json` or `pcl api coverage --markdown api-coverage.md --json` after an exploration run to find untested endpoints, endpoints hit without a 2xx, and side-effecting operations that need reconciliation.
 
 ### Jobs, Artifacts, And Provenance
 

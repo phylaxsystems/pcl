@@ -31,7 +31,6 @@ use indicatif::{
 };
 use pcl_common::args::CliArgs;
 use reqwest::header::{
-    AUTHORIZATION,
     CONTENT_TYPE,
     HeaderMap,
     HeaderName,
@@ -170,13 +169,13 @@ pub enum AuthSubcommands {
 
     /// Logout from PCL
     #[command(
-        long_about = "Revokes the server session when possible and removes stored authentication credentials.",
+        long_about = "Attempts remote logout with the stored access token, then removes local authentication credentials. Use --local to skip the remote logout attempt.",
         after_help = "Examples:\n  pcl auth logout\n  pcl auth logout --local"
     )]
     Logout {
         #[arg(
             long,
-            help = "Only remove local credentials; do not call the platform logout endpoint"
+            help = "Only remove local credentials; skip the remote logout request"
         )]
         local: bool,
     },
@@ -197,6 +196,15 @@ impl AuthCommand {
                 | AuthSubcommands::Login { .. }
                 | AuthSubcommands::Poll { .. }
                 | AuthSubcommands::Refresh { .. }
+                | AuthSubcommands::Logout { .. }
+        )
+    }
+
+    pub fn should_force_config_write(&self) -> bool {
+        matches!(
+            self.command,
+            AuthSubcommands::Login { .. }
+                | AuthSubcommands::Poll { .. }
                 | AuthSubcommands::Logout { .. }
         )
     }
@@ -247,15 +255,7 @@ impl AuthCommand {
                 self.refresh(config, cli_args, json_output, *force).await
             }
             AuthSubcommands::Logout { local } => {
-                let logout = if *local {
-                    json!({
-                        "attempted": false,
-                        "success": null,
-                        "mode": "local",
-                    })
-                } else {
-                    self.remote_logout(config).await
-                };
+                let logout = self.remote_logout(config, *local).await;
                 Self::logout(config);
                 Self::print_output(
                     &json!({
@@ -305,6 +305,9 @@ impl AuthCommand {
                 }
                 Err(AuthError::RefreshRejected { .. }) => {
                     refresh_challenge_reason = Some(AuthChallengeReason::InvalidRefresh);
+                }
+                Err(AuthError::RefreshEndpointNotFound { .. }) => {
+                    refresh_challenge_reason = Some(AuthChallengeReason::RefreshUnavailable);
                 }
                 Err(AuthError::NoRefreshableSession | AuthError::MissingRefreshToken) => {}
                 Err(error) => return Err(error),
@@ -530,7 +533,7 @@ impl AuthCommand {
                 "state": "login_required",
                 "reason": reason.as_str(),
                 "requires_user": true,
-                "refresh_supported": true,
+                "refresh_supported": reason.refresh_supported(),
                 "refresh_attempted": reason.refresh_attempted(),
                 "device_url": device_url.as_str(),
                 "code": auth_response.code.as_str(),
@@ -741,71 +744,6 @@ impl AuthCommand {
         )
     }
 
-    async fn remote_logout(&self, config: &CliConfig) -> Value {
-        let Some(auth) = &config.auth else {
-            return json!({
-                "attempted": false,
-                "success": null,
-                "reason": "not_authenticated",
-            });
-        };
-
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            HeaderName::from_static("api-version"),
-            HeaderValue::from_static("1"),
-        );
-        let auth_header = match HeaderValue::from_str(&format!("Bearer {}", auth.access_token)) {
-            Ok(value) => value,
-            Err(error) => {
-                return json!({
-                    "attempted": false,
-                    "success": false,
-                    "error": format!("Invalid stored auth token header: {error}"),
-                });
-            }
-        };
-        headers.insert(AUTHORIZATION, auth_header);
-
-        let mut url = self.effective_auth_url();
-        url.set_path("/api/v1/web/auth/logout");
-        url.set_query(None);
-        let client = match reqwest::Client::builder().default_headers(headers).build() {
-            Ok(client) => client,
-            Err(error) => {
-                return json!({
-                    "attempted": false,
-                    "success": false,
-                    "error": error.to_string(),
-                });
-            }
-        };
-        let response = match client.post(url).json(&json!({})).send().await {
-            Ok(response) => response,
-            Err(error) => {
-                return json!({
-                    "attempted": true,
-                    "success": false,
-                    "error": error.to_string(),
-                });
-            }
-        };
-        let status = response.status();
-        let request_id = response
-            .headers()
-            .get("x-request-id")
-            .and_then(|value| value.to_str().ok())
-            .map(ToOwned::to_owned);
-        let body = response.text().await.ok();
-        json!({
-            "attempted": true,
-            "success": status.is_success(),
-            "http_status": status.as_u16(),
-            "request_id": request_id,
-            "body": body,
-        })
-    }
-
     /// Check authentication status using the generated client.
     async fn check_auth_status(
         client: &GeneratedClient,
@@ -836,6 +774,73 @@ impl AuthCommand {
             .send()
             .await
             .map_err(|error| AuthError::RefreshRequestFailed(error.to_string()))
+    }
+
+    async fn remote_logout(&self, config: &CliConfig, local_only: bool) -> Value {
+        if local_only {
+            return json!({
+                "attempted": false,
+                "success": null,
+                "mode": "local",
+                "reason": "local_only_requested",
+            });
+        }
+
+        let Some(auth) = config.auth.as_ref() else {
+            return json!({
+                "attempted": false,
+                "success": null,
+                "mode": "local",
+                "reason": "no_stored_auth",
+            });
+        };
+
+        let mut url = self.effective_auth_url();
+        url.set_path("/api/v1/web/auth/logout");
+        url.set_query(None);
+        let response = reqwest::Client::new()
+            .post(url)
+            .bearer_auth(&auth.access_token)
+            .json(&json!({}))
+            .send()
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                return json!({
+                    "attempted": true,
+                    "success": false,
+                    "mode": "remote",
+                    "endpoint": "/api/v1/web/auth/logout",
+                    "error": error.to_string(),
+                });
+            }
+        };
+
+        let status = response.status();
+        let request_id = request_id_from_headers(response.headers());
+        if status.is_success() {
+            return json!({
+                "attempted": true,
+                "success": true,
+                "mode": "remote",
+                "endpoint": "/api/v1/web/auth/logout",
+                "http_status": status.as_u16(),
+                "request_id": request_id,
+            });
+        }
+
+        let details = refresh_error_details(response).await;
+        json!({
+            "attempted": true,
+            "success": false,
+            "mode": "remote",
+            "endpoint": "/api/v1/web/auth/logout",
+            "http_status": status.as_u16(),
+            "request_id": request_id,
+            "error_code": details.code,
+            "error": details.message,
+        })
     }
 
     async fn sleep_before_next_poll(
@@ -1238,6 +1243,7 @@ enum AuthChallengeReason {
     ExpiresSoon,
     Forced,
     InvalidRefresh,
+    RefreshUnavailable,
 }
 
 impl AuthChallengeReason {
@@ -1248,11 +1254,16 @@ impl AuthChallengeReason {
             Self::ExpiresSoon => "expires_soon",
             Self::Forced => "forced_login",
             Self::InvalidRefresh => "invalid_refresh_token",
+            Self::RefreshUnavailable => "refresh_unavailable",
         }
     }
 
     fn refresh_attempted(self) -> bool {
-        matches!(self, Self::InvalidRefresh)
+        matches!(self, Self::InvalidRefresh | Self::RefreshUnavailable)
+    }
+
+    fn refresh_supported(self) -> bool {
+        !matches!(self, Self::RefreshUnavailable)
     }
 }
 
@@ -1716,6 +1727,39 @@ mod tests {
         let mut config = create_test_config();
         AuthCommand::logout(&mut config);
         assert!(config.auth.is_none());
+    }
+
+    #[tokio::test]
+    async fn remote_logout_posts_to_platform_before_local_cleanup() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/v1/web/auth/logout")
+            .match_header("authorization", "Bearer test_token")
+            .match_header(
+                "content-type",
+                Matcher::Regex("application/json.*".to_string()),
+            )
+            .match_body(Matcher::Json(json!({})))
+            .with_status(200)
+            .with_header("x-request-id", "req_logout_ok")
+            .with_body(r#"{"success":true}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let config = create_test_config();
+        let auth_url = server.url();
+        let cmd =
+            AuthCommand::try_parse_from(vec!["auth", "--auth-url", auth_url.as_str(), "logout"])
+                .unwrap();
+
+        let logout = cmd.remote_logout(&config, false).await;
+
+        assert_eq!(logout["attempted"], true);
+        assert_eq!(logout["success"], true);
+        assert_eq!(logout["mode"], "remote");
+        assert_eq!(logout["http_status"], 200);
+        assert_eq!(logout["request_id"], "req_logout_ok");
+        mock.assert_async().await;
     }
 
     #[test]

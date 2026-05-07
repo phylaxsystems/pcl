@@ -169,6 +169,11 @@ impl Commands {
         matches!(self, Self::Config(config) if config.can_run_without_valid_config())
             || matches!(self, Self::Auth(auth) if auth.can_run_without_valid_config())
     }
+
+    pub fn should_force_config_write(&self) -> bool {
+        matches!(self, Self::Config(config) if config.should_force_config_write())
+            || matches!(self, Self::Auth(auth) if auth.should_force_config_write())
+    }
 }
 
 #[derive(clap::Args)]

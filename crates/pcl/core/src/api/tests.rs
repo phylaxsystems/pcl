@@ -432,6 +432,103 @@ fn public_openapi_call_commands_opt_out_of_local_auth() {
 }
 
 #[test]
+fn openapi_call_commands_include_required_headers() {
+    let bootstrap = json!({
+        "parameters": [
+            {
+                "name": "authorization",
+                "in": "header",
+                "required": true,
+                "schema": {
+                    "type": "string",
+                    "pattern": "^Bearer .+$"
+                }
+            }
+        ],
+        "requestBody": {}
+    });
+
+    assert_eq!(
+        example_call(HttpMethod::Post, "/web/auth/bootstrap-session", &bootstrap),
+        "pcl api call post /web/auth/bootstrap-session --header 'authorization=Bearer <privy-token>' --body '{}'"
+    );
+    assert_eq!(
+        operation_input_placeholders("/web/auth/bootstrap-session", &bootstrap),
+        vec!["header:authorization".to_string(), "body".to_string()]
+    );
+
+    let metadata =
+        operation_auth_metadata(HttpMethod::Post, "/web/auth/bootstrap-session", &bootstrap);
+    assert_eq!(metadata["browser_session_token_required"], true);
+    assert_eq!(metadata["stored_cli_auth"], false);
+}
+
+#[test]
+fn api_coverage_matches_request_log_to_openapi_operations() {
+    let temp_dir = tempfile::tempdir().expect("create tempdir");
+    let request_log = temp_dir.path().join("requests.jsonl");
+    crate::request_log::append_request_record_at(
+        &request_log,
+        &json!({
+            "timestamp": "2026-05-07T00:00:00Z",
+            "kind": "raw",
+            "method": "GET",
+            "path": "/views/projects/project-1/incidents",
+            "status": 200,
+            "success": true,
+            "request_id": "req_ok",
+        }),
+    )
+    .expect("append first request");
+    crate::request_log::append_request_record_at(
+        &request_log,
+        &json!({
+            "timestamp": "2026-05-07T00:01:00Z",
+            "kind": "raw",
+            "method": "POST",
+            "path": "/projects",
+            "status": 500,
+            "success": false,
+            "request_id": "req_500",
+            "operation_id": "post_projects",
+        }),
+    )
+    .expect("append second request");
+
+    let spec = json!({
+        "paths": {
+            "/views/projects/{projectId}/incidents": {
+                "get": {
+                    "operationId": "get_project_incidents"
+                }
+            },
+            "/projects": {
+                "post": {
+                    "operationId": "post_projects"
+                }
+            },
+            "/health": {
+                "get": {
+                    "operationId": "get_health"
+                }
+            }
+        }
+    });
+
+    let coverage =
+        api_coverage(&spec, &request_log, 100, "http://localhost:3000").expect("coverage");
+    assert_eq!(coverage["total_operations"], 3);
+    assert_eq!(coverage["no_hit_count"], 1);
+    assert_eq!(coverage["no_2xx_count"], 1);
+    assert_eq!(coverage["write_no_2xx_count"], 1);
+    assert_eq!(
+        coverage["no_2xx"][0]["operation_id"],
+        json!("post_projects")
+    );
+    assert_eq!(coverage["no_hit"][0]["operation_id"], json!("get_health"));
+}
+
+#[test]
 fn synthesizes_missing_operation_ids() {
     assert_eq!(
         synthetic_operation_id(HttpMethod::Post, "/web/auth/bootstrap-session"),
@@ -943,8 +1040,7 @@ async fn dry_run_projects_and_assertions_do_not_execute_requests() {
             &cli_args,
             &AssertionsArgs {
                 project_id: Some("project-1".to_string()),
-                submit: true,
-                body: Some(r#"{"assertions":[]}"#.to_string()),
+                registered: true,
                 ..assertions_args(None)
             },
             test_request_log_path(),
@@ -953,10 +1049,10 @@ async fn dry_run_projects_and_assertions_do_not_execute_requests() {
         .unwrap();
     assert_eq!(assertion_output["status"], "ok");
     assert_eq!(assertion_output["data"]["dry_run"], true);
-    assert_eq!(assertion_output["data"]["request"]["method"], "POST");
+    assert_eq!(assertion_output["data"]["request"]["method"], "GET");
     assert_eq!(
         assertion_output["data"]["request"]["path"],
-        "/projects/project-1/submitted-assertions"
+        "/projects/project-1/registered-assertions"
     );
 }
 
@@ -985,12 +1081,12 @@ fn builds_project_create_body_from_typed_flags() {
 
 #[test]
 fn builds_assertion_lifecycle_requests() {
-    let submitted = assertions_request(&AssertionsArgs {
-        submitted: true,
+    let registered = assertions_request(&AssertionsArgs {
+        registered: true,
         ..assertions_args(Some("project-1"))
     })
     .unwrap();
-    assert_eq!(submitted.path, "/projects/project-1/submitted-assertions");
+    assert_eq!(registered.path, "/projects/project-1/registered-assertions");
 
     let remove = assertions_request(&AssertionsArgs {
         remove_calldata: true,
@@ -1001,6 +1097,22 @@ fn builds_assertion_lifecycle_requests() {
         remove.path,
         "/projects/project-1/remove-assertions-calldata"
     );
+}
+
+#[test]
+fn submitted_assertion_workflows_are_removed() {
+    let error = assertions_request(&AssertionsArgs {
+        submitted: true,
+        ..assertions_args(Some("project-1"))
+    })
+    .unwrap_err();
+
+    match error {
+        ApiCommandError::InvalidWorkflow { message } => {
+            assert!(message.contains("Submitted assertions have been removed"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
 
 #[test]

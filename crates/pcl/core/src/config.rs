@@ -45,7 +45,7 @@ pub const AUTH_EXPIRES_SOON_SECONDS: i64 = 300;
 ///
 /// This struct holds all the configuration data for the PCL tool,
 /// including authentication details.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CliConfig {
     /// Optional authentication details
     pub auth: Option<UserAuth>,
@@ -69,6 +69,10 @@ enum ConfigCommand {
 
 impl ConfigArgs {
     pub fn can_run_without_valid_config(&self) -> bool {
+        matches!(self.command, ConfigCommand::Delete)
+    }
+
+    pub fn should_force_config_write(&self) -> bool {
         matches!(self.command, ConfigCommand::Delete)
     }
 
@@ -151,6 +155,22 @@ impl CliConfig {
                 .clone()
                 .unwrap_or(Self::get_config_dir()),
         )
+    }
+
+    /// Writes the configuration only when the on-disk config still matches
+    /// the snapshot read at process start. This prevents a read-only command
+    /// from overwriting credentials that another process just refreshed.
+    pub fn write_to_file_if_unchanged(
+        &self,
+        cli_args: &CliArgs,
+        expected_current: &Self,
+    ) -> Result<bool, ConfigError> {
+        let current = Self::read_from_file(cli_args)?;
+        if current != *expected_current {
+            return Ok(false);
+        }
+        self.write_to_file(cli_args)?;
+        Ok(true)
     }
 
     /// Writes the configuration to a specific directory
@@ -479,7 +499,7 @@ impl fmt::Display for CliConfig {
 }
 
 /// Authentication details for a user
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserAuth {
     /// Access token for API authentication
     pub access_token: String,
@@ -674,6 +694,62 @@ mod tests {
         assert!(formatted_cfg.contains("2022-12-31 16:00:00 UTC"));
         assert!(formatted_cfg.contains("Access Token: [Set]"));
         assert!(formatted_cfg.contains("Refresh Token: [Set]"));
+    }
+
+    #[test]
+    fn write_to_file_if_unchanged_preserves_newer_disk_auth() {
+        let temp_dir = TempDir::new().unwrap();
+        let cli_args = CliArgs {
+            config_dir: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        let old_config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "old_access".to_string(),
+                refresh_token: "old_refresh".to_string(),
+                expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: None,
+            }),
+        };
+        let stale_process_config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "normalized_old_access".to_string(),
+                refresh_token: "old_refresh".to_string(),
+                expires_at: DateTime::from_timestamp(4102444800, 0).unwrap(),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: None,
+            }),
+        };
+        let newer_config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "new_access".to_string(),
+                refresh_token: "new_refresh".to_string(),
+                expires_at: DateTime::from_timestamp(4102444800, 0).unwrap(),
+                refresh_expires_at: Some(DateTime::from_timestamp(4105036800, 0).unwrap()),
+                user_id: None,
+                wallet_address: None,
+                email: None,
+            }),
+        };
+
+        old_config.write_to_file(&cli_args).unwrap();
+        newer_config.write_to_file(&cli_args).unwrap();
+
+        let wrote = stale_process_config
+            .write_to_file_if_unchanged(&cli_args, &old_config)
+            .unwrap();
+
+        assert!(!wrote);
+        let persisted = CliConfig::read_from_file(&cli_args).unwrap();
+        assert_eq!(
+            persisted.auth.as_ref().unwrap().refresh_token,
+            "new_refresh"
+        );
     }
 
     #[test]

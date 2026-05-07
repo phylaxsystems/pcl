@@ -91,13 +91,27 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         }
     };
+    let original_config = config.clone();
     config.normalize_auth_expiry_from_access_token();
+    let baseline_config = config.clone();
 
     let should_write_after_invalid_config = cli.command.should_write_after_invalid_config();
+    let should_force_config_write = cli.command.should_force_config_write();
     let result = async {
         run_command(cli.command, &cli.args, &mut config, cli.args.json_output()).await?;
-        if read_valid_config || should_write_after_invalid_config {
-            config.write_to_file(&cli.args)?;
+        let command_changed_config = config != baseline_config;
+        let passive_config_changed = baseline_config != original_config;
+        let should_persist_config = command_changed_config
+            || passive_config_changed
+            || (!read_valid_config && should_write_after_invalid_config);
+        let force_config_write =
+            should_force_config_write && (command_changed_config || !read_valid_config);
+        if (read_valid_config || should_write_after_invalid_config) && should_persist_config {
+            if read_valid_config && !force_config_write {
+                config.write_to_file_if_unchanged(&cli.args, &original_config)?;
+            } else {
+                config.write_to_file(&cli.args)?;
+            }
         }
         Ok::<_, Report>(())
     }

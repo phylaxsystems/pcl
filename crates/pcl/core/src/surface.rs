@@ -450,6 +450,7 @@ impl DoctorArgs {
 
         if !self.offline {
             checks.push(health_check(&self.api_url).await);
+            checks.push(auth_capability_check(&self.api_url).await);
         }
 
         let status = if checks
@@ -1340,7 +1341,7 @@ fn llms_guide() -> Value {
         "no_mcp_required": true,
         "principles": [
             "Use top-level workflow commands first.",
-            "Use pcl api list/inspect/call as the raw OpenAPI escape hatch.",
+            "Use pcl api list/inspect/call/coverage as the raw OpenAPI escape hatch.",
             "Treat every output as an envelope with status, data, error, and next_actions.",
             "Use JSONL export artifacts for long investigations.",
             "Use request IDs from errors and pcl requests for audit trails.",
@@ -1355,7 +1356,8 @@ fn llms_guide() -> Value {
             "pcl api manifest --json",
             "top-level workflow commands",
             "pcl api inspect <operation-id> --json",
-            "pcl api call <method> <path> --json"
+            "pcl api call <method> <path> --json",
+            "pcl api coverage --json"
         ],
         "orientation": [
             {
@@ -1406,7 +1408,7 @@ fn llms_guide() -> Value {
             "single_envelope_login": "pcl auth login --no-wait --force --json returns status=action_required with device_url, code, device_secret, expires_at, and poll_command.",
             "poll_command": "pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --json",
             "refresh_command": "pcl auth refresh --json rotates the stored refresh token when available; if the refresh token is missing or rejected, it returns a login challenge.",
-            "logout": "pcl auth logout attempts remote revocation before local cleanup; pass --local for local-only cleanup."
+            "logout": "pcl auth logout attempts remote logout first, then clears local credentials; pass --local to skip the remote request."
         },
         "mutation_safety": {
             "order": ["--body-template", "--dry-run", "typed flags", "--field key=value", "--body-file body.json"],
@@ -1417,7 +1419,8 @@ fn llms_guide() -> Value {
             "inspect_first": "Use pcl api inspect <operation-id> --json before unfamiliar calls.",
             "query_strings": "pcl api call accepts both /path?key=value and repeated --query key=value.",
             "public_endpoints": "Known public raw calls do not attach stored tokens; --allow-unauthenticated remains the explicit opt-out for other public endpoints.",
-            "pagination": "Use --paginate <array-field> --limit <n> --max-pages <n> and optionally --jsonl --output <file> for generic GET pagination."
+            "pagination": "Use --paginate <array-field> --limit <n> --max-pages <n> and optionally --jsonl --output <file> for generic GET pagination.",
+            "coverage": "Use pcl api coverage --json after exploration to find no-hit, hit-without-2xx, side-effecting-without-2xx, and unmatched request-log records."
         },
         "jobs_and_artifacts": {
             "export": "pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --checkpoint checkpoint.json --resume --continue-on-error --json",
@@ -1554,6 +1557,92 @@ async fn health_check(api_url: &url::Url) -> Value {
     }
 }
 
+async fn auth_capability_check(api_url: &url::Url) -> Value {
+    let url = match build_api_url(api_url, "/openapi") {
+        Ok(url) => url,
+        Err(error) => {
+            return json!({
+                "name": "auth_capabilities",
+                "status": "error",
+                "error": error.to_string(),
+            });
+        }
+    };
+    let response = reqwest::Client::new().get(url).send().await;
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+            return json!({
+                "name": "auth_capabilities",
+                "status": "error",
+                "error": error.to_string(),
+            });
+        }
+    };
+    let http_status = response.status();
+    let request_id = request_id_from_headers(response.headers());
+    if !http_status.is_success() {
+        return json!({
+            "name": "auth_capabilities",
+            "status": "warning",
+            "http_status": http_status.as_u16(),
+            "request_id": request_id,
+            "error": "OpenAPI manifest could not be fetched, so CLI auth support could not be verified.",
+        });
+    }
+    let spec = match response.json::<Value>().await {
+        Ok(spec) => spec,
+        Err(error) => {
+            return json!({
+                "name": "auth_capabilities",
+                "status": "warning",
+                "request_id": request_id,
+                "error": error.to_string(),
+            });
+        }
+    };
+    let refresh_supported = openapi_has_operation(&spec, "/auth/refresh", "post");
+    let login_supported = openapi_has_operation(&spec, "/cli/auth/code", "get")
+        && openapi_has_operation(&spec, "/cli/auth/status", "get")
+        && openapi_has_operation(&spec, "/cli/auth/verify", "post");
+    let logout_revocation_supported = openapi_has_operation(&spec, "/web/auth/logout", "post")
+        || openapi_has_operation(&spec, "/cli/auth/revoke", "post")
+        || openapi_has_operation(&spec, "/auth/revoke", "post");
+    let status = if refresh_supported && login_supported {
+        "ok"
+    } else {
+        "warning"
+    };
+    json!({
+        "name": "auth_capabilities",
+        "status": status,
+        "request_id": request_id,
+        "refresh_supported": refresh_supported,
+        "login_supported": login_supported,
+        "logout_revocation_supported": logout_revocation_supported,
+        "refresh_endpoint": "/api/v1/auth/refresh",
+        "logout_endpoint": "/api/v1/web/auth/logout",
+        "login_endpoints": {
+            "code": "/api/v1/cli/auth/code",
+            "status": "/api/v1/cli/auth/status",
+            "verify": "/api/v1/cli/auth/verify",
+        },
+        "commands": [
+            "pcl auth refresh --json",
+            "pcl auth login --no-wait --json",
+            "pcl auth status --json",
+        ],
+    })
+}
+
+fn openapi_has_operation(spec: &Value, path: &str, method: &str) -> bool {
+    spec.get("paths")
+        .and_then(Value::as_object)
+        .and_then(|paths| paths.get(path))
+        .and_then(|path_item| path_item.get(method))
+        .is_some()
+}
+
 fn workflow_recipes() -> Vec<Value> {
     vec![
         json!({
@@ -1565,15 +1654,6 @@ fn workflow_recipes() -> Vec<Value> {
                 {"command": "pcl incidents --incident-id <incident-id>", "output": "incident detail"},
                 {"command": "pcl incidents --incident-id <incident-id> --tx-id <tx-id>", "output": "transaction trace"},
                 {"command": "pcl requests list --limit 20", "output": "API request IDs and status history"}
-            ],
-        }),
-        json!({
-            "name": "submit-assertions",
-            "description": "Construct, submit, and verify submitted assertion state.",
-            "steps": [
-                {"command": "pcl assertions --project-id <project-id> --body-template", "output": "submission body contract"},
-                {"command": "pcl assertions --project-id <project-id> --submit --body-file submitted-assertions.json", "output": "submit result"},
-                {"command": "pcl assertions --project-id <project-id> --submitted", "output": "submitted assertion state"}
             ],
         }),
         json!({

@@ -29,6 +29,19 @@ email = "agent@example.com"
     .expect("write legacy test config");
 }
 
+fn write_expired_refreshable_auth_config(config_dir: &std::path::Path) {
+    fs::write(
+        config_dir.join("config.toml"),
+        r#"[auth]
+access_token = "expired-token"
+refresh_token = "refresh-token"
+expires_at = 1
+email = "agent@example.com"
+"#,
+    )
+    .expect("write expired test config");
+}
+
 #[test]
 fn auth_login_json_with_existing_auth_outputs_json_envelope() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
@@ -172,6 +185,60 @@ fn auth_ensure_json_without_auth_outputs_login_challenge() {
             .expect("poll command")
             .contains("--expires-at")
     );
+    auth_code.assert();
+}
+
+#[test]
+fn auth_ensure_json_falls_back_to_login_when_refresh_endpoint_is_missing() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_expired_refreshable_auth_config(temp_dir.path());
+    let mut server = mockito::Server::new();
+    let refresh = server
+        .mock("POST", "/api/v1/auth/refresh")
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req_refresh_missing")
+        .with_body(r#"{"error":"Not Found"}"#)
+        .expect(1)
+        .create();
+    let auth_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2099-12-31T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "ensure",
+        ])
+        .output()
+        .expect("run pcl auth ensure");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "action_required");
+    assert_eq!(envelope["data"]["reason"], "refresh_unavailable");
+    assert_eq!(envelope["data"]["refresh_supported"], false);
+    assert_eq!(envelope["data"]["refresh_attempted"], true);
+    assert_eq!(envelope["data"]["code"], "123456");
+    let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
+    assert!(config.contains("[auth]"));
+    refresh.assert();
     auth_code.assert();
 }
 
@@ -618,23 +685,27 @@ fn auth_poll_json_pending_returns_pending_envelope_without_writing_auth() {
     assert_eq!(envelope["status"], "pending");
     assert_eq!(envelope["event"], "auth.login_pending");
     assert_eq!(envelope["terminal"], false);
-    let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
+    let config = fs::read_to_string(temp_dir.path().join("config.toml")).unwrap_or_default();
     assert!(!config.contains("[auth]"));
     auth_status.assert();
 }
 
 #[test]
-fn auth_logout_json_revokes_remote_then_clears_local_config() {
+fn auth_logout_json_clears_local_config_after_remote_logout() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     write_valid_auth_config(temp_dir.path());
     let mut server = mockito::Server::new();
     let logout = server
         .mock("POST", "/api/v1/web/auth/logout")
         .match_header("authorization", "Bearer test-token")
+        .match_header(
+            "content-type",
+            mockito::Matcher::Regex("application/json.*".to_string()),
+        )
+        .match_body(mockito::Matcher::Json(serde_json::json!({})))
         .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_header("x-request-id", "req_test_logout")
-        .with_body(r#"{"ok":true}"#)
+        .with_header("x-request-id", "req_logout_ok")
+        .with_body(r#"{"success":true}"#)
         .expect(1)
         .create();
 
@@ -660,11 +731,16 @@ fn auth_logout_json_revokes_remote_then_clears_local_config() {
     let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
     assert_eq!(envelope["status"], "ok");
     assert_eq!(envelope["data"]["authenticated"], false);
-    assert_eq!(envelope["data"]["remote_logout"]["attempted"], true);
-    assert_eq!(envelope["data"]["remote_logout"]["success"], true);
     assert_eq!(
-        envelope["data"]["remote_logout"]["request_id"],
-        "req_test_logout"
+        envelope["data"]["remote_logout"],
+        serde_json::json!({
+            "attempted": true,
+            "success": true,
+            "mode": "remote",
+            "endpoint": "/api/v1/web/auth/logout",
+            "http_status": 200,
+            "request_id": "req_logout_ok",
+        })
     );
     let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
     assert!(!config.contains("[auth]"));
@@ -697,7 +773,15 @@ fn auth_logout_local_can_repair_invalid_config() {
     let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
     let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
     assert_eq!(envelope["status"], "ok");
-    assert_eq!(envelope["data"]["remote_logout"]["attempted"], false);
+    assert_eq!(
+        envelope["data"]["remote_logout"],
+        serde_json::json!({
+            "attempted": false,
+            "success": null,
+            "mode": "local",
+            "reason": "local_only_requested",
+        })
+    );
     assert_eq!(fs::read_to_string(config_path).expect("read config"), "");
 }
 
@@ -926,7 +1010,7 @@ fn api_dry_run_project_create_does_not_hit_network() {
 }
 
 #[test]
-fn api_dry_run_assertion_submit_does_not_hit_network() {
+fn api_dry_run_assertion_registered_does_not_hit_network() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     write_valid_auth_config(temp_dir.path());
 
@@ -942,9 +1026,7 @@ fn api_dry_run_assertion_submit_does_not_hit_network() {
             "assertions",
             "--project-id",
             "project-1",
-            "--submit",
-            "--body",
-            r#"{"assertions":[]}"#,
+            "--registered",
         ])
         .output()
         .expect("run pcl api assertions dry-run");
@@ -958,10 +1040,10 @@ fn api_dry_run_assertion_submit_does_not_hit_network() {
     let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
     assert_eq!(envelope["status"], "ok");
     assert_eq!(envelope["data"]["dry_run"], true);
-    assert_eq!(envelope["data"]["request"]["method"], "POST");
+    assert_eq!(envelope["data"]["request"]["method"], "GET");
     assert_eq!(
         envelope["data"]["request"]["path"],
-        "/projects/project-1/submitted-assertions"
+        "/projects/project-1/registered-assertions"
     );
 }
 

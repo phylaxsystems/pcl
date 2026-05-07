@@ -51,7 +51,7 @@ Prefer the surfaces in this order:
 2. `pcl workflows` for task recipes.
 3. `pcl schema list` and `pcl schema get <workflow> --action <action>` for workflow action contracts.
 4. Top-level workflow commands like `pcl incidents`, `pcl projects`, `pcl assertions`, `pcl account`, `pcl releases`, and `pcl protocol-manager`.
-5. `pcl api list`, `pcl api inspect`, and `pcl api call` as the raw OpenAPI escape hatch.
+5. `pcl api list`, `pcl api inspect`, `pcl api call`, and `pcl api coverage` as the raw OpenAPI escape hatch.
 
 ## Safe Execution
 
@@ -74,7 +74,16 @@ pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated --jso
 pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json
 ```
 
-Use `pcl api inspect <operation-id> --json` before calling unfamiliar endpoints. For required request bodies, inspect the operation and prefer `--body-file`.
+Use `pcl api inspect <operation-id> --json` before calling unfamiliar endpoints. Inspect includes auth metadata and required header placeholders; preserve required `--header` values in generated examples. For required request bodies, inspect the operation and prefer `--body-file`.
+
+Raw API calls persist `operation_id` in request history when the live OpenAPI manifest can resolve the method/path. After exploratory testing, run:
+
+```bash
+pcl api coverage --json
+pcl api coverage --markdown api-coverage.md --json
+```
+
+Use `no_hit`, `no_2xx`, `write_no_2xx`, and `unmatched_records` to decide what still needs manual reconciliation.
 
 ## Long Jobs And Artifacts
 
@@ -100,7 +109,7 @@ pcl auth ensure --json
 pcl whoami --json
 ```
 
-Do not treat a stored token as valid unless `token_valid` is true and `expired` is false. Public endpoints should be called with `--allow-unauthenticated` when using raw `pcl api call`.
+Do not treat a stored token as valid unless `token_valid` is true and `expired` is false. `pcl doctor --json` also checks whether the target API advertises CLI login, refresh, and remote logout/revocation endpoints. Public endpoints should be called with `--allow-unauthenticated` when using raw `pcl api call`.
 
 Use `pcl auth ensure --json` before long workflows. It returns `status: ok` when auth is usable, or one `status: action_required` envelope with `device_url`, `code`, `device_secret`, and `poll_command` when user login is needed. Run `poll_command` until it returns `status: ok` or `status: error`.
 

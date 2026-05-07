@@ -30,6 +30,7 @@ use serde_json::{
     json,
 };
 use std::{
+    collections::BTreeMap,
     fmt::Write as _,
     fs,
     io::Read,
@@ -97,6 +98,13 @@ pub enum ApiCommandError {
         source: std::io::Error,
     },
 
+    #[error("Failed to read request log `{path}`: {source}")]
+    RequestLog {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[error("Failed to write output file `{path}`: {source}")]
     OutputFile {
         path: PathBuf,
@@ -144,6 +152,7 @@ impl ApiCommandError {
             Self::InvalidPath(_) => "input.invalid_path",
             Self::Url(_) => "input.invalid_url",
             Self::BodyFile { .. } => "input.body_file_read_failed",
+            Self::RequestLog { .. } => "request_log.read_failed",
             Self::OutputFile { .. } => "output.file_write_failed",
             Self::Stdin(_) => "input.stdin_read_failed",
             Self::Json(_) => "input.invalid_json",
@@ -310,6 +319,12 @@ impl ApiCommandError {
             Self::BodyFile { .. } => {
                 vec!["Check --body-file path or pass --body directly".to_string()]
             }
+            Self::RequestLog { .. } => {
+                vec![
+                    "pcl requests path --json".to_string(),
+                    "Check request log permissions or move the PCL state directory".to_string(),
+                ]
+            }
             Self::OutputFile { .. } => {
                 vec!["Check --output path permissions or choose a writable file".to_string()]
             }
@@ -334,6 +349,7 @@ impl ApiCommandError {
             Self::OperationNotFound(_) | Self::MissingPaths => vec!["inspect_manifest"],
             Self::Request(_) | Self::Url(_) => vec!["check_network", "retry"],
             Self::BodyFile { .. } | Self::Stdin(_) => vec!["fix_body_input", "retry"],
+            Self::RequestLog { .. } => vec!["inspect_request_log", "retry"],
             Self::OutputFile { .. } => vec!["fix_output_path", "retry"],
             Self::HttpStatus { status: 401, .. } => vec!["refresh_or_login", "retry"],
             Self::HttpStatus { status: 403, .. } => {
@@ -550,8 +566,8 @@ enum ApiCommand {
     Projects(ProjectsArgs),
 
     #[command(
-        about = "List, inspect, submit, and manage project assertions",
-        after_help = "Examples:\n  pcl assertions --project-id <project-ref>\n  pcl assertions --project-id <project-ref> --submitted\n  pcl assertions --project-id <project-ref> --submit --body-file submitted-assertions.json\n  pcl assertions --project-id <project-ref> --remove-info"
+        about = "List, inspect, and manage project assertions",
+        after_help = "Examples:\n  pcl assertions --project-id <project-ref>\n  pcl assertions --project-id <project-ref> --registered\n  pcl assertions --project-id <project-ref> --remove-info"
     )]
     Assertions(AssertionsArgs),
 
@@ -643,6 +659,23 @@ enum ApiCommand {
         path: Option<String>,
         #[arg(long, help = "Include the raw OpenAPI operation")]
         full: bool,
+    },
+
+    #[command(
+        name = "coverage",
+        alias = "audit",
+        about = "Compare the local request log against the live OpenAPI surface",
+        after_help = "Examples:\n  pcl api coverage --json\n  pcl api coverage --records 5000 --markdown /tmp/pcl-api-coverage.md"
+    )]
+    Coverage {
+        #[arg(
+            long,
+            default_value_t = 5000,
+            help = "Maximum recent request records to consider"
+        )]
+        records: usize,
+        #[arg(long, help = "Write a markdown coverage report to this path")]
+        markdown: Option<PathBuf>,
     },
 
     #[command(
@@ -771,6 +804,7 @@ struct OperationSummary {
     path: String,
     summary: Option<String>,
     tags: Vec<String>,
+    auth: Value,
     inspect_command: String,
     call_command: String,
     input_placeholders: Vec<String>,
@@ -1025,11 +1059,19 @@ struct AssertionsArgs {
     page: Option<u64>,
     #[arg(long, help = "Items per page")]
     limit: Option<u64>,
-    #[arg(long, help = "Return submitted assertions for --project-id")]
+    #[arg(
+        long,
+        hide = true,
+        help = "Removed: submitted assertions are no longer exposed by the API"
+    )]
     submitted: bool,
     #[arg(long, help = "Return registered assertions for --project-id")]
     registered: bool,
-    #[arg(long, help = "Submit assertions to --project-id")]
+    #[arg(
+        long,
+        hide = true,
+        help = "Removed: submitted assertions are no longer exposed by the API"
+    )]
     submit: bool,
     #[arg(long, alias = "remove_info", help = "Return remove assertions info")]
     remove_info: bool,
@@ -1484,8 +1526,8 @@ top_level_workflow_command!(
     AssertionsCommand,
     AssertionsArgs,
     Assertions,
-    "List, inspect, submit, and manage assertions",
-    "Examples:\n  pcl assertions --project-id <project-ref>\n  pcl assertions --adopter-address 0x... --network 1\n  pcl assertions --project-id <project-ref> --submitted\n  pcl assertions --project-id <project-ref> --submit --body-file submitted-assertions.json\n  pcl assertions --project-id <project-ref> --remove-info\n\nCompatibility alias:\n  pcl api assertions ..."
+    "List, inspect, and manage assertions",
+    "Examples:\n  pcl assertions --project-id <project-ref>\n  pcl assertions --adopter-address 0x... --network 1\n  pcl assertions --project-id <project-ref> --registered\n  pcl assertions --project-id <project-ref> --remove-info\n\nCompatibility alias:\n  pcl api assertions ..."
 );
 
 top_level_workflow_command!(
@@ -1752,6 +1794,24 @@ impl ApiArgs {
                 });
                 print_output(&output, json_output)?;
             }
+            ApiCommand::Coverage { records, markdown } => {
+                let spec = self.fetch_openapi(config).await?;
+                let coverage =
+                    api_coverage(&spec, &request_log_path, *records, self.api_url.as_str())?;
+                if let Some(path) = markdown {
+                    write_api_coverage_markdown(path, &coverage)?;
+                }
+                let output = json!({
+                    "status": "ok",
+                    "data": coverage,
+                    "next_actions": [
+                        "pcl requests list --json",
+                        "pcl api list --json",
+                        "pcl api coverage --markdown api-coverage.md",
+                    ],
+                });
+                print_output(&output, json_output)?;
+            }
             ApiCommand::Call {
                 method,
                 path,
@@ -1879,6 +1939,7 @@ impl ApiArgs {
         base_query.extend(parse_key_values("query", input.query)?);
         let url = self.api_url(&path)?;
         let headers = parse_headers(input.header)?;
+        let operation_id = self.resolve_operation_id(config, input.method, &path).await;
         self.ensure_request_auth(config, cli_args, input.require_auth)
             .await?;
         let client = self.http_client(
@@ -1924,6 +1985,7 @@ impl ApiArgs {
                 &path,
                 status.as_u16(),
                 request_id.as_deref(),
+                operation_id.as_deref(),
             );
             if !status.is_success() {
                 return Err(ApiCommandError::HttpStatus {
@@ -1958,6 +2020,7 @@ impl ApiArgs {
             "request": {
                 "method": input.method.as_str(),
                 "path": path,
+                "operation_id": operation_id,
                 "query": query_pairs_value(&base_query),
                 "pagination": {
                     "field": pagination.item_field,
@@ -2245,6 +2308,7 @@ impl ApiArgs {
         let url = self.api_url(&path)?;
         let headers = parse_headers(input.header)?;
         let body = read_body(input.body, input.body_file)?;
+        let operation_id = self.resolve_operation_id(config, input.method, &path).await;
         let requires_auth = input.require_auth && !self.allow_unauthenticated;
         self.ensure_request_auth(config, cli_args, input.require_auth)
             .await?;
@@ -2293,6 +2357,7 @@ impl ApiArgs {
             &path,
             status.as_u16(),
             request_id.as_deref(),
+            operation_id.as_deref(),
         );
         if status.as_u16() == 401 && requires_auth {
             refresh_stored_auth(config, &self.api_url, cli_args, true)
@@ -2338,6 +2403,7 @@ impl ApiArgs {
                 &path,
                 status.as_u16(),
                 retry_request_id.as_deref(),
+                operation_id.as_deref(),
             );
             if !status.is_success() {
                 return Err(ApiCommandError::HttpStatus {
@@ -2352,6 +2418,7 @@ impl ApiArgs {
                 "request": {
                     "method": input.method.as_str(),
                     "path": path,
+                    "operation_id": operation_id,
                     "query": query_pairs_value(&query),
                     "retried_after_refresh": true,
                 },
@@ -2378,6 +2445,7 @@ impl ApiArgs {
             "request": {
                 "method": input.method.as_str(),
                 "path": path,
+                "operation_id": operation_id,
                 "query": query_pairs_value(&query),
             },
             "response": {
@@ -2427,6 +2495,7 @@ impl ApiArgs {
             &path,
             status.as_u16(),
             request_id.as_deref(),
+            None,
         );
         let mut retried_after_refresh = false;
         if status.as_u16() == 401 && requires_auth {
@@ -2454,6 +2523,7 @@ impl ApiArgs {
                 &path,
                 status.as_u16(),
                 request_id.as_deref(),
+                None,
             );
         }
         if !status.is_success() {
@@ -2711,6 +2781,20 @@ impl ApiArgs {
             .map_err(ApiCommandError::Request)
     }
 
+    async fn resolve_operation_id(
+        &self,
+        config: &CliConfig,
+        method: HttpMethod,
+        path: &str,
+    ) -> Option<String> {
+        let spec = self.fetch_openapi(config).await.ok()?;
+        let operations = list_operations(&spec, None, Some(method)).ok()?;
+        operations
+            .into_iter()
+            .find(|operation| openapi_path_matches(&operation.path, path))
+            .map(|operation| operation.operation_id)
+    }
+
     fn api_url(&self, path: &str) -> Result<url::Url, ApiCommandError> {
         if !path.starts_with('/') {
             return Err(ApiCommandError::InvalidPath(path.to_string()));
@@ -2765,6 +2849,7 @@ fn write_request_log(
     path: &str,
     status: u16,
     request_id: Option<&str>,
+    operation_id: Option<&str>,
 ) {
     #[cfg(not(test))]
     {
@@ -2778,11 +2863,20 @@ fn write_request_log(
                 "status": status,
                 "success": (200..=299).contains(&status),
                 "request_id": request_id,
+                "operation_id": operation_id,
             }),
         );
     }
     #[cfg(test)]
-    let _ = (request_log_path, kind, method, path, status, request_id);
+    let _ = (
+        request_log_path,
+        kind,
+        method,
+        path,
+        status,
+        request_id,
+        operation_id,
+    );
 }
 
 fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {
@@ -2880,7 +2974,7 @@ pub fn api_manifest() -> Value {
     json!({
         "name": "pcl",
         "description": "Use top-level workflow commands for common UI/API workflows; use pcl api list/inspect/call as the raw OpenAPI escape hatch.",
-        "raw_api": "pcl api list | pcl api inspect | pcl api call | pcl api manifest",
+        "raw_api": "pcl api list | pcl api inspect | pcl api call | pcl api coverage | pcl api manifest",
         "llms": "pcl --llms | pcl llms",
         "default_output": "toon",
         "output_modes": {
@@ -2916,6 +3010,7 @@ pub fn api_manifest() -> Value {
             {"command": "pcl artifacts [path|init|list]", "description": "Find and inspect generated artifacts."},
             {"command": "pcl jobs [path|list|status|resume|cancel]", "description": "Inspect resumable local job records from export workflows."},
             {"command": "pcl requests|logs [path|list|clear]", "description": "Inspect the local API request log with status and request IDs."},
+            {"command": "pcl api coverage [--records <n>] [--markdown <path>]", "description": "Compare the local request log with the live OpenAPI manifest and report hit/no-hit/no-2xx coverage."},
             {"command": "pcl schema [list|get <workflow>]", "description": "Inspect workflow/action schemas from the command manifest."},
             {"command": "pcl completions <shell>", "description": "Generate shell completion scripts for bash, zsh, fish, powershell, and elvish."}
         ],
@@ -2952,15 +3047,13 @@ pub fn api_manifest() -> Value {
                 ]
             },
             {
-                "command": "pcl assertions --project <ref> [--assertion-id <id>|--submitted|--registered|--submit|--remove-info|--remove-calldata]",
-                "description": "List, inspect, submit, and manage project assertion lifecycle state.",
-                "output": "assertion index/detail, submitted assertions, registered assertions, removal info/calldata, or submit result",
+                "command": "pcl assertions --project <ref> [--assertion-id <id>|--registered|--remove-info|--remove-calldata]",
+                "description": "List, inspect, and manage project assertion lifecycle state.",
+                "output": "assertion index/detail, registered assertions, or removal info/calldata",
                 "actions": [
                     {"name": "index", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/assertions", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref>"},
                     {"name": "detail", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/assertions/{assertionId}", "required_flags": ["--project", "--assertion-id"], "example": "pcl assertions --project <project-ref> --assertion-id <assertion-id>"},
                     {"name": "adopter_lookup", "auth": false, "method": "GET", "path": "/assertions", "required_flags": ["--adopter-address"], "optional_flags": ["--network", "--environment", "--include-onchain-only"], "example": "pcl assertions --adopter-address 0x... --network 1"},
-                    {"name": "submitted", "auth": true, "method": "GET", "path": "/projects/{project_id}/submitted-assertions", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref> --submitted"},
-                    {"name": "submit", "auth": true, "method": "POST", "path": "/projects/{project_id}/submitted-assertions", "required_flags": ["--project"], "body_template": "submitted_assertions", "required_body_fields": ["assertions"], "example": "pcl assertions --project <project-ref> --submit --body-file submitted-assertions.json"},
                     {"name": "registered", "auth": true, "method": "GET", "path": "/projects/{project_id}/registered-assertions", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref> --registered"},
                     {"name": "remove_info", "auth": true, "method": "GET", "path": "/projects/{project_id}/remove-assertions-info", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref> --remove-info"},
                     {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/projects/{project_id}/remove-assertions-calldata", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref> --remove-calldata"}
@@ -3102,17 +3195,22 @@ pub fn api_manifest() -> Value {
             {
                 "command": "pcl api inspect <operation_id>|<method> <path> [--full]",
                 "description": "Inspect a compact operation manifest. Use --full for raw OpenAPI.",
-                "output": "operation_id, method, path, path_params, required_query, body_fields, required_body_fields, body_template, response_statuses, example_call",
+                "output": "operation_id, method, path, auth metadata, path_params, required_query, body_fields, required_body_fields, body_template, response_statuses, example_call",
             },
             {
                 "command": "pcl api call <method> <path[?query]> [--query key=value] [--body '{...}'] [--paginate <field>] [--page-param page] [--limit-param limit] [--jsonl] [--output <file>] [--dry-run]",
                 "description": "Execute any endpoint below /api/v1. Query strings in PATH and repeated --query flags are both accepted; GET calls can paginate any array response with --paginate. Add --dry-run to print the request plan without sending it.",
-                "output": "request and response status/body; non-2xx responses return structured error envelopes with request_id when the API provides one",
+                "output": "request and response status/body; non-2xx responses return structured error envelopes with request_id when the API provides one. Raw calls log operation_id when the live OpenAPI manifest can resolve the method/path.",
                 "actions": [
                     {"name": "execute", "method": "*", "path": "<path>", "auth": "default", "optional_flags": ["--dry-run"], "example": "pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated"},
                     {"name": "paginate", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate"], "optional_flags": ["--all", "--page", "--limit", "--page-param", "--limit-param", "--max-pages", "--jsonl", "--output"], "example": "pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json"},
                     {"name": "export_jsonl", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate", "--jsonl", "--output"], "example": "pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl"}
                 ]
+            },
+            {
+                "command": "pcl api coverage [--records <n>] [--markdown <path>]",
+                "description": "Audit local request history against the live OpenAPI surface. Old records are matched by method/path; new raw api calls also persist operation_id.",
+                "output": "total operations, by-method coverage, no-hit operations, hit-but-no-2xx operations, side-effecting no-2xx operations, unmatched records",
             },
         ],
         "examples": [
@@ -3856,10 +3954,7 @@ fn project_body_template(args: &ProjectsArgs) -> Value {
     body_template("project_create")
 }
 
-fn assertions_body_template(args: &AssertionsArgs) -> Value {
-    if args.submit {
-        return body_template("submitted_assertions");
-    }
+fn assertions_body_template(_args: &AssertionsArgs) -> Value {
     body_template("empty_object")
 }
 
@@ -3988,17 +4083,6 @@ fn body_template(kind: &str) -> Value {
             })
         }
         "project_saved" => json!({ "project_id": "<project-uuid>" }),
-        "submitted_assertions" => {
-            json!({
-                "assertions": [
-                    {
-                        "contract_name": "<contract-name>",
-                        "assertion_id": "<assertion-id>",
-                        "signature": "0x..."
-                    }
-                ]
-            })
-        }
         "release" => {
             json!({
                 "environment": "staging",
@@ -4473,7 +4557,13 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
 }
 
 fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiCommandError> {
-    let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
+    if args.submit || args.submitted {
+        return Err(ApiCommandError::InvalidWorkflow {
+            message:
+                "Submitted assertions have been removed from the API; use releases and registered assertions instead"
+                    .to_string(),
+        });
+    }
 
     if let Some(adopter_address) = &args.adopter_address {
         let mut request = WorkflowRequest::get(
@@ -4507,26 +4597,6 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
     push_query_string(&mut query, "assertionAdopterId", args.adopter_id.as_deref());
     push_query_string(&mut query, "environment", args.environment.as_deref());
 
-    if args.submit {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            format!("/projects/{project_id}/submitted-assertions"),
-            true,
-            body,
-            vec![format!(
-                "pcl assertions --project-id {project_id} --submitted"
-            )],
-        ));
-    }
-    if args.submitted {
-        return Ok(WorkflowRequest::get(
-            format!("/projects/{project_id}/submitted-assertions"),
-            true,
-            vec![format!(
-                "pcl assertions --project-id {project_id} --registered"
-            )],
-        ));
-    }
     if args.registered {
         return Ok(WorkflowRequest::get(
             format!("/projects/{project_id}/registered-assertions"),
@@ -4754,6 +4824,356 @@ fn write_jsonl_items_output_file(path: &PathBuf, value: &Value) -> Result<(), Ap
     })
 }
 
+#[derive(Clone, Debug)]
+struct OperationCoverage {
+    operation_id: String,
+    method: String,
+    path: String,
+    hit: u64,
+    ok: u64,
+    statuses: BTreeMap<String, u64>,
+    latest_request_id: Option<String>,
+    latest_status: Option<u64>,
+    latest_timestamp: Option<String>,
+    latest_kind: Option<String>,
+}
+
+impl OperationCoverage {
+    fn new(operation: &OperationSummary) -> Self {
+        Self {
+            operation_id: operation.operation_id.clone(),
+            method: operation.method.to_string(),
+            path: operation.path.clone(),
+            hit: 0,
+            ok: 0,
+            statuses: BTreeMap::new(),
+            latest_request_id: None,
+            latest_status: None,
+            latest_timestamp: None,
+            latest_kind: None,
+        }
+    }
+
+    fn record_hit(&mut self, record: &Value) {
+        let status = record.get("status").and_then(Value::as_u64);
+        self.hit += 1;
+        if status.is_some_and(|status| (200..=299).contains(&status)) {
+            self.ok += 1;
+        }
+        if let Some(status) = status {
+            *self.statuses.entry(status.to_string()).or_insert(0) += 1;
+        }
+        self.latest_status = status;
+        self.latest_request_id = record
+            .get("request_id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        self.latest_timestamp = record
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        self.latest_kind = record
+            .get("kind")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+    }
+
+    fn success_2xx(&self) -> bool {
+        self.ok > 0
+    }
+
+    fn side_effecting(&self) -> bool {
+        method_side_effecting(&self.method)
+    }
+
+    fn to_value(&self) -> Value {
+        json!({
+            "operation_id": self.operation_id,
+            "method": self.method,
+            "path": self.path,
+            "hit": self.hit > 0,
+            "hits": self.hit,
+            "success_2xx": self.success_2xx(),
+            "ok": self.ok,
+            "statuses": self.statuses,
+            "side_effecting": self.side_effecting(),
+            "latest_request_id": self.latest_request_id,
+            "latest_status": self.latest_status,
+            "latest_timestamp": self.latest_timestamp,
+            "latest_kind": self.latest_kind,
+        })
+    }
+}
+
+fn api_coverage(
+    spec: &Value,
+    request_log_path: &Path,
+    record_limit: usize,
+    api_url: &str,
+) -> Result<Value, ApiCommandError> {
+    let operations = list_operations(spec, None, None)?;
+    let records = crate::request_log::read_request_records_at(request_log_path, record_limit)
+        .map_err(|source| {
+            ApiCommandError::RequestLog {
+                path: request_log_path.to_path_buf(),
+                source,
+            }
+        })?;
+    let mut coverage = operations
+        .iter()
+        .map(OperationCoverage::new)
+        .collect::<Vec<_>>();
+    let mut unmatched_records = Vec::new();
+
+    for record in &records {
+        let Some(index) = match_request_record_to_operation(&operations, record) else {
+            unmatched_records.push(record.clone());
+            continue;
+        };
+        coverage[index].record_hit(record);
+    }
+
+    let mut by_method: BTreeMap<String, BTreeMap<&'static str, u64>> = BTreeMap::new();
+    for entry in &coverage {
+        let method = by_method.entry(entry.method.clone()).or_default();
+        *method.entry("total").or_insert(0) += 1;
+        if entry.hit > 0 {
+            *method.entry("hit").or_insert(0) += 1;
+        }
+        if entry.success_2xx() {
+            *method.entry("ok").or_insert(0) += 1;
+        }
+    }
+
+    let no_hit = coverage
+        .iter()
+        .filter(|entry| entry.hit == 0)
+        .map(OperationCoverage::to_value)
+        .collect::<Vec<_>>();
+    let no_2xx = coverage
+        .iter()
+        .filter(|entry| entry.hit > 0 && !entry.success_2xx())
+        .map(OperationCoverage::to_value)
+        .collect::<Vec<_>>();
+    let write_no_2xx = coverage
+        .iter()
+        .filter(|entry| entry.side_effecting() && entry.hit > 0 && !entry.success_2xx())
+        .map(OperationCoverage::to_value)
+        .collect::<Vec<_>>();
+    let operations_value = coverage
+        .iter()
+        .map(OperationCoverage::to_value)
+        .collect::<Vec<_>>();
+
+    Ok(json!({
+        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "api_url": api_url,
+        "request_log": request_log_path,
+        "records_considered": records.len(),
+        "record_limit": record_limit,
+        "total_operations": operations.len(),
+        "by_method": by_method,
+        "no_hit_count": no_hit.len(),
+        "no_2xx_count": no_2xx.len(),
+        "write_no_2xx_count": write_no_2xx.len(),
+        "unmatched_record_count": unmatched_records.len(),
+        "no_hit": no_hit,
+        "no_2xx": no_2xx,
+        "write_no_2xx": write_no_2xx,
+        "unmatched_records": unmatched_records,
+        "operations": operations_value,
+    }))
+}
+
+fn write_api_coverage_markdown(path: &PathBuf, coverage: &Value) -> Result<(), ApiCommandError> {
+    let markdown = api_coverage_markdown(coverage);
+    fs::write(path, markdown).map_err(|source| {
+        ApiCommandError::OutputFile {
+            path: path.clone(),
+            source,
+        }
+    })
+}
+
+fn api_coverage_markdown(coverage: &Value) -> String {
+    let mut body = String::new();
+    writeln!(body, "# PCL API Coverage").expect("writing to String cannot fail");
+    writeln!(body).expect("writing to String cannot fail");
+    writeln!(
+        body,
+        "- Generated: {}",
+        coverage
+            .get("generated_at")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+    )
+    .expect("writing to String cannot fail");
+    writeln!(
+        body,
+        "- API URL: {}",
+        coverage
+            .get("api_url")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+    )
+    .expect("writing to String cannot fail");
+    writeln!(
+        body,
+        "- Request log: {}",
+        coverage
+            .get("request_log")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+    )
+    .expect("writing to String cannot fail");
+    writeln!(
+        body,
+        "- Operations: {}",
+        coverage
+            .get("total_operations")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    )
+    .expect("writing to String cannot fail");
+    writeln!(
+        body,
+        "- Records considered: {}",
+        coverage
+            .get("records_considered")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    )
+    .expect("writing to String cannot fail");
+    writeln!(
+        body,
+        "- No-hit operations: {}",
+        coverage
+            .get("no_hit_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    )
+    .expect("writing to String cannot fail");
+    writeln!(
+        body,
+        "- Hit but no 2xx operations: {}",
+        coverage
+            .get("no_2xx_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    )
+    .expect("writing to String cannot fail");
+    writeln!(body).expect("writing to String cannot fail");
+
+    append_coverage_table(&mut body, "No-Hit Operations", coverage.get("no_hit"));
+    append_coverage_table(
+        &mut body,
+        "Hit But No 2xx Operations",
+        coverage.get("no_2xx"),
+    );
+    append_coverage_table(
+        &mut body,
+        "Side-Effecting Operations Hit But No 2xx",
+        coverage.get("write_no_2xx"),
+    );
+    body
+}
+
+fn append_coverage_table(body: &mut String, title: &str, value: Option<&Value>) {
+    writeln!(body, "## {title}").expect("writing to String cannot fail");
+    writeln!(body).expect("writing to String cannot fail");
+    let Some(entries) = value.and_then(Value::as_array) else {
+        writeln!(body, "None.").expect("writing to String cannot fail");
+        writeln!(body).expect("writing to String cannot fail");
+        return;
+    };
+    if entries.is_empty() {
+        writeln!(body, "None.").expect("writing to String cannot fail");
+        writeln!(body).expect("writing to String cannot fail");
+        return;
+    }
+    writeln!(
+        body,
+        "| Operation | Method | Path | Hits | Statuses | Latest Request |"
+    )
+    .expect("writing to String cannot fail");
+    writeln!(body, "| --- | --- | --- | ---: | --- | --- |")
+        .expect("writing to String cannot fail");
+    for entry in entries {
+        writeln!(
+            body,
+            "| `{}` | `{}` | `{}` | {} | `{}` | `{}` |",
+            entry
+                .get("operation_id")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            entry
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            entry
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            entry.get("hits").and_then(Value::as_u64).unwrap_or(0),
+            entry
+                .get("statuses")
+                .map_or_else(|| "{}".to_string(), Value::to_string),
+            entry
+                .get("latest_request_id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+        )
+        .expect("writing to String cannot fail");
+    }
+    writeln!(body).expect("writing to String cannot fail");
+}
+
+fn match_request_record_to_operation(
+    operations: &[OperationSummary],
+    record: &Value,
+) -> Option<usize> {
+    if let Some(operation_id) = record.get("operation_id").and_then(Value::as_str)
+        && let Some(index) = operations
+            .iter()
+            .position(|operation| operation.operation_id == operation_id)
+    {
+        return Some(index);
+    }
+
+    let method = record.get("method").and_then(Value::as_str)?;
+    let path = record.get("path").and_then(Value::as_str)?;
+    let path = path.split_once('?').map_or(path, |(path, _)| path);
+
+    operations.iter().position(|operation| {
+        operation.method.eq_ignore_ascii_case(method) && openapi_path_matches(&operation.path, path)
+    })
+}
+
+fn openapi_path_matches(openapi_path: &str, observed_path: &str) -> bool {
+    if openapi_path == observed_path {
+        return true;
+    }
+    let openapi_segments = openapi_path
+        .trim_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let observed_segments = observed_path
+        .trim_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if openapi_segments.len() != observed_segments.len() {
+        return false;
+    }
+    openapi_segments
+        .iter()
+        .zip(observed_segments)
+        .all(|(expected, observed)| {
+            (expected.starts_with('{') && expected.ends_with('}')) || *expected == observed
+        })
+}
+
 fn list_operations(
     spec: &Value,
     filter: Option<&str>,
@@ -4826,6 +5246,7 @@ fn list_operations(
                 call_command: example_call(method, path, operation),
                 input_placeholders,
                 requires_input,
+                auth: operation_auth_metadata(method, path, operation),
                 operation_id,
                 method: method.as_str(),
                 path: path.clone(),
@@ -4935,6 +5356,7 @@ fn operation_manifest(
         "path": path,
         "summary": operation.get("summary").and_then(Value::as_str),
         "description": operation.get("description").and_then(Value::as_str),
+        "auth": operation_auth_metadata(method, path, operation),
         "parameters": operation_parameters(operation),
         "path_params": named_parameters(operation, "path", false),
         "required_query": named_parameters(operation, "query", true),
@@ -5194,6 +5616,22 @@ fn example_call(method: HttpMethod, path: &str, operation: &Value) -> String {
     if service_api_key_raw_call_path(method, &path) {
         command.push_str(" --header 'x-api-key=<x-api-key>'");
     }
+    for parameter in required_header_parameters(operation) {
+        if service_api_key_raw_call_path(method, &path)
+            && parameter.eq_ignore_ascii_case("x-api-key")
+        {
+            continue;
+        }
+        write!(
+            command,
+            " --header {}",
+            shell_quote(&format!(
+                "{parameter}={}",
+                header_placeholder(&parameter, &path, operation)
+            ))
+        )
+        .expect("writing to String cannot fail");
+    }
     for parameter in required_query_parameters(operation) {
         write!(
             command,
@@ -5213,6 +5651,50 @@ fn example_call(method: HttpMethod, path: &str, operation: &Value) -> String {
         }
     }
     command
+}
+
+fn operation_auth_metadata(method: HttpMethod, path: &str, operation: &Value) -> Value {
+    let required_headers = required_header_parameters(operation);
+    let browser_token_required = requires_browser_session_token(path, operation);
+    let service_api_key_required = service_api_key_raw_call_path(method, path);
+    let stored_cli_auth =
+        !should_allow_unauthenticated_raw_call(method, path, operation) && !browser_token_required;
+    let mut notes = Vec::new();
+    if browser_token_required {
+        notes.push(
+            "Requires a browser/Privy session bearer token supplied with --header authorization=Bearer <privy-token>.",
+        );
+    }
+    if stored_cli_auth {
+        notes.push(
+            "PCL attaches the stored CLI bearer token unless --allow-unauthenticated is set.",
+        );
+    }
+    if service_api_key_required {
+        notes.push("Requires a service API key supplied with --header x-api-key=<x-api-key>.");
+    }
+    json!({
+        "stored_cli_auth": stored_cli_auth,
+        "allow_unauthenticated_example": should_allow_unauthenticated_raw_call(method, path, operation),
+        "browser_session_token_required": browser_token_required,
+        "service_api_key_required": service_api_key_required,
+        "required_headers": required_headers,
+        "notes": notes,
+    })
+}
+
+fn requires_browser_session_token(path: &str, operation: &Value) -> bool {
+    path == "/web/auth/bootstrap-session" && has_required_authorization_parameter(operation)
+}
+
+fn header_placeholder(parameter: &str, path: &str, operation: &Value) -> String {
+    if parameter.eq_ignore_ascii_case("authorization") {
+        if requires_browser_session_token(path, operation) {
+            return "Bearer <privy-token>".to_string();
+        }
+        return "Bearer <token>".to_string();
+    }
+    format!("<{parameter}>")
 }
 
 fn should_allow_unauthenticated_raw_call(
@@ -5301,6 +5783,11 @@ fn operation_input_placeholders(path: &str, operation: &Value) -> Vec<String> {
         .map(|parameter| format!("path:{parameter}"))
         .collect::<Vec<_>>();
     placeholders.extend(
+        required_header_parameters(operation)
+            .into_iter()
+            .map(|parameter| format!("header:{parameter}")),
+    );
+    placeholders.extend(
         required_query_parameters(operation)
             .into_iter()
             .map(|parameter| format!("query:{parameter}")),
@@ -5312,6 +5799,27 @@ fn operation_input_placeholders(path: &str, operation: &Value) -> Vec<String> {
         placeholders.push("path".to_string());
     }
     placeholders
+}
+
+fn required_header_parameters(operation: &Value) -> Vec<String> {
+    operation
+        .get("parameters")
+        .and_then(Value::as_array)
+        .map(|parameters| {
+            parameters
+                .iter()
+                .filter(|parameter| {
+                    parameter.get("in").and_then(Value::as_str) == Some("header")
+                        && parameter
+                            .get("required")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                })
+                .filter_map(|parameter| parameter.get("name").and_then(Value::as_str))
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn required_query_parameters(operation: &Value) -> Vec<String> {
