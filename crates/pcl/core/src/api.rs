@@ -5191,6 +5191,9 @@ fn example_call(method: HttpMethod, path: &str, operation: &Value) -> String {
     if should_allow_unauthenticated_raw_call(method, &path, operation) {
         command.push_str(" --allow-unauthenticated");
     }
+    if service_api_key_raw_call_path(method, &path) {
+        command.push_str(" --header 'x-api-key=<x-api-key>'");
+    }
     for parameter in required_query_parameters(operation) {
         write!(
             command,
@@ -5217,7 +5220,16 @@ fn should_allow_unauthenticated_raw_call(
     path: &str,
     operation: &Value,
 ) -> bool {
-    public_raw_call_path(method, path) && !has_required_authorization_parameter(operation)
+    service_api_key_raw_call_path(method, path)
+        || (public_raw_call_path(method, path) && !has_required_authorization_parameter(operation))
+}
+
+fn service_api_key_raw_call_path(method: HttpMethod, path: &str) -> bool {
+    method == HttpMethod::Post
+        && (path.starts_with("/enforcer/")
+            || path.starts_with("/indexer/")
+            || path.starts_with("/tracer/")
+            || path.starts_with("/backtesting/"))
 }
 
 fn public_raw_call_path(method: HttpMethod, path: &str) -> bool {
@@ -5239,9 +5251,7 @@ fn public_raw_call_path(method: HttpMethod, path: &str) -> bool {
                 || path.starts_with("/web/verified-contract")
                 || (path.starts_with("/invitations/") && path.ends_with("/preview"))
         }
-        HttpMethod::Post => {
-            path == "/auth/refresh" || path == "/cli/auth/verify" || path.starts_with("/enforcer/")
-        }
+        HttpMethod::Post => path == "/auth/refresh" || path == "/cli/auth/verify",
         HttpMethod::Put | HttpMethod::Patch | HttpMethod::Delete => false,
     }
 }

@@ -308,6 +308,32 @@ fn public_openapi_call_commands_opt_out_of_local_auth() {
         ),
         "pcl api call post /auth/refresh --allow-unauthenticated --body '{}'"
     );
+    assert_eq!(
+        example_call(
+            HttpMethod::Post,
+            "/indexer/assertion-registered",
+            &json!({"requestBody": {}})
+        ),
+        "pcl api call post /indexer/assertion-registered --allow-unauthenticated --header 'x-api-key=<x-api-key>' --body '{}'"
+    );
+    assert_eq!(
+        example_call(
+            HttpMethod::Post,
+            "/backtesting/events",
+            &json!({
+                "parameters": [
+                    {
+                        "name": "check_id",
+                        "in": "query",
+                        "required": true,
+                        "schema": {"type": "string"}
+                    }
+                ],
+                "requestBody": {}
+            })
+        ),
+        "pcl api call post /backtesting/events --allow-unauthenticated --header 'x-api-key=<x-api-key>' --query 'check_id=<check_id>' --body '{}'"
+    );
 
     let public_incidents = json!({
         "parameters": [
