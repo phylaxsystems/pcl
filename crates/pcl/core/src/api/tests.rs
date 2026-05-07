@@ -331,6 +331,14 @@ fn public_openapi_call_commands_opt_out_of_local_auth() {
         example_call(HttpMethod::Get, "/public/incidents", &public_incidents),
         "pcl api call get /public/incidents --allow-unauthenticated --query 'limit=<limit>'"
     );
+    assert_eq!(
+        example_call(HttpMethod::Get, "/views/incidents/incident-1", &health),
+        "pcl api call get /views/incidents/incident-1"
+    );
+    assert_eq!(
+        example_call(HttpMethod::Get, "/incidents/incident-1", &health),
+        "pcl api call get /incidents/incident-1"
+    );
 
     let public_with_optional_auth = json!({
         "parameters": [
@@ -1216,6 +1224,51 @@ fn builds_account_workflow_requests() {
     assert_eq!(accept_terms.body.as_deref(), Some("{}"));
 }
 
+#[test]
+fn empty_object_workflows_send_body_by_default() {
+    let resend = access_request(&AccessArgs {
+        resend: true,
+        invitation_id: Some("invitation-1".to_string()),
+        ..access_args()
+    })
+    .unwrap();
+    assert_eq!(resend.method.openapi_key(), "post");
+    assert_eq!(resend.body.as_deref(), Some("{}"));
+
+    let test = integrations_request(&IntegrationsArgs {
+        project: Some("project-1".to_string()),
+        provider: Some(IntegrationProvider::Slack),
+        configure: false,
+        test: true,
+        delete: false,
+        body: None,
+        field: Vec::new(),
+        body_file: None,
+        body_template: false,
+    })
+    .unwrap();
+    assert_eq!(test.method.openapi_key(), "post");
+    assert_eq!(test.path, "/projects/project-1/integrations/slack/test");
+    assert_eq!(test.body.as_deref(), Some("{}"));
+
+    let delete = integrations_request(&IntegrationsArgs {
+        project: Some("project-1".to_string()),
+        provider: Some(IntegrationProvider::Pagerduty),
+        configure: false,
+        test: false,
+        delete: true,
+        body: None,
+        field: Vec::new(),
+        body_file: None,
+        body_template: false,
+    })
+    .unwrap();
+    assert_eq!(
+        delete.next_actions,
+        vec!["pcl integrations --project project-1 --provider pagerduty"]
+    );
+}
+
 #[tokio::test]
 async fn workflow_http_errors_include_response_body() {
     let mut server = mockito::Server::new_async().await;
@@ -1781,6 +1834,19 @@ fn forbidden_errors_preserve_permission_context() {
 
 #[test]
 fn body_templates_are_action_specific() {
+    assert_eq!(
+        project_body_template(&ProjectsArgs {
+            create: true,
+            ..projects_args()
+        }),
+        json!({
+            "project_name": "<name>",
+            "chain_id": 1,
+            "project_description": "<description>",
+            "profile_image_url": "https://example.com/project.png",
+            "is_private": false
+        })
+    );
     assert_eq!(
         access_body_template(&AccessArgs {
             project: Some("project-1".to_string()),

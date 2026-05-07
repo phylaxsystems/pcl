@@ -3464,7 +3464,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
                 HttpMethod::Post,
                 format!("/projects/{project}/invitations/{invitation_id}/resend"),
                 true,
-                body,
+                body.or_else(|| Some(empty_json_body())),
                 vec![format!("pcl access --project {project} --invitations")],
             ));
         }
@@ -3540,7 +3540,7 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
             HttpMethod::Post,
             format!("{base}/test"),
             true,
-            body,
+            body.or_else(|| Some(empty_json_body())),
             vec![format!(
                 "pcl integrations --project {project} --provider {provider}"
             )],
@@ -3553,7 +3553,7 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
             true,
             body,
             vec![format!(
-                "pcl integrations --project {project} --provider slack"
+                "pcl integrations --project {project} --provider {provider}"
             )],
         ));
     }
@@ -3718,6 +3718,10 @@ fn workflow_with_body(
         require_auth,
         next_actions,
     }
+}
+
+fn empty_json_body() -> String {
+    json!({}).to_string()
 }
 
 fn request_body(
@@ -3967,17 +3971,17 @@ fn body_template(kind: &str) -> Value {
             json!({
                 "project_name": "<name>",
                 "chain_id": 1,
-                "project_description": null,
-                "profile_image_url": null,
+                "project_description": "<description>",
+                "profile_image_url": "https://example.com/project.png",
                 "is_private": false
             })
         }
         "project_update" => {
             json!({
                 "project_name": "<name>",
-                "project_description": null,
-                "github_url": null,
-                "profile_image_url": null,
+                "project_description": "<description>",
+                "github_url": "https://github.com/org/repo",
+                "profile_image_url": "https://example.com/project.png",
                 "is_dev": false,
                 "is_private": false,
                 "assertion_adopters": []
@@ -5230,9 +5234,7 @@ fn public_raw_call_path(method: HttpMethod, path: &str) -> bool {
                 || path == "/search"
                 || path == "/assertions"
                 || path == "/views/projects"
-                || path.starts_with("/incidents/")
                 || path.starts_with("/views/public/")
-                || path.starts_with("/views/incidents/")
                 || path.starts_with("/projects/resolve/")
                 || path.starts_with("/web/verified-contract")
                 || (path.starts_with("/invitations/") && path.ends_with("/preview"))
