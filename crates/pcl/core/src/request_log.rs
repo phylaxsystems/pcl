@@ -50,9 +50,11 @@ pub fn append_request_record_at(path: &Path, record: &Value) -> std::io::Result<
         fs::create_dir_all(parent)?;
     }
 
+    let mut bytes = serde_json::to_vec(record)?;
+    bytes.push(b'\n');
+
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    serde_json::to_writer(&mut file, record)?;
-    file.write_all(b"\n")?;
+    file.write_all(&bytes)?;
     file.sync_all()?;
     Ok(())
 }
@@ -92,4 +94,56 @@ pub fn clear_request_log_at(path: &Path) -> std::io::Result<bool> {
     }
     fs::remove_file(path)?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{
+        Value,
+        json,
+    };
+
+    #[test]
+    fn append_request_record_at_writes_valid_jsonl_under_concurrency() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("requests.jsonl");
+        let writers = 16;
+        let records_per_writer = 25;
+
+        let handles = (0..writers)
+            .map(|writer| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for sequence in 0..records_per_writer {
+                        append_request_record_at(
+                            &path,
+                            &json!({
+                                "timestamp": "2026-05-07T00:00:00Z",
+                                "kind": "workflow",
+                                "method": "POST",
+                                "path": format!("/projects/{writer}/{sequence}"),
+                                "status": 200,
+                                "success": true,
+                                "request_id": format!("req_{writer}_{sequence}"),
+                                "padding": "x".repeat(4096),
+                            }),
+                        )
+                        .expect("append request record");
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            handle.join().expect("writer thread should not panic");
+        }
+
+        let content = fs::read_to_string(&path).expect("read request log");
+        let lines = content.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), writers * records_per_writer);
+        for line in lines {
+            serde_json::from_str::<Value>(line).expect("request log line should be valid json");
+        }
+    }
 }
