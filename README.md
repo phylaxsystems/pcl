@@ -56,12 +56,13 @@ pcl assertions --project-id <project-ref> --body-template
 pcl releases --project <project-ref> --body-template
 ```
 
-When a workflow is not yet first-class, use the raw API surface:
+When debugging or checking an endpoint that is not yet first-class, use the raw API surface.
+If `pcl api list` or `pcl api inspect` returns `workflow_alternatives`, use that workflow command for normal work.
 
 ```bash
 pcl api list --filter incidents
 pcl api inspect get_views_projects_project_id_incidents
-pcl api call get /views/projects/<project-id>/incidents --query environment=production
+pcl incidents --project <project-id> --environment production
 pcl api coverage --json
 ```
 
@@ -150,7 +151,7 @@ Start with CLI-native discovery. Do not scrape human help text unless the struct
 2. `pcl doctor` and `pcl whoami` for readiness and token truthfulness.
 3. `pcl workflows`, `pcl schema list`, and `pcl api manifest --json` for discovery.
 4. Top-level workflow commands for normal work.
-5. `pcl api list`, `pcl api inspect`, `pcl api call`, and `pcl api coverage` for raw OpenAPI fallback.
+5. `pcl api list`, `pcl api inspect`, `pcl api call`, and `pcl api coverage` only for debugging, API parity checks, internal/service endpoints, or endpoints without `workflow_alternatives`.
 
 ### Output Contract
 
@@ -249,6 +250,8 @@ For complex bodies:
 
 ### Raw API Fallback
 
+Raw calls are an escape hatch for debugging, API parity checks, internal/service endpoints, browser-session bridge investigation, and new endpoint exploration before a workflow is promoted.
+For normal product work, inspect `workflow_alternatives` and use the advertised workflow command instead of `pcl api call`.
 Call any endpoint below `/api/v1`. Query strings and repeated `--query` flags are both valid.
 Known public raw paths do not attach stored tokens by default; pass `--allow-unauthenticated` when you need to force no auth on another public endpoint.
 For simple JSON object bodies, repeated `--field key=value` works on raw `pcl api call` the same way it works on workflow commands.
@@ -256,17 +259,16 @@ For simple JSON object bodies, repeated `--field key=value` works on raw `pcl ap
 ```bash
 pcl api list --filter integrations --json
 pcl api inspect get_views_projects_project_id_incidents --json
-pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated
-pcl api call post /projects --field project_name=demo --field chain_id=1
-pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated
-pcl api call get /views/projects/<project-id>/incidents --query environment=production
-pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json
-pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl
-pcl api call get /views/projects/<project-id>/assertions
-pcl api call post /web/auth/logout --body '{}'
+pcl incidents --limit 5
+pcl projects --create --field project_name=demo --field chain_id=1
+pcl incidents --project <project-id> --environment production
+pcl incidents --all --limit 50 --output incidents.json
+pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --resume
+pcl assertions --project <project-id>
+pcl account --logout
 ```
 
-`pcl api inspect` reports auth metadata and required header placeholders so generated examples are executable for endpoints such as browser-session bootstrap. Raw API calls record `operation_id` in request history when it can be resolved from OpenAPI; use `pcl api coverage --json` or `pcl api coverage --markdown api-coverage.md --json` after an exploration run to find untested endpoints, endpoints hit without a 2xx, and side-effecting operations that need reconciliation.
+`pcl api inspect` reports `workflow_alternatives`, `raw_api_use`, auth metadata, and required header placeholders so agents can avoid manual raw calls unless they are intentionally debugging. Raw API calls record `operation_id` in request history when it can be resolved from OpenAPI; use `pcl api coverage --json` or `pcl api coverage --markdown api-coverage.md --json` after an exploration run to find untested endpoints, endpoints hit without a 2xx, and side-effecting operations that need reconciliation.
 
 ### Jobs, Artifacts, And Provenance
 

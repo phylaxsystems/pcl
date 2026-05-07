@@ -1341,7 +1341,7 @@ fn llms_guide() -> Value {
         "no_mcp_required": true,
         "principles": [
             "Use top-level workflow commands first.",
-            "Use pcl api list/inspect/call/coverage as the raw OpenAPI escape hatch.",
+            "Use pcl api list/inspect/call/coverage only for debugging, API parity checks, or endpoints without workflow_alternatives.",
             "Treat every output as an envelope with status, data, error, and next_actions.",
             "Use JSONL export artifacts for long investigations.",
             "Use request IDs from errors and pcl requests for audit trails.",
@@ -1355,8 +1355,8 @@ fn llms_guide() -> Value {
             "pcl schema list",
             "pcl api manifest --json",
             "top-level workflow commands",
-            "pcl api inspect <operation-id> --json",
-            "pcl api call <method> <path> --json",
+            "pcl api inspect <operation-id> --json when debugging",
+            "pcl api call <method> <path> --json only after checking workflow_alternatives",
             "pcl api coverage --json"
         ],
         "orientation": [
@@ -1369,11 +1369,11 @@ fn llms_guide() -> Value {
                 "commands": ["pcl workflows", "pcl schema list", "pcl api manifest --json"]
             },
             {
-                "goal": "Inspect raw API shape",
+                "goal": "Debug raw API shape",
                 "commands": ["pcl api list --filter incidents --json", "pcl api inspect <operation-id> --json"]
             },
             {
-                "goal": "Run raw calls",
+                "goal": "Run raw calls only for debugging or unsupported/internal endpoints",
                 "commands": ["pcl api call get /health --allow-unauthenticated", "pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated"]
             },
             {
@@ -1416,7 +1416,8 @@ fn llms_guide() -> Value {
             "dry_run": "Use dry-run request plans before destructive project, assertion, release, access, integration, transfer, or protocol-manager operations. Dry-run is a planner, not an enforced confirmation gate."
         },
         "raw_api": {
-            "inspect_first": "Use pcl api inspect <operation-id> --json before unfamiliar calls.",
+            "policy": "For normal product work, use workflow_alternatives from pcl api list/inspect or a top-level workflow command. Raw api call is for debugging, OpenAPI parity checks, internal/service endpoints, browser-session bridge investigation, or new endpoint exploration before promotion.",
+            "inspect_first": "Use pcl api inspect <operation-id> --json before unfamiliar raw calls and check data.workflow_alternatives first.",
             "query_strings": "pcl api call accepts both /path?key=value and repeated --query key=value.",
             "fields": "pcl api call accepts repeated --field key=value for simple JSON object bodies; use --body-file for nested payloads.",
             "public_endpoints": "Known public raw calls do not attach stored tokens; --allow-unauthenticated remains the explicit opt-out for other public endpoints.",

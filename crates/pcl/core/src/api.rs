@@ -595,8 +595,8 @@ enum ApiCommand {
     Contracts(ContractsArgs),
 
     #[command(
-        about = "List, inspect, create, preview, deploy, or remove releases",
-        after_help = "Examples:\n  pcl releases --project <project-ref>\n  pcl releases --project <project-ref> --release-id <release-id>\n  pcl releases --project <project-ref> --preview --body-file release.json\n  pcl releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address <signer-address>"
+        about = "List, inspect, create, preview, check, retry, deploy, or remove releases",
+        after_help = "Examples:\n  pcl releases --project <project-ref>\n  pcl releases --project <project-ref> --release-id <release-id>\n  pcl releases --project <project-ref> --preview --body-file release.json\n  pcl releases --project <project-ref> --release-id <release-id> --backtest-progress\n  pcl releases --project <project-ref> --release-id <release-id> --check-id <check-id> --retry-check\n  pcl releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address <signer-address>"
     )]
     Releases(ReleasesArgs),
 
@@ -815,6 +815,8 @@ struct OperationSummary {
     summary: Option<String>,
     tags: Vec<String>,
     auth: Value,
+    workflow_alternatives: Vec<Value>,
+    raw_api_use: Value,
     inspect_command: String,
     call_command: String,
     input_placeholders: Vec<String>,
@@ -1233,7 +1235,7 @@ struct ContractsArgs {
 #[derive(clap::Args, Debug)]
 #[command(group(
     ArgGroup::new("releases_action")
-        .args(["create", "preview", "deploy", "remove", "deploy_calldata", "remove_calldata"])
+        .args(["create", "preview", "deploy", "remove", "deploy_calldata", "remove_calldata", "backtest_progress", "retry_check"])
         .multiple(false)
 ))]
 struct ReleasesArgs {
@@ -1252,6 +1254,8 @@ struct ReleasesArgs {
         help = "Signer address for --deploy-calldata"
     )]
     signer_address: Option<String>,
+    #[arg(long, alias = "check_id", help = "Release check ID for --retry-check")]
+    check_id: Option<String>,
     #[arg(long, help = "Create a release")]
     create: bool,
     #[arg(long, help = "Preview release diff without persisting")]
@@ -1264,6 +1268,14 @@ struct ReleasesArgs {
     deploy_calldata: bool,
     #[arg(long, alias = "remove_calldata", help = "Build remove calldata")]
     remove_calldata: bool,
+    #[arg(
+        long,
+        alias = "backtest_progress",
+        help = "Get release backtest/check progress"
+    )]
+    backtest_progress: bool,
+    #[arg(long, alias = "retry_check", help = "Retry a failed release check")]
+    retry_check: bool,
     #[arg(long, help = "JSON request body")]
     body: Option<String>,
     #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
@@ -1569,8 +1581,8 @@ top_level_workflow_command!(
     ReleasesCommand,
     ReleasesArgs,
     Releases,
-    "List, inspect, create, preview, deploy, or remove releases",
-    "Examples:\n  pcl releases --project <project-ref>\n  pcl releases --project <project-ref> --release-id <release-id>\n  pcl releases --project <project-ref> --preview --body-file release.json\n  pcl releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address <signer-address>\n\nCompatibility alias:\n  pcl api releases ..."
+    "List, inspect, create, preview, check, retry, deploy, or remove releases",
+    "Examples:\n  pcl releases --project <project-ref>\n  pcl releases --project <project-ref> --release-id <release-id>\n  pcl releases --project <project-ref> --preview --body-file release.json\n  pcl releases --project <project-ref> --release-id <release-id> --backtest-progress\n  pcl releases --project <project-ref> --release-id <release-id> --check-id <check-id> --retry-check\n  pcl releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address <signer-address>\n\nCompatibility alias:\n  pcl api releases ..."
 );
 
 top_level_workflow_command!(
@@ -3005,8 +3017,13 @@ fn request_is_destructive(method: HttpMethod, path: &str) -> bool {
 pub fn api_manifest() -> Value {
     json!({
         "name": "pcl",
-        "description": "Use top-level workflow commands for common UI/API workflows; use pcl api list/inspect/call as the raw OpenAPI escape hatch.",
+        "description": "Use top-level workflow commands for product workflows; use pcl api list/inspect/call only for debugging, API parity checks, internal/service endpoints, or endpoints not yet promoted to a workflow.",
         "raw_api": "pcl api list | pcl api inspect | pcl api call | pcl api coverage | pcl api manifest",
+        "raw_api_policy": {
+            "normal_work": "Use workflow_alternatives from pcl api list/inspect when present, or start with pcl workflows and pcl schema.",
+            "allowed_uses": ["debugging", "OpenAPI parity checks", "service/internal endpoint investigation", "browser-session bridge investigation", "new endpoint exploration before promotion"],
+            "not_normal_path": "Agents should not call raw endpoints for incidents, projects, assertions, releases, integrations, access, protocol-manager, transfers, events, search, or auth when a workflow alternative is advertised."
+        },
         "llms": "pcl --llms | pcl llms",
         "default_output": "toon",
         "output_modes": {
@@ -3130,14 +3147,16 @@ pub fn api_manifest() -> Value {
                 ]
             },
             {
-                "command": "pcl releases --project <ref> [--release-id <id>] [--preview|--create|--deploy|--remove|--deploy-calldata --signer-address <address>|--remove-calldata]",
-                "description": "List, inspect, create, preview, deploy, and remove releases.",
-                "output": "release data, diffs, deployment confirmations, or calldata",
+                "command": "pcl releases --project <ref> [--release-id <id>] [--preview|--create|--backtest-progress|--retry-check --check-id <id>|--deploy|--remove|--deploy-calldata --signer-address <address>|--remove-calldata]",
+                "description": "List, inspect, create, preview, deploy, check progress, retry failed checks, and remove releases.",
+                "output": "release data, diffs, check progress, deployment confirmations, or calldata",
                 "actions": [
                     {"name": "list", "auth": true, "method": "GET", "path": "/projects/{project}/releases", "required_flags": ["--project"], "example": "pcl releases --project <project-ref>"},
                     {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}", "required_flags": ["--project", "--release-id"], "example": "pcl releases --project <project-ref> --release-id <release-id>"},
                     {"name": "preview", "auth": true, "method": "POST", "path": "/projects/{project}/releases/preview", "required_flags": ["--project"], "body_template": "release", "example": "pcl releases --project <project-ref> --preview --body-file release.json"},
                     {"name": "create", "auth": true, "method": "POST", "path": "/projects/{project}/releases", "required_flags": ["--project"], "body_template": "release", "example": "pcl releases --project <project-ref> --create --body-file release.json"},
+                    {"name": "backtest_progress", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/backtest-progress", "required_flags": ["--project", "--release-id"], "example": "pcl releases --project <project-ref> --release-id <release-id> --backtest-progress"},
+                    {"name": "retry_check", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/checks/{check_id}/retry", "required_flags": ["--project", "--release-id", "--check-id"], "body_template": "empty_object", "example": "pcl releases --project <project-ref> --release-id <release-id> --check-id <check-id> --retry-check"},
                     {"name": "deploy_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/deploy-calldata", "required_flags": ["--project", "--release-id", "--signer-address"], "query": {"signerAddress": "<signer-address>"}, "example": "pcl releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address 0x..."},
                     {"name": "deploy", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/deploy", "required_flags": ["--project", "--release-id"], "body_template": "release_deploy", "example": "pcl releases --project <project-ref> --release-id <release-id> --deploy --body-template"},
                     {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/remove-calldata", "required_flags": ["--project", "--release-id"], "example": "pcl releases --project <project-ref> --release-id <release-id> --remove-calldata"},
@@ -3222,12 +3241,12 @@ pub fn api_manifest() -> Value {
             {
                 "command": "pcl api list [--filter <term>] [--method <get|post|put|patch|delete>]",
                 "description": "List OpenAPI operations with executable inspect and call commands.",
-                "output": "operations[] with operation_id, method, path, summary, tags, inspect_command, call_command",
+                "output": "operations[] with operation_id, method, path, summary, tags, workflow_alternatives, raw_api_use, inspect_command, call_command",
             },
             {
                 "command": "pcl api inspect <operation_id>|<method> <path> [--full]",
                 "description": "Inspect a compact operation manifest. Use --full for raw OpenAPI.",
-                "output": "operation_id, method, path, auth metadata, path_params, required_query, body_fields, required_body_fields, body_template, response_statuses, example_call",
+                "output": "operation_id, method, path, auth metadata, workflow_alternatives, raw_api_use, path_params, required_query, body_fields, required_body_fields, body_template, response_statuses, example_call",
             },
             {
                 "command": "pcl api call <method> <path[?query]> [--query key=value] [--field key=value] [--body '{...}'] [--paginate <field>] [--page-param page] [--limit-param limit] [--jsonl] [--output <file>] [--dry-run]",
@@ -3455,8 +3474,35 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
             vec![format!("pcl releases --project {project}")],
         ));
     }
-    if args.deploy || args.remove || args.deploy_calldata || args.remove_calldata {
+    if args.deploy
+        || args.remove
+        || args.deploy_calldata
+        || args.remove_calldata
+        || args.backtest_progress
+        || args.retry_check
+    {
         let release_id = required_arg(args.release_id.as_deref(), "--release-id")?;
+        if args.backtest_progress {
+            return Ok(WorkflowRequest::get(
+                format!("/projects/{project}/releases/{release_id}/backtest-progress"),
+                true,
+                vec![format!(
+                    "pcl releases --project {project} --release-id {release_id}"
+                )],
+            ));
+        }
+        if args.retry_check {
+            let check_id = required_arg(args.check_id.as_deref(), "--check-id")?;
+            return Ok(workflow_with_body(
+                HttpMethod::Post,
+                format!("/projects/{project}/releases/{release_id}/checks/{check_id}/retry"),
+                true,
+                body.or_else(|| Some(empty_json_body())),
+                vec![format!(
+                    "pcl releases --project {project} --release-id {release_id} --backtest-progress"
+                )],
+            ));
+        }
         if args.deploy {
             return Ok(workflow_with_body(
                 HttpMethod::Post,
@@ -4011,7 +4057,12 @@ fn release_body_template(args: &ReleasesArgs) -> Value {
     if args.remove {
         return body_template("release_remove");
     }
-    if args.deploy_calldata || args.remove_calldata || args.release_id.is_some() {
+    if args.deploy_calldata
+        || args.remove_calldata
+        || args.backtest_progress
+        || args.retry_check
+        || args.release_id.is_some()
+    {
         return body_template("empty_object");
     }
     body_template("release")
@@ -5273,12 +5324,17 @@ fn list_operations(
 
             let input_placeholders = operation_input_placeholders(path, operation);
             let requires_input = !input_placeholders.is_empty();
+            let workflow_alternatives = workflow_alternatives(method, path);
+            let raw_api_use =
+                raw_api_use(method, path, operation, !workflow_alternatives.is_empty());
             operations.push(OperationSummary {
                 inspect_command: format!("pcl api inspect {operation_id}"),
                 call_command: example_call(method, path, operation),
                 input_placeholders,
                 requires_input,
                 auth: operation_auth_metadata(method, path, operation),
+                workflow_alternatives,
+                raw_api_use,
                 operation_id,
                 method: method.as_str(),
                 path: path.clone(),
@@ -5382,6 +5438,8 @@ fn operation_manifest(
     operation: &Value,
     full: bool,
 ) -> Value {
+    let workflow_alternatives = workflow_alternatives(method, path);
+    let raw_api_use = raw_api_use(method, path, operation, !workflow_alternatives.is_empty());
     let mut manifest = json!({
         "operation_id": operation_id,
         "method": method.as_str(),
@@ -5389,6 +5447,8 @@ fn operation_manifest(
         "summary": operation.get("summary").and_then(Value::as_str),
         "description": operation.get("description").and_then(Value::as_str),
         "auth": operation_auth_metadata(method, path, operation),
+        "workflow_alternatives": workflow_alternatives,
+        "raw_api_use": raw_api_use,
         "parameters": operation_parameters(operation),
         "path_params": named_parameters(operation, "path", false),
         "required_query": named_parameters(operation, "query", true),
@@ -5407,6 +5467,286 @@ fn operation_manifest(
     }
 
     manifest
+}
+
+fn workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
+    let mut alternatives = manifest_workflow_alternatives(method, path);
+    alternatives.extend(special_workflow_alternatives(method, path));
+    alternatives
+}
+
+fn manifest_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
+    let Some(commands) = api_manifest()
+        .get("commands")
+        .and_then(Value::as_array)
+        .cloned()
+    else {
+        return Vec::new();
+    };
+
+    let mut alternatives = Vec::new();
+    for command in commands {
+        let Some(command_text) = command.get("command").and_then(Value::as_str) else {
+            continue;
+        };
+        if command_text.starts_with("pcl api ") {
+            continue;
+        }
+        let workflow = command_text
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or(command_text)
+            .to_string();
+        let Some(actions) = command.get("actions").and_then(Value::as_array) else {
+            continue;
+        };
+
+        for action in actions {
+            if !manifest_action_matches_operation(action, method, path) {
+                continue;
+            }
+            let action_name = action.get("name").and_then(Value::as_str);
+            let example = workflow_example_for_operation(&workflow, action.get("example"), path);
+            alternatives.push(json!({
+                "workflow": workflow,
+                "action": action_name,
+                "command": command_text,
+                "example": example,
+                "required_flags": action.get("required_flags").cloned().unwrap_or(Value::Null),
+                "body_template": action.get("body_template").cloned().unwrap_or(Value::Null),
+            }));
+        }
+    }
+
+    alternatives
+}
+
+fn workflow_example_for_operation(
+    workflow: &str,
+    example: Option<&Value>,
+    operation_path: &str,
+) -> Option<String> {
+    let example = example.and_then(Value::as_str)?;
+    if workflow == "integrations" {
+        if operation_path.contains("/integrations/pagerduty") {
+            return Some(example.replace("--provider slack", "--provider pagerduty"));
+        }
+        if operation_path.contains("/integrations/slack") {
+            return Some(example.replace("--provider pagerduty", "--provider slack"));
+        }
+    }
+    Some(example.to_string())
+}
+
+fn manifest_action_matches_operation(action: &Value, method: HttpMethod, path: &str) -> bool {
+    action
+        .get("method")
+        .and_then(Value::as_str)
+        .is_some_and(|action_method| action_method.eq_ignore_ascii_case(method.as_str()))
+        && action
+            .get("path")
+            .and_then(Value::as_str)
+            .is_some_and(|action_path| path_patterns_overlap(action_path, path))
+}
+
+fn path_patterns_overlap(left: &str, right: &str) -> bool {
+    openapi_path_matches(left, right) || openapi_path_matches(right, left)
+}
+
+fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
+    let normalized_path = normalize_path_placeholders(path);
+    match (method, normalized_path.as_str()) {
+        (HttpMethod::Get, "/cli/auth/code") => {
+            vec![special_workflow(
+                "auth",
+                "login_challenge",
+                "pcl auth login --no-wait --force --json",
+                "Device-login challenge is exposed as a structured auth command.",
+            )]
+        }
+        (HttpMethod::Get, "/cli/auth/status") => {
+            vec![special_workflow(
+                "auth",
+                "poll",
+                "pcl auth poll --session-id <session-id> --device-secret <secret> --expires-at <rfc3339> --json",
+                "Polling is handled by the auth command returned in data.poll_command.",
+            )]
+        }
+        (HttpMethod::Post, "/cli/auth/verify") => {
+            vec![special_workflow(
+                "auth",
+                "verify",
+                "pcl auth login --force --json",
+                "The login command owns verification and stores the resulting credentials.",
+            )]
+        }
+        (HttpMethod::Post, "/auth/refresh") => {
+            vec![special_workflow(
+                "auth",
+                "refresh",
+                "pcl auth refresh --json",
+                "Refresh rotation is exposed as a structured auth command.",
+            )]
+        }
+        (HttpMethod::Get, "/openapi") => {
+            vec![special_workflow(
+                "api",
+                "manifest",
+                "pcl api manifest --json",
+                "Use the CLI manifest/list/inspect surfaces for discovery instead of raw OpenAPI retrieval.",
+            )]
+        }
+        (HttpMethod::Get, "/projects") => {
+            vec![special_workflow(
+                "projects",
+                "explorer",
+                "pcl projects --limit 10",
+                "Project exploration uses the normalized project view endpoint.",
+            )]
+        }
+        (HttpMethod::Get, "/public/incidents") => {
+            vec![special_workflow(
+                "incidents",
+                "list_public",
+                "pcl incidents --limit 5",
+                "Public incident listing uses the normalized incident view endpoint.",
+            )]
+        }
+        (HttpMethod::Get, "/projects/{}/incidents") => {
+            vec![special_workflow(
+                "incidents",
+                "list_project",
+                "pcl incidents --project <project-ref> --limit 50",
+                "Project incident listing uses the normalized incident view endpoint.",
+            )]
+        }
+        (HttpMethod::Get, "/incidents/{}") => {
+            vec![special_workflow(
+                "incidents",
+                "detail",
+                "pcl incidents --incident-id <incident-id>",
+                "Incident detail uses the normalized incident view endpoint.",
+            )]
+        }
+        (HttpMethod::Get, "/incidents/{}/transactions/{}/trace") => {
+            vec![special_workflow(
+                "incidents",
+                "trace",
+                "pcl incidents --incident-id <incident-id> --tx-id <tx-id>",
+                "Incident traces use the normalized incident view endpoint.",
+            )]
+        }
+        (HttpMethod::Get, "/projects/{}/submitted-assertions") => {
+            vec![
+                special_workflow(
+                    "releases",
+                    "list",
+                    "pcl releases --project <project-ref>",
+                    "Submitted assertions were superseded by release and registered-assertion workflows.",
+                ),
+                special_workflow(
+                    "assertions",
+                    "registered",
+                    "pcl assertions --project <project-ref> --registered",
+                    "Submitted assertions were superseded by release and registered-assertion workflows.",
+                ),
+            ]
+        }
+        (HttpMethod::Post, "/projects/{}/submitted-assertions") => {
+            vec![special_workflow(
+                "releases",
+                "create",
+                "pcl apply --json",
+                "Submitting assertions is now represented by creating a release through pcl apply or pcl releases.",
+            )]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn special_workflow(workflow: &str, action: &str, example: &str, note: &str) -> Value {
+    json!({
+        "workflow": workflow,
+        "action": action,
+        "example": example,
+        "note": note,
+    })
+}
+
+fn normalize_path_placeholders(path: &str) -> String {
+    path.split('/')
+        .map(|segment| {
+            if segment.starts_with('{') && segment.ends_with('}') {
+                "{}"
+            } else {
+                segment
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn raw_api_use(
+    method: HttpMethod,
+    path: &str,
+    operation: &Value,
+    has_workflow_alternative: bool,
+) -> Value {
+    if has_workflow_alternative {
+        return json!({
+            "policy": "prefer_workflow",
+            "reason": "A first-class CLI workflow exists. Use raw api call only for debugging, OpenAPI parity checks, or reproducing low-level API behavior.",
+        });
+    }
+    if service_api_key_raw_call_path(method, path) {
+        return json!({
+            "policy": "internal_service",
+            "reason": "Service callback endpoint; normal CLI users and agents should not call it directly.",
+        });
+    }
+    if requires_browser_session_token(path, operation) {
+        return json!({
+            "policy": "browser_session_bridge",
+            "reason": "Browser/Privy session bridge; use auth/account commands for CLI authentication state.",
+        });
+    }
+
+    let normalized_path = normalize_path_placeholders(path);
+    let (policy, reason) = match (method, normalized_path.as_str()) {
+        (_, "/projects/{}/submitted-assertions") => {
+            (
+                "superseded",
+                "Submitted assertions were removed from the product workflow; use releases and registered assertions instead.",
+            )
+        }
+        (HttpMethod::Get, "/projects")
+        | (HttpMethod::Get, "/public/incidents")
+        | (HttpMethod::Get, "/projects/{}/incidents")
+        | (HttpMethod::Get, "/incidents/{}")
+        | (HttpMethod::Get, "/incidents/{}/transactions/{}/trace") => {
+            (
+                "legacy_view",
+                "A normalized view/workflow command should be used for normal product work.",
+            )
+        }
+        (HttpMethod::Get, "/openapi") => {
+            (
+                "discovery",
+                "Prefer pcl api manifest/list/inspect for agent-readable discovery.",
+            )
+        }
+        _ => {
+            (
+                "debug_escape_hatch",
+                "No first-class workflow is advertised; inspect first and preserve request IDs when using raw calls.",
+            )
+        }
+    };
+
+    json!({
+        "policy": policy,
+        "reason": reason,
+    })
 }
 
 fn operation_parameters(operation: &Value) -> Vec<Value> {
@@ -5879,6 +6219,17 @@ fn next_actions_for_operations(operations: &[OperationSummary]) -> Vec<String> {
     operations.first().map_or_else(
         || vec!["pcl api list".to_string(), "pcl api manifest".to_string()],
         |operation| {
+            if let Some(example) = operation
+                .workflow_alternatives
+                .first()
+                .and_then(|alternative| alternative.get("example"))
+                .and_then(Value::as_str)
+            {
+                return vec![
+                    example.to_string(),
+                    format!("{} --json", operation.inspect_command),
+                ];
+            }
             if operation.requires_input {
                 vec![
                     format!("{} --json", operation.inspect_command),
@@ -5895,6 +6246,15 @@ fn next_actions_for_operations(operations: &[OperationSummary]) -> Vec<String> {
 }
 
 fn command_next_actions(inspected: &Value) -> Vec<String> {
+    if let Some(example) = inspected
+        .get("workflow_alternatives")
+        .and_then(Value::as_array)
+        .and_then(|alternatives| alternatives.first())
+        .and_then(|alternative| alternative.get("example"))
+        .and_then(Value::as_str)
+    {
+        return vec![example.to_string()];
+    }
     inspected
         .get("example_call")
         .and_then(Value::as_str)

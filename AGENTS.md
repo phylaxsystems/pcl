@@ -51,7 +51,7 @@ Prefer the surfaces in this order:
 2. `pcl workflows` for task recipes.
 3. `pcl schema list` and `pcl schema get <workflow> --action <action>` for workflow action contracts.
 4. Top-level workflow commands like `pcl incidents`, `pcl projects`, `pcl assertions`, `pcl account`, `pcl releases`, and `pcl protocol-manager`.
-5. `pcl api list`, `pcl api inspect`, `pcl api call`, and `pcl api coverage` as the raw OpenAPI escape hatch.
+5. `pcl api list`, `pcl api inspect`, `pcl api call`, and `pcl api coverage` only for debugging, API parity checks, internal/service endpoints, or endpoints without `workflow_alternatives`.
 
 ## Safe Execution
 
@@ -67,6 +67,8 @@ Use typed flags first. Use `--field key=value` for simple payload fields. Use `-
 
 ## Raw API Calls
 
+Raw calls are not the normal product path. Use them for debugging, API parity checks, service/internal endpoint investigation, browser-session bridge investigation, or new endpoint exploration before promotion to a workflow. If `pcl api list` or `pcl api inspect` returns `workflow_alternatives`, use the advertised workflow command instead of `pcl api call`.
+
 Both query forms are valid:
 
 ```bash
@@ -76,7 +78,7 @@ pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated
 
 For simple raw request bodies, `pcl api call` accepts repeated `--field key=value` and merges those fields into a JSON object, matching workflow command behavior. Use `--body-file` for nested payloads.
 
-Use `pcl api inspect <operation-id> --json` before calling unfamiliar endpoints. Inspect includes auth metadata and required header placeholders; preserve required `--header` values in generated examples. For required request bodies, inspect the operation and prefer `--body-file`.
+Use `pcl api inspect <operation-id> --json` before calling unfamiliar endpoints. Inspect includes `workflow_alternatives`, `raw_api_use`, auth metadata, and required header placeholders; preserve required `--header` values in generated examples. For required request bodies, inspect the operation and prefer `--body-file`.
 
 Raw API calls persist `operation_id` in request history when the live OpenAPI manifest can resolve the method/path. After exploratory testing, run:
 

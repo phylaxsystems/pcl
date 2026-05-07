@@ -136,12 +136,15 @@ fn release_args() -> ReleasesArgs {
         project: Some("project-1".to_string()),
         release_id: None,
         signer_address: None,
+        check_id: None,
         create: false,
         preview: false,
         deploy: false,
         remove: false,
         deploy_calldata: false,
         remove_calldata: false,
+        backtest_progress: false,
+        retry_check: false,
         body: None,
         field: Vec::new(),
         body_file: None,
@@ -1465,6 +1468,76 @@ fn release_deploy_calldata_requires_and_sends_signer_address() {
 }
 
 #[test]
+fn release_check_progress_and_retry_are_first_class_workflows() {
+    let progress = releases_request(&ReleasesArgs {
+        release_id: Some("release-1".to_string()),
+        backtest_progress: true,
+        ..release_args()
+    })
+    .unwrap();
+    assert_eq!(
+        progress.path,
+        "/projects/project-1/releases/release-1/backtest-progress"
+    );
+    assert!(progress.body.is_none());
+
+    let error = releases_request(&ReleasesArgs {
+        release_id: Some("release-1".to_string()),
+        retry_check: true,
+        ..release_args()
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("--check-id is required"));
+
+    let retry = releases_request(&ReleasesArgs {
+        release_id: Some("release-1".to_string()),
+        check_id: Some("check-1".to_string()),
+        retry_check: true,
+        ..release_args()
+    })
+    .unwrap();
+    assert_eq!(
+        retry.path,
+        "/projects/project-1/releases/release-1/checks/check-1/retry"
+    );
+    assert_eq!(retry.method, HttpMethod::Post);
+    assert_eq!(retry.body, Some(json!({}).to_string()));
+}
+
+#[test]
+fn raw_operations_advertise_workflow_alternatives_when_available() {
+    let release = workflow_alternatives(
+        HttpMethod::Get,
+        "/projects/{project_id}/releases/{release_id}/backtest-progress",
+    );
+    assert!(release.iter().any(|alternative| {
+        alternative["workflow"] == "releases"
+            && alternative["action"] == "backtest_progress"
+            && alternative["example"]
+                .as_str()
+                .is_some_and(|example| example.contains("--backtest-progress"))
+    }));
+
+    let integration = workflow_alternatives(
+        HttpMethod::Post,
+        "/projects/{project_id}/integrations/slack/test",
+    );
+    assert!(integration.iter().any(|alternative| {
+        alternative["workflow"] == "integrations"
+            && alternative["action"] == "test"
+            && alternative["example"]
+                .as_str()
+                .is_some_and(|example| example.contains("--provider slack --test"))
+    }));
+
+    let legacy = workflow_alternatives(HttpMethod::Get, "/public/incidents");
+    assert!(legacy.iter().any(|alternative| {
+        alternative["workflow"] == "incidents"
+            && alternative["example"] == "pcl incidents --limit 5"
+    }));
+}
+
+#[test]
 fn protocol_manager_nonce_requires_and_sends_address() {
     let error = protocol_manager_request(&ProtocolManagerArgs {
         nonce: true,
@@ -2271,12 +2344,15 @@ fn body_templates_are_action_specific() {
             project: Some("project-1".to_string()),
             release_id: Some("release-1".to_string()),
             signer_address: None,
+            check_id: None,
             create: false,
             preview: false,
             deploy: true,
             remove: false,
             deploy_calldata: false,
             remove_calldata: false,
+            backtest_progress: false,
+            retry_check: false,
             body: None,
             field: Vec::new(),
             body_file: None,
@@ -2289,12 +2365,15 @@ fn body_templates_are_action_specific() {
             project: Some("project-1".to_string()),
             release_id: Some("release-1".to_string()),
             signer_address: None,
+            check_id: None,
             create: false,
             preview: false,
             deploy: false,
             remove: false,
             deploy_calldata: true,
             remove_calldata: false,
+            backtest_progress: false,
+            retry_check: false,
             body: None,
             field: Vec::new(),
             body_file: None,
