@@ -1,24 +1,292 @@
-# PCL — The Credible CLI
+# PCL - The Credible CLI
 
 The CLI for the [Credible Layer](https://phylax.systems).
 
-## Installation
+## For Humans
+
+Use this section when you are installing PCL, building assertions, deploying projects, or investigating platform state interactively.
+The CLI is organized around the jobs people usually do in the Credible Layer: write assertions, verify them, ship them, and inspect what happened after deployment.
+
+For repository development, see [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [CHANGELOG.md](CHANGELOG.md).
+
+### Install
 
 ```bash
 brew install phylax/pcl/phylax
 ```
 
-## Commands
+After installing, authenticate and check the environment:
+
+```bash
+pcl auth login
+pcl doctor
+pcl whoami
+```
+
+`pcl doctor` checks local configuration, platform connectivity, and CLI auth endpoint support. `pcl whoami` prints the account and platform context the CLI will use.
+
+### Daily Workflow
+
+For assertion development, the core loop is:
+
+```bash
+pcl build
+pcl test
+pcl verify
+pcl apply --dry-run
+pcl apply
+```
+
+For platform work, prefer the natural workflow commands:
+
+```bash
+pcl projects --home
+pcl projects --project-id <project-ref>
+pcl assertions --project-id <project-ref>
+pcl incidents --project-id <project-ref> --environment production
+pcl releases --project <project-ref>
+pcl deployments --project <project-ref>
+```
+
+When you need a payload for a write, ask the CLI for the shape before sending it:
+
+```bash
+pcl projects --body-template
+pcl assertions --project-id <project-ref> --body-template
+pcl releases --project <project-ref> --body-template
+```
+
+When debugging or checking an endpoint that is not yet first-class, use the raw API surface.
+If `pcl api list` or `pcl api inspect` returns `workflow_alternatives`, use that workflow command for normal work.
+
+```bash
+pcl api list --filter incidents
+pcl api inspect get_views_projects_project_id_incidents
+pcl incidents --project <project-id> --environment production
+pcl api coverage --format toon
+```
+
+### Command Map
 
 | Command | Description |
 |---------|-------------|
 | `pcl build` | Build assertion contracts |
 | `pcl apply` | Preview and apply declarative deployment changes |
+| `pcl incidents`, `pcl projects`, `pcl assertions` | Natural platform workflow commands |
+| `pcl account`, `pcl contracts`, `pcl releases`, `pcl deployments` | Account, contract, release, and deployment workflows |
+| `pcl access`, `pcl integrations`, `pcl protocol-manager`, `pcl transfers`, `pcl events`, `pcl search` | Access control, integrations, protocol manager, transfer, audit, and search workflows |
+| `pcl doctor`, `pcl whoami` | Diagnose local/API readiness, target auth capability, and identity state |
+| `pcl workflows`, `pcl schema` | Agent-facing workflow recipes and command/action schemas |
+| `pcl --llms`, `pcl llms` | Print the CLI-native LLM usage guide |
+| `pcl export`, `pcl jobs`, `pcl artifacts`, `pcl requests` | Export JSONL artifacts and inspect local jobs, artifacts, and request logs |
+| `pcl completions` | Generate shell completion scripts |
+| `pcl api` | Discover, inspect, call, and audit raw platform API endpoints |
 | `pcl auth` | Authenticate with the Credible Layer platform |
 | `pcl config` | Manage CLI configuration |
 | `pcl download` | Download assertion source code for a protocol |
 | `pcl test` | Run assertion tests |
 | `pcl verify` | Verify assertions locally before deployment |
+
+### Shell Setup
+
+Generate completions for your shell:
+
+```bash
+pcl completions zsh > ~/.zfunc/_pcl
+```
+
+For long investigations, export artifacts instead of copying terminal output:
+
+```bash
+pcl export incidents \
+  --project-id <project-ref> \
+  --environment production \
+  --out incidents.jsonl \
+  --errors errors.jsonl \
+  --resume
+```
+
+Then inspect resumable jobs and request history:
+
+```bash
+pcl jobs list
+pcl jobs status <job-id>
+pcl requests list --limit 20
+```
+
+## For Agents
+
+Use this section when you are consuming PCL from an LLM, automation, script, or coding agent. It is written as a contract, not a tutorial.
+
+Top-level workflow commands expose the platform API as structured CLI operations for agents and scripts.
+`pcl api` remains the raw discovery and escape-hatch surface for uncovered endpoints.
+The CLI is designed around the platform workflows documented in the [Phylax docs](https://docs.phylax.systems):
+projects, assertions, transparency views, deployment state, integrations, and incidents.
+API commands default to compact TOON-style envelopes with `status`, `data`, and `next_actions`;
+use `--format toon` to pin that default explicitly. Pass `--json` / `--format json`
+only when a downstream tool needs the same envelope as strict JSON. Successes and errors use the same shape,
+so agents can recover from auth, validation, and parser failures without scraping prose diagnostics.
+`pcl auth status` also reports token validity, expiry, and platform URL; expired stored tokens return
+a nonzero structured error so agents do not mistake stale credentials for a working login.
+For preflight checks, prefer `pcl auth ensure --format toon`: it returns `status: ok` when auth is usable,
+or one `status: action_required` envelope with `device_url`, `code`, `device_secret`, and `poll_command`
+when user login is needed. `pcl auth refresh --format toon` is safe to call and rotates the stored CLI
+refresh token when available; if the refresh token is missing or rejected,
+it returns the same login challenge shape.
+Auth commands use `--auth-url`/`PCL_AUTH_URL` when set, otherwise they follow `PCL_API_URL`
+before falling back to the production app URL.
+When `expires_soon` is true, renew before long-running work with `pcl auth ensure --force --format toon`
+or `pcl auth login --no-wait --format toon`.
+`pcl auth logout` attempts remote logout first, then clears local credentials. Use
+`pcl auth logout --local` only when you explicitly want local cleanup.
+Repository-local agent instructions also live in [AGENTS.md](AGENTS.md).
+The core discovery commands in this section are exercised by `make agent-smoke`, which is part of
+`make ci`, so README/agent guidance should not drift from the CLI contract.
+
+### Start Here
+
+Start with CLI-native discovery. Do not scrape human help text unless the structured surfaces are missing the field you need.
+
+1. `pcl --llms` for the current CLI-native agent guide.
+2. `pcl doctor` and `pcl whoami` for readiness and token truthfulness.
+3. `pcl workflows`, `pcl schema list`, and `pcl api manifest --format toon` for discovery.
+4. Top-level workflow commands for normal work.
+5. `pcl api list`, `pcl api inspect`, `pcl api call`, and `pcl api coverage` only for debugging, API parity checks, internal/service endpoints, or endpoints without `workflow_alternatives`.
+
+### Output Contract
+
+Every machine-facing command is an envelope. Default TOON output looks like:
+
+```toon
+status: ok
+data: {}
+next_actions: []
+schema_version: pcl.envelope.v1
+pcl_version: "..."
+```
+
+Errors use `status: "error"` with:
+
+- `error.code`
+- `error.message`
+- `error.recoverable`
+- optional `error.http`
+- optional `request_id`
+- `next_actions`
+
+Default output is TOON for compact agent consumption. Use `--format toon` when a script needs
+to make that contract explicit. Use `--json` or `--format json` only when you need strict JSON parsing.
+Do not parse colored or human prose output as a control plane.
+
+`pcl auth login --json` is the one streaming exception: a fresh login emits JSONL events because the command must print device-login instructions and then wait for verification. Read each line as an envelope and trust only the event with `terminal: true` as the final result. If credentials are already valid, `pcl auth login --json` returns a single normal envelope. For normal agent flows, prefer a single TOON envelope from `pcl auth ensure --format toon` or `pcl auth login --no-wait --format toon`, then run `data.poll_command`.
+
+### Discovery Commands
+
+```bash
+pcl --llms
+pcl --format toon --llms
+pcl doctor --format toon
+pcl auth ensure --format toon
+pcl whoami --format toon
+pcl workflows --format toon
+pcl workflows show incident-investigation --format toon
+pcl schema list --format toon
+pcl schema get incidents --action list_public --format toon
+pcl api manifest --format toon
+```
+
+Use `--format json` for these same commands only when strict JSON parsing is required.
+
+### Workflow Commands
+
+Prefer top-level commands before raw API calls:
+
+```bash
+pcl incidents --limit 5 --format toon
+pcl incidents --project-id <project-ref> --environment production --format toon
+pcl incidents --project-id <project-ref> --all --limit 50 --output incidents.json --format toon
+pcl incidents --incident-id <incident-id> --format toon
+pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace --format toon
+pcl projects --limit 10 --format toon
+pcl projects --project-id <project-ref> --format toon
+pcl projects --create --project-name demo --chain-id 1 --dry-run --format toon
+pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo --dry-run --format toon
+pcl assertions --project-id <project-ref> --format toon
+pcl assertions --adopter-address 0x... --network 1 --format toon
+pcl account --format toon
+pcl contracts --project <project-ref> --format toon
+pcl releases --project <project-ref> --format toon
+pcl deployments --project <project-ref> --format toon
+pcl access --project <project-ref> --members --format toon
+pcl integrations --project <project-ref> --provider slack --format toon
+pcl protocol-manager --project <project-ref> --pending-transfer --format toon
+pcl transfers --pending --format toon
+pcl events --project <project-ref> --audit-log --format toon
+pcl search --query settler --format toon
+```
+
+### Mutation Rules
+
+Use `--dry-run` before writes and `--body-template` before constructing mutation payloads.
+`--dry-run` is a planning mode, not an enforced confirmation gate; rerunning without it executes the request.
+Prefer typed flags, then `--field key=value`, then `--body-file` for nested payloads.
+
+```bash
+pcl projects --body-template --format toon
+pcl assertions --project-id <project-ref> --body-template --format toon
+pcl releases --project <project-ref> --body-template --format toon
+pcl access --project <project-ref> --member-user-id <user-id> --update-role --body-template --format toon
+pcl protocol-manager --project <project-ref> --confirm-transfer --body-template --format toon
+pcl api inspect post_projects --format toon
+```
+
+For complex bodies:
+
+1. Get the template with `--body-template --format toon`.
+2. Fill the returned body into a file.
+3. Run the write with `--dry-run --body-file <file> --format toon`.
+4. Execute without `--dry-run` only after the request plan is correct.
+
+### Raw API Fallback
+
+Raw calls are an escape hatch for debugging, API parity checks, internal/service endpoints, browser-session bridge investigation, and new endpoint exploration before a workflow is promoted.
+For normal product work, inspect `workflow_alternatives` and use the advertised workflow command instead of `pcl api call`.
+Call any endpoint below `/api/v1`. Query strings and repeated `--query` flags are both valid.
+Known public raw paths do not attach stored tokens by default; pass `--allow-unauthenticated` when you need to force no auth on another public endpoint.
+For simple JSON object bodies, repeated `--field key=value` works on raw `pcl api call` the same way it works on workflow commands.
+
+```bash
+pcl api list --filter integrations --format toon
+pcl api inspect get_views_projects_project_id_incidents --format toon
+pcl incidents --limit 5
+pcl projects --create --field project_name=demo --field chain_id=1
+pcl incidents --project <project-id> --environment production
+pcl incidents --all --limit 50 --output incidents.json
+pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --resume
+pcl assertions --project <project-id>
+pcl account --logout
+```
+
+`pcl api inspect` reports `workflow_alternatives`, `raw_api_use`, auth metadata, and required header placeholders so agents can avoid manual raw calls unless they are intentionally debugging. Raw API calls record `operation_id` in request history when it can be resolved from OpenAPI; use `pcl api coverage --format toon` or `pcl api coverage --markdown api-coverage.md --format toon` after an exploration run to find untested endpoints, endpoints hit without a 2xx, and side-effecting operations that need reconciliation.
+
+### Jobs, Artifacts, And Provenance
+
+For long investigations, use JSONL exports, checkpoint files, and `pcl jobs` instead of rebuilding pagination or retry state manually.
+
+```bash
+pcl export incidents --project-id <project-ref> --environment production --out incidents.jsonl --errors errors.jsonl --checkpoint checkpoint.json --resume --continue-on-error --format toon
+pcl jobs path --format toon
+pcl jobs list --format toon
+pcl jobs status <job-id> --format toon
+pcl jobs resume <job-id> --format toon
+pcl artifacts list --format toon
+pcl requests list --limit 20 --format toon
+```
+
+When an agent reports a derived result, preserve the command, artifact path, request ID, project ID,
+incident ID, transaction hash, and trace context that produced it. `pcl requests list --format toon` recovers
+recent request IDs and HTTP statuses; export outputs include `job_id`, `resume_command`, checkpoint,
+output, and error file paths.
 
 ## Development
 

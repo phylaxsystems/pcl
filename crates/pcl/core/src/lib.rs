@@ -2,7 +2,9 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::struct_field_names)]
 #![allow(clippy::unreadable_literal)]
+#![recursion_limit = "256"]
 
+pub mod api;
 pub mod apply;
 pub mod auth;
 pub mod client;
@@ -11,6 +13,8 @@ pub mod credible_config;
 pub mod diff;
 pub mod download;
 pub mod error;
+pub mod request_log;
+pub mod surface;
 #[cfg(feature = "credible")]
 pub mod verify;
 

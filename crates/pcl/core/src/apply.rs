@@ -31,7 +31,10 @@ use dapp_api_client::generated::client::{
 };
 use inquire::Select;
 use pcl_common::args::CliArgs;
-use pcl_phoundry::build_and_flatten::BuildAndFlattenArgs;
+use pcl_phoundry::{
+    DEFAULT_ASSERTION_CONTRACTS_DIR,
+    build_and_flatten::BuildAndFlattenArgs,
+};
 use serde::Serialize;
 use std::{
     collections::HashMap,
@@ -283,6 +286,7 @@ impl ApplyArgs {
                     let output = BuildAndFlattenArgs {
                         root: Some(root.to_path_buf()),
                         assertion_contract: assertion_contract_name(&assertion.file)?,
+                        contracts: assertion_contracts_dir(&assertion.file),
                     }
                     .run()
                     .map_err(ApplyError::BuildFailed)?;
@@ -439,6 +443,17 @@ where
     value
         .parse()
         .map_err(|e| ApplyError::InvalidConfig(format!("Invalid {field}: {e}")))
+}
+
+fn assertion_contracts_dir(file: &str) -> PathBuf {
+    let source_path = file.split_once(':').map_or(file, |(path, _)| path);
+    Path::new(source_path)
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map_or_else(
+            || PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
+            Path::to_path_buf,
+        )
 }
 
 fn build_assertion_item(

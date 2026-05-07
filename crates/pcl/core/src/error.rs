@@ -1,4 +1,8 @@
 use crate::credible_config::CredibleConfigError;
+use chrono::{
+    DateTime,
+    Utc,
+};
 use dapp_api_client::generated::client::{
     Error as ApiError,
     types::GetCliAuthStatusResponse,
@@ -104,6 +108,10 @@ pub enum ConfigError {
     #[error("Failed to serialize config file: {0}")]
     SerializeError(#[source] toml::ser::Error),
 
+    /// Error when serializing structured CLI output fails
+    #[error("Failed to serialize JSON output: {0}")]
+    JsonError(#[source] serde_json::Error),
+
     /// Error when attempting an operation that requires authentication
     /// but no authentication token is present in the config
     #[error("No Authentication Token Found")]
@@ -128,6 +136,66 @@ pub enum AuthError {
     /// Error when the auth session is no longer valid
     #[error("Invalid session: {0}. Please run `pcl auth login` again.")]
     InvalidSession(String),
+
+    /// Error when the locally stored access token has expired
+    #[error(
+        "Stored auth token for {user} expired at {expires_at}. Run `pcl auth login --force` again."
+    )]
+    StoredTokenExpired {
+        user: String,
+        expires_at: DateTime<Utc>,
+        platform_url: String,
+    },
+
+    /// Error when there are no stored credentials that can be refreshed.
+    #[error("No refreshable CLI session found. Run `pcl auth login`.")]
+    NoRefreshableSession,
+
+    /// Error when the stored refresh token is missing or empty.
+    #[error("Stored CLI session is missing a refresh token. Run `pcl auth login --force`.")]
+    MissingRefreshToken,
+
+    /// Error when the platform rejected the refresh token.
+    #[error("Stored CLI session expired or was already rotated. Run `pcl auth login --force`.")]
+    RefreshRejected {
+        status: u16,
+        code: Option<String>,
+        request_id: Option<String>,
+        message: Option<String>,
+    },
+
+    /// Error when the platform does not expose the CLI refresh endpoint.
+    #[error("Token refresh endpoint was not found on the platform. Run `pcl auth login --force`.")]
+    RefreshEndpointNotFound {
+        request_id: Option<String>,
+        message: Option<String>,
+    },
+
+    /// Error when the platform rate-limits token refresh.
+    #[error("Token refresh was rate limited. Retry after {retry_after_seconds:?} seconds.")]
+    RefreshRateLimited {
+        retry_after_seconds: Option<u64>,
+        request_id: Option<String>,
+        message: Option<String>,
+    },
+
+    /// Error when refresh failed due to a server-side issue.
+    #[error("Token refresh failed with server status {status}. Try again later.")]
+    RefreshServerError {
+        status: u16,
+        request_id: Option<String>,
+        message: Option<String>,
+    },
+
+    /// Error when refresh failed due to local transport or response issues.
+    #[error(
+        "Token refresh request failed. Please check your connection and try again.\nError: {0}"
+    )]
+    RefreshRequestFailed(String),
+
+    /// Error when another local process is holding the refresh lock too long.
+    #[error("Timed out waiting for another PCL process to finish refreshing auth.")]
+    RefreshLockTimeout,
 
     /// Error when the session has expired server-side
     #[error("Session expired. Please run `pcl auth login` to start a new session.")]

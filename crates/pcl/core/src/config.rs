@@ -1,4 +1,10 @@
-use crate::error::ConfigError;
+use crate::{
+    api::{
+        toon_string,
+        with_envelope_metadata,
+    },
+    error::ConfigError,
+};
 use alloy_primitives::Address;
 use chrono::{
     DateTime,
@@ -12,9 +18,14 @@ use serde::{
     Deserialize,
     Serialize,
 };
+use serde_json::{
+    Value,
+    json,
+};
 
 use std::{
     fmt,
+    io::Write,
     path::{
         Path,
         PathBuf,
@@ -28,12 +39,13 @@ const LEGACY_CONFIG_DIR: &str = ".pcl";
 const CONFIG_DIR_NAME: &str = "pcl";
 /// Configuration file name
 pub const CONFIG_FILE: &str = "config.toml";
+pub const AUTH_EXPIRES_SOON_SECONDS: i64 = 300;
 
 /// Main configuration structure for PCL
 ///
 /// This struct holds all the configuration data for the PCL tool,
 /// including authentication details.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CliConfig {
     /// Optional authentication details
     pub auth: Option<UserAuth>,
@@ -56,6 +68,14 @@ enum ConfigCommand {
 }
 
 impl ConfigArgs {
+    pub fn can_run_without_valid_config(&self) -> bool {
+        matches!(self.command, ConfigCommand::Delete)
+    }
+
+    pub fn should_force_config_write(&self) -> bool {
+        matches!(self.command, ConfigCommand::Delete)
+    }
+
     /// Executes the configuration command
     ///
     /// # Arguments
@@ -63,21 +83,64 @@ impl ConfigArgs {
     ///
     /// # Returns
     /// * `Result<(), ConfigError>` - Success or error
-    pub fn run(&self, config: &mut CliConfig) -> Result<(), ConfigError> {
+    pub fn run(&self, config: &mut CliConfig, cli_args: &CliArgs) -> Result<(), ConfigError> {
         match self.command {
             ConfigCommand::Show => {
-                println!("{config}");
-                Ok(())
+                print_config_output(
+                    &config_show_envelope(config, cli_args),
+                    cli_args.json_output(),
+                )
             }
             ConfigCommand::Delete => {
                 *config = CliConfig::default();
-                Ok(())
+                print_config_output(
+                    &json!({
+                        "status": "ok",
+                        "data": {
+                            "deleted": true,
+                            "config_path": CliConfig::config_file_path(cli_args).display().to_string(),
+                            "auth": config_auth_value(config),
+                        },
+                        "next_actions": [
+                            "pcl auth login",
+                            "pcl config show",
+                        ],
+                    }),
+                    cli_args.json_output(),
+                )
             }
         }
     }
 }
 
 impl CliConfig {
+    /// Updates stored auth expiry from the JWT `exp` claim when available.
+    ///
+    /// Older CLI versions stored the short device-login session expiry here,
+    /// which made valid tokens look expired after only a few minutes.
+    pub fn normalize_auth_expiry_from_access_token(&mut self) -> bool {
+        let Some(auth) = &mut self.auth else {
+            return false;
+        };
+        let Some(token_expires_at) = auth.access_token_expires_at() else {
+            return false;
+        };
+        if auth.expires_at == token_expires_at {
+            return false;
+        }
+        auth.expires_at = token_expires_at;
+        true
+    }
+
+    /// Returns the path to the active config file for the supplied CLI arguments.
+    pub fn config_file_path(cli_args: &CliArgs) -> PathBuf {
+        cli_args
+            .config_dir
+            .clone()
+            .unwrap_or(Self::get_config_dir())
+            .join(CONFIG_FILE)
+    }
+
     /// Writes the configuration to the default config file, or a specific directory
     ///
     /// # Arguments
@@ -92,6 +155,22 @@ impl CliConfig {
                 .clone()
                 .unwrap_or(Self::get_config_dir()),
         )
+    }
+
+    /// Writes the configuration only when the on-disk config still matches
+    /// the snapshot read at process start. This prevents a read-only command
+    /// from overwriting credentials that another process just refreshed.
+    pub fn write_to_file_if_unchanged(
+        &self,
+        cli_args: &CliArgs,
+        expected_current: &Self,
+    ) -> Result<bool, ConfigError> {
+        let current = Self::read_from_file(cli_args)?;
+        if current != *expected_current {
+            return Ok(false);
+        }
+        self.write_to_file(cli_args)?;
+        Ok(true)
     }
 
     /// Writes the configuration to a specific directory
@@ -109,9 +188,39 @@ impl CliConfig {
         let config_file = config_dir.join(CONFIG_FILE);
         Self::ensure_writable_file(&config_file)?;
 
-        // Serialize and write config
+        // Serialize and write config atomically so access/refresh tokens never
+        // land on disk as a partially-written pair.
         let config_str = toml::to_string(self).map_err(ConfigError::SerializeError)?;
-        std::fs::write(config_file, config_str).map_err(ConfigError::WriteError)?;
+        let temp_file = config_dir.join(format!(
+            ".{CONFIG_FILE}.{}.{}.tmp",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp_file)
+                .map_err(ConfigError::WriteError)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&temp_file, std::fs::Permissions::from_mode(0o600))
+                    .map_err(ConfigError::WriteError)?;
+            }
+            file.write_all(config_str.as_bytes())
+                .map_err(ConfigError::WriteError)?;
+            file.sync_all().map_err(ConfigError::WriteError)?;
+        }
+        std::fs::rename(&temp_file, &config_file).map_err(|error| {
+            let _ = std::fs::remove_file(&temp_file);
+            ConfigError::WriteError(error)
+        })?;
+        if let Some(parent) = config_file.parent()
+            && let Ok(parent_file) = std::fs::File::open(parent)
+        {
+            let _ = parent_file.sync_all();
+        }
         Ok(())
     }
 
@@ -299,6 +408,79 @@ impl CliConfig {
     }
 }
 
+fn config_show_envelope(config: &CliConfig, cli_args: &CliArgs) -> Value {
+    with_envelope_metadata(json!({
+        "status": "ok",
+        "data": {
+            "config_path": CliConfig::config_file_path(cli_args).display().to_string(),
+            "auth": config_auth_value(config),
+        },
+        "next_actions": if config.auth.is_some() {
+            json!(["pcl auth status", "pcl account", "pcl config delete"])
+        } else {
+            json!(["pcl auth login", "pcl config delete"])
+        },
+    }))
+}
+
+fn config_auth_value(config: &CliConfig) -> Value {
+    let Some(auth) = &config.auth else {
+        return json!({
+            "authenticated": false,
+            "token_present": false,
+            "refresh_token_present": false,
+            "refresh_expires_at": null,
+            "refresh_seconds_remaining": null,
+            "token_valid": false,
+            "token_expired": false,
+            "expires_soon": false,
+            "expired": false,
+            "expires_at": null,
+            "seconds_remaining": null,
+            "expires_in_seconds": null,
+        });
+    };
+
+    let now = Utc::now();
+    let seconds_remaining = (auth.expires_at - now).num_seconds();
+    let token_expired = auth.expires_at <= now;
+    let expires_soon = !token_expired && seconds_remaining <= AUTH_EXPIRES_SOON_SECONDS;
+    let refresh_seconds_remaining = auth
+        .refresh_expires_at
+        .map(|expires_at| (expires_at - now).num_seconds());
+    json!({
+        "authenticated": true,
+        "user": auth.display_name(),
+        "user_id": auth.user_id.map(|id| id.to_string()),
+        "wallet_address": auth.wallet_address.map(|address| address.to_string()),
+        "email": auth.email.as_deref(),
+        "token_present": !auth.access_token.is_empty(),
+        "refresh_token_present": !auth.refresh_token.is_empty(),
+        "refresh_expires_at": auth.refresh_expires_at.map(|expires_at| expires_at.to_rfc3339()),
+        "refresh_seconds_remaining": refresh_seconds_remaining,
+        "token_valid": !token_expired,
+        "token_expired": token_expired,
+        "expires_soon": expires_soon,
+        "expired": token_expired,
+        "expires_at": auth.expires_at.to_rfc3339(),
+        "seconds_remaining": seconds_remaining,
+        "expires_in_seconds": seconds_remaining,
+    })
+}
+
+fn print_config_output(value: &Value, json_output: bool) -> Result<(), ConfigError> {
+    let value = with_envelope_metadata(value.clone());
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).map_err(ConfigError::JsonError)?
+        );
+    } else {
+        print!("{}", toon_string(&value));
+    }
+    Ok(())
+}
+
 impl fmt::Display for CliConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let config_path = Self::get_config_dir().join(CONFIG_FILE);
@@ -317,7 +499,7 @@ impl fmt::Display for CliConfig {
 }
 
 /// Authentication details for a user
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserAuth {
     /// Access token for API authentication
     pub access_token: String,
@@ -326,6 +508,13 @@ pub struct UserAuth {
     /// Token expiration timestamp
     #[serde(with = "chrono::serde::ts_seconds")]
     pub expires_at: DateTime<Utc>,
+    /// Refresh token sliding expiration timestamp, when returned by the platform.
+    #[serde(
+        default,
+        with = "chrono::serde::ts_seconds_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub refresh_expires_at: Option<DateTime<Utc>>,
     /// Platform user ID (UUID), used for API calls that require it
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_id: Option<Uuid>,
@@ -338,6 +527,10 @@ pub struct UserAuth {
 }
 
 impl UserAuth {
+    pub fn access_token_expires_at(&self) -> Option<DateTime<Utc>> {
+        access_token_expires_at(&self.access_token)
+    }
+
     /// Returns the best available display name for this user.
     pub fn display_name(&self) -> String {
         if let Some(addr) = &self.wallet_address
@@ -353,6 +546,47 @@ impl UserAuth {
         }
         "unknown".to_string()
     }
+}
+
+pub fn access_token_expires_at(token: &str) -> Option<DateTime<Utc>> {
+    let payload = token.split('.').nth(1)?;
+    let payload = decode_base64_url(payload)?;
+    let payload: Value = serde_json::from_slice(&payload).ok()?;
+    let exp = payload.get("exp").and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|exp| i64::try_from(exp).ok()))
+    })?;
+    DateTime::from_timestamp(exp, 0)
+}
+
+fn decode_base64_url(input: &str) -> Option<Vec<u8>> {
+    let mut output = Vec::new();
+    let mut buffer = 0u32;
+    let mut bits = 0u8;
+
+    for byte in input.bytes() {
+        if byte == b'=' {
+            break;
+        }
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            _ => return None,
+        };
+        buffer = (buffer << 6) | u32::from(value);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            output.push(((buffer >> bits) & 0xff) as u8);
+            buffer &= (1 << bits) - 1;
+        }
+    }
+
+    Some(output)
 }
 
 impl fmt::Display for UserAuth {
@@ -427,6 +661,7 @@ mod tests {
                 access_token: "test_access".to_string(),
                 refresh_token: "test_refresh".to_string(),
                 expires_at: fixed_timestamp,
+                refresh_expires_at: None,
                 user_id: None,
                 wallet_address: None,
                 email: None,
@@ -462,6 +697,62 @@ mod tests {
     }
 
     #[test]
+    fn write_to_file_if_unchanged_preserves_newer_disk_auth() {
+        let temp_dir = TempDir::new().unwrap();
+        let cli_args = CliArgs {
+            config_dir: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        let old_config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "old_access".to_string(),
+                refresh_token: "old_refresh".to_string(),
+                expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: None,
+            }),
+        };
+        let stale_process_config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "normalized_old_access".to_string(),
+                refresh_token: "old_refresh".to_string(),
+                expires_at: DateTime::from_timestamp(4102444800, 0).unwrap(),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: None,
+            }),
+        };
+        let newer_config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "new_access".to_string(),
+                refresh_token: "new_refresh".to_string(),
+                expires_at: DateTime::from_timestamp(4102444800, 0).unwrap(),
+                refresh_expires_at: Some(DateTime::from_timestamp(4105036800, 0).unwrap()),
+                user_id: None,
+                wallet_address: None,
+                email: None,
+            }),
+        };
+
+        old_config.write_to_file(&cli_args).unwrap();
+        newer_config.write_to_file(&cli_args).unwrap();
+
+        let wrote = stale_process_config
+            .write_to_file_if_unchanged(&cli_args, &old_config)
+            .unwrap();
+
+        assert!(!wrote);
+        let persisted = CliConfig::read_from_file(&cli_args).unwrap();
+        assert_eq!(
+            persisted.auth.as_ref().unwrap().refresh_token,
+            "new_refresh"
+        );
+    }
+
+    #[test]
     fn test_read_nonexistent_config() {
         let (config_dir, _temp_dir) = setup_config_dir();
 
@@ -476,6 +767,7 @@ mod tests {
             access_token: "test_access".to_string(),
             refresh_token: "test_refresh".to_string(),
             expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(), // 2022-12-31 16:00:00 UTC
+            refresh_expires_at: None,
             user_id: None,
             wallet_address: None,
             email: Some("test@example.com".to_string()),
@@ -497,6 +789,7 @@ mod tests {
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
+            refresh_expires_at: None,
             wallet_address: Some(Address::from_slice(&[1; 20])),
             email: Some("test@example.com".to_string()),
             user_id: Some(Uuid::nil()),
@@ -511,6 +804,7 @@ mod tests {
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
+            refresh_expires_at: None,
             wallet_address: None,
             email: Some("test@example.com".to_string()),
             user_id: Some(Uuid::nil()),
@@ -522,6 +816,7 @@ mod tests {
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
+            refresh_expires_at: None,
             wallet_address: None,
             email: None,
             user_id: Some(Uuid::nil()),
@@ -536,6 +831,7 @@ mod tests {
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
+            refresh_expires_at: None,
             wallet_address: None,
             email: None,
             user_id: None,
@@ -544,12 +840,51 @@ mod tests {
     }
 
     #[test]
+    fn extracts_expiry_from_jwt_access_token() {
+        let auth = UserAuth {
+            access_token: "e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig".to_string(),
+            refresh_token: String::new(),
+            expires_at: DateTime::from_timestamp(0, 0).unwrap(),
+            refresh_expires_at: None,
+            wallet_address: None,
+            email: None,
+            user_id: None,
+        };
+
+        assert_eq!(
+            auth.access_token_expires_at(),
+            DateTime::from_timestamp(4102444800, 0)
+        );
+    }
+
+    #[test]
+    fn normalizes_legacy_device_session_expiry_from_access_token_exp() {
+        let mut config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig".to_string(),
+                refresh_token: "refresh".to_string(),
+                expires_at: DateTime::from_timestamp(1, 0).unwrap(),
+                refresh_expires_at: None,
+                wallet_address: None,
+                email: None,
+                user_id: None,
+            }),
+        };
+
+        assert!(config.normalize_auth_expiry_from_access_token());
+        assert_eq!(
+            config.auth.unwrap().expires_at,
+            DateTime::from_timestamp(4102444800, 0).unwrap()
+        );
+    }
+
+    #[test]
     fn test_config_args_show() {
         let mut config = CliConfig::default();
         let args = ConfigArgs {
             command: ConfigCommand::Show,
         };
-        assert!(args.run(&mut config).is_ok());
+        assert!(args.run(&mut config, &CliArgs::default()).is_ok());
     }
 
     #[test]
@@ -559,6 +894,7 @@ mod tests {
                 access_token: "test".to_string(),
                 refresh_token: "test".to_string(),
                 expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
+                refresh_expires_at: None,
                 user_id: None,
                 wallet_address: None,
                 email: None,
@@ -567,8 +903,45 @@ mod tests {
         let args = ConfigArgs {
             command: ConfigCommand::Delete,
         };
-        assert!(args.run(&mut config).is_ok());
+        assert!(args.run(&mut config, &CliArgs::default()).is_ok());
         assert!(config.auth.is_none());
+    }
+
+    #[test]
+    fn config_show_envelope_hides_tokens_and_reports_expiry() {
+        let args = CliArgs {
+            config_dir: Some(PathBuf::from("/tmp/pcl-test-config")),
+            ..Default::default()
+        };
+        let config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "secret-access".to_string(),
+                refresh_token: "secret-refresh".to_string(),
+                expires_at: Utc::now() + chrono::Duration::minutes(10),
+                refresh_expires_at: None,
+                user_id: Some(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()),
+                wallet_address: None,
+                email: Some("test@example.com".to_string()),
+            }),
+        };
+
+        let envelope = config_show_envelope(&config, &args);
+
+        assert_eq!(envelope["status"], "ok");
+        assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+        assert_eq!(envelope["pcl_version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            envelope["data"]["config_path"],
+            "/tmp/pcl-test-config/config.toml"
+        );
+        assert_eq!(envelope["data"]["auth"]["authenticated"], true);
+        assert_eq!(envelope["data"]["auth"]["user"], "test@example.com");
+        assert_eq!(envelope["data"]["auth"]["token_valid"], true);
+        assert_eq!(envelope["data"]["auth"]["expired"], false);
+        assert!(envelope["data"]["auth"]["seconds_remaining"].is_number());
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        assert!(!serialized.contains("secret-access"));
+        assert!(!serialized.contains("secret-refresh"));
     }
 
     #[test]
@@ -616,6 +989,7 @@ mod tests {
             access_token: "test_access".to_string(),
             refresh_token: "test_refresh".to_string(),
             expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
+            refresh_expires_at: Some(DateTime::from_timestamp(1675094400, 0).unwrap()),
             user_id: Some(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()),
             wallet_address: Some(Address::from_slice(&[0; 20])),
             email: Some("test@example.com".to_string()),

@@ -1,0 +1,14 @@
+[advisories]
+# Keep the advisory gate explicit even while upstream Foundry/Alloy dependencies
+# carry known transitive advisories. Revisit these ignores during dependency
+# upgrade work; do not add new ignores without recording the upstream owner.
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "Transitive through Foundry/Alloy; paste is unmaintained but no direct PCL usage." },
+    { id = "RUSTSEC-2024-0437", reason = "Transitive through Foundry/trezor protobuf dependency; tracked upstream." },
+    { id = "RUSTSEC-2026-0002", reason = "Transitive lru versions through Foundry/Alloy; tracked upstream." },
+    { id = "RUSTSEC-2026-0097", reason = "Transitive rand 0.8 through Foundry/Alloy; tracked upstream." },
+    { id = "RUSTSEC-2026-0104", reason = "Transitive rustls-webpki through reqwest/Alloy; tracked upstream." },
+    { id = "RUSTSEC-2018-0017", reason = "Transitive through credible-sdk assertion-executor -> sled optional credible feature; tracked upstream." },
+    { id = "RUSTSEC-2023-0018", reason = "Transitive through credible-sdk assertion-executor -> sled optional credible feature; no direct PCL remove_dir_all usage." },
+    { id = "RUSTSEC-2025-0141", reason = "Transitive through credible-sdk assertion-executor optional credible feature; bincode 1.x is complete upstream but unmaintained." },
+]
