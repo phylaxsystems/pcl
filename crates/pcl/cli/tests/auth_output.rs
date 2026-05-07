@@ -432,7 +432,7 @@ fn auth_login_no_wait_uses_pcl_api_url_when_auth_url_is_unset() {
         envelope["data"]["poll_command"]
             .as_str()
             .expect("poll_command string")
-            .contains(&format!("--auth-url {}", server.url()))
+            .contains(&format!("--auth-url={}", server.url()))
     );
     auth_code.assert();
 }

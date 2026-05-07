@@ -112,7 +112,7 @@ pub enum AuthSubcommands {
     /// Ensure auth is usable, or return a one-envelope login challenge
     #[command(
         long_about = "Checks whether auth is usable. If not, returns a structured device-login challenge without waiting.",
-        after_help = "Examples:\n  pcl auth ensure\n  pcl auth ensure --json\n  pcl auth ensure --force --json"
+        after_help = "Examples:\n  pcl auth ensure\n  pcl auth ensure --format toon\n  pcl auth ensure --force --format toon"
     )]
     Ensure {
         #[arg(long, help = "Return a fresh login challenge even when auth is usable")]
@@ -122,7 +122,7 @@ pub enum AuthSubcommands {
     /// Login to PCL
     #[command(
         long_about = "Initiates the login process. Opens a browser window for authentication.",
-        after_help = "Examples:\n  pcl auth login\n  pcl auth login --force\n  pcl auth login --no-wait --json"
+        after_help = "Examples:\n  pcl auth login\n  pcl auth login --force\n  pcl auth login --no-wait --format toon"
     )]
     Login {
         #[arg(
@@ -140,7 +140,7 @@ pub enum AuthSubcommands {
     /// Poll a pending device-login session once
     #[command(
         long_about = "Checks a device-login session once and stores credentials if verification completed.",
-        after_help = "Example: pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --json"
+        after_help = "Example: pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --format toon"
     )]
     Poll {
         #[arg(
@@ -157,7 +157,7 @@ pub enum AuthSubcommands {
     /// Refresh auth when possible, or return a login challenge when refresh is unavailable
     #[command(
         long_about = "Refreshes auth non-interactively by rotating the stored CLI refresh token; returns a structured login challenge when no refreshable session exists.",
-        after_help = "Example: pcl auth refresh --json"
+        after_help = "Example: pcl auth refresh --format toon"
     )]
     Refresh {
         #[arg(
@@ -318,7 +318,7 @@ impl AuthCommand {
             refresh_challenge_reason.unwrap_or_else(|| auth_challenge_reason(config, force));
         let auth_response = Self::request_auth_code(&self.api_client()).await?;
         Self::print_output(
-            &self.login_challenge_envelope(&auth_response, reason),
+            &self.login_challenge_envelope(&auth_response, reason, json_output),
             json_output,
         )
     }
@@ -372,7 +372,7 @@ impl AuthCommand {
         let auth_response = Self::request_auth_code(&self.api_client()).await?;
         let reason = refresh_challenge_reason.unwrap_or(AuthChallengeReason::Missing);
         Self::print_output(
-            &self.login_challenge_envelope(&auth_response, reason),
+            &self.login_challenge_envelope(&auth_response, reason, json_output),
             json_output,
         )
     }
@@ -414,6 +414,7 @@ impl AuthCommand {
                     } else {
                         auth_challenge_reason(config, false)
                     },
+                    json_output,
                 ),
                 json_output,
             )?;
@@ -521,6 +522,7 @@ impl AuthCommand {
         &self,
         auth_response: &GetCliAuthCodeResponse,
         reason: AuthChallengeReason,
+        json_output: bool,
     ) -> Value {
         let mut device_url = self.effective_auth_url();
         device_url.set_path("/device");
@@ -540,8 +542,12 @@ impl AuthCommand {
                 "session_id": auth_response.session_id.to_string(),
                 "device_secret": auth_response.device_secret.as_str(),
                 "expires_at": auth_response.expires_at.to_rfc3339(),
-                "poll_command": self.poll_command(auth_response, true),
-                "wait_command": "pcl auth login --force --json",
+                "poll_command": self.poll_command(auth_response, json_output),
+                "wait_command": if json_output {
+                    "pcl auth login --force --json"
+                } else {
+                    "pcl auth login --force --format toon"
+                },
             },
             "next_actions": [
                 "Open data.device_url and enter data.code",
@@ -596,15 +602,19 @@ impl AuthCommand {
     }
 
     fn poll_command(&self, auth_response: &GetCliAuthCodeResponse, json_output: bool) -> String {
-        let json_flag = if json_output { " --json" } else { "" };
+        let output_flag = if json_output {
+            " --json"
+        } else {
+            " --format toon"
+        };
         let auth_url = self.effective_auth_url();
         format!(
-            "pcl auth --auth-url {} poll --session-id {} --device-secret {} --expires-at {}{}",
+            "pcl auth --auth-url={} poll --session-id={} --device-secret={} --expires-at={}{}",
             shell_quote(auth_url.as_str()),
             auth_response.session_id,
             shell_quote(&auth_response.device_secret),
             shell_quote(&auth_response.expires_at.to_rfc3339()),
-            json_flag
+            output_flag
         )
     }
 
@@ -1444,6 +1454,61 @@ mod tests {
                         && command.contains("2024-12-31T00:00:00+00:00")
                 })
         );
+    }
+
+    #[test]
+    fn login_challenge_commands_follow_requested_output_mode() {
+        let cmd = AuthCommand {
+            command: AuthSubcommands::Login {
+                force: false,
+                no_wait: true,
+            },
+            auth_url: Some("https://app.phylax.systems".parse().unwrap()),
+        };
+        let auth_response: GetCliAuthCodeResponse =
+            serde_json::from_str(test_auth_response_json()).unwrap();
+
+        let toon =
+            cmd.login_challenge_envelope(&auth_response, AuthChallengeReason::Missing, false);
+        assert!(
+            toon["data"]["poll_command"]
+                .as_str()
+                .is_some_and(|command| command.ends_with("--format toon"))
+        );
+        assert_eq!(
+            toon["data"]["wait_command"],
+            "pcl auth login --force --format toon"
+        );
+
+        let json = cmd.login_challenge_envelope(&auth_response, AuthChallengeReason::Missing, true);
+        assert!(
+            json["data"]["poll_command"]
+                .as_str()
+                .is_some_and(|command| command.ends_with("--json"))
+        );
+        assert_eq!(
+            json["data"]["wait_command"],
+            "pcl auth login --force --json"
+        );
+    }
+
+    #[test]
+    fn login_challenge_poll_command_handles_leading_dash_secret() {
+        let cmd = AuthCommand {
+            command: AuthSubcommands::Login {
+                force: false,
+                no_wait: true,
+            },
+            auth_url: Some("https://app.phylax.systems".parse().unwrap()),
+        };
+        let mut auth_response: GetCliAuthCodeResponse =
+            serde_json::from_str(test_auth_response_json()).unwrap();
+        auth_response.device_secret = "-dash_secret".to_string();
+
+        let command = cmd.poll_command(&auth_response, false);
+
+        assert!(command.contains("--device-secret=-dash_secret"));
+        assert!(!command.contains("--device-secret -dash_secret"));
     }
 
     #[test]
