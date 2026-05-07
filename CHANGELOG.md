@@ -4,7 +4,12 @@ All notable user-facing changes should be recorded here.
 
 ## Unreleased
 
-## 1.5.0 - 2026-05-08
+## 1.4.2 - 2026-05-09
+
+- Updated Credible SDK assertion dependencies to the latest 1.4 assertion runtime graph.
+- Fixed CI private dependency handling for the reusable Rust workflow and documented the remaining upstream-pinned advisory exceptions.
+
+## 1.4.1 - 2026-05-08
 
 - Added `pcl apply --dry-run` to build and verify release payloads from `credible.toml` without calling the API.
 - Fixed full-feature release builds for local assertion verification.

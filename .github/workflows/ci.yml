@@ -63,11 +63,14 @@ jobs:
       runner: "phylax-self-hosted"
       rust-channel: "nightly-2026-01-07"
       require-lockfile: true
+      requires-private-deps: true
       use-nextest: true
       enable-sccache: true
       sccache-backend: "local"
       deny-checks: "advisories"
       deny-preinstalled: true
+    secrets:
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
 
   release-feature-check:
     name: Release Feature Check
@@ -92,8 +95,8 @@ jobs:
         run: git config --file "$GIT_CONFIG_GLOBAL" url."git@github.com:".insteadOf "https://github.com/"
       - name: Install Rust toolchain
         run: rustup toolchain install "$RUST_NIGHTLY_VERSION" --profile minimal --no-self-update
-      - name: Check release feature set
-        run: make full-check
+      - name: Check release build surface
+        run: make release-check
 
   agent-smoke:
     name: Agent CLI Smoke
