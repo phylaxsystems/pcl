@@ -763,6 +763,7 @@ async fn paginates_incident_list_workflows() {
         api_url: server.url().parse().unwrap(),
         allow_unauthenticated: true,
         dry_run: false,
+        refresh_after_401: Cell::new(true),
     };
     let request = WorkflowRequest::get("/views/public/incidents", false, Vec::new());
     let mut config = CliConfig::default();
@@ -798,6 +799,7 @@ async fn incident_workflow_pagination_rejects_zero_limit() {
         api_url: "https://app.phylax.systems".parse().unwrap(),
         allow_unauthenticated: true,
         dry_run: false,
+        refresh_after_401: Cell::new(true),
     };
     let request = WorkflowRequest::get("/views/public/incidents", false, Vec::new());
     let mut config = CliConfig::default();
@@ -842,6 +844,7 @@ async fn public_workflows_do_not_attach_expired_stored_tokens() {
         api_url: server.url().parse().unwrap(),
         allow_unauthenticated: false,
         dry_run: false,
+        refresh_after_401: Cell::new(true),
     };
     let mut config = CliConfig {
         auth: Some(UserAuth {
@@ -886,6 +889,7 @@ async fn public_raw_calls_do_not_attach_expired_stored_tokens() {
         api_url: server.url().parse().unwrap(),
         allow_unauthenticated: false,
         dry_run: false,
+        refresh_after_401: Cell::new(true),
     };
     let mut config = CliConfig {
         auth: Some(UserAuth {
@@ -906,6 +910,7 @@ async fn public_raw_calls_do_not_attach_expired_stored_tokens() {
         header: &[],
         body: None,
         body_file: None,
+        field: &[],
         require_auth: api
             .raw_call_requires_auth(HttpMethod::Get, "/views/public/incidents")
             .unwrap(),
@@ -962,6 +967,7 @@ async fn authenticated_workflow_retries_once_after_refresh_on_401() {
         api_url: server.url().parse().unwrap(),
         allow_unauthenticated: false,
         dry_run: false,
+        refresh_after_401: Cell::new(true),
     };
     let temp_dir = tempfile::tempdir().unwrap();
     let cli_args = CliArgs {
@@ -996,12 +1002,190 @@ async fn authenticated_workflow_retries_once_after_refresh_on_401() {
 }
 
 #[tokio::test]
+async fn raw_401_preserves_original_error_when_refresh_endpoint_is_missing() {
+    let mut server = mockito::Server::new_async().await;
+    let original = server
+        .mock(
+            "GET",
+            "/api/v1/projects/550e8400-e29b-41d4-a716-446655440000/incidents/stats",
+        )
+        .match_header("authorization", "Bearer old_access")
+        .with_status(401)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-original-401")
+        .with_body(r#"{"code":"PROJECT_ACCESS_DENIED","error":"project not owned"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let refresh = server
+        .mock("POST", "/api/v1/auth/refresh")
+        .match_body(Matcher::Json(json!({ "refresh_token": "old_refresh" })))
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-refresh-404")
+        .with_body(r#"{"error":"Not Found"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let api = ApiArgs {
+        command: ApiCommand::Manifest,
+        api_url: server.url().parse().unwrap(),
+        allow_unauthenticated: false,
+        dry_run: false,
+        refresh_after_401: Cell::new(true),
+    };
+    let temp_dir = tempfile::tempdir().unwrap();
+    let cli_args = CliArgs {
+        config_dir: Some(temp_dir.path().to_path_buf()),
+        ..Default::default()
+    };
+    let mut config = CliConfig {
+        auth: Some(UserAuth {
+            access_token: "old_access".to_string(),
+            refresh_token: "old_refresh".to_string(),
+            expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+            refresh_expires_at: None,
+            user_id: None,
+            wallet_address: None,
+            email: Some("agent@example.com".to_string()),
+        }),
+    };
+    config.write_to_file(&cli_args).unwrap();
+    let input = ApiRequestInput {
+        method: HttpMethod::Get,
+        path: "/projects/550e8400-e29b-41d4-a716-446655440000/incidents/stats",
+        query: &[],
+        header: &[],
+        body: None,
+        body_file: None,
+        field: &[],
+        require_auth: true,
+    };
+
+    let error = api
+        .call_api(&mut config, &cli_args, input, test_request_log_path())
+        .await
+        .unwrap_err();
+
+    let ApiCommandError::HttpStatus {
+        status,
+        request_id,
+        body,
+        ..
+    } = error
+    else {
+        panic!("expected original HTTP status error");
+    };
+    assert_eq!(status, 401);
+    assert_eq!(request_id.as_deref(), Some("req-original-401"));
+    assert_eq!(body["code"], "PROJECT_ACCESS_DENIED");
+    assert_eq!(body["error"], "project not owned");
+    assert!(!api.refresh_after_401.get());
+    original.assert_async().await;
+    refresh.assert_async().await;
+}
+
+#[tokio::test]
+async fn incident_stats_401_propagates_original_http_error() {
+    let mut server = mockito::Server::new_async().await;
+    let project_id = "550e8400-e29b-41d4-a716-446655440000";
+    let original = server
+        .mock(
+            "GET",
+            format!("/api/v1/projects/{project_id}/incidents/stats").as_str(),
+        )
+        .match_header("authorization", "Bearer old_access")
+        .with_status(401)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-stats-401")
+        .with_body(r#"{"code":"PROJECT_ACCESS_DENIED","error":"project not owned"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let refresh = server
+        .mock("POST", "/api/v1/auth/refresh")
+        .match_body(Matcher::Json(json!({ "refresh_token": "old_refresh" })))
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"error":"Not Found"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let api = ApiArgs {
+        command: ApiCommand::Manifest,
+        api_url: server.url().parse().unwrap(),
+        allow_unauthenticated: false,
+        dry_run: false,
+        refresh_after_401: Cell::new(true),
+    };
+    let temp_dir = tempfile::tempdir().unwrap();
+    let cli_args = CliArgs {
+        config_dir: Some(temp_dir.path().to_path_buf()),
+        ..Default::default()
+    };
+    let mut config = CliConfig {
+        auth: Some(UserAuth {
+            access_token: "old_access".to_string(),
+            refresh_token: "old_refresh".to_string(),
+            expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+            refresh_expires_at: None,
+            user_id: None,
+            wallet_address: None,
+            email: Some("agent@example.com".to_string()),
+        }),
+    };
+    config.write_to_file(&cli_args).unwrap();
+    let args = IncidentsArgs {
+        project_id: Some(project_id.to_string()),
+        incident_id: None,
+        tx_id: None,
+        assertion_id: None,
+        assertion_adopter_id: None,
+        environment: None,
+        from_date: None,
+        to_date: None,
+        page: None,
+        limit: None,
+        network: None,
+        sort: None,
+        dev_mode: None,
+        stats: true,
+        retry_trace: false,
+        all: false,
+        max_pages: None,
+        output: None,
+        jsonl: false,
+    };
+
+    let error = api
+        .run_incidents(&mut config, &cli_args, &args, test_request_log_path())
+        .await
+        .unwrap_err();
+
+    let ApiCommandError::HttpStatus {
+        status,
+        request_id,
+        body,
+        ..
+    } = error
+    else {
+        panic!("expected stats HTTP status error");
+    };
+    assert_eq!(status, 401);
+    assert_eq!(request_id.as_deref(), Some("req-stats-401"));
+    assert_eq!(body["code"], "PROJECT_ACCESS_DENIED");
+    original.assert_async().await;
+    refresh.assert_async().await;
+}
+
+#[tokio::test]
 async fn dry_run_projects_and_assertions_do_not_execute_requests() {
     let api = ApiArgs {
         command: ApiCommand::Manifest,
         api_url: "https://app.phylax.systems".parse().unwrap(),
         allow_unauthenticated: false,
         dry_run: true,
+        refresh_after_401: Cell::new(true),
     };
     let mut config = CliConfig::default();
     let cli_args = CliArgs::default();
@@ -1470,6 +1654,7 @@ async fn workflow_http_errors_include_response_body() {
         api_url: server.url().parse().unwrap(),
         allow_unauthenticated: true,
         dry_run: false,
+        refresh_after_401: Cell::new(true),
     };
     let mut config = CliConfig::default();
     let request = WorkflowRequest::get("/health", false, Vec::new());
@@ -1523,6 +1708,7 @@ async fn workflow_success_envelopes_include_request_provenance() {
         api_url: server.url().parse().unwrap(),
         allow_unauthenticated: true,
         dry_run: false,
+        refresh_after_401: Cell::new(true),
     };
     let request = WorkflowRequest::get("/health", false, vec!["next".to_string()]);
     let mut config = CliConfig::default();
@@ -1568,6 +1754,7 @@ async fn raw_api_call_accepts_inline_query_strings() {
         api_url: server.url().parse().unwrap(),
         allow_unauthenticated: true,
         dry_run: false,
+        refresh_after_401: Cell::new(true),
     };
     let mut config = CliConfig::default();
 
@@ -1582,6 +1769,7 @@ async fn raw_api_call_accepts_inline_query_strings() {
                 header: &[],
                 body: None,
                 body_file: None,
+                field: &[],
                 require_auth: false,
             },
             test_request_log_path(),
@@ -1611,10 +1799,16 @@ fn parser_accepts_global_dry_run() {
         "/web/auth/logout",
         "--body",
         "{}",
+        "--field",
+        "reason=manual",
     ])
     .unwrap();
 
     assert!(args.dry_run);
+    let ApiCommand::Call { field, .. } = args.command else {
+        panic!("expected raw api call");
+    };
+    assert_eq!(field, vec!["reason=manual".to_string()]);
 }
 
 #[test]
@@ -1624,9 +1818,11 @@ fn raw_api_dry_run_plans_request_without_auth_or_network() {
         api_url: "https://api.example.com".parse().unwrap(),
         allow_unauthenticated: false,
         dry_run: true,
+        refresh_after_401: Cell::new(true),
     };
     let query = vec!["force=true".to_string()];
     let header = vec!["x-test=yes".to_string()];
+    let field = vec!["reason=manual".to_string(), "notify=false".to_string()];
     let config = CliConfig::default();
 
     let plan = api
@@ -1638,6 +1834,7 @@ fn raw_api_dry_run_plans_request_without_auth_or_network() {
                 header: &header,
                 body: Some("{}"),
                 body_file: None,
+                field: &field,
                 require_auth: true,
             },
             None,
@@ -1656,7 +1853,10 @@ fn raw_api_dry_run_plans_request_without_auth_or_network() {
             {"name": "force", "value": "true"}
         ])
     );
-    assert_eq!(plan["request"]["body"], json!({}));
+    assert_eq!(
+        plan["request"]["body"],
+        json!({"reason": "manual", "notify": false})
+    );
     assert_eq!(plan["request"]["auth"]["required"], true);
     assert_eq!(plan["request"]["auth"]["stored_token_present"], false);
     assert_eq!(plan["request"]["auth"]["will_attach_stored_token"], false);
@@ -1671,6 +1871,7 @@ fn workflow_dry_run_plans_destructive_requests() {
         api_url: "https://api.example.com".parse().unwrap(),
         allow_unauthenticated: false,
         dry_run: true,
+        refresh_after_401: Cell::new(true),
     };
     let request = WorkflowRequest {
         method: HttpMethod::Delete,
@@ -1738,6 +1939,7 @@ async fn raw_api_call_paginates_any_array_response() {
         api_url: server.url().parse().unwrap(),
         allow_unauthenticated: true,
         dry_run: false,
+        refresh_after_401: Cell::new(true),
     };
     let mut config = CliConfig::default();
 
@@ -1752,6 +1954,7 @@ async fn raw_api_call_paginates_any_array_response() {
                 header: &[],
                 body: None,
                 body_file: None,
+                field: &[],
                 require_auth: false,
             },
             RawPaginationOptions {
@@ -1798,6 +2001,7 @@ async fn raw_api_call_pagination_supports_custom_param_names() {
         api_url: server.url().parse().unwrap(),
         allow_unauthenticated: true,
         dry_run: false,
+        refresh_after_401: Cell::new(true),
     };
     let mut config = CliConfig::default();
 
@@ -1812,6 +2016,7 @@ async fn raw_api_call_pagination_supports_custom_param_names() {
                 header: &[],
                 body: None,
                 body_file: None,
+                field: &[],
                 require_auth: false,
             },
             RawPaginationOptions {
@@ -1840,6 +2045,7 @@ async fn raw_api_call_pagination_rejects_non_get_requests() {
         api_url: "https://api.example.com".parse().unwrap(),
         allow_unauthenticated: true,
         dry_run: false,
+        refresh_after_401: Cell::new(true),
     };
     let mut config = CliConfig::default();
 
@@ -1854,6 +2060,7 @@ async fn raw_api_call_pagination_rejects_non_get_requests() {
                 header: &[],
                 body: None,
                 body_file: None,
+                field: &[],
                 require_auth: false,
             },
             RawPaginationOptions {
@@ -1910,6 +2117,7 @@ async fn raw_api_call_errors_include_request_id() {
         api_url: server.url().parse().unwrap(),
         allow_unauthenticated: true,
         dry_run: false,
+        refresh_after_401: Cell::new(true),
     };
     let mut config = CliConfig::default();
 
@@ -1924,6 +2132,7 @@ async fn raw_api_call_errors_include_request_id() {
                 header: &[],
                 body: None,
                 body_file: None,
+                field: &[],
                 require_auth: false,
             },
             test_request_log_path(),

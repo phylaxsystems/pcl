@@ -74,6 +74,8 @@ pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated --jso
 pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json
 ```
 
+For simple raw request bodies, `pcl api call` accepts repeated `--field key=value` and merges those fields into a JSON object, matching workflow command behavior. Use `--body-file` for nested payloads.
+
 Use `pcl api inspect <operation-id> --json` before calling unfamiliar endpoints. Inspect includes auth metadata and required header placeholders; preserve required `--header` values in generated examples. For required request bodies, inspect the operation and prefer `--body-file`.
 
 Raw API calls persist `operation_id` in request history when the live OpenAPI manifest can resolve the method/path. After exploratory testing, run:

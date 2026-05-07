@@ -251,11 +251,13 @@ For complex bodies:
 
 Call any endpoint below `/api/v1`. Query strings and repeated `--query` flags are both valid.
 Known public raw paths do not attach stored tokens by default; pass `--allow-unauthenticated` when you need to force no auth on another public endpoint.
+For simple JSON object bodies, repeated `--field key=value` works on raw `pcl api call` the same way it works on workflow commands.
 
 ```bash
 pcl api list --filter integrations --json
 pcl api inspect get_views_projects_project_id_incidents --json
 pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated
+pcl api call post /projects --field project_name=demo --field chain_id=1
 pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated
 pcl api call get /views/projects/<project-id>/incidents --query environment=production
 pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json

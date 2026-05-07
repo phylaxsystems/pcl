@@ -504,7 +504,7 @@ impl WhoamiArgs {
                     "auth": auth_value(config.auth.as_ref()),
                 },
                 "next_actions": if config.auth.is_some() {
-                    json!(["pcl account", "pcl projects --home", "pcl doctor"])
+                    json!(["pcl account", "pcl projects --limit 10", "pcl doctor"])
                 } else {
                     json!(["pcl auth login", "pcl doctor"])
                 },
@@ -1418,6 +1418,7 @@ fn llms_guide() -> Value {
         "raw_api": {
             "inspect_first": "Use pcl api inspect <operation-id> --json before unfamiliar calls.",
             "query_strings": "pcl api call accepts both /path?key=value and repeated --query key=value.",
+            "fields": "pcl api call accepts repeated --field key=value for simple JSON object bodies; use --body-file for nested payloads.",
             "public_endpoints": "Known public raw calls do not attach stored tokens; --allow-unauthenticated remains the explicit opt-out for other public endpoints.",
             "pagination": "Use --paginate <array-field> --limit <n> --max-pages <n> and optionally --jsonl --output <file> for generic GET pagination.",
             "coverage": "Use pcl api coverage --json after exploration to find no-hit, hit-without-2xx, side-effecting-without-2xx, and unmatched request-log records."

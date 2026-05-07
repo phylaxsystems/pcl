@@ -30,6 +30,7 @@ use serde_json::{
     json,
 };
 use std::{
+    cell::Cell,
     collections::BTreeMap,
     fmt::Write as _,
     fs,
@@ -479,6 +480,9 @@ pub struct ApiArgs {
         help = "Print the request plan without sending an API request"
     )]
     dry_run: bool,
+
+    #[arg(skip = Cell::new(true))]
+    refresh_after_401: Cell<bool>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -514,6 +518,7 @@ impl ApiWorkflowOptions {
             api_url: self.api_url,
             allow_unauthenticated: self.allow_unauthenticated,
             dry_run: self.dry_run,
+            refresh_after_401: Cell::new(true),
         }
         .run(config, cli_args, json_output)
         .await
@@ -704,6 +709,11 @@ enum ApiCommand {
         )]
         body_file: Option<PathBuf>,
         #[arg(
+            long = "field",
+            help = "Extra JSON body field as KEY=VALUE; VALUE may be a JSON scalar/object/array"
+        )]
+        field: Vec<String>,
+        #[arg(
             long,
             value_name = "FIELD",
             help = "Fetch every page and aggregate array field/path from each response"
@@ -818,6 +828,7 @@ struct ApiRequestInput<'a> {
     header: &'a [String],
     body: Option<&'a str>,
     body_file: Option<&'a PathBuf>,
+    field: &'a [String],
     require_auth: bool,
 }
 
@@ -1819,6 +1830,7 @@ impl ApiArgs {
                 header,
                 body,
                 body_file,
+                field,
                 paginate,
                 all: _,
                 page,
@@ -1841,6 +1853,7 @@ impl ApiArgs {
                     header,
                     body: body.as_deref(),
                     body_file: body_file.as_ref(),
+                    field,
                     require_auth: self.raw_call_requires_auth(*method, path)?,
                 };
                 let pagination = paginate.as_ref().map(|item_field| {
@@ -1919,7 +1932,7 @@ impl ApiArgs {
                 message: "--paginate is only supported for GET requests".to_string(),
             });
         }
-        if input.body.is_some() || input.body_file.is_some() {
+        if input.body.is_some() || input.body_file.is_some() || !input.field.is_empty() {
             return Err(ApiCommandError::InvalidWorkflow {
                 message: "--paginate cannot be used with request bodies".to_string(),
             });
@@ -2226,7 +2239,7 @@ impl ApiArgs {
         let (path, mut query) = split_path_and_inline_query(input.path)?;
         query.extend(parse_key_values("query", input.query)?);
         let header = parse_key_values("header", input.header)?;
-        let body = read_body(input.body, input.body_file)?
+        let body = request_body(input.body, input.body_file, input.field)?
             .map(|body| serde_json::from_str::<Value>(&body))
             .transpose()?;
         let destructive = request_is_destructive(input.method, &path);
@@ -2296,6 +2309,25 @@ impl ApiArgs {
         Ok(response.json().await?)
     }
 
+    async fn try_refresh_after_401(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+    ) -> Result<bool, ApiCommandError> {
+        if !self.refresh_after_401.get() {
+            return Ok(false);
+        }
+
+        match refresh_stored_auth(config, &self.api_url, cli_args, true).await {
+            Ok(_) => Ok(true),
+            Err(AuthError::RefreshEndpointNotFound { .. }) => {
+                self.refresh_after_401.set(false);
+                Ok(false)
+            }
+            Err(error) => Err(ApiCommandError::AuthRefresh(error)),
+        }
+    }
+
     async fn call_api(
         &self,
         config: &mut CliConfig,
@@ -2307,7 +2339,7 @@ impl ApiArgs {
         query.extend(parse_key_values("query", input.query)?);
         let url = self.api_url(&path)?;
         let headers = parse_headers(input.header)?;
-        let body = read_body(input.body, input.body_file)?;
+        let body = request_body(input.body, input.body_file, input.field)?;
         let operation_id = self.resolve_operation_id(config, input.method, &path).await;
         let requires_auth = input.require_auth && !self.allow_unauthenticated;
         self.ensure_request_auth(config, cli_args, input.require_auth)
@@ -2359,10 +2391,10 @@ impl ApiArgs {
             request_id.as_deref(),
             operation_id.as_deref(),
         );
-        if status.as_u16() == 401 && requires_auth {
-            refresh_stored_auth(config, &self.api_url, cli_args, true)
-                .await
-                .map_err(ApiCommandError::AuthRefresh)?;
+        if status.as_u16() == 401
+            && requires_auth
+            && self.try_refresh_after_401(config, cli_args).await?
+        {
             response = self
                 .send_api_request(
                     config,
@@ -2498,10 +2530,10 @@ impl ApiArgs {
             None,
         );
         let mut retried_after_refresh = false;
-        if status.as_u16() == 401 && requires_auth {
-            refresh_stored_auth(config, &self.api_url, cli_args, true)
-                .await
-                .map_err(ApiCommandError::AuthRefresh)?;
+        if status.as_u16() == 401
+            && requires_auth
+            && self.try_refresh_after_401(config, cli_args).await?
+        {
             response = self
                 .send_workflow_request(config, request, &url, json_body.as_ref())
                 .await?;
@@ -3198,8 +3230,8 @@ pub fn api_manifest() -> Value {
                 "output": "operation_id, method, path, auth metadata, path_params, required_query, body_fields, required_body_fields, body_template, response_statuses, example_call",
             },
             {
-                "command": "pcl api call <method> <path[?query]> [--query key=value] [--body '{...}'] [--paginate <field>] [--page-param page] [--limit-param limit] [--jsonl] [--output <file>] [--dry-run]",
-                "description": "Execute any endpoint below /api/v1. Query strings in PATH and repeated --query flags are both accepted; GET calls can paginate any array response with --paginate. Add --dry-run to print the request plan without sending it.",
+                "command": "pcl api call <method> <path[?query]> [--query key=value] [--field key=value] [--body '{...}'] [--paginate <field>] [--page-param page] [--limit-param limit] [--jsonl] [--output <file>] [--dry-run]",
+                "description": "Execute any endpoint below /api/v1. Query strings in PATH and repeated --query flags are both accepted; --field merges simple JSON object body fields; GET calls can paginate any array response with --paginate. Add --dry-run to print the request plan without sending it.",
                 "output": "request and response status/body; non-2xx responses return structured error envelopes with request_id when the API provides one. Raw calls log operation_id when the live OpenAPI manifest can resolve the method/path.",
                 "actions": [
                     {"name": "execute", "method": "*", "path": "<path>", "auth": "default", "optional_flags": ["--dry-run"], "example": "pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated"},
