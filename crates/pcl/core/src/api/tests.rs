@@ -149,6 +149,30 @@ fn release_args() -> ReleasesArgs {
     }
 }
 
+fn incidents_args() -> IncidentsArgs {
+    IncidentsArgs {
+        project_id: None,
+        incident_id: None,
+        tx_id: None,
+        assertion_id: None,
+        assertion_adopter_id: None,
+        environment: None,
+        from_date: None,
+        to_date: None,
+        page: None,
+        limit: None,
+        network: None,
+        sort: None,
+        dev_mode: None,
+        stats: false,
+        retry_trace: false,
+        all: false,
+        max_pages: None,
+        output: None,
+        jsonl: false,
+    }
+}
+
 #[test]
 fn parses_key_values() {
     let parsed = parse_key_values("query", &["limit=5".to_string()]).unwrap();
@@ -608,6 +632,7 @@ fn builds_incident_trace_retry_request() {
         "/incidents/incident-1/transactions/tx-1/trace/retry"
     );
     assert_eq!(request.method.openapi_key(), "post");
+    assert_eq!(request.body.as_deref(), Some("{}"));
     assert!(request.require_auth);
 }
 
@@ -1269,6 +1294,20 @@ fn empty_object_workflows_send_body_by_default() {
     .unwrap();
     assert_eq!(resend.method.openapi_key(), "post");
     assert_eq!(resend.body.as_deref(), Some("{}"));
+
+    let retry_trace = incidents_request(&IncidentsArgs {
+        incident_id: Some("incident-1".to_string()),
+        tx_id: Some("tx-1".to_string()),
+        retry_trace: true,
+        ..incidents_args()
+    })
+    .unwrap();
+    assert_eq!(retry_trace.method.openapi_key(), "post");
+    assert_eq!(
+        retry_trace.path,
+        "/incidents/incident-1/transactions/tx-1/trace/retry"
+    );
+    assert_eq!(retry_trace.body.as_deref(), Some("{}"));
 
     let test = integrations_request(&IntegrationsArgs {
         project: Some("project-1".to_string()),

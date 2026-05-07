@@ -4198,7 +4198,7 @@ fn incidents_request(args: &IncidentsArgs) -> Result<WorkflowRequest, ApiCommand
                 method: HttpMethod::Post,
                 path: format!("/incidents/{incident_id}/transactions/{tx_id}/trace/retry"),
                 query,
-                body: None,
+                body: Some("{}".to_string()),
                 require_auth: true,
                 next_actions: vec![format!(
                     "pcl incidents --incident-id {incident_id} --tx-id {tx_id}"
