@@ -1252,6 +1252,15 @@ fn builds_account_workflow_requests() {
 
 #[test]
 fn empty_object_workflows_send_body_by_default() {
+    let accept = access_request(&AccessArgs {
+        accept: true,
+        token: Some("token-1".to_string()),
+        ..access_args()
+    })
+    .unwrap();
+    assert_eq!(accept.method.openapi_key(), "post");
+    assert_eq!(accept.body.as_deref(), Some("{}"));
+
     let resend = access_request(&AccessArgs {
         resend: true,
         invitation_id: Some("invitation-1".to_string()),

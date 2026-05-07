@@ -3423,7 +3423,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
                 HttpMethod::Post,
                 format!("/invitations/{token}/accept"),
                 true,
-                body,
+                body.or_else(|| Some(empty_json_body())),
                 vec!["pcl projects --home".to_string()],
             ));
         }
