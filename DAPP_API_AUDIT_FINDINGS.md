@@ -88,31 +88,40 @@ IDs.
    - Impact: OpenAPI/PCL discovery makes agents think assertion submission is
      available, then the API rejects the call as removed.
 
-3. **Incident detail/trace auth metadata does not match runtime behavior.**
-   - Classification: dApp API contract/runtime metadata issue. The PCL fix is a
-     workaround, not the root cause.
+3. **OpenAPI auth/security metadata does not match runtime behavior.**
+   - Classification: dApp API contract/runtime metadata issue. The PCL fixes are
+     workarounds for specific workflows, not the root cause.
    - Audit evidence: `GET /views/incidents/{incidentId}` and
      `GET /views/incidents/{incidentId}/transactions/{txId}/trace` were exposed
      through discovery as public-style view calls, but returned 401 without a
      bearer token.
+   - Second-pass evidence: production `/api/v1/openapi` has 102 operations and
+     all 102 have `security: null`, including routes whose routers require
+     `requireAuthStrictWithDbToken`, `requireProjectMemberAuth`,
+     `requireIndexerAuth`, `requireEnforcerAuth`, `requireTracerAuth`, or
+     `requireBacktestAuth`.
    - Source evidence: the contracts only add OpenAPI tags and response codes:
      `packages/dapp-api/src/v1/contracts/views/incident-detail.ts:84-105` and
      `packages/dapp-api/src/v1/contracts/views/incident-trace.ts:68-90`.
+     The OpenAPI generator defines `bearerAuth`/`cookieAuth` schemes but sets
+     global `security: []` and does not inject per-operation security in
+     `packages/dapp-api/src/openapi/index.ts:38-55`.
    - Runtime evidence: the routers attach `createProjectMemberAuthMiddleware`
      and return 401/403 when auth or membership is missing:
      `packages/dapp-api/src/v1/routers/views/incident-detail.ts:56-109`,
      `packages/dapp-api/src/v1/routers/views/incident-trace.ts:69-122`, and
      `packages/dapp-api/src/v1/middleware/incidents-auth.ts:176-320`.
-   - Root cause: the auth requirement lives only in router middleware. It is
-     not represented clearly enough in the contract/OpenAPI metadata that PCL
-     consumes.
-   - Impact: agents following the generated manifest/OpenAPI examples omit auth
-     and get 401s on valid incidents.
+   - Root cause: auth requirements live in router middleware and contract
+     headers, but the generated OpenAPI security metadata does not encode which
+     endpoints are public, optional-auth, or required-auth.
+   - Impact: agents following generated OpenAPI cannot reliably know which dApp
+     endpoints require auth. Incident detail/trace were the concrete PCL
+     failures, but the metadata gap is API-wide.
    - PCL mitigation added: incident detail/trace workflow calls now require and
      attach stored auth. Local verification passed with request ids
      `req_mousmyhd_cceb08387bfa4b3a` and `req_mousmygz_972e49dccf4fb513`.
 
-4. **Incident trace `txId` is a row UUID, not a chain transaction hash.**
+4. **Incident trace `txId` / `tx_id` is a row UUID, not a chain transaction hash.**
    - Classification: dApp API naming/schema issue, not a CLI bug.
    - Audit evidence: using transaction hash
      `0x32a5993654370879a11a1d9d5dd0eb4112670b40d100fa1a75c7e75270ad17ae`
@@ -121,6 +130,9 @@ IDs.
    - Source evidence: the contract names the path param `txId` but validates it
      as `UUIDSchema` in
      `packages/dapp-api/src/v1/contracts/views/incident-trace.ts:68-78`.
+     The older incidents contract has the same shape as `tx_id: UUIDSchema` in
+     `packages/dapp-api/src/v1/contracts/incidents/index.ts:112-121` and
+     `packages/dapp-api/src/v1/contracts/incidents/index.ts:139-148`.
      The trace service documents `txId` as the invalidating transaction UUID and
      queries `invalidating_transactions.id` / `debug_traces.invalidating_transaction_id`
      in `packages/dapp-api/src/v1/services/incidents/trace.ts:20-43` and
@@ -180,6 +192,27 @@ IDs.
 - malformed input tests returned structured envelopes as expected:
   `input.invalid_json`, `input.body_file_read_failed`,
   `openapi.operation_not_found`, `api.bad_request`, and `api.not_found`.
+
+### Second-Pass dApp Audit Coverage
+
+- Rechecked production `/api/v1/openapi` on 2026-05-07:
+  - 87 paths, 102 operations.
+  - `/auth/refresh` is absent from production OpenAPI and direct
+    `POST /api/v1/auth/refresh` returns 404.
+  - `/projects/{project_id}/submitted-assertions` remains present in
+    production OpenAPI even though the dApp router returns 410.
+  - all 102 operations have `security: null`, so required-auth/optional-auth
+    behavior is not machine-readable from OpenAPI.
+- Source sweep for removed/stubbed features found no other active
+  contract-exposed 410 stubs besides `submitted-assertions`.
+- Source sweep for trace path naming found the same internal-UUID transaction
+  parameter on both the view trace endpoint and the older incidents trace/retry
+  endpoints.
+- Attempted to regenerate source OpenAPI with
+  `pnpm --filter @phylax-systems/dapp-api generate:openapi`; local generation
+  was blocked by Node v25 package export resolution for
+  `@phylax-systems/types`. The static source and production OpenAPI evidence
+  above are still enough to classify the issues.
 
 ## Confirmed Findings
 
