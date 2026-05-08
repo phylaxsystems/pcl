@@ -16971,6 +16971,174 @@ pub mod types {
                 })
         }
     }
+    ///`GetProjectsProjectIdSubmittedAssertionsEnvironment`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "default": "all",
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "staging",
+    ///    "production",
+    ///    "all"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetProjectsProjectIdSubmittedAssertionsEnvironment {
+        #[serde(rename = "staging")]
+        Staging,
+        #[serde(rename = "production")]
+        Production,
+        #[serde(rename = "all")]
+        All,
+    }
+    impl ::std::convert::From<&Self>
+    for GetProjectsProjectIdSubmittedAssertionsEnvironment {
+        fn from(value: &GetProjectsProjectIdSubmittedAssertionsEnvironment) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display for GetProjectsProjectIdSubmittedAssertionsEnvironment {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Staging => f.write_str("staging"),
+                Self::Production => f.write_str("production"),
+                Self::All => f.write_str("all"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for GetProjectsProjectIdSubmittedAssertionsEnvironment {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "staging" => Ok(Self::Staging),
+                "production" => Ok(Self::Production),
+                "all" => Ok(Self::All),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetProjectsProjectIdSubmittedAssertionsEnvironment {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdSubmittedAssertionsEnvironment {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdSubmittedAssertionsEnvironment {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::default::Default for GetProjectsProjectIdSubmittedAssertionsEnvironment {
+        fn default() -> Self {
+            GetProjectsProjectIdSubmittedAssertionsEnvironment::All
+        }
+    }
+    ///`GetProjectsProjectIdSubmittedAssertionsResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "submitted_assertions"
+    ///  ],
+    ///  "properties": {
+    ///    "submitted_assertions": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "assertion_id"
+    ///        ],
+    ///        "properties": {
+    ///          "assertion_id": {
+    ///            "type": "string"
+    ///          }
+    ///        }
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetProjectsProjectIdSubmittedAssertionsResponse {
+        pub submitted_assertions: ::std::vec::Vec<
+            GetProjectsProjectIdSubmittedAssertionsResponseSubmittedAssertionsItem,
+        >,
+    }
+    impl ::std::convert::From<&GetProjectsProjectIdSubmittedAssertionsResponse>
+    for GetProjectsProjectIdSubmittedAssertionsResponse {
+        fn from(value: &GetProjectsProjectIdSubmittedAssertionsResponse) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetProjectsProjectIdSubmittedAssertionsResponseSubmittedAssertionsItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "assertion_id"
+    ///  ],
+    ///  "properties": {
+    ///    "assertion_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetProjectsProjectIdSubmittedAssertionsResponseSubmittedAssertionsItem {
+        pub assertion_id: ::std::string::String,
+    }
+    impl ::std::convert::From<
+        &GetProjectsProjectIdSubmittedAssertionsResponseSubmittedAssertionsItem,
+    > for GetProjectsProjectIdSubmittedAssertionsResponseSubmittedAssertionsItem {
+        fn from(
+            value: &GetProjectsProjectIdSubmittedAssertionsResponseSubmittedAssertionsItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
     ///`GetProjectsProjectIdWidgetResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -25858,7 +26026,6 @@ pub mod types {
     ///            "args",
     ///            "bytecode",
     ///            "compiler_version",
-    ///            "environment",
     ///            "file",
     ///            "source_code",
     ///            "verification_status"
@@ -25880,13 +26047,6 @@ pub mod types {
     ///              "type": [
     ///                "string",
     ///                "null"
-    ///              ]
-    ///            },
-    ///            "environment": {
-    ///              "type": "string",
-    ///              "enum": [
-    ///                "STAGING",
-    ///                "PRODUCTION"
     ///              ]
     ///            },
     ///            "file": {
@@ -26102,7 +26262,6 @@ pub mod types {
     ///        "args",
     ///        "bytecode",
     ///        "compiler_version",
-    ///        "environment",
     ///        "file",
     ///        "source_code",
     ///        "verification_status"
@@ -26124,13 +26283,6 @@ pub mod types {
     ///          "type": [
     ///            "string",
     ///            "null"
-    ///          ]
-    ///        },
-    ///        "environment": {
-    ///          "type": "string",
-    ///          "enum": [
-    ///            "STAGING",
-    ///            "PRODUCTION"
     ///          ]
     ///        },
     ///        "file": {
@@ -26734,7 +26886,6 @@ pub mod types {
     ///    "args",
     ///    "bytecode",
     ///    "compiler_version",
-    ///    "environment",
     ///    "file",
     ///    "source_code",
     ///    "verification_status"
@@ -26756,13 +26907,6 @@ pub mod types {
     ///      "type": [
     ///        "string",
     ///        "null"
-    ///      ]
-    ///    },
-    ///    "environment": {
-    ///      "type": "string",
-    ///      "enum": [
-    ///        "STAGING",
-    ///        "PRODUCTION"
     ///      ]
     ///    },
     ///    "file": {
@@ -26795,7 +26939,6 @@ pub mod types {
         pub args: ::std::vec::Vec<::std::string::String>,
         pub bytecode: ::std::option::Option<::std::string::String>,
         pub compiler_version: ::std::option::Option<::std::string::String>,
-        pub environment: GetViewsProjectsProjectIdAssertionsAssertionIdResponseDataSourceEnvironment,
         pub file: ::std::option::Option<::std::string::String>,
         pub source_code: ::std::option::Option<::std::string::String>,
         pub verification_status: GetViewsProjectsProjectIdAssertionsAssertionIdResponseDataSourceVerificationStatus,
@@ -26807,95 +26950,6 @@ pub mod types {
             value: &GetViewsProjectsProjectIdAssertionsAssertionIdResponseDataSource,
         ) -> Self {
             value.clone()
-        }
-    }
-    ///`GetViewsProjectsProjectIdAssertionsAssertionIdResponseDataSourceEnvironment`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "enum": [
-    ///    "STAGING",
-    ///    "PRODUCTION"
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(
-        ::serde::Deserialize,
-        ::serde::Serialize,
-        Clone,
-        Copy,
-        Debug,
-        Eq,
-        Hash,
-        Ord,
-        PartialEq,
-        PartialOrd
-    )]
-    pub enum GetViewsProjectsProjectIdAssertionsAssertionIdResponseDataSourceEnvironment {
-        #[serde(rename = "STAGING")]
-        Staging,
-        #[serde(rename = "PRODUCTION")]
-        Production,
-    }
-    impl ::std::convert::From<&Self>
-    for GetViewsProjectsProjectIdAssertionsAssertionIdResponseDataSourceEnvironment {
-        fn from(
-            value: &GetViewsProjectsProjectIdAssertionsAssertionIdResponseDataSourceEnvironment,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display
-    for GetViewsProjectsProjectIdAssertionsAssertionIdResponseDataSourceEnvironment {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match *self {
-                Self::Staging => f.write_str("STAGING"),
-                Self::Production => f.write_str("PRODUCTION"),
-            }
-        }
-    }
-    impl ::std::str::FromStr
-    for GetViewsProjectsProjectIdAssertionsAssertionIdResponseDataSourceEnvironment {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            match value {
-                "STAGING" => Ok(Self::Staging),
-                "PRODUCTION" => Ok(Self::Production),
-                _ => Err("invalid value".into()),
-            }
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetViewsProjectsProjectIdAssertionsAssertionIdResponseDataSourceEnvironment {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetViewsProjectsProjectIdAssertionsAssertionIdResponseDataSourceEnvironment {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetViewsProjectsProjectIdAssertionsAssertionIdResponseDataSourceEnvironment {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
         }
     }
     ///`GetViewsProjectsProjectIdAssertionsAssertionIdResponseDataSourceVerificationStatus`
@@ -52648,6 +52702,124 @@ pub mod types {
             value.parse()
         }
     }
+    ///`PostProjectsProjectIdSubmittedAssertionsBody`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "assertions"
+    ///  ],
+    ///  "properties": {
+    ///    "assertions": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "assertion_id",
+    ///          "contract_name",
+    ///          "signature"
+    ///        ],
+    ///        "properties": {
+    ///          "assertion_id": {
+    ///            "type": "string"
+    ///          },
+    ///          "contract_name": {
+    ///            "type": "string"
+    ///          },
+    ///          "signature": {
+    ///            "type": "string"
+    ///          }
+    ///        }
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdSubmittedAssertionsBody {
+        pub assertions: ::std::vec::Vec<
+            PostProjectsProjectIdSubmittedAssertionsBodyAssertionsItem,
+        >,
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdSubmittedAssertionsBody>
+    for PostProjectsProjectIdSubmittedAssertionsBody {
+        fn from(value: &PostProjectsProjectIdSubmittedAssertionsBody) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostProjectsProjectIdSubmittedAssertionsBodyAssertionsItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "assertion_id",
+    ///    "contract_name",
+    ///    "signature"
+    ///  ],
+    ///  "properties": {
+    ///    "assertion_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "contract_name": {
+    ///      "type": "string"
+    ///    },
+    ///    "signature": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdSubmittedAssertionsBodyAssertionsItem {
+        pub assertion_id: ::std::string::String,
+        pub contract_name: ::std::string::String,
+        pub signature: ::std::string::String,
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdSubmittedAssertionsBodyAssertionsItem,
+    > for PostProjectsProjectIdSubmittedAssertionsBodyAssertionsItem {
+        fn from(
+            value: &PostProjectsProjectIdSubmittedAssertionsBodyAssertionsItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostProjectsProjectIdSubmittedAssertionsResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdSubmittedAssertionsResponse {
+        pub success: bool,
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdSubmittedAssertionsResponse>
+    for PostProjectsProjectIdSubmittedAssertionsResponse {
+        fn from(value: &PostProjectsProjectIdSubmittedAssertionsResponse) -> Self {
+            value.clone()
+        }
+    }
     ///`PostProjectsResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -59653,6 +59825,142 @@ Sends a `GET` request to `/projects/{project_id}/remove-assertions-info`
             .build()?;
         let info = OperationInfo {
             operation_id: "get_projects_project_id_remove_assertions_info",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            400u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            401u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            404u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            500u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+    /**Get submitted assertions for a project
+
+Get all assertions that have been submitted for a specific project
+
+Sends a `GET` request to `/projects/{project_id}/submitted-assertions`
+
+*/
+    pub async fn get_projects_project_id_submitted_assertions<'a>(
+        &'a self,
+        project_id: &'a str,
+        environment: Option<types::GetProjectsProjectIdSubmittedAssertionsEnvironment>,
+        network: Option<&'a str>,
+        authorization: Option<&'a str>,
+    ) -> Result<
+        ResponseValue<types::GetProjectsProjectIdSubmittedAssertionsResponse>,
+        Error<types::GetProjectsProjectIdSubmittedAssertionsResponse>,
+    > {
+        let url = format!(
+            "{}/projects/{}/submitted-assertions", self.baseurl, encode_path(& project_id
+            .to_string()),
+        );
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
+        if let Some(value) = authorization {
+            header_map.append("Authorization", value.to_string().try_into()?);
+        }
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .get(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .query(&progenitor_client::QueryParam::new("environment", &environment))
+            .query(&progenitor_client::QueryParam::new("network", &network))
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "get_projects_project_id_submitted_assertions",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            401u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            404u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            500u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+    /**Submit assertions to a project
+
+Submit one or more assertions to a specific project (CLI only)
+
+Sends a `POST` request to `/projects/{project_id}/submitted-assertions`
+
+Arguments:
+- `project_id`
+- `authorization`
+- `x_auth_scope`
+- `body`: Body
+*/
+    pub async fn post_projects_project_id_submitted_assertions<'a>(
+        &'a self,
+        project_id: &'a str,
+        authorization: Option<&'a str>,
+        x_auth_scope: Option<&'a str>,
+        body: &'a types::PostProjectsProjectIdSubmittedAssertionsBody,
+    ) -> Result<
+        ResponseValue<types::PostProjectsProjectIdSubmittedAssertionsResponse>,
+        Error<types::PostProjectsProjectIdSubmittedAssertionsResponse>,
+    > {
+        let url = format!(
+            "{}/projects/{}/submitted-assertions", self.baseurl, encode_path(& project_id
+            .to_string()),
+        );
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(3usize);
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
+        if let Some(value) = authorization {
+            header_map.append("Authorization", value.to_string().try_into()?);
+        }
+        if let Some(value) = x_auth_scope {
+            header_map.append("X-Auth-Scope", value.to_string().try_into()?);
+        }
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .post(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .json(&body)
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "post_projects_project_id_submitted_assertions",
         };
         self.pre(&mut request, &info).await?;
         let result = self.exec(request, &info).await;
