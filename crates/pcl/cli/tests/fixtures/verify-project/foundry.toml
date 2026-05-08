@@ -1,7 +1,7 @@
 [profile.default]
 src = "assertions/src"
+test = "assertions/test"
 out = "out"
 libs = ["lib"]
 optimizer = true
 optimizer_runs = 200
-
