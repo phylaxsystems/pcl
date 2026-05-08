@@ -4,6 +4,12 @@ All notable user-facing changes should be recorded here.
 
 ## Unreleased
 
+## 1.5.0 - 2026-05-08
+
+- Added `pcl apply --dry-run` to build and verify release payloads from `credible.toml` without calling the API.
+- Fixed full-feature release builds for local assertion verification.
+- Reduced dependency advisory exposure by replacing the `vergen-gix` build dependency and refreshing patched transitive dependencies.
+
 ## 1.4.0 - 2026-05-06
 
 - Added agent-oriented CLI discovery, schemas, JSON/TOON envelopes, resumable jobs, and artifact surfaces.
