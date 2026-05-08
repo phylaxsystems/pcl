@@ -1,0 +1,9 @@
+environment = "production"
+
+[contracts.mock]
+address = "0x0101010101010101010101010101010101010101"
+name = "Mock"
+
+[[contracts.mock.assertions]]
+file = "assertions/src/NoArgsAssertion.a.sol:NoArgsAssertion"
+

@@ -1,12 +1,16 @@
-.PHONY: ci fmt-check clippy test doc diff-check agent-smoke audit regenerate regenerate-dev
+.PHONY: ci fmt-check clippy full-check test doc diff-check agent-smoke audit regenerate regenerate-dev
 
-ci: fmt-check clippy test doc agent-smoke diff-check
+ci: fmt-check clippy full-check test doc agent-smoke diff-check
 
 fmt-check:
 	cargo fmt --all -- --check
 
 clippy:
 	cargo +nightly-2026-01-07 clippy --all-targets --workspace --locked --profile dev -- -D warnings -D clippy::pedantic
+
+full-check:
+	cargo check --locked --workspace --all-targets --features full
+	PCL_AUTH_NO_BROWSER=1 cargo test -q -p pcl --features full --test verify_cli
 
 test:
 	PCL_AUTH_NO_BROWSER=1 cargo test -q --workspace --all-targets

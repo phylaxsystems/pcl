@@ -23,7 +23,10 @@ use assertion_verification::{
 };
 use clap::ValueHint;
 use pcl_common::args::CliArgs;
-use pcl_phoundry::build_and_flatten::BuildAndFlattenArgs;
+use pcl_phoundry::{
+    DEFAULT_ASSERTION_CONTRACTS_DIR,
+    build_and_flatten::BuildAndFlattenArgs,
+};
 use serde::Serialize;
 use std::path::{
     Path,
@@ -135,6 +138,7 @@ impl VerifyArgs {
         let output = BuildAndFlattenArgs {
             root: Some(root.to_path_buf()),
             assertion_contract: contract_name.clone(),
+            contracts: assertion_contracts_dir(assertion),
         }
         .run()
         .map_err(VerifyError::BuildFailed)?;
@@ -159,6 +163,7 @@ impl VerifyArgs {
                 let output = BuildAndFlattenArgs {
                     root: Some(root.to_path_buf()),
                     assertion_contract: contract_name.clone(),
+                    contracts: assertion_contracts_dir(&assertion.file),
                 }
                 .run()
                 .map_err(VerifyError::BuildFailed)?;
@@ -194,6 +199,17 @@ fn parse_assertion_name(arg: &str) -> String {
     } else {
         arg.to_string()
     }
+}
+
+fn assertion_contracts_dir(file: &str) -> PathBuf {
+    let source_path = file.split_once(':').map_or(file, |(path, _)| path);
+    Path::new(source_path)
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map_or_else(
+            || PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
+            Path::to_path_buf,
+        )
 }
 
 /// Result of verifying a set of assertions.
