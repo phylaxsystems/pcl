@@ -12,8 +12,8 @@ pcl-common = { workspace = true }
 pcl-phoundry = { workspace = true }
 
 # assertion deps (optional — behind `credible` feature)
-assertion-verification = { git = "https://github.com/phylaxsystems/credible-sdk.git", rev = "3387cf96ff9a04869445ea0d20cd5a29f1a0ddfa", optional = true }
-assertion-executor = { git = "https://github.com/phylaxsystems/credible-sdk.git", rev = "3387cf96ff9a04869445ea0d20cd5a29f1a0ddfa", default-features = false, optional = true }
+assertion-verification = { git = "https://github.com/phylaxsystems/credible-sdk.git", rev = "d8911ce1841e27b928edb642cfb5f8e26023817d", optional = true }
+assertion-executor = { git = "https://github.com/phylaxsystems/credible-sdk.git", rev = "d8911ce1841e27b928edb642cfb5f8e26023817d", default-features = false, optional = true }
 
 # alloy deps
 alloy-primitives = { workspace = true }
