@@ -85,6 +85,12 @@ pub struct ApplyArgs {
     pub yes: bool,
 
     #[arg(
+        long,
+        help = "Build and verify the release payload without calling the API"
+    )]
+    pub dry_run: bool,
+
+    #[arg(
         short = 'u',
         long = "api-url",
         env = "PCL_API_URL",
@@ -101,6 +107,7 @@ struct ApplyJsonOutput {
     project_id: Uuid,
     #[cfg(feature = "credible")]
     verification: VerificationSummary,
+    payload: Option<PostProjectsProjectIdReleasesBody>,
     preview: Option<PreviewResponse>,
     applied: bool,
     release: Option<PostProjectsProjectIdReleasesResponse>,
@@ -125,6 +132,14 @@ impl ApplyArgs {
         #[cfg(feature = "credible")]
         let verification = Self::verify_all_assertions(&_verification_inputs, json_output)?;
 
+        if self.dry_run {
+            #[cfg(feature = "credible")]
+            Self::print_dry_run_output(json_output, project_id, payload, verification)?;
+            #[cfg(not(feature = "credible"))]
+            Self::print_dry_run_output(json_output, project_id, payload)?;
+            return Ok(());
+        }
+
         let (http_client, base_url) = Self::build_http_client(config, &self.api_url)?;
         let preview = Self::call_preview(&http_client, &base_url, &project_id, &payload).await?;
 
@@ -137,6 +152,7 @@ impl ApplyArgs {
                         project_id,
                         #[cfg(feature = "credible")]
                         verification,
+                        payload: None,
                         preview: Some(preview),
                         applied: false,
                         release: None,
@@ -183,6 +199,7 @@ impl ApplyArgs {
                     project_id,
                     #[cfg(feature = "credible")]
                     verification,
+                    payload: None,
                     preview: Some(preview),
                     applied: true,
                     release: Some(release),
@@ -227,6 +244,58 @@ impl ApplyArgs {
             .map_err(|e| ApplyError::InvalidConfig(format!("Failed to build HTTP client: {e}")))?;
 
         Ok((http_client, base_url))
+    }
+
+    #[cfg(feature = "credible")]
+    fn print_dry_run_output(
+        json_output: bool,
+        project_id: Uuid,
+        payload: PostProjectsProjectIdReleasesBody,
+        verification: VerificationSummary,
+    ) -> Result<(), ApplyError> {
+        if json_output {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&ApplyJsonOutput {
+                    status: "dry_run",
+                    project_id,
+                    verification,
+                    payload: Some(payload),
+                    preview: None,
+                    applied: false,
+                    release: None,
+                })?
+            );
+        } else {
+            println!(
+                "Dry run complete. Built and verified release payload for project {project_id}."
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "credible"))]
+    fn print_dry_run_output(
+        json_output: bool,
+        project_id: Uuid,
+        payload: PostProjectsProjectIdReleasesBody,
+    ) -> Result<(), ApplyError> {
+        if json_output {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&ApplyJsonOutput {
+                    status: "dry_run",
+                    project_id,
+                    payload: Some(payload),
+                    preview: None,
+                    applied: false,
+                    release: None,
+                })?
+            );
+        } else {
+            println!("Dry run complete. Built release payload for project {project_id}.");
+        }
+        Ok(())
     }
 
     async fn call_preview(

@@ -46,8 +46,18 @@ env:
   RUST_NIGHTLY_VERSION: "nightly-2026-01-07"
 
 jobs:
+  runner-git-config:
+    name: Runner Git Config Preflight
+    runs-on: phylax-self-hosted
+    steps:
+      - name: Remove leaked GitHub SSH rewrites
+        run: |
+          git config --global --unset-all 'url.git@github.com:.insteadOf' || true
+          git config --global --unset-all 'url.ssh://git@github.com/.insteadOf' || true
+
   rust-base:
     name: Rust Test & Lint
+    needs: runner-git-config
     uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@main
     with:
       runner: "phylax-self-hosted"
@@ -59,11 +69,39 @@ jobs:
       deny-checks: "advisories"
       deny-preinstalled: true
 
-  agent-smoke:
-    name: Agent CLI Smoke
+  release-feature-check:
+    name: Release Feature Check
+    needs: runner-git-config
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: phylax-self-hosted
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: true
+      GIT_CONFIG_GLOBAL: /tmp/pcl-release-feature-${{ github.run_id }}-${{ github.run_attempt }}.gitconfig
+      RUSTC_WRAPPER: ""
+      SCCACHE_DISABLE: "1"
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure SSH for private dependencies
+        if: env.SSH_PRIVATE_KEY != ''
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ env.SSH_PRIVATE_KEY }}
+      - name: Prefer SSH for GitHub dependencies
+        if: env.SSH_PRIVATE_KEY != ''
+        run: git config --file "$GIT_CONFIG_GLOBAL" url."git@github.com:".insteadOf "https://github.com/"
+      - name: Install Rust toolchain
+        run: rustup toolchain install "$RUST_NIGHTLY_VERSION" --profile minimal --no-self-update
+      - name: Check release feature set
+        run: make full-check
+
+  agent-smoke:
+    name: Agent CLI Smoke
+    needs: [runner-git-config, release-feature-check]
+    runs-on: phylax-self-hosted
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
+      GIT_CONFIG_GLOBAL: /tmp/pcl-agent-smoke-${{ github.run_id }}-${{ github.run_attempt }}.gitconfig
       PCL_AUTH_NO_BROWSER: "1"
       RUSTC_WRAPPER: ""
       SCCACHE_DISABLE: "1"
