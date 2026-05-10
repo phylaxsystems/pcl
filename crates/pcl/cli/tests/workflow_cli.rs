@@ -193,13 +193,14 @@ fn workflow_body_templates_cover_access_manager_families() {
 }
 
 #[test]
-fn workflow_body_template_defaults_to_toon_envelope() {
+fn workflow_body_template_toon_flag_emits_toon_envelope() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     write_valid_auth_config(temp_dir.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
         .arg("--config-dir")
         .arg(temp_dir.path())
+        .arg("--toon")
         .args([
             "projects",
             "--api-url",

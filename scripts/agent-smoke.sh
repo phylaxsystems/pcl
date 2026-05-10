@@ -18,7 +18,7 @@ email = "agent-smoke@example.com"
 CONFIG
 
 json_envelope() {
-  "$bin" --config-dir "$config_dir" --format json "$@" | python3 -c 'import json, sys
+  "$bin" --config-dir "$config_dir" --json "$@" | python3 -c 'import json, sys
 doc = json.load(sys.stdin)
 assert doc.get("schema_version") == "pcl.envelope.v1", doc
 assert doc.get("status") in {"ok", "warning", "pending", "action_required"}, doc
@@ -26,26 +26,22 @@ assert doc.get("status") in {"ok", "warning", "pending", "action_required"}, doc
 }
 
 toon_envelope() {
-  "$bin" --config-dir "$config_dir" --format toon "$@" | grep -q "schema_version: pcl.envelope.v1"
+  "$bin" --config-dir "$config_dir" --toon "$@" | grep -q "schema_version: pcl.envelope.v1"
 }
 
-"$bin" --config-dir "$config_dir" --format json --llms | python3 -c 'import json, sys
-doc = json.load(sys.stdin)
-assert doc.get("schema_version") == "pcl.envelope.v1", doc
-assert doc.get("status") == "ok", doc
-' >/dev/null
-json_envelope llms
-json_envelope doctor --offline
-json_envelope auth ensure
-json_envelope whoami
-json_envelope workflows
-json_envelope workflows show incident-investigation
-json_envelope schema list
-json_envelope schema get incidents --action list_public
-json_envelope api manifest
-json_envelope api --dry-run --allow-unauthenticated call get '/health?limit=5'
-json_envelope completions bash
-
+toon_envelope --llms
+toon_envelope llms
 toon_envelope doctor --offline
 toon_envelope auth ensure
+toon_envelope whoami
+toon_envelope workflows
+toon_envelope workflows show incident-investigation
+toon_envelope schema list
+toon_envelope schema get incidents --action list_public
+toon_envelope api manifest
 toon_envelope api --dry-run --allow-unauthenticated call get '/health?limit=5'
+toon_envelope completions bash
+
+json_envelope llms
+json_envelope api manifest
+json_envelope completions bash

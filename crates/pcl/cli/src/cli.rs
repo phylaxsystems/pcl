@@ -3,7 +3,11 @@ use clap::{
     Parser,
 };
 use clap_complete::Shell;
-use pcl_common::args::CliArgs;
+use pcl_common::args::{
+    CliArgs,
+    OutputMode,
+    current_output_mode,
+};
 #[cfg(feature = "credible")]
 use pcl_core::verify::VerifyArgs;
 use pcl_core::{
@@ -186,7 +190,14 @@ pub struct CompletionsArgs {
 impl CompletionsArgs {
     pub fn run(&self, json_output: bool) -> Result<(), serde_json::Error> {
         let script = completion_script(self.shell);
-        if json_output {
+        let output_mode = if json_output {
+            OutputMode::Json
+        } else {
+            current_output_mode()
+        };
+        if output_mode == OutputMode::Human {
+            print!("{script}");
+        } else {
             let envelope = with_envelope_metadata(json!({
                 "status": "ok",
                 "data": {
@@ -198,9 +209,10 @@ impl CompletionsArgs {
                     format!("pcl completions {}", self.shell),
                 ],
             }));
-            println!("{}", serde_json::to_string_pretty(&envelope)?);
-        } else {
-            print!("{script}");
+            print!(
+                "{}",
+                pcl_core::api::envelope_output_string(&envelope, json_output)?
+            );
         }
         Ok(())
     }

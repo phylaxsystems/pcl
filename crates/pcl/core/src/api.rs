@@ -17,7 +17,11 @@ use clap::{
     ArgGroup,
     ValueEnum,
 };
-use pcl_common::args::CliArgs;
+use pcl_common::args::{
+    CliArgs,
+    OutputMode,
+    current_output_mode,
+};
 use reqwest::header::{
     HeaderMap,
     HeaderName,
@@ -62,7 +66,7 @@ pub enum ApiCommandError {
     NoAuthToken,
 
     #[error(
-        "Stored auth token expired at {0}. Run `pcl auth refresh --json` or `pcl auth login` again, or pass `--allow-unauthenticated` for public endpoints."
+        "Stored auth token expired at {0}. Run `pcl auth refresh --toon` or `pcl auth login` again, or pass `--allow-unauthenticated` for public endpoints."
     )]
     ExpiredAuthToken(chrono::DateTime<chrono::Utc>),
 
@@ -189,21 +193,21 @@ impl ApiCommandError {
         match self {
             Self::NoAuthToken | Self::ExpiredAuthToken(_) | Self::AuthRefresh(_) => {
                 vec![
-                    "pcl auth refresh --json".to_string(),
+                    "pcl auth refresh --toon".to_string(),
                     "pcl auth login".to_string(),
-                    "pcl api list --allow-unauthenticated --json".to_string(),
+                    "pcl api list --allow-unauthenticated --toon".to_string(),
                 ]
             }
             Self::InvalidPath(_) => {
                 vec![
-                    "pcl api list --json".to_string(),
-                    "pcl api call get /views/public/incidents --allow-unauthenticated --json"
+                    "pcl api list --toon".to_string(),
+                    "pcl api call get /views/public/incidents --allow-unauthenticated --toon"
                         .to_string(),
                 ]
             }
             Self::InvalidKeyValue { kind, .. } => {
                 vec![format!(
-                    "Use --{kind} key=value, for example: pcl api call get /views/public/incidents --{kind} limit=5 --json"
+                    "Use --{kind} key=value, for example: pcl api call get /views/public/incidents --{kind} limit=5 --toon"
                 )]
             }
             Self::InvalidHeaderName { .. } | Self::InvalidHeaderValue { .. } => {
@@ -219,8 +223,8 @@ impl ApiCommandError {
             }
             Self::OperationNotFound(_) => {
                 vec![
-                    "pcl api list --json".to_string(),
-                    "pcl api inspect get /views/public/incidents --json".to_string(),
+                    "pcl api list --toon".to_string(),
+                    "pcl api inspect get /views/public/incidents --toon".to_string(),
                 ]
             }
             Self::InvalidWorkflow { .. } => {
@@ -243,7 +247,7 @@ impl ApiCommandError {
             }
             Self::HttpStatus { status: 401, .. } => {
                 vec![
-                    "pcl auth refresh --json".to_string(),
+                    "pcl auth refresh --toon".to_string(),
                     "pcl auth login".to_string(),
                     "Use --allow-unauthenticated only for public endpoints".to_string(),
                 ]
@@ -265,17 +269,17 @@ impl ApiCommandError {
             } => {
                 vec![
                     format!(
-                        "pcl api inspect {} {} --json",
+                        "pcl api inspect {} {} --toon",
                         method.to_ascii_lowercase(),
                         path
                     ),
-                    "pcl api manifest --json".to_string(),
+                    "pcl api manifest --toon".to_string(),
                     "Read error.http.body for the rejected field details".to_string(),
                 ]
             }
             Self::HttpStatus { status: 404, .. } => {
                 vec![
-                    "pcl api list --json".to_string(),
+                    "pcl api list --toon".to_string(),
                     "Check identifiers and required path/query parameters".to_string(),
                 ]
             }
@@ -293,13 +297,13 @@ impl ApiCommandError {
                             method.to_ascii_lowercase(),
                             path
                         ),
-                        "pcl requests list --json".to_string(),
+                        "pcl requests list --toon".to_string(),
                         "Read error.http.body for API-provided failure details".to_string(),
                     ]
                 } else {
                     vec![
                         "Retry the same command once; server errors can be transient".to_string(),
-                        "pcl api manifest --json".to_string(),
+                        "pcl api manifest --toon".to_string(),
                         "Read error.http.body for API-provided failure details".to_string(),
                     ]
                 };
@@ -312,7 +316,7 @@ impl ApiCommandError {
             }
             Self::HttpStatus { .. } => {
                 vec![
-                    "pcl api manifest --json".to_string(),
+                    "pcl api manifest --toon".to_string(),
                     "Read error.http.body for API-provided failure details".to_string(),
                 ]
             }
@@ -322,7 +326,7 @@ impl ApiCommandError {
             }
             Self::RequestLog { .. } => {
                 vec![
-                    "pcl requests path --json".to_string(),
+                    "pcl requests path --toon".to_string(),
                     "Check request log permissions or move the PCL state directory".to_string(),
                 ]
             }
@@ -452,7 +456,7 @@ impl ApiCommandError {
 #[derive(clap::Parser, Debug)]
 #[command(
     about = "Discover and call the platform API",
-    long_about = "Discover and call the Credible Layer platform API. Commands return compact structured TOON by default, including error envelopes and next actions. Pass --json for full JSON envelopes."
+    long_about = "Discover and call the Credible Layer platform API. Commands use human-readable output by default. Pass --toon for compact agent envelopes or --json for strict JSON envelopes."
 )]
 pub struct ApiArgs {
     #[command(subcommand)]
@@ -638,13 +642,13 @@ enum ApiCommand {
 
     #[command(
         about = "Print an agent-readable command manifest",
-        after_help = "Examples:\n  pcl api manifest\n  pcl api manifest --json"
+        after_help = "Examples:\n  pcl api manifest\n  pcl api manifest --toon\n  pcl api manifest --json"
     )]
     Manifest,
 
     #[command(
         about = "List OpenAPI operations",
-        after_help = "Examples:\n  pcl api list\n  pcl api list --filter incidents\n  pcl api list --method get\n  pcl api list --json"
+        after_help = "Examples:\n  pcl api list\n  pcl api list --filter incidents\n  pcl api list --method get\n  pcl api list --toon\n  pcl api list --json"
     )]
     List {
         #[arg(long, help = "Filter operation id, summary, tags, or path")]
@@ -655,7 +659,7 @@ enum ApiCommand {
 
     #[command(
         about = "Inspect one OpenAPI operation",
-        after_help = "Examples:\n  pcl api inspect get_views_projects_project_id_incidents\n  pcl api inspect get /views/public/incidents\n  pcl api inspect get_views_projects_project_id_incidents --json"
+        after_help = "Examples:\n  pcl api inspect get_views_projects_project_id_incidents\n  pcl api inspect get /views/public/incidents\n  pcl api inspect get_views_projects_project_id_incidents --toon\n  pcl api inspect get_views_projects_project_id_incidents --json"
     )]
     Inspect {
         #[arg(help = "Operation id, or HTTP method when PATH is also provided")]
@@ -670,7 +674,7 @@ enum ApiCommand {
         name = "coverage",
         alias = "audit",
         about = "Compare the local request log against the live OpenAPI surface",
-        after_help = "Examples:\n  pcl api coverage --json\n  pcl api coverage --records 5000 --markdown /tmp/pcl-api-coverage.md"
+        after_help = "Examples:\n  pcl api coverage --toon\n  pcl api coverage --json\n  pcl api coverage --records 5000 --markdown /tmp/pcl-api-coverage.md"
     )]
     Coverage {
         #[arg(
@@ -685,7 +689,7 @@ enum ApiCommand {
 
     #[command(
         about = "Call any platform API endpoint",
-        after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json"
+        after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --toon"
     )]
     Call {
         #[arg(value_enum, help = "HTTP method")]
@@ -1828,8 +1832,8 @@ impl ApiArgs {
                     "status": "ok",
                     "data": coverage,
                     "next_actions": [
-                        "pcl requests list --json",
-                        "pcl api list --json",
+                        "pcl requests list --toon",
+                        "pcl api list --toon",
                         "pcl api coverage --markdown api-coverage.md",
                     ],
                 });
@@ -1893,7 +1897,7 @@ impl ApiArgs {
                             "Adjust --limit or --max-pages if the result set was truncated"
                                 .to_string(),
                             "Use --output results.json to save paginated data".to_string(),
-                            "pcl api manifest --json".to_string(),
+                            "pcl api manifest --toon".to_string(),
                         ],
                     )
                 } else {
@@ -1903,8 +1907,8 @@ impl ApiArgs {
                     (
                         response,
                         vec![
-                            "pcl api list --json".to_string(),
-                            "pcl api manifest --json".to_string(),
+                            "pcl api list --toon".to_string(),
+                            "pcl api manifest --toon".to_string(),
                         ],
                     )
                 };
@@ -2938,17 +2942,1594 @@ fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {
 }
 
 fn print_output(value: &Value, json_output: bool) -> Result<(), ApiCommandError> {
-    print!("{}", output_string(value, json_output)?);
+    print!("{}", envelope_output_string(value, json_output)?);
     Ok(())
 }
 
-fn output_string(value: &Value, json_output: bool) -> Result<String, ApiCommandError> {
+pub fn envelope_output_string(
+    value: &Value,
+    json_output: bool,
+) -> Result<String, serde_json::Error> {
     let value = with_envelope_metadata(value.clone());
-    if json_output {
-        Ok(format!("{}\n", serde_json::to_string_pretty(&value)?))
+    let output_mode = if json_output {
+        OutputMode::Json
     } else {
-        Ok(toon_string(&value))
+        current_output_mode()
+    };
+    match output_mode {
+        OutputMode::Json => Ok(format!("{}\n", serde_json::to_string_pretty(&value)?)),
+        OutputMode::Toon => Ok(toon_string(&value)),
+        OutputMode::Human => Ok(human_string(&value)),
     }
+}
+
+/// Render an envelope for interactive humans.
+pub fn human_string(value: &Value) -> String {
+    let value = with_envelope_metadata(value.clone());
+    let status = value.get("status").and_then(Value::as_str).unwrap_or("ok");
+    let mut output = String::new();
+    output.push_str(match status {
+        "ok" => "OK",
+        "error" => "Error",
+        "action_required" => "Action required",
+        "pending" => "Pending",
+        other => other,
+    });
+    output.push('\n');
+
+    if let Some(error) = value.get("error") {
+        render_human_error(&mut output, error);
+    } else if !render_human_special(&mut output, &value)
+        && !render_human_collection(&mut output, &value)
+        && let Some(data) = value.get("data")
+    {
+        render_human_summary(&mut output, data);
+    }
+
+    if let Some(actions) = value.get("next_actions").and_then(Value::as_array)
+        && !actions.is_empty()
+    {
+        output.push_str("\nNext:\n");
+        for (index, action) in actions.iter().enumerate() {
+            output.push_str("  ");
+            output.push_str(&(index + 1).to_string());
+            output.push_str(". ");
+            output.push_str(&human_action(action));
+            output.push('\n');
+        }
+    }
+    render_human_request_id(&mut output, &value);
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output
+}
+
+struct HumanCollection<'a> {
+    field: String,
+    name: String,
+    items: &'a [Value],
+    pagination: Option<&'a Value>,
+    meta: Option<&'a Value>,
+}
+
+fn render_human_error(output: &mut String, error: &Value) {
+    output.push('\n');
+    if let Some(message) = error.get("message").and_then(Value::as_str) {
+        output.push_str(message);
+        output.push('\n');
+    } else if let Some(error) = error.as_str() {
+        output.push_str(error);
+        output.push('\n');
+    } else {
+        render_human_value(output, error, 0);
+    }
+
+    if let Some(code) = error.get("code").and_then(Value::as_str) {
+        output.push_str("Code: ");
+        output.push_str(code);
+        output.push('\n');
+    }
+}
+
+fn render_human_special(output: &mut String, envelope: &Value) -> bool {
+    let Some(data) = envelope.get("data") else {
+        return false;
+    };
+    let display_data = data.get("data").unwrap_or(data);
+
+    if render_login_challenge(output, display_data) {
+        return true;
+    }
+    if render_request_plan(output, display_data) {
+        return true;
+    }
+    if render_auth_status(output, display_data) {
+        return true;
+    }
+    if render_identity_status(output, display_data) {
+        return true;
+    }
+    if render_doctor(output, display_data) {
+        return true;
+    }
+    if render_api_manifest(output, display_data) {
+        return true;
+    }
+    if render_llms_guide(output, display_data) {
+        return true;
+    }
+    if render_workflow_detail(output, display_data) {
+        return true;
+    }
+    if render_schema_detail(output, display_data) {
+        return true;
+    }
+    if render_operation_detail(output, display_data) {
+        return true;
+    }
+    if render_api_coverage(output, display_data) {
+        return true;
+    }
+    if render_raw_api_response(output, display_data) {
+        return true;
+    }
+    if render_export_result(output, display_data) {
+        return true;
+    }
+    if render_job_detail(output, display_data) {
+        return true;
+    }
+    if render_path_or_toggle_result(output, display_data) {
+        return true;
+    }
+    if render_body_template(output, envelope, display_data) {
+        return true;
+    }
+
+    false
+}
+
+fn render_login_challenge(output: &mut String, data: &Value) -> bool {
+    if data.get("state").and_then(Value::as_str) != Some("login_required") {
+        return false;
+    }
+    output.push_str("\nLogin required\n");
+    if let Some(reason) = data.get("reason").and_then(Value::as_str) {
+        writeln!(output, "Reason: {}", title_case(reason)).expect("write to string");
+    }
+    if let Some(url) = data.get("device_url").and_then(Value::as_str) {
+        writeln!(output, "Open: {url}").expect("write to string");
+    }
+    if let Some(code) = data.get("code").and_then(Value::as_str) {
+        writeln!(output, "Code: {code}").expect("write to string");
+    }
+    if let Some(expires_at) = data.get("expires_at").and_then(Value::as_str) {
+        writeln!(output, "Expires: {}", format_timestamp(expires_at)).expect("write to string");
+    }
+    if let Some(command) = data.get("poll_command").and_then(Value::as_str) {
+        writeln!(output, "Poll: {}", humanize_command(command)).expect("write to string");
+    }
+    true
+}
+
+fn render_request_plan(output: &mut String, data: &Value) -> bool {
+    if data.get("dry_run").and_then(Value::as_bool) != Some(true) {
+        return false;
+    }
+
+    output.push_str("\nDry run\n");
+    if data.get("valid").and_then(Value::as_bool) == Some(false) {
+        output.push_str("Request is not valid.\n");
+        if let Some(error) = data.get("error") {
+            render_human_error(output, error);
+        }
+        return true;
+    }
+
+    let request = data.get("request").unwrap_or(data);
+    let method = request.get("method").and_then(Value::as_str).unwrap_or("-");
+    let path = request.get("path").and_then(Value::as_str).unwrap_or("-");
+    writeln!(output, "{method} {path}").expect("write to string");
+    if let Some(query) = request.get("query").and_then(Value::as_array)
+        && !query.is_empty()
+    {
+        output.push_str("Query: ");
+        output.push_str(&name_value_pairs(query));
+        output.push('\n');
+    }
+    if let Some(auth) = request.get("auth") {
+        let required = auth
+            .get("required")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let attached = auth
+            .get("will_attach_stored_token")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        writeln!(
+            output,
+            "Auth: {}{}",
+            if required { "required" } else { "not required" },
+            if attached {
+                ", stored token will be attached"
+            } else {
+                ""
+            }
+        )
+        .expect("write to string");
+    }
+    if let Some(body) = request.get("body")
+        && !body.is_null()
+    {
+        output.push_str("Body: ");
+        output.push_str(&human_compact_summary(body));
+        output.push('\n');
+    }
+    if let Some(pagination) = data.get("pagination")
+        && !pagination.is_null()
+    {
+        output.push_str("Pagination: ");
+        output.push_str(&human_compact_summary(pagination));
+        output.push('\n');
+    }
+    true
+}
+
+fn render_auth_status(output: &mut String, data: &Value) -> bool {
+    if !data.get("authenticated").is_some_and(Value::is_boolean)
+        || data.get("auth").is_some()
+        || data.get("config_path").is_some()
+    {
+        return false;
+    }
+
+    output.push_str("\nAuthentication\n");
+    let authenticated = data
+        .get("authenticated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    writeln!(
+        output,
+        "Status: {}",
+        if authenticated {
+            "authenticated"
+        } else {
+            "not logged in"
+        }
+    )
+    .expect("write to string");
+    if let Some(user) = data.get("user").and_then(Value::as_str) {
+        writeln!(output, "User: {user}").expect("write to string");
+    }
+    if let Some(email) = data.get("email").and_then(Value::as_str)
+        && data.get("user").and_then(Value::as_str) != Some(email)
+    {
+        writeln!(output, "Email: {email}").expect("write to string");
+    }
+    if let Some(wallet) = data.get("wallet_address").and_then(Value::as_str) {
+        writeln!(output, "Wallet: {wallet}").expect("write to string");
+    }
+    if let Some(expires_at) = data.get("expires_at").and_then(Value::as_str) {
+        writeln!(output, "Token expires: {}", format_timestamp(expires_at))
+            .expect("write to string");
+    }
+    if let Some(seconds) = data.get("seconds_remaining").and_then(Value::as_i64) {
+        writeln!(output, "Time remaining: {}", format_duration(seconds)).expect("write to string");
+    }
+    if data.get("refreshed").and_then(Value::as_bool) == Some(true) {
+        output.push_str("Token refreshed.\n");
+    }
+    if let Some(request_id) = data.get("request_id").and_then(Value::as_str) {
+        writeln!(output, "Request ID: {request_id}").expect("write to string");
+    }
+    true
+}
+
+fn render_identity_status(output: &mut String, data: &Value) -> bool {
+    let Some(auth) = data.get("auth") else {
+        return false;
+    };
+    if !auth.get("authenticated").is_some_and(Value::is_boolean) {
+        return false;
+    }
+    output.push_str("\nIdentity\n");
+    let authenticated = auth
+        .get("authenticated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    writeln!(
+        output,
+        "Status: {}",
+        if authenticated {
+            "authenticated"
+        } else {
+            "not logged in"
+        }
+    )
+    .expect("write to string");
+    if let Some(user) = auth.get("user").and_then(Value::as_str) {
+        writeln!(output, "User: {user}").expect("write to string");
+    }
+    if let Some(user_id) = auth.get("user_id").and_then(Value::as_str) {
+        writeln!(output, "User ID: {user_id}").expect("write to string");
+    }
+    if let Some(expires_at) = auth.get("expires_at").and_then(Value::as_str) {
+        writeln!(output, "Token expires: {}", format_timestamp(expires_at))
+            .expect("write to string");
+    }
+    if let Some(config_path) = data.get("config_path").and_then(Value::as_str) {
+        writeln!(output, "Config: {config_path}").expect("write to string");
+    }
+    if data.get("offline").and_then(Value::as_bool) == Some(true) {
+        output.push_str("Network checks skipped.\n");
+    }
+    true
+}
+
+fn render_doctor(output: &mut String, data: &Value) -> bool {
+    let Some(checks) = data.get("checks").and_then(Value::as_array) else {
+        return false;
+    };
+    output.push_str("\nDoctor\n");
+    render_checks_table(output, checks);
+    if let Some(api_url) = data.get("api_url").and_then(Value::as_str) {
+        writeln!(output, "\nAPI: {api_url}").expect("write to string");
+    }
+    output.push_str("Default output: human. Agents should pass --toon; scripts can pass --json.\n");
+    true
+}
+
+fn render_body_template(output: &mut String, envelope: &Value, data: &Value) -> bool {
+    if !is_body_template_envelope(envelope) {
+        return false;
+    }
+    if let Some(variants) = data.get("body_variants").and_then(Value::as_array) {
+        output.push_str("\nBody variants\n");
+        for variant in variants {
+            let name = variant
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("variant");
+            writeln!(output, "- {name}").expect("write to string");
+            if let Some(body) = variant.get("body") {
+                render_human_value(output, body, 4);
+            }
+        }
+        return true;
+    }
+
+    let Some(object) = data.as_object() else {
+        return false;
+    };
+    if object.is_empty()
+        || !object
+            .values()
+            .all(|value| is_scalar(value) || value.is_object() || value.is_array())
+    {
+        return false;
+    }
+    if !object.keys().any(|key| is_body_template_key(key)) {
+        return false;
+    }
+    output.push_str("\nBody template\n");
+    render_human_value(output, data, 2);
+    true
+}
+
+fn is_body_template_envelope(envelope: &Value) -> bool {
+    envelope
+        .get("next_actions")
+        .and_then(Value::as_array)
+        .is_some_and(|actions| {
+            actions.iter().filter_map(Value::as_str).any(|action| {
+                action.starts_with("Pass the template")
+                    || action.starts_with("Choose one entry from data.body_variants")
+            })
+        })
+}
+
+fn render_api_manifest(output: &mut String, data: &Value) -> bool {
+    if data.get("name").and_then(Value::as_str) != Some("pcl") || data.get("commands").is_none() {
+        return false;
+    }
+    output.push_str("\nPCL command surface\n");
+    if let Some(description) = data.get("description").and_then(Value::as_str) {
+        writeln!(output, "{description}").expect("write to string");
+    }
+    output.push_str("\nStart here:\n");
+    for command in ["pcl --llms", "pcl workflows", "pcl schema list"] {
+        writeln!(output, "  - {command}").expect("write to string");
+    }
+    if let Some(commands) = data.get("commands").and_then(Value::as_array) {
+        writeln!(
+            output,
+            "\n{} workflow/API command groups available.",
+            commands.len()
+        )
+        .expect("write to string");
+    }
+    true
+}
+
+fn render_llms_guide(output: &mut String, data: &Value) -> bool {
+    if data.get("purpose").is_none() || data.get("consumption_order").is_none() {
+        return false;
+    }
+    output.push_str("\nLLM guide\n");
+    if let Some(purpose) = data.get("purpose").and_then(Value::as_str) {
+        writeln!(output, "{purpose}").expect("write to string");
+    }
+    if let Some(order) = data.get("consumption_order").and_then(Value::as_array) {
+        output.push_str("\nRecommended order:\n");
+        for command in order.iter().filter_map(Value::as_str).take(8) {
+            writeln!(output, "  - {}", humanize_command(command)).expect("write to string");
+        }
+    }
+    true
+}
+
+fn render_workflow_detail(output: &mut String, data: &Value) -> bool {
+    if data.get("steps").is_none() || data.get("name").is_none() {
+        return false;
+    }
+    output.push('\n');
+    if let Some(name) = data.get("name").and_then(Value::as_str) {
+        writeln!(output, "Workflow: {name}").expect("write to string");
+    }
+    if let Some(description) = data.get("description").and_then(Value::as_str) {
+        writeln!(output, "{description}").expect("write to string");
+    }
+    if let Some(steps) = data.get("steps").and_then(Value::as_array) {
+        output.push_str("\nSteps:\n");
+        for (index, step) in steps.iter().enumerate() {
+            let command = step.get("command").and_then(Value::as_str).unwrap_or("-");
+            let description = step.get("output").and_then(Value::as_str).unwrap_or("");
+            writeln!(
+                output,
+                "  {}. {}{}",
+                index + 1,
+                humanize_command(command),
+                if description.is_empty() {
+                    String::new()
+                } else {
+                    format!(" -> {description}")
+                }
+            )
+            .expect("write to string");
+        }
+    }
+    true
+}
+
+fn render_schema_detail(output: &mut String, data: &Value) -> bool {
+    if data.get("workflow").is_none()
+        || !(data.get("actions").is_some() || data.get("action").is_some())
+    {
+        return false;
+    }
+    output.push('\n');
+    if let Some(workflow) = data.get("workflow").and_then(Value::as_str) {
+        writeln!(output, "Schema: {workflow}").expect("write to string");
+    }
+    if let Some(command) = data.get("command").and_then(Value::as_str) {
+        writeln!(output, "Command: {}", humanize_command(command)).expect("write to string");
+    }
+    if let Some(actions) = data.get("actions").and_then(Value::as_array) {
+        render_actions_table(output, actions);
+    } else if let Some(action) = data.get("action") {
+        render_action_detail(output, action);
+    }
+    true
+}
+
+fn render_operation_detail(output: &mut String, data: &Value) -> bool {
+    if data.get("operation_id").is_none()
+        || data.get("method").is_none()
+        || data.get("path").is_none()
+    {
+        return false;
+    }
+    output.push_str("\nAPI operation\n");
+    let method = data.get("method").and_then(Value::as_str).unwrap_or("-");
+    let path = data.get("path").and_then(Value::as_str).unwrap_or("-");
+    writeln!(output, "{method} {path}").expect("write to string");
+    if let Some(operation_id) = data.get("operation_id").and_then(Value::as_str) {
+        writeln!(output, "Operation: {operation_id}").expect("write to string");
+    }
+    if let Some(summary) = data.get("summary").and_then(Value::as_str) {
+        writeln!(output, "Summary: {summary}").expect("write to string");
+    }
+    if let Some(policy) = data.pointer("/raw_api_use/policy").and_then(Value::as_str) {
+        writeln!(output, "Raw API policy: {}", title_case(policy)).expect("write to string");
+    }
+    if let Some(alternatives) = data.get("workflow_alternatives").and_then(Value::as_array)
+        && !alternatives.is_empty()
+    {
+        output.push_str("Prefer:\n");
+        for alternative in alternatives {
+            if let Some(example) = alternative.get("example").and_then(Value::as_str) {
+                writeln!(output, "  - {}", humanize_command(example)).expect("write to string");
+            }
+        }
+    }
+    if let Some(command) = data.get("call_command").and_then(Value::as_str) {
+        writeln!(output, "Raw call: {}", humanize_command(command)).expect("write to string");
+    }
+    true
+}
+
+fn render_api_coverage(output: &mut String, data: &Value) -> bool {
+    let Some(total) = data.get("total_operations").and_then(Value::as_u64) else {
+        return false;
+    };
+    output.push_str("\nAPI coverage\n");
+    writeln!(output, "Operations: {total}").expect("write to string");
+    for (label, field) in [
+        ("No request-log hit", "no_hit_count"),
+        ("Hit without 2xx", "no_2xx_count"),
+        ("Write hit without 2xx", "write_no_2xx_count"),
+        ("Unmatched records", "unmatched_record_count"),
+    ] {
+        if let Some(count) = data.get(field).and_then(Value::as_u64) {
+            writeln!(output, "{label}: {count}").expect("write to string");
+        }
+    }
+    if let Some(by_method) = data.get("by_method").and_then(Value::as_object) {
+        output.push_str("\nBy method:\n");
+        for (method, stats) in by_method {
+            let total = stats.get("total").and_then(Value::as_u64).unwrap_or(0);
+            let hit = stats.get("hit").and_then(Value::as_u64).unwrap_or(0);
+            let ok = stats.get("ok").and_then(Value::as_u64).unwrap_or(0);
+            writeln!(output, "  {method}: {ok}/{total} 2xx, {hit} hit").expect("write to string");
+        }
+    }
+    true
+}
+
+fn render_raw_api_response(output: &mut String, data: &Value) -> bool {
+    if data.get("request").is_none() || data.get("response").is_none() {
+        return false;
+    }
+    let request = data.get("request").unwrap_or(&Value::Null);
+    let response = data.get("response").unwrap_or(&Value::Null);
+    output.push_str("\nAPI response\n");
+    if let (Some(method), Some(path)) = (
+        request.get("method").and_then(Value::as_str),
+        request.get("path").and_then(Value::as_str),
+    ) {
+        writeln!(output, "{method} {path}").expect("write to string");
+    }
+    if let Some(status) = response.get("status").and_then(Value::as_u64) {
+        writeln!(output, "HTTP {status}").expect("write to string");
+    }
+    if let Some(request_id) = response.get("request_id").and_then(Value::as_str) {
+        writeln!(output, "Request ID: {request_id}").expect("write to string");
+    }
+    if let Some(body) = response.get("body") {
+        if let Some(collection) = find_collection_in_value(body, "") {
+            output.push('\n');
+            output.push_str(&collection.name);
+            output.push('\n');
+            output.push_str(&collection_summary(&collection));
+            output.push_str("\n\n");
+            render_collection_items(output, &collection);
+        } else {
+            output.push_str("Body: ");
+            output.push_str(&human_compact_summary(body));
+            output.push('\n');
+        }
+    }
+    if let Some(path) = data.get("output_path").and_then(Value::as_str) {
+        writeln!(output, "Wrote: {path}").expect("write to string");
+    }
+    true
+}
+
+fn render_export_result(output: &mut String, data: &Value) -> bool {
+    if data.get("export").and_then(Value::as_str) != Some("incidents")
+        && !(data.get("plan").is_some() && data.get("job_id").is_some())
+    {
+        return false;
+    }
+    output.push_str("\nIncident export\n");
+    if let Some(job_id) = data.get("job_id").and_then(Value::as_str) {
+        writeln!(output, "Job: {job_id}").expect("write to string");
+    }
+    let source = data.get("plan").unwrap_or(data);
+    for (label, field) in [
+        ("Output", "out"),
+        ("Errors", "errors"),
+        ("Checkpoint", "checkpoint"),
+    ] {
+        if let Some(path) = source.get(field).and_then(Value::as_str) {
+            writeln!(output, "{label}: {path}").expect("write to string");
+        }
+    }
+    for (label, field) in [
+        ("Pages fetched", "pages_fetched"),
+        ("Incidents written", "incidents_written"),
+        ("Errors written", "errors_written"),
+        ("Retries", "retries_attempted"),
+    ] {
+        if let Some(count) = data.get(field).and_then(Value::as_u64) {
+            writeln!(output, "{label}: {count}").expect("write to string");
+        }
+    }
+    if let Some(command) = data.get("resume_command").and_then(Value::as_str) {
+        writeln!(output, "Resume: {}", humanize_command(command)).expect("write to string");
+    }
+    true
+}
+
+fn render_job_detail(output: &mut String, data: &Value) -> bool {
+    let job = data.get("job").unwrap_or(data);
+    if job.get("job_id").is_none() {
+        return false;
+    }
+    output.push_str("\nJob\n");
+    for (label, field) in [
+        ("ID", "job_id"),
+        ("Kind", "kind"),
+        ("Status", "status"),
+        ("Updated", "updated_at"),
+    ] {
+        if let Some(value) = job.get(field) {
+            writeln!(output, "{label}: {}", human_cell(value)).expect("write to string");
+        }
+    }
+    if let Some(stats) = job.get("stats") {
+        output.push_str("Stats: ");
+        output.push_str(&human_compact_summary(stats));
+        output.push('\n');
+    }
+    if let Some(command) = data
+        .get("resume_command")
+        .or_else(|| job.get("resume_command"))
+        .and_then(Value::as_str)
+    {
+        writeln!(output, "Resume: {}", humanize_command(command)).expect("write to string");
+    }
+    true
+}
+
+fn render_path_or_toggle_result(output: &mut String, data: &Value) -> bool {
+    if data
+        .as_object()
+        .is_some_and(|object| object.values().any(Value::is_array))
+    {
+        return false;
+    }
+    let path_fields = [
+        ("Config", "config_path"),
+        ("Artifacts", "artifact_dir"),
+        ("Request log", "request_log"),
+        ("Jobs", "jobs_path"),
+    ];
+    let mut rendered = false;
+    for (label, field) in path_fields {
+        if let Some(path) = data.get(field).and_then(Value::as_str) {
+            if !rendered {
+                output.push('\n');
+                rendered = true;
+            }
+            writeln!(output, "{label}: {path}").expect("write to string");
+        }
+    }
+    for (label, field) in [("Created", "created"), ("Deleted", "deleted")] {
+        if let Some(value) = data.get(field).and_then(Value::as_bool) {
+            if !rendered {
+                output.push('\n');
+                rendered = true;
+            }
+            writeln!(output, "{label}: {}", yes_no(value)).expect("write to string");
+        }
+    }
+    rendered
+}
+
+fn render_human_collection(output: &mut String, envelope: &Value) -> bool {
+    let Some(collection) = find_human_collection(envelope) else {
+        return false;
+    };
+
+    output.push('\n');
+    output.push_str(&collection.name);
+    output.push('\n');
+    output.push_str(&collection_summary(&collection));
+    output.push('\n');
+    if let Some(meta) = collection.meta {
+        render_collection_meta(output, meta);
+    }
+    output.push('\n');
+
+    if collection.items.is_empty() {
+        output.push_str("No results.\n");
+        return true;
+    }
+
+    render_collection_items(output, &collection);
+
+    if let Some(pagination) = collection.pagination
+        && pagination
+            .get("hasMore")
+            .or_else(|| pagination.get("has_more"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        let next_page = pagination
+            .get("page")
+            .and_then(Value::as_u64)
+            .map_or(2, |page| page.saturating_add(1));
+        let limit = pagination
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(collection.items.len() as u64);
+        output.push('\n');
+        writeln!(
+            output,
+            "More results available. Try --page {next_page} --limit {limit}."
+        )
+        .expect("write to string");
+    }
+
+    true
+}
+
+fn find_human_collection(envelope: &Value) -> Option<HumanCollection<'_>> {
+    let data = envelope.get("data")?;
+    let request_path = envelope
+        .pointer("/request/path")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    find_collection_in_value(data, request_path)
+}
+
+fn find_collection_in_value<'a>(
+    data: &'a Value,
+    request_path: &str,
+) -> Option<HumanCollection<'a>> {
+    if let Some(inner) = data.get("data")
+        && let Some(collection) = find_collection_in_value(inner, request_path)
+    {
+        return Some(HumanCollection {
+            meta: data.get("_meta").or(collection.meta),
+            ..collection
+        });
+    }
+
+    if let Some(items) = data.get("items").and_then(Value::as_array) {
+        return Some(HumanCollection {
+            field: "items".to_string(),
+            name: infer_collection_name("items", request_path, items),
+            items,
+            pagination: data.get("pagination"),
+            meta: data.get("_meta"),
+        });
+    }
+
+    for field in [
+        "incidents",
+        "projects",
+        "assertions",
+        "contracts",
+        "releases",
+        "deployments",
+        "events",
+        "operations",
+        "workflows",
+        "schemas",
+        "checks",
+        "records",
+        "jobs",
+        "artifacts",
+        "members",
+        "invitations",
+        "integrations",
+        "transfers",
+        "requests",
+        "no_hit",
+        "no_2xx",
+        "write_no_2xx",
+        "unmatched_records",
+        "body_variants",
+        "examples",
+        "product_surfaces",
+        "requests",
+    ] {
+        if let Some(items) = data.get(field).and_then(Value::as_array) {
+            return Some(HumanCollection {
+                field: field.to_string(),
+                name: title_case(field),
+                items,
+                pagination: data.get("pagination"),
+                meta: data.get("_meta"),
+            });
+        }
+    }
+
+    None
+}
+
+fn infer_collection_name(field: &str, request_path: &str, items: &[Value]) -> String {
+    for name in [
+        "incidents",
+        "projects",
+        "assertions",
+        "contracts",
+        "releases",
+        "deployments",
+        "events",
+        "operations",
+        "workflows",
+        "schemas",
+        "records",
+        "jobs",
+        "artifacts",
+        "requests",
+    ] {
+        if request_path.contains(name) {
+            return title_case(name);
+        }
+    }
+    if items.iter().any(has_incident_shape) {
+        return "Incidents".to_string();
+    }
+    title_case(field)
+}
+
+fn collection_summary(collection: &HumanCollection<'_>) -> String {
+    let shown = collection.items.len();
+    let item_name = collection.name.to_ascii_lowercase();
+    if let Some(pagination) = collection.pagination {
+        let total = pagination
+            .get("total")
+            .and_then(Value::as_u64)
+            .unwrap_or(shown as u64);
+        let page = pagination.get("page").and_then(Value::as_u64);
+        let limit = pagination.get("limit").and_then(Value::as_u64);
+        let mut summary = if total > shown as u64 {
+            format!("Showing {shown} of {total} {item_name}")
+        } else {
+            format!("Showing {shown} {item_name}")
+        };
+        if let Some(page) = page {
+            write!(summary, " on page {page}").expect("write to string");
+        }
+        if let Some(limit) = limit {
+            write!(summary, " (limit {limit})").expect("write to string");
+        }
+        return summary;
+    }
+    format!("Showing {shown} {item_name}")
+}
+
+fn render_collection_items(output: &mut String, collection: &HumanCollection<'_>) {
+    match collection.field.as_str() {
+        "checks" => render_checks_table(output, collection.items),
+        "operations" => render_operations_table(output, collection.items),
+        "workflows" => render_workflows_table(output, collection.items),
+        "schemas" => render_schemas_table(output, collection.items),
+        "records" | "requests" | "unmatched_records" => {
+            render_request_records_table(output, collection.items);
+        }
+        "jobs" => render_jobs_table(output, collection.items),
+        "artifacts" => render_artifacts_table(output, collection.items),
+        "no_hit" | "no_2xx" | "write_no_2xx" => render_coverage_table(output, collection.items),
+        "body_variants" => render_body_variant_table(output, collection.items),
+        _ if is_incident_collection(collection) => render_incident_table(output, collection.items),
+        _ => render_generic_table(output, collection.items),
+    }
+}
+
+fn render_checks_table(output: &mut String, items: &[Value]) {
+    writeln!(output, "{:<20} {:<10} Details", "Check", "Status").expect("write to string");
+    for item in items {
+        let name = item.get("name").and_then(Value::as_str).unwrap_or("-");
+        let status = item.get("status").and_then(Value::as_str).unwrap_or("-");
+        let details = item
+            .get("details")
+            .or_else(|| item.get("path"))
+            .map_or_else(String::new, human_compact_summary);
+        writeln!(
+            output,
+            "{:<20} {:<10} {}",
+            pad(name, 20),
+            pad(status, 10),
+            details
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_operations_table(output: &mut String, items: &[Value]) {
+    writeln!(
+        output,
+        "{:<7} {:<45} {:<36} Policy",
+        "Method", "Path", "Operation"
+    )
+    .expect("write to string");
+    for item in items {
+        let method = item.get("method").and_then(Value::as_str).unwrap_or("-");
+        let path = item.get("path").and_then(Value::as_str).unwrap_or("-");
+        let operation = item
+            .get("operation_id")
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        let policy = item
+            .pointer("/raw_api_use/policy")
+            .and_then(Value::as_str)
+            .map_or("-", |value| value);
+        writeln!(
+            output,
+            "{:<7} {:<45} {:<36} {}",
+            method,
+            pad(path, 45),
+            pad(operation, 36),
+            title_case(policy)
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_workflows_table(output: &mut String, items: &[Value]) {
+    writeln!(output, "{:<28} Steps  Description", "Workflow").expect("write to string");
+    for item in items {
+        let name = item.get("name").and_then(Value::as_str).unwrap_or("-");
+        let steps = item
+            .get("steps")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        let description = item
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        writeln!(
+            output,
+            "{:<28} {:<5} {}",
+            pad(name, 28),
+            steps,
+            truncate(description, 72)
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_schemas_table(output: &mut String, items: &[Value]) {
+    writeln!(output, "{:<24} {:<7} Command", "Workflow", "Actions").expect("write to string");
+    for item in items {
+        let workflow = item.get("workflow").and_then(Value::as_str).unwrap_or("-");
+        let actions = item.get("actions").and_then(Value::as_u64).unwrap_or(0);
+        let command = item.get("command").and_then(Value::as_str).unwrap_or("-");
+        writeln!(
+            output,
+            "{:<24} {:<7} {}",
+            pad(workflow, 24),
+            actions,
+            truncate(&humanize_command(command), 96)
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_request_records_table(output: &mut String, items: &[Value]) {
+    writeln!(
+        output,
+        "{:<16} {:<7} {:<45} {:<6} Request ID",
+        "Time", "Method", "Path", "HTTP"
+    )
+    .expect("write to string");
+    for item in items {
+        let time = item
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .map_or_else(String::new, format_timestamp);
+        let method = item.get("method").and_then(Value::as_str).unwrap_or("-");
+        let path = item.get("path").and_then(Value::as_str).unwrap_or("-");
+        let status = item
+            .get("status")
+            .and_then(Value::as_u64)
+            .map_or_else(|| "-".to_string(), |value| value.to_string());
+        let request_id = item
+            .get("request_id")
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        writeln!(
+            output,
+            "{:<16} {:<7} {:<45} {:<6} {}",
+            pad(&time, 16),
+            method,
+            pad(path, 45),
+            status,
+            request_id
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_jobs_table(output: &mut String, items: &[Value]) {
+    writeln!(
+        output,
+        "{:<38} {:<16} {:<12} Updated",
+        "Job", "Kind", "Status"
+    )
+    .expect("write to string");
+    for item in items {
+        let job_id = item.get("job_id").and_then(Value::as_str).unwrap_or("-");
+        let kind = item.get("kind").and_then(Value::as_str).unwrap_or("-");
+        let status = item.get("status").and_then(Value::as_str).unwrap_or("-");
+        let updated = item
+            .get("updated_at")
+            .and_then(Value::as_str)
+            .map_or_else(String::new, format_timestamp);
+        writeln!(
+            output,
+            "{:<38} {:<16} {:<12} {}",
+            pad(job_id, 38),
+            pad(kind, 16),
+            pad(status, 12),
+            updated
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_artifacts_table(output: &mut String, items: &[Value]) {
+    writeln!(output, "{:<58} {:>10} Modified", "Path", "Bytes").expect("write to string");
+    for item in items {
+        let path = item.get("path").and_then(Value::as_str).unwrap_or("-");
+        let bytes = item
+            .get("bytes")
+            .and_then(Value::as_u64)
+            .map_or_else(|| "-".to_string(), |value| value.to_string());
+        let modified = item
+            .get("modified")
+            .and_then(Value::as_u64)
+            .map_or_else(String::new, format_unix_timestamp);
+        writeln!(output, "{:<58} {:>10} {}", pad(path, 58), bytes, modified)
+            .expect("write to string");
+    }
+}
+
+fn render_coverage_table(output: &mut String, items: &[Value]) {
+    writeln!(
+        output,
+        "{:<7} {:<45} {:<7} {:<7} Request ID",
+        "Method", "Path", "Hits", "2xx"
+    )
+    .expect("write to string");
+    for item in items.iter().take(20) {
+        let method = item.get("method").and_then(Value::as_str).unwrap_or("-");
+        let path = item.get("path").and_then(Value::as_str).unwrap_or("-");
+        let hits = item.get("hits").and_then(Value::as_u64).unwrap_or(0);
+        let ok = item.get("ok").and_then(Value::as_u64).unwrap_or(0);
+        let request_id = item
+            .get("latest_request_id")
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        writeln!(
+            output,
+            "{:<7} {:<45} {:<7} {:<7} {}",
+            method,
+            pad(path, 45),
+            hits,
+            ok,
+            request_id
+        )
+        .expect("write to string");
+    }
+    if items.len() > 20 {
+        writeln!(output, "... {} more", items.len() - 20).expect("write to string");
+    }
+}
+
+fn render_body_variant_table(output: &mut String, items: &[Value]) {
+    for item in items {
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("variant");
+        writeln!(output, "- {name}").expect("write to string");
+        if let Some(body) = item.get("body") {
+            render_human_value(output, body, 4);
+        }
+    }
+}
+
+fn render_collection_meta(output: &mut String, meta: &Value) {
+    let fetched_at = meta
+        .get("fetchedAt")
+        .or_else(|| meta.get("fetched_at"))
+        .and_then(Value::as_str);
+    let sources = meta.get("sources").and_then(Value::as_array);
+    if fetched_at.is_none() && sources.is_none_or(Vec::is_empty) {
+        return;
+    }
+
+    output.push_str("Fetched");
+    if let Some(fetched_at) = fetched_at {
+        output.push(' ');
+        output.push_str(&format_timestamp(fetched_at));
+    }
+    if let Some(sources) = sources {
+        let source_names = sources
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !source_names.is_empty() {
+            output.push_str(" from ");
+            output.push_str(&source_names);
+        }
+    }
+    output.push('\n');
+}
+
+fn is_incident_collection(collection: &HumanCollection<'_>) -> bool {
+    collection.name == "Incidents" || collection.items.iter().any(has_incident_shape)
+}
+
+fn has_incident_shape(value: &Value) -> bool {
+    value.get("referenceId").is_some()
+        || value.get("reference_id").is_some()
+        || (value.get("timestamp").is_some()
+            && value.get("network").is_some()
+            && value.get("title").is_some())
+}
+
+fn render_incident_table(output: &mut String, items: &[Value]) {
+    writeln!(
+        output,
+        "{:<3} {:<16} {:<24} {:<29} ID",
+        "#", "Time", "Network", "Title"
+    )
+    .expect("write to string");
+    for (index, item) in items.iter().enumerate() {
+        let timestamp = item
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .map_or_else(String::new, format_timestamp);
+        let network = format_network(item.get("network"));
+        let title = item
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("Untitled");
+        let id = item.get("id").and_then(Value::as_str).unwrap_or("-");
+        writeln!(
+            output,
+            "{:<3} {:<16} {:<24} {:<29} {}",
+            index + 1,
+            pad(&timestamp, 16),
+            pad(&network, 24),
+            pad(title, 29),
+            id
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_generic_table(output: &mut String, items: &[Value]) {
+    let columns = generic_columns(items);
+    if columns.is_empty() {
+        render_human_value(output, &Value::Array(items.to_vec()), 0);
+        return;
+    }
+
+    write!(output, "{:<3}", "#").expect("write to string");
+    for column in &columns {
+        write!(output, " {:<22}", title_case(column)).expect("write to string");
+    }
+    output.push('\n');
+
+    for (index, item) in items.iter().enumerate() {
+        write!(output, "{:<3}", index + 1).expect("write to string");
+        for column in &columns {
+            let value = item.get(column).map_or_else(String::new, human_cell);
+            write!(output, " {:<22}", pad(&value, 22)).expect("write to string");
+        }
+        output.push('\n');
+    }
+}
+
+fn generic_columns(items: &[Value]) -> Vec<String> {
+    let mut columns = Vec::new();
+    for preferred in [
+        "name",
+        "title",
+        "id",
+        "status",
+        "environment",
+        "network",
+        "timestamp",
+        "createdAt",
+        "updatedAt",
+    ] {
+        if items.iter().any(|item| item.get(preferred).is_some()) {
+            columns.push(preferred.to_string());
+        }
+        if columns.len() == 4 {
+            return columns;
+        }
+    }
+
+    if columns.is_empty()
+        && let Some(object) = items.first().and_then(Value::as_object)
+    {
+        columns.extend(object.keys().take(4).cloned());
+    }
+    columns
+}
+
+fn human_cell(value: &Value) -> String {
+    match value {
+        Value::Object(object) if object.contains_key("name") => {
+            object
+                .get("name")
+                .and_then(Value::as_str)
+                .map_or_else(|| compact_json(value), ToString::to_string)
+        }
+        Value::Object(_) | Value::Array(_) => compact_json(value),
+        _ => scalar_string(value),
+    }
+}
+
+fn human_action(action: &Value) -> String {
+    action.as_str().map_or_else(
+        || compact_json(action),
+        |value| {
+            if value.trim_start().starts_with("pcl ") {
+                humanize_command(value)
+            } else if value == "Use --toon for agent consumption or --json for strict JSON parsing"
+            {
+                "Use --json for strict JSON parsing".to_string()
+            } else {
+                value.to_string()
+            }
+        },
+    )
+}
+
+fn humanize_command(command: &str) -> String {
+    command
+        .replace(" --format toon", "")
+        .replace(" --toon", "")
+        .replace("--toon ", "")
+}
+
+fn is_body_template_key(key: &str) -> bool {
+    matches!(
+        key,
+        "project_name"
+            | "project_description"
+            | "profile_image_url"
+            | "github_url"
+            | "chain_id"
+            | "is_private"
+            | "is_dev"
+            | "project_id"
+            | "identifier"
+            | "identifier_type"
+            | "role"
+            | "provider"
+            | "webhook_url"
+            | "routing_key"
+            | "enabled"
+            | "address"
+            | "signature"
+            | "nonce"
+            | "tx_hash"
+            | "contract_name"
+            | "assertions"
+            | "assertionsDir"
+            | "contracts"
+            | "environment"
+            | "mode"
+            | "new_manager_address"
+            | "ponder_transfer_id"
+            | "reason"
+            | "notify"
+    )
+}
+
+fn name_value_pairs(values: &[Value]) -> String {
+    values
+        .iter()
+        .map(|value| {
+            let name = value.get("name").and_then(Value::as_str).unwrap_or("?");
+            let rendered = value
+                .get("value")
+                .map_or_else(|| "none".to_string(), scalar_string);
+            format!("{name}={rendered}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_actions_table(output: &mut String, actions: &[Value]) {
+    writeln!(
+        output,
+        "{:<24} {:<7} {:<8} Path",
+        "Action", "Auth", "Method"
+    )
+    .expect("write to string");
+    for action in actions {
+        let name = action.get("name").and_then(Value::as_str).unwrap_or("-");
+        let auth = action
+            .get("auth")
+            .and_then(Value::as_bool)
+            .map_or("-", |value| if value { "yes" } else { "no" });
+        let method = action.get("method").and_then(Value::as_str).unwrap_or("-");
+        let path = action.get("path").and_then(Value::as_str).unwrap_or("-");
+        writeln!(
+            output,
+            "{:<24} {:<7} {:<8} {}",
+            pad(name, 24),
+            auth,
+            method,
+            path
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_action_detail(output: &mut String, action: &Value) {
+    let name = action.get("name").and_then(Value::as_str).unwrap_or("-");
+    writeln!(output, "Action: {name}").expect("write to string");
+    if let (Some(method), Some(path)) = (
+        action.get("method").and_then(Value::as_str),
+        action.get("path").and_then(Value::as_str),
+    ) {
+        writeln!(output, "Request: {method} {path}").expect("write to string");
+    }
+    if let Some(auth) = action.get("auth").and_then(Value::as_bool) {
+        writeln!(
+            output,
+            "Auth: {}",
+            if auth { "required" } else { "not required" }
+        )
+        .expect("write to string");
+    }
+    if let Some(example) = action.get("example").and_then(Value::as_str) {
+        writeln!(output, "Example: {}", humanize_command(example)).expect("write to string");
+    }
+    if let Some(flags) = action.get("required_flags").and_then(Value::as_array)
+        && !flags.is_empty()
+    {
+        writeln!(output, "Required flags: {}", string_list(flags)).expect("write to string");
+    }
+    if let Some(flags) = action.get("optional_flags").and_then(Value::as_array)
+        && !flags.is_empty()
+    {
+        writeln!(output, "Optional flags: {}", string_list(flags)).expect("write to string");
+    }
+}
+
+fn string_list(values: &[Value]) -> String {
+    values
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
+fn format_duration(seconds: i64) -> String {
+    if seconds < 0 {
+        return "expired".to_string();
+    }
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else {
+        format!("{minutes}m")
+    }
+}
+
+fn render_human_summary(output: &mut String, data: &Value) {
+    let display_data = data.get("data").unwrap_or(data);
+    output.push('\n');
+    if let Some(object) = display_data.as_object() {
+        for (key, value) in object {
+            if key.starts_with('_') {
+                continue;
+            }
+            output.push_str(&title_case(key));
+            output.push_str(": ");
+            if is_scalar(value) {
+                output.push_str(&scalar_string(value));
+                output.push('\n');
+            } else {
+                output.push_str(&human_compact_summary(value));
+                output.push('\n');
+            }
+        }
+    } else {
+        render_human_value(output, display_data, 0);
+    }
+}
+
+fn render_human_request_id(output: &mut String, envelope: &Value) {
+    let request_id = envelope
+        .pointer("/response/request_id")
+        .and_then(Value::as_str);
+    let status = envelope.pointer("/response/status").and_then(Value::as_u64);
+    if request_id.is_none() && status.is_none() {
+        return;
+    }
+
+    output.push('\n');
+    if let Some(request_id) = request_id {
+        output.push_str("Request ID: ");
+        output.push_str(request_id);
+        if let Some(status) = status {
+            write!(output, " (HTTP {status})").expect("write to string");
+        }
+        output.push('\n');
+    } else if let Some(status) = status {
+        writeln!(output, "HTTP status: {status}").expect("write to string");
+    }
+}
+
+fn human_compact_summary(value: &Value) -> String {
+    match value {
+        Value::Array(values) => format!("{} item(s)", values.len()),
+        Value::Object(object) => {
+            object
+                .iter()
+                .filter(|(key, _)| !key.starts_with('_'))
+                .take(3)
+                .map(|(key, value)| {
+                    if is_scalar(value) {
+                        format!("{key}={}", scalar_string(value))
+                    } else {
+                        format!("{key}={}", compact_json(value))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+        _ => scalar_string(value),
+    }
+}
+
+fn format_network(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return "-".to_string();
+    };
+    if let Some(name) = value.as_str() {
+        return name.to_string();
+    }
+    let name = value
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("Unknown network");
+    if let Some(chain_id) = value.get("chainId").and_then(Value::as_u64) {
+        return format!("{name} ({chain_id})");
+    }
+    if let Some(chain_id) = value.get("chain_id").and_then(Value::as_u64) {
+        return format!("{name} ({chain_id})");
+    }
+    name.to_string()
+}
+
+fn format_timestamp(value: &str) -> String {
+    if value.len() >= 16 && value.as_bytes().get(10) == Some(&b'T') {
+        return value[..16].replace('T', " ");
+    }
+    value.to_string()
+}
+
+fn format_unix_timestamp(value: u64) -> String {
+    let Ok(seconds) = i64::try_from(value) else {
+        return value.to_string();
+    };
+    chrono::DateTime::from_timestamp(seconds, 0).map_or_else(
+        || value.to_string(),
+        |timestamp| timestamp.format("%Y-%m-%d %H:%M").to_string(),
+    )
+}
+
+fn title_case(value: &str) -> String {
+    value
+        .replace('_', " ")
+        .split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first.to_uppercase().collect::<String>() + chars.as_str()
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn pad(value: &str, width: usize) -> String {
+    let value = truncate(value, width);
+    format!("{value:<width$}")
+}
+
+fn truncate(value: &str, max_chars: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_string();
+    }
+    if max_chars <= 3 {
+        return value.chars().take(max_chars).collect();
+    }
+    let prefix: String = value.chars().take(max_chars - 3).collect();
+    format!("{prefix}...")
+}
+
+fn render_human_value(output: &mut String, value: &Value, indent: usize) {
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object {
+                write_indent(output, indent);
+                output.push_str(key);
+                output.push_str(": ");
+                if is_scalar(value) {
+                    output.push_str(&scalar_string(value));
+                    output.push('\n');
+                } else {
+                    output.push('\n');
+                    render_human_value(output, value, indent + 2);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                write_indent(output, indent);
+                output.push_str("- ");
+                if is_scalar(value) {
+                    output.push_str(&scalar_string(value));
+                    output.push('\n');
+                } else {
+                    output.push('\n');
+                    render_human_value(output, value, indent + 2);
+                }
+            }
+        }
+        _ => {
+            write_indent(output, indent);
+            output.push_str(&scalar_string(value));
+            output.push('\n');
+        }
+    }
+}
+
+fn write_indent(output: &mut String, indent: usize) {
+    for _ in 0..indent {
+        output.push(' ');
+    }
+}
+
+fn is_scalar(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)
+    )
+}
+
+fn scalar_string(value: &Value) -> String {
+    match value {
+        Value::Null => "none".to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => value.clone(),
+        Value::Array(_) | Value::Object(_) => compact_json(value),
+    }
+}
+
+fn compact_json(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
 }
 
 fn ok_envelope(data: Value) -> Value {
@@ -2978,16 +4559,23 @@ fn dry_run_envelope(data: Value) -> Value {
         .unwrap_or(false);
     let next_actions = if auth_required && !allow_unauthenticated && !stored_token_valid {
         vec![
-            "pcl auth ensure --json",
+            "pcl auth ensure --toon",
             "Authenticate before removing --dry-run",
             "Use --body-template when constructing mutation bodies",
         ]
     } else {
-        vec![
+        let mut actions = vec![
             "Remove --dry-run to execute this request",
-            "Use --json to consume this plan programmatically",
-            "Use --body-template when constructing mutation bodies",
-        ]
+            "Use --toon for agent consumption or --json for strict JSON parsing",
+        ];
+        let method = data
+            .pointer("/request/method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if method_side_effecting(method) {
+            actions.push("Use --body-template when constructing mutation bodies");
+        }
+        actions
     };
     with_envelope_metadata(json!({
         "status": "ok",
@@ -3024,12 +4612,12 @@ pub fn api_manifest() -> Value {
             "allowed_uses": ["debugging", "OpenAPI parity checks", "service/internal endpoint investigation", "browser-session bridge investigation", "new endpoint exploration before promotion"],
             "not_normal_path": "Agents should not call raw endpoints for incidents, projects, assertions, releases, integrations, access, protocol-manager, transfers, events, search, or auth when a workflow alternative is advertised."
         },
-        "llms": "pcl --llms | pcl llms",
-        "default_output": "toon",
+        "llms": "pcl --toon --llms | pcl llms --toon",
+        "default_output": "human",
         "output_modes": {
-            "default": "toon",
-            "toon": "Default compact machine-readable envelope; explicit form is --format toon.",
-            "json": "Pass --json or --format json for the same {status,data,error,next_actions} envelope as JSON."
+            "default": "Human-readable output optimized for people.",
+            "toon": "Pass --toon for compact machine-readable envelopes.",
+            "json": "Pass --json for the same {status,data,error,next_actions} envelope as JSON."
         },
         "body_input": {
             "preferred": "Use typed flags when available, then --field key=value, then --body-file for nested payloads.",
@@ -3051,17 +4639,17 @@ pub fn api_manifest() -> Value {
             "destructive_detection": "Request plans flag likely destructive paths, but raw api call does not enforce a confirmation gate."
         },
         "product_surfaces": [
-            {"command": "pcl --llms | pcl llms", "description": "Print the CLI-native LLM usage guide; use --json for JSON."},
-            {"command": "pcl doctor", "description": "Diagnose config, auth, request-log, artifact, and API health state."},
-            {"command": "pcl whoami", "description": "Print local identity, token validity, and expiry."},
-            {"command": "pcl workflows [show <name>]", "description": "List agent-friendly workflow recipes with concrete command steps."},
-            {"command": "pcl export incidents", "description": "Export incident list data as resumable JSONL artifacts with checkpoint and error files."},
-            {"command": "pcl artifacts [path|init|list]", "description": "Find and inspect generated artifacts."},
-            {"command": "pcl jobs [path|list|status|resume|cancel]", "description": "Inspect resumable local job records from export workflows."},
-            {"command": "pcl requests|logs [path|list|clear]", "description": "Inspect the local API request log with status and request IDs."},
-            {"command": "pcl api coverage [--records <n>] [--markdown <path>]", "description": "Compare the local request log with the live OpenAPI manifest and report hit/no-hit/no-2xx coverage."},
-            {"command": "pcl schema [list|get <workflow>]", "description": "Inspect workflow/action schemas from the command manifest."},
-            {"command": "pcl completions <shell>", "description": "Generate shell completion scripts for bash, zsh, fish, powershell, and elvish."}
+            {"command": "pcl --toon --llms | pcl llms --toon", "description": "Print the CLI-native LLM usage guide for agents."},
+            {"command": "pcl doctor --toon", "description": "Diagnose config, auth, request-log, artifact, and API health state."},
+            {"command": "pcl whoami --toon", "description": "Print local identity, token validity, and expiry."},
+            {"command": "pcl workflows [show <name>] --toon", "description": "List agent-friendly workflow recipes with concrete command steps."},
+            {"command": "pcl export incidents --toon", "description": "Export incident list data as resumable JSONL artifacts with checkpoint and error files."},
+            {"command": "pcl artifacts [path|init|list] --toon", "description": "Find and inspect generated artifacts."},
+            {"command": "pcl jobs [path|list|status|resume|cancel] --toon", "description": "Inspect resumable local job records from export workflows."},
+            {"command": "pcl requests|logs [path|list|clear] --toon", "description": "Inspect the local API request log with status and request IDs."},
+            {"command": "pcl api coverage [--records <n>] [--markdown <path>] --toon", "description": "Compare the local request log with the live OpenAPI manifest and report hit/no-hit/no-2xx coverage."},
+            {"command": "pcl schema [list|get <workflow>] --toon", "description": "Inspect workflow/action schemas from the command manifest."},
+            {"command": "pcl completions <shell> --toon", "description": "Generate shell completion scripts for bash, zsh, fish, powershell, and elvish."}
         ],
         "commands": [
             {
@@ -5560,7 +7148,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "auth",
                 "login_challenge",
-                "pcl auth login --no-wait --force --json",
+                "pcl auth login --no-wait --force --toon",
                 "Device-login challenge is exposed as a structured auth command.",
             )
         }
@@ -5568,7 +7156,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "auth",
                 "poll",
-                "pcl auth poll --session-id <session-id> --device-secret <secret> --expires-at <rfc3339> --json",
+                "pcl auth poll --session-id <session-id> --device-secret <secret> --expires-at <rfc3339> --toon",
                 "Polling is handled by the auth command returned in data.poll_command.",
             )
         }
@@ -5576,7 +7164,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "auth",
                 "verify",
-                "pcl auth login --force --json",
+                "pcl auth login --force --toon",
                 "The login command owns verification and stores the resulting credentials.",
             )
         }
@@ -5584,7 +7172,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "auth",
                 "refresh",
-                "pcl auth refresh --json",
+                "pcl auth refresh --toon",
                 "Refresh rotation is exposed as a structured auth command.",
             )
         }
@@ -5592,7 +7180,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "api",
                 "manifest",
-                "pcl api manifest --json",
+                "pcl api manifest --toon",
                 "Use the CLI manifest/list/inspect surfaces for discovery instead of raw OpenAPI retrieval.",
             )
         }
@@ -6199,12 +7787,12 @@ fn next_actions_for_operations(operations: &[OperationSummary]) -> Vec<String> {
             {
                 return vec![
                     example.to_string(),
-                    format!("{} --json", operation.inspect_command),
+                    format!("{} --toon", operation.inspect_command),
                 ];
             }
             if operation.requires_input {
                 vec![
-                    format!("{} --json", operation.inspect_command),
+                    format!("{} --toon", operation.inspect_command),
                     "Use data.example_call after filling placeholders".to_string(),
                 ]
             } else {

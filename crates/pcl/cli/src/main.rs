@@ -12,11 +12,15 @@ use color_eyre::{
     Result,
     eyre::Report,
 };
-use pcl_common::args::CliArgs;
+use pcl_common::args::{
+    CliArgs,
+    OutputMode,
+    set_current_output_mode,
+};
 use pcl_core::{
     api::{
         ApiCommandError,
-        toon_string,
+        envelope_output_string,
         with_envelope_metadata,
     },
     config::CliConfig,
@@ -48,14 +52,18 @@ async fn main() -> Result<()> {
         .install()?;
 
     if wants_llms_output(env::args_os()) {
-        pcl_core::surface::print_llms_guide(wants_json_output(env::args_os()))?;
+        let output_mode = wants_output_mode(env::args_os());
+        set_current_output_mode(output_mode);
+        pcl_core::surface::print_llms_guide(output_mode.is_json())?;
         return Ok(());
     }
 
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(err) => {
-            if wants_json_output(env::args_os()) {
+            let output_mode = wants_output_mode(env::args_os());
+            set_current_output_mode(output_mode);
+            if output_mode.is_json() {
                 let exit_code = err.exit_code();
                 let envelope = with_envelope_metadata(clap_error_envelope(&err));
                 eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
@@ -69,11 +77,12 @@ async fn main() -> Result<()> {
             }
             eprint!(
                 "{}",
-                toon_string(&with_envelope_metadata(clap_error_envelope(&err)))
+                envelope_output_string(&with_envelope_metadata(clap_error_envelope(&err)), false)?
             );
             std::process::exit(err.exit_code());
         }
     };
+    set_current_output_mode(cli.args.output_mode());
     let mut read_valid_config = true;
     let mut config = match CliConfig::read_from_file(&cli.args) {
         Ok(config) => config,
@@ -86,7 +95,7 @@ async fn main() -> Result<()> {
             if cli.args.json_output() {
                 eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
             } else {
-                eprint!("{}", toon_string(&envelope));
+                eprint!("{}", envelope_output_string(&envelope, false)?);
             }
             std::process::exit(1);
         }
@@ -122,7 +131,7 @@ async fn main() -> Result<()> {
         if cli.args.json_output() {
             eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
         } else {
-            eprint!("{}", toon_string(&envelope));
+            eprint!("{}", envelope_output_string(&envelope, false)?);
         }
         std::process::exit(1);
     }
@@ -473,6 +482,52 @@ where
     false
 }
 
+fn wants_toon_output<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut saw_output_flag = false;
+    for arg in args {
+        let arg = arg.as_ref();
+        if arg == OsStr::new("--toon") {
+            return true;
+        }
+        if saw_output_flag {
+            saw_output_flag = false;
+            if arg == OsStr::new("toon") {
+                return true;
+            }
+            continue;
+        }
+        if arg == OsStr::new("--format") {
+            saw_output_flag = true;
+            continue;
+        }
+        if let Some(value) = arg.to_str().and_then(|arg| arg.strip_prefix("--format="))
+            && value == "toon"
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn wants_output_mode<I, S>(args: I) -> OutputMode
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let args: Vec<S> = args.into_iter().collect();
+    if wants_json_output(&args) {
+        OutputMode::Json
+    } else if wants_toon_output(&args) {
+        OutputMode::Toon
+    } else {
+        OutputMode::Human
+    }
+}
+
 fn wants_llms_output<I, S>(args: I) -> bool
 where
     I: IntoIterator<Item = S>,
@@ -492,7 +547,7 @@ fn clap_error_envelope(err: &clap::Error) -> Value {
         },
         "next_actions": [
             "pcl --help",
-            "pcl api manifest --json"
+            "pcl api manifest --toon"
         ],
     }))
 }
@@ -517,6 +572,7 @@ fn clap_error_code(kind: ErrorKind) -> &'static str {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use pcl_core::api::toon_string;
 
     #[test]
     fn detects_json_flag_before_successful_parse() {
@@ -526,6 +582,23 @@ mod tests {
         assert!(wants_json_output(["pcl", "--format=json", "api"]));
         assert!(!wants_json_output(["pcl", "--format", "toon", "api"]));
         assert!(!wants_json_output(["pcl", "api", "projects"]));
+    }
+
+    #[test]
+    fn detects_output_mode_before_successful_parse() {
+        assert_eq!(
+            wants_output_mode(["pcl", "--json", "api"]),
+            OutputMode::Json
+        );
+        assert_eq!(
+            wants_output_mode(["pcl", "--toon", "api"]),
+            OutputMode::Toon
+        );
+        assert_eq!(
+            wants_output_mode(["pcl", "--format", "toon", "api"]),
+            OutputMode::Toon
+        );
+        assert_eq!(wants_output_mode(["pcl", "api"]), OutputMode::Human);
     }
 
     #[test]
