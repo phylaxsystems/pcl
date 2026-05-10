@@ -416,9 +416,9 @@ fn config_show_envelope(config: &CliConfig, cli_args: &CliArgs) -> Value {
             "auth": config_auth_value(config),
         },
         "next_actions": if config.auth.is_some() {
-            json!(["pcl auth status", "pcl account", "pcl config delete"])
+            json!(["pcl auth status", "pcl account", "pcl doctor"])
         } else {
-            json!(["pcl auth login", "pcl config delete"])
+            json!(["pcl auth login", "pcl doctor"])
         },
     }))
 }
