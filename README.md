@@ -40,7 +40,7 @@ pcl apply
 For platform work, prefer the natural workflow commands:
 
 ```bash
-pcl projects --home
+pcl projects --mine
 pcl projects --project-id <project-ref>
 pcl assertions --project-id <project-ref>
 pcl incidents --project-id <project-ref> --environment production

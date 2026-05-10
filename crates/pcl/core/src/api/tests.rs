@@ -39,7 +39,7 @@ fn assertions_args(project_id: Option<&str>) -> AssertionsArgs {
 fn projects_args() -> ProjectsArgs {
     ProjectsArgs {
         project_id: None,
-        home: false,
+        mine: false,
         saved: false,
         user_id: None,
         page: None,
@@ -1385,6 +1385,26 @@ fn saved_projects_require_and_send_user_id() {
 }
 
 #[test]
+fn projects_mine_uses_authenticated_home_view() {
+    let request = projects_request(&ProjectsArgs {
+        mine: true,
+        ..projects_args()
+    })
+    .unwrap();
+
+    assert_eq!(request.path, "/views/projects/home");
+    assert_eq!(request.method.openapi_key(), "get");
+    assert!(request.require_auth);
+    assert_eq!(
+        request.next_actions,
+        vec![
+            "pcl account".to_string(),
+            "pcl projects --saved --user-id <user-id>".to_string()
+        ]
+    );
+}
+
+#[test]
 fn contracts_unassigned_require_and_send_manager() {
     let error = contracts_request(&ContractsArgs {
         unassigned: true,
@@ -2617,6 +2637,57 @@ fn human_output_formats_project_details_for_people() {
 }
 
 #[test]
+fn human_output_formats_project_home_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "data": {
+                    "member_projects": [
+                        {
+                            "project_id": "project-1",
+                            "project_name": "Private Test",
+                            "slug": "private-test",
+                            "chain_names": ["Linea Mainnet"],
+                            "is_private": true
+                        }
+                    ],
+                    "saved_projects": [],
+                    "no_project_adopters": []
+                },
+                "_meta": {
+                    "sources": ["offchain"],
+                    "fetchedAt": "2026-05-10T04:16:00Z"
+                }
+            },
+            "request": {"method": "GET", "path": "/views/projects/home"},
+            "response": {"status": 200, "request_id": "req_projects_home"},
+            "next_actions": ["pcl projects --project-id project-1"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Your projects\n"));
+    assert!(output.contains("Showing 1 project you belong to"));
+    assert!(output.contains("Updated: 2026-05-10 04:16"));
+    assert!(output.contains("Source: Phylax platform index"));
+    assert!(output.contains("Project"));
+    assert!(output.contains("Slug"));
+    assert!(output.contains("Network"));
+    assert!(output.contains("Visibility"));
+    assert!(output.contains("Private Test"));
+    assert!(output.contains("private-test"));
+    assert!(output.contains("Linea Mainnet"));
+    assert!(output.contains("private"));
+    assert!(output.contains("project-1"));
+    assert!(output.contains("Saved projects: 0 projects"));
+    assert!(output.contains("Contracts without a project: 0 contracts"));
+    assert!(!output.contains("Member projects:"));
+    assert!(!output.contains("Details:"));
+}
+
+#[test]
 fn human_output_formats_mixed_search_results_for_people() {
     let output = envelope_output_string(
         &json!({
@@ -3021,6 +3092,7 @@ fn manifest_lists_structured_actions_for_every_workflow() {
 #[test]
 fn parser_rejects_conflicting_workflow_actions() {
     assert!(ApiArgs::try_parse_from(["api", "projects", "--save", "--unsave"]).is_err());
+    assert!(ApiArgs::try_parse_from(["api", "projects", "--mine", "--saved"]).is_err());
     assert!(
         ApiArgs::try_parse_from([
             "api",
@@ -3035,6 +3107,21 @@ fn parser_rejects_conflicting_workflow_actions() {
     assert!(
         ApiArgs::try_parse_from(["api", "transfers", "--transfer-id", "t1", "--reject"]).is_err()
     );
+}
+
+#[test]
+fn parser_accepts_projects_mine_and_home_aliases() {
+    let mine = ApiArgs::try_parse_from(["api", "projects", "--mine"]).unwrap();
+    let ApiCommand::Projects(args) = mine.command else {
+        panic!("expected projects command");
+    };
+    assert!(args.mine);
+
+    let home = ApiArgs::try_parse_from(["api", "projects", "--home"]).unwrap();
+    let ApiCommand::Projects(args) = home.command else {
+        panic!("expected projects command");
+    };
+    assert!(args.mine);
 }
 
 #[test]

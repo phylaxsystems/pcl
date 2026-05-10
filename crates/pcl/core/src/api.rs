@@ -570,7 +570,7 @@ enum ApiCommand {
 
     #[command(
         about = "List, inspect, create, update, save, or delete projects",
-        after_help = "Examples:\n  pcl projects\n  pcl projects --project-id <project-ref>\n  pcl projects --saved --user-id <user-id>\n  pcl projects --create --project-name demo --chain-id 1\n  pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl projects --project-id <project-ref> --save"
+        after_help = "Examples:\n  pcl projects --mine\n  pcl projects\n  pcl projects --project-id <project-ref>\n  pcl projects --saved --user-id <user-id>\n  pcl projects --create --project-name demo --chain-id 1\n  pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl projects --project-id <project-ref> --save"
     )]
     Projects(ProjectsArgs),
 
@@ -969,7 +969,7 @@ struct IncidentsArgs {
 #[derive(clap::Args, Debug)]
 #[command(group(
     ArgGroup::new("project_action")
-        .args(["home", "saved", "create", "update", "delete", "save", "unsave", "resolve", "widget"])
+        .args(["mine", "saved", "create", "update", "delete", "save", "unsave", "resolve", "widget"])
         .multiple(false)
 ))]
 struct ProjectsArgs {
@@ -980,8 +980,8 @@ struct ProjectsArgs {
         help = "Project UUID or slug"
     )]
     project_id: Option<String>,
-    #[arg(long, help = "Return authenticated projects home view")]
-    home: bool,
+    #[arg(long, visible_alias = "home", help = "Show projects you belong to")]
+    mine: bool,
     #[arg(long, help = "Return saved projects")]
     saved: bool,
     #[arg(long, alias = "user_id", help = "User ID for --saved")]
@@ -1546,7 +1546,7 @@ top_level_workflow_command!(
     ProjectsArgs,
     Projects,
     "List, inspect, create, update, save, or delete projects",
-    "Examples:\n  pcl projects\n  pcl projects --project-id <project-ref>\n  pcl projects --saved --user-id <user-id>\n  pcl projects --create --project-name demo --chain-id 1\n  pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl projects --project-id <project-ref> --save\n\nCompatibility alias:\n  pcl api projects ..."
+    "Examples:\n  pcl projects --mine\n  pcl projects\n  pcl projects --project-id <project-ref>\n  pcl projects --saved --user-id <user-id>\n  pcl projects --create --project-name demo --chain-id 1\n  pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl projects --project-id <project-ref> --save\n\nCompatibility alias:\n  pcl api projects ..."
 );
 
 top_level_workflow_command!(
@@ -3196,6 +3196,9 @@ fn render_human_special(output: &mut String, envelope: &Value) -> bool {
     if render_doctor(output, display_data) {
         return true;
     }
+    if render_project_home(output, data, display_data) {
+        return true;
+    }
     if render_project_detail(output, display_data) {
         return true;
     }
@@ -3489,6 +3492,55 @@ fn render_project_detail(output: &mut String, data: &Value) -> bool {
         "submitted_assertion_ids",
     );
     write_u64_field(output, "Saved by", data, "saved_count", Some("users"));
+    true
+}
+
+fn render_project_home(output: &mut String, envelope_data: &Value, data: &Value) -> bool {
+    let Some(member_projects) = data.get("member_projects").and_then(Value::as_array) else {
+        return false;
+    };
+    let saved_projects = data
+        .get("saved_projects")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let no_project_adopters = data
+        .get("no_project_adopters")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+
+    output.push_str("\nYour projects\n");
+    writeln!(
+        output,
+        "Showing {} you belong to",
+        plural_count(member_projects.len(), "project")
+    )
+    .expect("write to string");
+    if let Some(meta) = envelope_data.get("_meta") {
+        render_collection_meta(output, meta);
+    }
+    output.push('\n');
+
+    if member_projects.is_empty() {
+        output.push_str("No projects found for your account.\n");
+    } else {
+        render_projects_table(output, member_projects);
+    }
+
+    writeln!(
+        output,
+        "\nSaved projects: {}",
+        plural_count(saved_projects.len(), "project")
+    )
+    .expect("write to string");
+    if !saved_projects.is_empty() {
+        render_projects_table(output, saved_projects);
+    }
+    writeln!(
+        output,
+        "Contracts without a project: {}",
+        plural_count(no_project_adopters.len(), "contract")
+    )
+    .expect("write to string");
     true
 }
 
@@ -4318,6 +4370,7 @@ fn render_collection_items(output: &mut String, collection: &HumanCollection<'_>
         "artifacts" => render_artifacts_table(output, collection.items),
         "members" => render_members_table(output, collection.items),
         "invitations" => render_invitations_table(output, collection.items),
+        "projects" => render_projects_table(output, collection.items),
         "releases" => render_releases_table(output, collection.items),
         "events" => render_events_table(output, collection.items),
         "no_hit" | "no_2xx" | "write_no_2xx" => render_coverage_table(output, collection.items),
@@ -4494,6 +4547,55 @@ fn render_artifacts_table(output: &mut String, items: &[Value]) {
         writeln!(output, "{:<58} {:>10} {}", pad(path, 58), bytes, modified)
             .expect("write to string");
     }
+}
+
+fn render_projects_table(output: &mut String, items: &[Value]) {
+    writeln!(
+        output,
+        "{:<28} {:<22} {:<20} {:<10} ID",
+        "Project", "Slug", "Network", "Visibility"
+    )
+    .expect("write to string");
+    for item in items {
+        let name = item
+            .get("project_name")
+            .or_else(|| item.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        let slug = item.get("slug").and_then(Value::as_str).unwrap_or("-");
+        let network = first_project_network(item);
+        let visibility = item
+            .get("is_private")
+            .and_then(Value::as_bool)
+            .map_or("-", |private| if private { "private" } else { "public" });
+        let id = item
+            .get("project_id")
+            .or_else(|| item.get("id"))
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        writeln!(
+            output,
+            "{:<28} {:<22} {:<20} {:<10} {}",
+            pad(name, 28),
+            pad(slug, 22),
+            pad(&network, 20),
+            visibility,
+            id
+        )
+        .expect("write to string");
+    }
+}
+
+fn first_project_network(item: &Value) -> String {
+    item.get("chain_names")
+        .and_then(Value::as_array)
+        .and_then(|values| values.first())
+        .or_else(|| {
+            item.get("project_networks")
+                .and_then(Value::as_array)
+                .and_then(|values| values.first())
+        })
+        .map_or_else(|| "-".to_string(), human_scalar)
 }
 
 fn render_members_table(output: &mut String, items: &[Value]) {
@@ -5361,12 +5463,12 @@ pub fn api_manifest() -> Value {
                 ]
             },
             {
-                "command": "pcl projects [--project <ref>] [--saved --user-id <id>] [--create|--update|--delete|--save|--unsave|--resolve|--widget]",
+                "command": "pcl projects [--mine|--project <ref>] [--saved --user-id <id>] [--create|--update|--delete|--save|--unsave|--resolve|--widget]",
                 "description": "List, inspect, create, update, save, unsave, resolve, widget, and delete projects.",
-                "output": "project explorer, project detail, projects home, saved projects, widget, or mutation result",
+                "output": "project explorer, your projects, project detail, saved projects, widget, or mutation result",
                 "actions": [
                     {"name": "explorer", "auth": false, "method": "GET", "path": "/views/projects", "example": "pcl projects --limit 10"},
-                    {"name": "home", "auth": true, "method": "GET", "path": "/views/projects/home", "example": "pcl projects --home"},
+                    {"name": "mine", "auth": true, "method": "GET", "path": "/views/projects/home", "example": "pcl projects --mine", "aliases": ["pcl projects --home"]},
                     {"name": "saved", "auth": true, "method": "GET", "path": "/projects/saved", "required_flags": ["--user-id"], "query": {"user_id": "<user-id>"}, "example": "pcl projects --saved --user-id <user-id>"},
                     {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project_id}", "required_flags": ["--project"], "example": "pcl projects --project <project-ref>"},
                     {"name": "create", "auth": true, "method": "POST", "path": "/projects", "body_template": "project_create", "required_body_fields": ["project_name", "chain_id"], "example": "pcl projects --create --project-name demo --chain-id 1"},
@@ -5584,7 +5686,7 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
         return Ok(WorkflowRequest::get(
             "/whitelist",
             true,
-            vec!["pcl projects --home".to_string()],
+            vec!["pcl projects --mine".to_string()],
         ));
     }
     if args.verified_contract {
@@ -5624,7 +5726,7 @@ fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, ApiCommandErro
             "/web/auth/accept-terms",
             true,
             body.or_else(|| Some(json!({}).to_string())),
-            vec!["pcl account".to_string(), "pcl projects --home".to_string()],
+            vec!["pcl account".to_string(), "pcl projects --mine".to_string()],
         ));
     }
     if args.logout {
@@ -5641,7 +5743,7 @@ fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, ApiCommandErro
         true,
         vec![
             "pcl account --accept-terms".to_string(),
-            "pcl projects --home".to_string(),
+            "pcl projects --mine".to_string(),
         ],
     ))
 }
@@ -5883,7 +5985,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
                 format!("/invitations/{token}/accept"),
                 true,
                 body.or_else(|| Some(empty_json_body())),
-                vec!["pcl projects --home".to_string()],
+                vec!["pcl projects --mine".to_string()],
             ));
         }
         return Ok(WorkflowRequest::get(
@@ -6309,7 +6411,7 @@ fn project_body_template(args: &ProjectsArgs) -> Value {
     if args.save || args.unsave {
         return body_template("project_saved");
     }
-    if args.delete || args.resolve || args.widget || args.home || args.saved {
+    if args.delete || args.resolve || args.widget || args.mine || args.saved {
         return body_template("empty_object");
     }
     body_template("project_create")
@@ -6850,11 +6952,11 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
             "/projects",
             true,
             body,
-            vec!["pcl projects --home".to_string()],
+            vec!["pcl projects --mine".to_string()],
         ));
     }
 
-    if args.home {
+    if args.mine {
         return Ok(WorkflowRequest {
             method: HttpMethod::Get,
             path: "/views/projects/home".to_string(),
@@ -6876,7 +6978,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
             query,
             body: None,
             require_auth: true,
-            next_actions: vec!["pcl projects --home".to_string()],
+            next_actions: vec!["pcl projects --mine".to_string()],
         });
     }
     if args.project_id.is_none()
@@ -6912,7 +7014,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
                 "/projects/saved",
                 true,
                 Some(json!({ "project_id": project_id }).to_string()),
-                vec!["pcl account".to_string(), "pcl projects --home".to_string()],
+                vec!["pcl account".to_string(), "pcl projects --mine".to_string()],
             ));
         }
         if args.update {
@@ -6930,7 +7032,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
                 format!("/projects/{project_id}"),
                 true,
                 body,
-                vec!["pcl projects --home".to_string()],
+                vec!["pcl projects --mine".to_string()],
             ));
         }
         return Ok(WorkflowRequest {
