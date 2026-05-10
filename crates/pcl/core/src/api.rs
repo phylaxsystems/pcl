@@ -653,7 +653,7 @@ enum ApiCommand {
     List {
         #[arg(long, help = "Filter operation id, summary, tags, or path")]
         filter: Option<String>,
-        #[arg(long, value_enum, help = "Filter by HTTP method")]
+        #[arg(long, value_enum, ignore_case = true, help = "Filter by HTTP method")]
         method: Option<HttpMethod>,
     },
 
@@ -692,7 +692,7 @@ enum ApiCommand {
         after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --toon"
     )]
     Call {
-        #[arg(value_enum, help = "HTTP method")]
+        #[arg(value_enum, ignore_case = true, help = "HTTP method")]
         method: HttpMethod,
         #[arg(help = "API path below /api/v1, for example /views/public/incidents")]
         path: String,
@@ -1666,7 +1666,7 @@ impl ApiArgs {
             }
             ApiCommand::Search(args) => {
                 let output = self
-                    .run_workflow(config, cli_args, search_request(args)?, &request_log_path)
+                    .run_search(config, cli_args, args, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -2184,6 +2184,26 @@ impl ApiArgs {
             .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
         let next_actions = assertions_next_actions(&result.body, args, request.next_actions);
+        Ok(workflow_success_envelope(result, next_actions))
+    }
+
+    async fn run_search(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        args: &SearchArgs,
+        request_log_path: &Path,
+    ) -> Result<Value, ApiCommandError> {
+        let request = search_request(args)?;
+        if self.dry_run {
+            return Ok(dry_run_envelope(
+                self.workflow_request_plan(&request, None, config),
+            ));
+        }
+        let result = self
+            .call_workflow_result(config, cli_args, &request, request_log_path)
+            .await?;
+        let next_actions = search_next_actions(&result.body, request.next_actions);
         Ok(workflow_success_envelope(result, next_actions))
     }
 
@@ -2986,15 +3006,14 @@ pub fn human_string(value: &Value) -> String {
         render_human_summary(&mut output, data);
     }
 
-    if let Some(actions) = value.get("next_actions").and_then(Value::as_array)
-        && !actions.is_empty()
-    {
+    let human_actions = human_next_actions(&value);
+    if !human_actions.is_empty() {
         output.push_str("\nNext:\n");
-        for (index, action) in actions.iter().enumerate() {
+        for (index, action) in human_actions.iter().enumerate() {
             output.push_str("  ");
             output.push_str(&(index + 1).to_string());
             output.push_str(". ");
-            output.push_str(&human_action(action));
+            output.push_str(action);
             output.push('\n');
         }
     }
@@ -3003,6 +3022,90 @@ pub fn human_string(value: &Value) -> String {
         output.push('\n');
     }
     output
+}
+
+fn human_next_actions(envelope: &Value) -> Vec<String> {
+    let status = envelope
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("ok");
+    let is_empty_ok = status == "ok" && envelope_has_empty_results(envelope);
+    let terms_accepted = envelope_terms_accepted(envelope);
+    let integration_test_unavailable = envelope
+        .pointer("/data/test_available")
+        .or_else(|| envelope.pointer("/data/data/test_available"))
+        .and_then(Value::as_bool)
+        == Some(false);
+    envelope
+        .get("next_actions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|action| !is_dangerous_or_internal_action(action))
+        .filter(|action| !(is_empty_ok && is_item_placeholder_action(action)))
+        .filter(|action| !(terms_accepted && action.contains("account --accept-terms")))
+        .filter(|action| !(integration_test_unavailable && action.contains(" --test")))
+        .map(human_action_str)
+        .filter(|action| !action.is_empty())
+        .collect()
+}
+
+fn envelope_terms_accepted(envelope: &Value) -> bool {
+    envelope
+        .pointer("/data/terms_accepted")
+        .or_else(|| envelope.pointer("/data/data/terms_accepted"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn is_dangerous_or_internal_action(action: &str) -> bool {
+    action.contains(" config delete")
+        || action.contains(" --delete")
+        || action.contains(" --remove")
+        || action.contains(" --revoke")
+        || action.contains(" --logout")
+        || action.starts_with("Read error.http.body")
+        || action.starts_with("Use data.")
+}
+
+fn is_item_placeholder_action(action: &str) -> bool {
+    [
+        "<assertion-id>",
+        "<incident-id>",
+        "<release-id>",
+        "<transfer-id>",
+        "<adopter-id>",
+        "<token>",
+    ]
+    .iter()
+    .any(|placeholder| action.contains(placeholder))
+}
+
+fn envelope_has_empty_results(envelope: &Value) -> bool {
+    let Some(data) = envelope.get("data") else {
+        return false;
+    };
+    value_has_empty_results(data)
+}
+
+fn value_has_empty_results(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.is_empty(),
+        Value::Object(object) => {
+            if let Some(inner) = object.get("data")
+                && value_has_empty_results(inner)
+            {
+                return true;
+            }
+            object.iter().any(|(key, value)| {
+                !key.starts_with('_')
+                    && (value.as_array().is_some_and(Vec::is_empty)
+                        || value_has_empty_results(value))
+            })
+        }
+        _ => false,
+    }
 }
 
 struct HumanCollection<'a> {
@@ -3015,8 +3118,9 @@ struct HumanCollection<'a> {
 
 fn render_human_error(output: &mut String, error: &Value) {
     output.push('\n');
+    let code = error.get("code").and_then(Value::as_str);
     if let Some(message) = error.get("message").and_then(Value::as_str) {
-        output.push_str(message);
+        output.push_str(&human_error_message(code, message));
         output.push('\n');
     } else if let Some(error) = error.as_str() {
         output.push_str(error);
@@ -3025,11 +3129,50 @@ fn render_human_error(output: &mut String, error: &Value) {
         render_human_value(output, error, 0);
     }
 
-    if let Some(code) = error.get("code").and_then(Value::as_str) {
+    if let Some(reason) = api_error_reason(error) {
+        output.push_str("API reason: ");
+        output.push_str(&reason);
+        output.push('\n');
+    }
+    if let Some(request_id) = error.get("request_id").and_then(Value::as_str) {
+        output.push_str("Request ID: ");
+        output.push_str(request_id);
+        output.push('\n');
+    }
+    if let Some(code) = code {
         output.push_str("Code: ");
         output.push_str(code);
         output.push('\n');
     }
+}
+
+fn human_error_message(code: Option<&str>, message: &str) -> String {
+    if code.is_some_and(|value| value.starts_with("cli.")) {
+        return clean_cli_error_message(message);
+    }
+    message.to_string()
+}
+
+fn clean_cli_error_message(message: &str) -> String {
+    message
+        .lines()
+        .take_while(|line| !line.starts_with("Usage:") && !line.starts_with("For more information"))
+        .map(|line| line.strip_prefix("error: ").unwrap_or(line).trim_end())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn api_error_reason(error: &Value) -> Option<String> {
+    let body = error.pointer("/http/body")?;
+    for key in ["message", "error", "detail", "reason"] {
+        if let Some(value) = body.get(key).and_then(Value::as_str)
+            && !value.is_empty()
+        {
+            return Some(value.to_string());
+        }
+    }
+    body.as_str().map(ToString::to_string)
 }
 
 fn render_human_special(output: &mut String, envelope: &Value) -> bool {
@@ -3051,6 +3194,27 @@ fn render_human_special(output: &mut String, envelope: &Value) -> bool {
         return true;
     }
     if render_doctor(output, display_data) {
+        return true;
+    }
+    if render_project_detail(output, display_data) {
+        return true;
+    }
+    if render_search_results(output, display_data) {
+        return true;
+    }
+    if render_account_detail(output, display_data) {
+        return true;
+    }
+    if render_deployment_state(output, display_data) {
+        return true;
+    }
+    if render_transfer_state(output, display_data) {
+        return true;
+    }
+    if render_integration_status(output, display_data) {
+        return true;
+    }
+    if render_protocol_manager_status(output, display_data) {
         return true;
     }
     if render_api_manifest(output, display_data) {
@@ -3277,6 +3441,212 @@ fn render_doctor(output: &mut String, data: &Value) -> bool {
         writeln!(output, "\nAPI: {api_url}").expect("write to string");
     }
     output.push_str("Default output: human. Agents should pass --toon; scripts can pass --json.\n");
+    true
+}
+
+fn render_project_detail(output: &mut String, data: &Value) -> bool {
+    if data.get("project_id").is_none() || data.get("project_name").is_none() {
+        return false;
+    }
+    output.push_str("\nProject\n");
+    write_string_field(output, "Name", data, "project_name");
+    write_string_field(output, "ID", data, "project_id");
+    write_string_field(output, "Slug", data, "slug");
+    if let Some(private) = data.get("is_private").and_then(Value::as_bool) {
+        writeln!(
+            output,
+            "Visibility: {}",
+            if private { "private" } else { "public" }
+        )
+        .expect("write to string");
+    }
+    if let Some(dev) = data.get("is_dev").and_then(Value::as_bool) {
+        writeln!(
+            output,
+            "Mode: {}",
+            if dev { "development" } else { "production" }
+        )
+        .expect("write to string");
+    }
+    write_network_list(output, data);
+    write_optional_string_field(output, "Description", data, "project_description");
+    write_optional_string_field(output, "GitHub", data, "github_url");
+    write_timestamp_field(output, "Created", data, "created_at");
+    write_timestamp_field(output, "Updated", data, "updated_at");
+    if let Some(manager) = data
+        .get("protocol_manager_address")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        writeln!(output, "Protocol manager: {manager}").expect("write to string");
+    } else {
+        output.push_str("Protocol manager: not set\n");
+    }
+    write_count_field(
+        output,
+        "Submitted assertions",
+        data,
+        "submitted_assertion_ids",
+    );
+    write_u64_field(output, "Saved by", data, "saved_count", Some("users"));
+    true
+}
+
+fn render_search_results(output: &mut String, data: &Value) -> bool {
+    let Some(projects) = data.get("projects").and_then(Value::as_array) else {
+        return false;
+    };
+    let contracts = data
+        .get("contracts")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let assertions = data
+        .get("assertions")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+
+    output.push_str("\nSearch results\n");
+    writeln!(output, "Projects: {}", projects.len()).expect("write to string");
+    writeln!(output, "Contracts: {}", contracts.len()).expect("write to string");
+    writeln!(output, "Assertions: {}", assertions.len()).expect("write to string");
+
+    if projects.is_empty() && contracts.is_empty() && assertions.is_empty() {
+        output.push_str("\nNo search results found.\n");
+        return true;
+    }
+
+    if !projects.is_empty() {
+        output.push_str("\nProjects\n");
+        render_generic_table(output, projects);
+    }
+    if !contracts.is_empty() {
+        output.push_str("\nContracts\n");
+        render_search_contracts_table(output, contracts);
+    }
+    if !assertions.is_empty() {
+        output.push_str("\nAssertions\n");
+        render_generic_table(output, assertions);
+    }
+    true
+}
+
+fn render_search_contracts_table(output: &mut String, items: &[Value]) {
+    writeln!(
+        output,
+        "{:<32} {:<10} {:<22} Project",
+        "Contract", "Network", "Address"
+    )
+    .expect("write to string");
+    for item in items {
+        let data = item.get("data").unwrap_or(item);
+        let name = data
+            .get("contract_name")
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        let network = data.get("network").and_then(Value::as_str).unwrap_or("-");
+        let address = data.get("address").and_then(Value::as_str).unwrap_or("-");
+        let project = data
+            .get("related_project_slug")
+            .or_else(|| data.get("related_project_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        writeln!(
+            output,
+            "{:<32} {:<10} {:<22} {}",
+            pad(name, 32),
+            pad(network, 10),
+            pad(address, 22),
+            project
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_account_detail(output: &mut String, data: &Value) -> bool {
+    if data.get("email").is_none() || data.get("authMethod").is_none() {
+        return false;
+    }
+    output.push_str("\nAccount\n");
+    write_string_field(output, "Email", data, "email");
+    write_string_field(output, "User ID", data, "id");
+    write_string_field(output, "Auth method", data, "authMethod");
+    write_string_field(output, "Scope", data, "scope");
+    write_bool_field(output, "Whitelisted", data, "whitelisted");
+    write_bool_field(output, "Terms accepted", data, "terms_accepted");
+    write_timestamp_field(output, "Terms accepted at", data, "terms_accepted_at");
+    true
+}
+
+fn render_deployment_state(output: &mut String, data: &Value) -> bool {
+    let Some(project) = data.get("project") else {
+        return false;
+    };
+    if data.get("available_contracts").is_none()
+        || data.get("submitted_assertions").is_none()
+        || data.get("staging_assertions").is_none()
+    {
+        return false;
+    }
+    output.push_str("\nDeployments\n");
+    if let Some(name) = project.get("project_name").and_then(Value::as_str) {
+        writeln!(output, "Project: {name}").expect("write to string");
+    }
+    if let Some(id) = project.get("project_id").and_then(Value::as_str) {
+        writeln!(output, "Project ID: {id}").expect("write to string");
+    }
+    write_network_list_for_value(output, project);
+    write_count_field(output, "Available contracts", data, "available_contracts");
+    write_count_field(output, "Submitted assertions", data, "submitted_assertions");
+    write_count_field(output, "Staging assertions", data, "staging_assertions");
+    if let Some(meta) = data.get("_meta") {
+        render_collection_meta(output, meta);
+    }
+    true
+}
+
+fn render_transfer_state(output: &mut String, data: &Value) -> bool {
+    let (Some(incoming), Some(outgoing)) = (data.get("incoming"), data.get("outgoing")) else {
+        return false;
+    };
+    output.push_str("\nProtocol manager transfers\n");
+    write_transfer_counts(output, "Incoming", incoming);
+    write_transfer_counts(output, "Outgoing", outgoing);
+    true
+}
+
+fn render_integration_status(output: &mut String, data: &Value) -> bool {
+    if data.get("configured").is_none() || data.get("enabled").is_none() {
+        return false;
+    }
+    output.push_str("\nIntegration\n");
+    write_bool_field(output, "Configured", data, "configured");
+    write_bool_field(output, "Enabled", data, "enabled");
+    write_optional_string_field(output, "Webhook URL", data, "webhook_url");
+    write_timestamp_field(output, "Last notification", data, "last_notification_at");
+    write_u64_field(
+        output,
+        "Notifications sent",
+        data,
+        "notification_count",
+        None,
+    );
+    write_bool_field(output, "Test available", data, "test_available");
+    true
+}
+
+fn render_protocol_manager_status(output: &mut String, data: &Value) -> bool {
+    if data.get("has_pending_transfer").is_none()
+        || data.get("contracts_pending").is_none()
+        || data.get("contracts_total").is_none()
+    {
+        return false;
+    }
+    output.push_str("\nProtocol manager\n");
+    write_bool_field(output, "Pending transfer", data, "has_pending_transfer");
+    write_optional_string_field(output, "Current manager", data, "current_manager_address");
+    write_optional_string_field(output, "New manager", data, "new_manager_address");
+    write_u64_field(output, "Contracts pending", data, "contracts_pending", None);
+    write_u64_field(output, "Contracts total", data, "contracts_total", None);
     true
 }
 
@@ -3513,7 +3883,12 @@ fn render_raw_api_response(output: &mut String, data: &Value) -> bool {
             output.push('\n');
             output.push_str(&collection_summary(&collection));
             output.push_str("\n\n");
-            render_collection_items(output, &collection);
+            if collection.items.is_empty() {
+                writeln!(output, "No {} found.", collection.name.to_ascii_lowercase())
+                    .expect("write to string");
+            } else {
+                render_collection_items(output, &collection);
+            }
         } else {
             output.push_str("Body: ");
             output.push_str(&human_compact_summary(body));
@@ -3628,6 +4003,100 @@ fn render_path_or_toggle_result(output: &mut String, data: &Value) -> bool {
     rendered
 }
 
+fn write_string_field(output: &mut String, label: &str, data: &Value, field: &str) {
+    if let Some(value) = data.get(field).and_then(Value::as_str) {
+        writeln!(output, "{label}: {value}").expect("write to string");
+    }
+}
+
+fn write_optional_string_field(output: &mut String, label: &str, data: &Value, field: &str) {
+    match data.get(field) {
+        Some(Value::String(value)) if !value.is_empty() => {
+            writeln!(output, "{label}: {value}").expect("write to string");
+        }
+        Some(Value::Null) | None => {}
+        Some(value) if is_scalar(value) => {
+            writeln!(output, "{label}: {}", scalar_string(value)).expect("write to string");
+        }
+        Some(_) => {}
+    }
+}
+
+fn write_timestamp_field(output: &mut String, label: &str, data: &Value, field: &str) {
+    if let Some(value) = data.get(field).and_then(Value::as_str) {
+        writeln!(output, "{label}: {}", format_timestamp(value)).expect("write to string");
+    }
+}
+
+fn write_bool_field(output: &mut String, label: &str, data: &Value, field: &str) {
+    if let Some(value) = data.get(field).and_then(Value::as_bool) {
+        writeln!(output, "{label}: {}", yes_no(value)).expect("write to string");
+    }
+}
+
+fn write_u64_field(
+    output: &mut String,
+    label: &str,
+    data: &Value,
+    field: &str,
+    unit: Option<&str>,
+) {
+    if let Some(value) = data.get(field).and_then(Value::as_u64) {
+        if let Some(unit) = unit {
+            writeln!(output, "{label}: {value} {unit}").expect("write to string");
+        } else {
+            writeln!(output, "{label}: {value}").expect("write to string");
+        }
+    }
+}
+
+fn write_count_field(output: &mut String, label: &str, data: &Value, field: &str) {
+    if let Some(values) = data.get(field).and_then(Value::as_array) {
+        writeln!(output, "{label}: {}", plural_count(values.len(), "item"))
+            .expect("write to string");
+    }
+}
+
+fn write_network_list(output: &mut String, data: &Value) {
+    write_network_list_for_value(output, data);
+}
+
+fn write_network_list_for_value(output: &mut String, data: &Value) {
+    let names = data
+        .get("chain_names")
+        .or_else(|| data.get("project_networks"))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(ToString::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if names.is_empty() {
+        return;
+    }
+    writeln!(output, "Networks: {}", names.join(", ")).expect("write to string");
+}
+
+fn write_transfer_counts(output: &mut String, label: &str, value: &Value) {
+    let projects = value
+        .get("project_transfers")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let contracts = value
+        .get("contract_transfers")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    writeln!(
+        output,
+        "{label}: {}, {}",
+        plural_count(projects, "project transfer"),
+        plural_count(contracts, "contract transfer")
+    )
+    .expect("write to string");
+}
+
 fn render_human_collection(output: &mut String, envelope: &Value) -> bool {
     let Some(collection) = find_human_collection(envelope) else {
         return false;
@@ -3644,7 +4113,8 @@ fn render_human_collection(output: &mut String, envelope: &Value) -> bool {
     output.push('\n');
 
     if collection.items.is_empty() {
-        output.push_str("No results.\n");
+        writeln!(output, "No {} found.", collection.name.to_ascii_lowercase())
+            .expect("write to string");
         return true;
     }
 
@@ -3699,6 +4169,16 @@ fn find_collection_in_value<'a>(
         });
     }
 
+    if let Some(items) = data.as_array() {
+        return Some(HumanCollection {
+            field: infer_collection_field(request_path),
+            name: infer_collection_name("items", request_path, items),
+            items,
+            pagination: None,
+            meta: None,
+        });
+    }
+
     if let Some(items) = data.get("items").and_then(Value::as_array) {
         return Some(HumanCollection {
             field: "items".to_string(),
@@ -3711,10 +4191,10 @@ fn find_collection_in_value<'a>(
 
     for field in [
         "incidents",
-        "projects",
         "assertions",
         "contracts",
         "releases",
+        "projects",
         "deployments",
         "events",
         "operations",
@@ -3752,13 +4232,33 @@ fn find_collection_in_value<'a>(
     None
 }
 
-fn infer_collection_name(field: &str, request_path: &str, items: &[Value]) -> String {
-    for name in [
+fn infer_collection_field(request_path: &str) -> String {
+    for field in [
         "incidents",
         "projects",
         "assertions",
         "contracts",
         "releases",
+        "deployments",
+        "events",
+        "members",
+        "invitations",
+        "transfers",
+    ] {
+        if request_path.contains(field) {
+            return field.to_string();
+        }
+    }
+    "items".to_string()
+}
+
+fn infer_collection_name(field: &str, request_path: &str, items: &[Value]) -> String {
+    for name in [
+        "incidents",
+        "assertions",
+        "contracts",
+        "releases",
+        "projects",
         "deployments",
         "events",
         "operations",
@@ -3816,6 +4316,10 @@ fn render_collection_items(output: &mut String, collection: &HumanCollection<'_>
         }
         "jobs" => render_jobs_table(output, collection.items),
         "artifacts" => render_artifacts_table(output, collection.items),
+        "members" => render_members_table(output, collection.items),
+        "invitations" => render_invitations_table(output, collection.items),
+        "releases" => render_releases_table(output, collection.items),
+        "events" => render_events_table(output, collection.items),
         "no_hit" | "no_2xx" | "write_no_2xx" => render_coverage_table(output, collection.items),
         "body_variants" => render_body_variant_table(output, collection.items),
         _ if is_incident_collection(collection) => render_incident_table(output, collection.items),
@@ -3992,6 +4496,121 @@ fn render_artifacts_table(output: &mut String, items: &[Value]) {
     }
 }
 
+fn render_members_table(output: &mut String, items: &[Value]) {
+    writeln!(output, "{:<34} {:<12} User ID", "Email", "Role").expect("write to string");
+    for item in items {
+        let email = item.get("email").and_then(Value::as_str).unwrap_or("-");
+        let role = item.get("role").and_then(Value::as_str).unwrap_or("-");
+        let user_id = item.get("user_id").and_then(Value::as_str).unwrap_or("-");
+        writeln!(
+            output,
+            "{:<34} {:<12} {}",
+            pad(email, 34),
+            pad(role, 12),
+            user_id
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_invitations_table(output: &mut String, items: &[Value]) {
+    writeln!(output, "{:<34} {:<12} {:<16} ID", "Email", "Role", "Status")
+        .expect("write to string");
+    for item in items {
+        let email = item
+            .get("email")
+            .or_else(|| item.get("identifier"))
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        let role = item.get("role").and_then(Value::as_str).unwrap_or("-");
+        let status = item.get("status").and_then(Value::as_str).unwrap_or("-");
+        let id = item
+            .get("id")
+            .or_else(|| item.get("invitation_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        writeln!(
+            output,
+            "{:<34} {:<12} {:<16} {}",
+            pad(email, 34),
+            pad(role, 12),
+            pad(status, 16),
+            id
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_releases_table(output: &mut String, items: &[Value]) {
+    writeln!(
+        output,
+        "{:<36} {:<14} {:<16} Created",
+        "Release", "Environment", "Status"
+    )
+    .expect("write to string");
+    for item in items {
+        let id = item
+            .get("release_id")
+            .or_else(|| item.get("id"))
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        let environment = item
+            .get("environment")
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        let status = item.get("status").and_then(Value::as_str).unwrap_or("-");
+        let created = item
+            .get("created_at")
+            .or_else(|| item.get("createdAt"))
+            .and_then(Value::as_str)
+            .map_or_else(String::new, format_timestamp);
+        writeln!(
+            output,
+            "{:<36} {:<14} {:<16} {}",
+            pad(id, 36),
+            pad(environment, 14),
+            pad(status, 16),
+            created
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_events_table(output: &mut String, items: &[Value]) {
+    writeln!(
+        output,
+        "{:<34} {:<14} {:<16} Type",
+        "Event", "Environment", "Time"
+    )
+    .expect("write to string");
+    for item in items {
+        let id = item.get("id").and_then(Value::as_str).unwrap_or("-");
+        let environment = item
+            .get("environment")
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        let timestamp = item
+            .get("timestamp")
+            .or_else(|| item.get("created_at"))
+            .and_then(Value::as_str)
+            .map_or_else(String::new, format_timestamp);
+        let kind = item
+            .get("type")
+            .or_else(|| item.get("event_type"))
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        writeln!(
+            output,
+            "{:<34} {:<14} {:<16} {}",
+            pad(id, 34),
+            pad(environment, 14),
+            pad(&timestamp, 16),
+            kind
+        )
+        .expect("write to string");
+    }
+}
+
 fn render_coverage_table(output: &mut String, items: &[Value]) {
     writeln!(
         output,
@@ -4047,23 +4666,33 @@ fn render_collection_meta(output: &mut String, meta: &Value) {
         return;
     }
 
-    output.push_str("Fetched");
     if let Some(fetched_at) = fetched_at {
-        output.push(' ');
+        output.push_str("Updated: ");
         output.push_str(&format_timestamp(fetched_at));
+        output.push('\n');
     }
     if let Some(sources) = sources {
         let source_names = sources
             .iter()
             .filter_map(Value::as_str)
+            .map(human_source_name)
             .collect::<Vec<_>>()
             .join(", ");
         if !source_names.is_empty() {
-            output.push_str(" from ");
+            output.push_str("Source: ");
             output.push_str(&source_names);
+            output.push('\n');
         }
     }
-    output.push('\n');
+}
+
+fn human_source_name(source: &str) -> String {
+    match source {
+        "offchain" => "Phylax platform index".to_string(),
+        "onchain" => "on-chain data".to_string(),
+        "cache" => "cache".to_string(),
+        other => human_label(other),
+    }
 }
 
 fn is_incident_collection(collection: &HumanCollection<'_>) -> bool {
@@ -4174,20 +4803,14 @@ fn human_cell(value: &Value) -> String {
     }
 }
 
-fn human_action(action: &Value) -> String {
-    action.as_str().map_or_else(
-        || compact_json(action),
-        |value| {
-            if value.trim_start().starts_with("pcl ") {
-                humanize_command(value)
-            } else if value == "Use --toon for agent consumption or --json for strict JSON parsing"
-            {
-                "Use --json for strict JSON parsing".to_string()
-            } else {
-                value.to_string()
-            }
-        },
-    )
+fn human_action_str(value: &str) -> String {
+    if value.trim_start().starts_with("pcl ") {
+        humanize_command(value)
+    } else if value == "Use --toon for agent consumption or --json for strict JSON parsing" {
+        "Use --json for strict JSON parsing".to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 fn humanize_command(command: &str) -> String {
@@ -4341,10 +4964,10 @@ fn render_human_summary(output: &mut String, data: &Value) {
             if key.starts_with('_') {
                 continue;
             }
-            output.push_str(&title_case(key));
+            output.push_str(&human_label(key));
             output.push_str(": ");
             if is_scalar(value) {
-                output.push_str(&scalar_string(value));
+                output.push_str(&human_scalar(value));
                 output.push('\n');
             } else {
                 output.push_str(&human_compact_summary(value));
@@ -4380,23 +5003,26 @@ fn render_human_request_id(output: &mut String, envelope: &Value) {
 
 fn human_compact_summary(value: &Value) -> String {
     match value {
-        Value::Array(values) => format!("{} item(s)", values.len()),
+        Value::Array(values) => plural_count(values.len(), "item"),
         Value::Object(object) => {
+            if object.is_empty() {
+                return "empty object".to_string();
+            }
             object
                 .iter()
                 .filter(|(key, _)| !key.starts_with('_'))
                 .take(3)
                 .map(|(key, value)| {
                     if is_scalar(value) {
-                        format!("{key}={}", scalar_string(value))
+                        format!("{}={}", human_label(key), human_scalar(value))
                     } else {
-                        format!("{key}={}", compact_json(value))
+                        format!("{}={}", human_label(key), compact_json(value))
                     }
                 })
                 .collect::<Vec<_>>()
                 .join(", ")
         }
-        _ => scalar_string(value),
+        _ => human_scalar(value),
     }
 }
 
@@ -4438,17 +5064,86 @@ fn format_unix_timestamp(value: u64) -> String {
 }
 
 fn title_case(value: &str) -> String {
-    value
-        .replace('_', " ")
-        .split_whitespace()
-        .map(|word| {
-            let mut chars = word.chars();
-            chars.next().map_or_else(String::new, |first| {
-                first.to_uppercase().collect::<String>() + chars.as_str()
-            })
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    human_label(value)
+}
+
+fn human_label(value: &str) -> String {
+    let words = split_label_words(value);
+    let mut rendered = Vec::new();
+    for (index, word) in words.iter().enumerate() {
+        let lower = word.to_ascii_lowercase();
+        let text = match lower.as_str() {
+            "id" => "ID".to_string(),
+            "api" => "API".to_string(),
+            "http" => "HTTP".to_string(),
+            "url" => "URL".to_string(),
+            "json" => "JSON".to_string(),
+            "cli" => "CLI".to_string(),
+            "pcl" => "PCL".to_string(),
+            "uuid" => "UUID".to_string(),
+            "tx" => "tx".to_string(),
+            "github" => "GitHub".to_string(),
+            "authmethod" => "auth method".to_string(),
+            other if index == 0 => capitalize(other),
+            other => other.to_string(),
+        };
+        rendered.push(text);
+    }
+    rendered.join(" ")
+}
+
+fn split_label_words(value: &str) -> Vec<String> {
+    let normalized = value.replace(['_', '-'], " ");
+    let mut words = Vec::new();
+    for raw in normalized.split_whitespace() {
+        let mut current = String::new();
+        let chars = raw.chars().collect::<Vec<_>>();
+        for (index, ch) in chars.iter().enumerate() {
+            if index > 0
+                && ch.is_uppercase()
+                && chars
+                    .get(index.saturating_sub(1))
+                    .is_some_and(|previous| previous.is_lowercase() || previous.is_ascii_digit())
+            {
+                words.push(current);
+                current = String::new();
+            }
+            current.push(*ch);
+        }
+        if !current.is_empty() {
+            words.push(current);
+        }
+    }
+    words
+}
+
+fn capitalize(value: &str) -> String {
+    let mut chars = value.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().collect::<String>() + chars.as_str()
+    })
+}
+
+fn plural_count(count: usize, item: &str) -> String {
+    if count == 1 {
+        format!("1 {item}")
+    } else {
+        format!("{count} {item}s")
+    }
+}
+
+fn human_scalar(value: &Value) -> String {
+    match value {
+        Value::Bool(value) => yes_no(*value).to_string(),
+        Value::String(value) => {
+            if value.len() >= 16 && value.as_bytes().get(10) == Some(&b'T') {
+                format_timestamp(value)
+            } else {
+                value.clone()
+            }
+        }
+        _ => scalar_string(value),
+    }
 }
 
 fn pad(value: &str, width: usize) -> String {
@@ -6049,6 +6744,12 @@ fn incidents_next_actions(
 }
 
 fn projects_next_actions(data: &Value, fallback: Vec<String>) -> Vec<String> {
+    if let Some(project_id) = data.get("project_id").and_then(Value::as_str) {
+        return vec![
+            format!("pcl assertions --project-id {project_id}"),
+            format!("pcl incidents --project-id {project_id} --limit 10"),
+        ];
+    }
     first_string_field(data, &["project_id", "projectId", "id"]).map_or(fallback, |project_id| {
         vec![
             format!("pcl projects --project-id {project_id}"),
@@ -6082,6 +6783,37 @@ fn assertions_next_actions(
             ]
         },
     )
+}
+
+fn search_next_actions(data: &Value, fallback: Vec<String>) -> Vec<String> {
+    if let Some(project_id) = data
+        .get("projects")
+        .and_then(Value::as_array)
+        .and_then(|projects| projects.first())
+        .and_then(|project| first_string_field(project, &["project_id", "projectId", "id", "slug"]))
+    {
+        return vec![
+            format!("pcl projects --project-id {project_id}"),
+            format!("pcl contracts --project {project_id}"),
+        ];
+    }
+    if let Some(project_id) = data
+        .get("contracts")
+        .and_then(Value::as_array)
+        .and_then(|contracts| contracts.first())
+        .and_then(|contract| {
+            contract.get("data").map_or_else(
+                || first_string_field(contract, &["related_project_id", "related_project_slug"]),
+                |inner| first_string_field(inner, &["related_project_id", "related_project_slug"]),
+            )
+        })
+    {
+        return vec![
+            format!("pcl projects --project-id {project_id}"),
+            format!("pcl contracts --project {project_id}"),
+        ];
+    }
+    fallback
 }
 
 fn first_string_field(value: &Value, keys: &[&str]) -> Option<String> {
@@ -7793,7 +8525,8 @@ fn next_actions_for_operations(operations: &[OperationSummary]) -> Vec<String> {
             if operation.requires_input {
                 vec![
                     format!("{} --toon", operation.inspect_command),
-                    "Use data.example_call after filling placeholders".to_string(),
+                    "Inspect the operation, then fill the placeholders in the example call"
+                        .to_string(),
                 ]
             } else {
                 vec![

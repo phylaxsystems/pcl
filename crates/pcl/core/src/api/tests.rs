@@ -280,7 +280,7 @@ fn openapi_call_commands_include_required_inputs() {
         next_actions_for_operations(&operations),
         vec![
             "pcl api inspect post_project_widgets --toon".to_string(),
-            "Use data.example_call after filling placeholders".to_string()
+            "Inspect the operation, then fill the placeholders in the example call".to_string()
         ]
     );
 
@@ -2502,7 +2502,7 @@ fn default_api_output_is_human_readable() {
     .unwrap();
 
     assert!(output.starts_with("OK\n"));
-    assert!(output.contains("Healthy: true"));
+    assert!(output.contains("Healthy: yes"));
     assert!(output.contains("Next:"));
     assert!(!output.contains("Schema: pcl.envelope.v1"));
     assert!(!output.contains("Details:"));
@@ -2546,7 +2546,8 @@ fn human_api_output_formats_incident_lists_for_people() {
 
     assert!(output.contains("Incidents\n"));
     assert!(output.contains("Showing 1 of 332 incidents on page 1 (limit 20)"));
-    assert!(output.contains("Fetched 2026-05-09 23:30 from offchain"));
+    assert!(output.contains("Updated: 2026-05-09 23:30"));
+    assert!(output.contains("Source: Phylax platform index"));
     assert!(output.contains("Linea Mainnet (59144)"));
     assert!(output.contains("Removed invalid transaction"));
     assert!(output.contains("7dfe71ee-9d69-41bb-b33c-992c0fbd684f"));
@@ -2555,6 +2556,152 @@ fn human_api_output_formats_incident_lists_for_people() {
     assert!(!output.contains("Details:"));
     assert!(!output.contains("Request:\n"));
     assert!(!output.contains("Schema:"));
+}
+
+#[test]
+fn human_output_formats_empty_workflow_arrays_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": [],
+            "request": {"method": "GET", "path": "/projects/project-1/releases"},
+            "response": {"status": 200, "request_id": "req_empty"},
+            "next_actions": ["pcl releases --project project-1 --release-id <release-id>"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Releases\n"));
+    assert!(output.contains("Showing 0 releases"));
+    assert!(output.contains("No releases found."));
+    assert!(!output.contains("<release-id>"));
+}
+
+#[test]
+fn human_output_formats_project_details_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "project_id": "project-1",
+                "project_name": "Private Test",
+                "project_description": null,
+                "project_networks": ["59144"],
+                "chain_names": ["Linea Mainnet"],
+                "created_at": "2026-05-06T16:50:17+00:00",
+                "updated_at": "2026-05-06T16:51:17+00:00",
+                "is_private": true,
+                "is_dev": false,
+                "submitted_assertion_ids": [],
+                "saved_count": 0,
+                "protocol_manager_address": null,
+                "slug": "private-test"
+            },
+            "next_actions": [
+                "pcl projects --project-id project-1",
+                "pcl assertions --project-id project-1"
+            ],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Project\n"));
+    assert!(output.contains("ID: project-1"));
+    assert!(output.contains("Visibility: private"));
+    assert!(output.contains("Networks: Linea Mainnet"));
+    assert!(output.contains("Submitted assertions: 0 items"));
+    assert!(!output.contains("Project Id:"));
+    assert!(!output.contains("item(s)"));
+}
+
+#[test]
+fn human_output_formats_mixed_search_results_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "projects": [],
+                "contracts": [
+                    {
+                        "data": {
+                            "contract_name": "LineaSettler",
+                            "network": "59144",
+                            "address": "0xc026251dc69f6e3556331b2e14e72eb4a34dd55a",
+                            "related_project_slug": "0x-settler"
+                        },
+                        "foundBy": "contract name"
+                    }
+                ],
+                "assertions": []
+            },
+            "next_actions": [
+                "pcl projects --project-id 0x-settler",
+                "pcl contracts --project 0x-settler"
+            ],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Search results"));
+    assert!(output.contains("Projects: 0"));
+    assert!(output.contains("Contracts: 1"));
+    assert!(output.contains("LineaSettler"));
+    assert!(!output.contains("Assertions\nShowing 0"));
+}
+
+#[test]
+fn human_errors_include_api_reason_and_hide_internal_actions() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "error",
+            "error": {
+                "code": "auth.forbidden",
+                "message": "API request failed with status 403 for GET /system-status",
+                "request_id": "req_forbidden",
+                "http": {
+                    "method": "GET",
+                    "path": "/system-status",
+                    "status": 403,
+                    "body": {"error": "System status checks are temporarily disabled"}
+                }
+            },
+            "next_actions": [
+                "Read error.http.body for the API-provided reason",
+                "Check whether the endpoint is enabled and your user has permission"
+            ],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("API reason: System status checks are temporarily disabled"));
+    assert!(output.contains("Request ID: req_forbidden"));
+    assert!(!output.contains("Read error.http.body"));
+}
+
+#[test]
+fn human_cli_errors_strip_raw_usage_dump() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "error",
+            "error": {
+                "code": "cli.unknown_argument",
+                "message": "error: unexpected argument '--limit' found\n\nUsage: pcl api list [OPTIONS]\n\nFor more information, try '--help'.",
+                "recoverable": true
+            },
+            "next_actions": ["pcl --help", "pcl api manifest --toon"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("unexpected argument '--limit' found"));
+    assert!(!output.contains("error:"));
+    assert!(!output.contains("Usage:"));
+    assert!(!output.contains("--toon"));
 }
 
 #[test]
@@ -2669,7 +2816,7 @@ fn human_output_formats_api_discovery_for_people() {
     assert!(output.contains("Operations\n"));
     assert!(output.contains("GET"));
     assert!(output.contains("/views/public/incidents"));
-    assert!(output.contains("Prefer Workflow"));
+    assert!(output.contains("Prefer workflow"));
     assert!(!output.contains("--toon"));
 }
 
@@ -2908,6 +3055,12 @@ fn parser_allows_body_template_without_routing_ids() {
         ])
         .is_ok()
     );
+}
+
+#[test]
+fn parser_accepts_uppercase_http_methods_for_raw_api_calls() {
+    assert!(ApiArgs::try_parse_from(["api", "call", "GET", "/views/public/incidents"]).is_ok());
+    assert!(ApiArgs::try_parse_from(["api", "list", "--method", "GET"]).is_ok());
 }
 
 #[test]

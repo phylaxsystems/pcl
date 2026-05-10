@@ -467,6 +467,20 @@ impl DoctorArgs {
             "ok"
         };
 
+        let next_actions = if status == "error" {
+            json!([
+                "Check --api-url or PCL_API_URL",
+                "pcl requests list --limit 20",
+                "pcl whoami",
+            ])
+        } else {
+            json!([
+                "pcl whoami",
+                "pcl workflows",
+                "pcl requests list --limit 20",
+            ])
+        };
+
         print_output(
             &json!({
                 "status": status,
@@ -478,11 +492,7 @@ impl DoctorArgs {
                     "legacy_format_flag": "--format toon|json",
                     "api_url": self.api_url.as_str(),
                 },
-                "next_actions": [
-                    "pcl whoami",
-                    "pcl workflows",
-                    "pcl requests list --limit 20",
-                ],
+                "next_actions": next_actions,
             }),
             json_output,
         )
