@@ -279,7 +279,7 @@ fn openapi_call_commands_include_required_inputs() {
     assert_eq!(
         next_actions_for_operations(&operations),
         vec![
-            "pcl api inspect post_project_widgets --json".to_string(),
+            "pcl api inspect post_project_widgets --toon".to_string(),
             "Use data.example_call after filling placeholders".to_string()
         ]
     );
@@ -1219,7 +1219,7 @@ async fn dry_run_projects_and_assertions_do_not_execute_requests() {
         project_output["data"]["request"]["auth"]["will_attach_stored_token"],
         false
     );
-    assert_eq!(project_output["next_actions"][0], "pcl auth ensure --json");
+    assert_eq!(project_output["next_actions"][0], "pcl auth ensure --toon");
 
     let assertion_output = api
         .run_assertions(
@@ -2340,7 +2340,7 @@ fn forbidden_errors_preserve_permission_context() {
         !error
             .next_actions()
             .iter()
-            .any(|action| action == "pcl auth refresh --json")
+            .any(|action| action == "pcl auth refresh --toon")
     );
 }
 
@@ -2490,8 +2490,8 @@ fn body_templates_are_action_specific() {
 }
 
 #[test]
-fn default_api_output_is_full_toon_envelope() {
-    let output = output_string(
+fn default_api_output_is_human_readable() {
+    let output = envelope_output_string(
         &json!({
             "status": "ok",
             "data": {"healthy": true},
@@ -2501,12 +2501,176 @@ fn default_api_output_is_full_toon_envelope() {
     )
     .unwrap();
 
-    assert!(output.contains("status: ok"));
-    assert!(output.contains("schema_version: pcl.envelope.v1"));
-    assert!(output.contains("pcl_version:"));
-    assert!(output.contains("data:"));
-    assert!(output.contains("healthy: true"));
-    assert!(output.contains("next_actions[1]:"));
+    assert!(output.starts_with("OK\n"));
+    assert!(output.contains("Healthy: true"));
+    assert!(output.contains("Next:"));
+    assert!(!output.contains("Schema: pcl.envelope.v1"));
+    assert!(!output.contains("Details:"));
+}
+
+#[test]
+fn human_api_output_formats_incident_lists_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "data": {
+                    "items": [
+                        {
+                            "id": "7dfe71ee-9d69-41bb-b33c-992c0fbd684f",
+                            "title": "Removed invalid transaction",
+                            "network": {"chainId": 59144, "name": "Linea Mainnet"},
+                            "timestamp": "2026-05-06T14:01:54+00:00",
+                            "referenceId": "c4f250"
+                        }
+                    ],
+                    "pagination": {
+                        "page": 1,
+                        "limit": 20,
+                        "total": 332,
+                        "hasMore": true
+                    }
+                },
+                "_meta": {
+                    "sources": ["offchain"],
+                    "fetchedAt": "2026-05-09T23:30:09.618Z"
+                }
+            },
+            "request": {"method": "GET", "path": "/views/public/incidents"},
+            "response": {"status": 200, "request_id": "req_123"},
+            "next_actions": ["pcl incidents --incident-id 7dfe71ee-9d69-41bb-b33c-992c0fbd684f"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Incidents\n"));
+    assert!(output.contains("Showing 1 of 332 incidents on page 1 (limit 20)"));
+    assert!(output.contains("Fetched 2026-05-09 23:30 from offchain"));
+    assert!(output.contains("Linea Mainnet (59144)"));
+    assert!(output.contains("Removed invalid transaction"));
+    assert!(output.contains("7dfe71ee-9d69-41bb-b33c-992c0fbd684f"));
+    assert!(output.contains("More results available. Try --page 2 --limit 20."));
+    assert!(output.contains("Request ID: req_123 (HTTP 200)"));
+    assert!(!output.contains("Details:"));
+    assert!(!output.contains("Request:\n"));
+    assert!(!output.contains("Schema:"));
+}
+
+#[test]
+fn human_output_formats_surface_lists_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "workflows": [
+                    {
+                        "name": "incident-investigation",
+                        "description": "Export incidents and inspect traces.",
+                        "steps": [
+                            {"command": "pcl doctor --toon", "output": "environment readiness"}
+                        ]
+                    }
+                ]
+            },
+            "next_actions": ["pcl schema list --toon"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Workflows\n"));
+    assert!(output.contains("incident-investigation"));
+    assert!(output.contains("Export incidents and inspect traces."));
+    assert!(output.contains("pcl schema list"));
+    assert!(!output.contains("--toon"));
+    assert!(!output.contains("Details:"));
+}
+
+#[test]
+fn human_output_formats_schema_action_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "workflow": "incidents",
+                "action": {
+                    "name": "list_public",
+                    "auth": false,
+                    "method": "GET",
+                    "path": "/views/public/incidents",
+                    "optional_flags": ["--page", "--limit"],
+                    "example": "pcl incidents --limit 5 --toon"
+                }
+            },
+            "next_actions": ["pcl workflows --toon"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Schema: incidents"));
+    assert!(output.contains("Action: list_public"));
+    assert!(output.contains("Request: GET /views/public/incidents"));
+    assert!(output.contains("Example: pcl incidents --limit 5"));
+    assert!(!output.contains("--toon"));
+}
+
+#[test]
+fn human_output_formats_dry_run_request_plan_for_people() {
+    let output = envelope_output_string(
+        &dry_run_envelope(json!({
+            "dry_run": true,
+            "valid": true,
+            "request": {
+                "method": "GET",
+                "path": "/views/projects",
+                "query": [{"name": "limit", "value": "2"}],
+                "auth": {
+                    "required": false,
+                    "will_attach_stored_token": false,
+                }
+            },
+            "pagination": null,
+        })),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Dry run"));
+    assert!(output.contains("GET /views/projects"));
+    assert!(output.contains("Query: limit=2"));
+    assert!(output.contains("Auth: not required"));
+    assert!(!output.contains("Use --body-template when constructing mutation bodies"));
+    assert!(!output.contains("Details:"));
+}
+
+#[test]
+fn human_output_formats_api_discovery_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "operations": [
+                    {
+                        "operation_id": "get_views_public_incidents",
+                        "method": "GET",
+                        "path": "/views/public/incidents",
+                        "raw_api_use": {"policy": "prefer_workflow"}
+                    }
+                ]
+            },
+            "next_actions": ["pcl api inspect get_views_public_incidents --toon"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Operations\n"));
+    assert!(output.contains("GET"));
+    assert!(output.contains("/views/public/incidents"));
+    assert!(output.contains("Prefer Workflow"));
+    assert!(!output.contains("--toon"));
 }
 
 #[test]
@@ -2578,15 +2742,15 @@ fn variant_body_templates_return_variant_specific_next_actions() {
 #[test]
 fn manifest_lists_structured_actions_for_every_workflow() {
     let manifest = api_manifest();
-    assert_eq!(manifest["default_output"], "toon");
+    assert_eq!(manifest["default_output"], "human");
     assert_eq!(
         manifest["output_modes"]["toon"],
-        "Default compact machine-readable envelope; explicit form is --format toon."
+        "Pass --toon for compact machine-readable envelopes."
     );
     assert!(
         manifest["output_modes"]["json"]
             .as_str()
-            .is_some_and(|value| value.contains("--format json"))
+            .is_some_and(|value| value.contains("--json"))
     );
     let commands = manifest["commands"].as_array().unwrap();
     for command_name in [

@@ -1,6 +1,6 @@
 use crate::{
     api::{
-        toon_string,
+        envelope_output_string,
         with_envelope_metadata,
     },
     error::ConfigError,
@@ -469,15 +469,10 @@ fn config_auth_value(config: &CliConfig) -> Value {
 }
 
 fn print_config_output(value: &Value, json_output: bool) -> Result<(), ConfigError> {
-    let value = with_envelope_metadata(value.clone());
-    if json_output {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&value).map_err(ConfigError::JsonError)?
-        );
-    } else {
-        print!("{}", toon_string(&value));
-    }
+    print!(
+        "{}",
+        envelope_output_string(value, json_output).map_err(ConfigError::JsonError)?
+    );
     Ok(())
 }
 

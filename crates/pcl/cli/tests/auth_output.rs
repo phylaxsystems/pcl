@@ -108,7 +108,34 @@ fn auth_ensure_json_with_existing_auth_outputs_single_ok_envelope() {
 }
 
 #[test]
-fn auth_ensure_default_output_is_toon_envelope() {
+fn auth_ensure_toon_output_is_toon_envelope() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_valid_auth_config(temp_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--toon",
+            "auth",
+            "ensure",
+        ])
+        .output()
+        .expect("run pcl auth ensure");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    assert!(stdout.starts_with("status: ok\n"));
+    assert!(stdout.contains("token_valid: true"));
+    assert!(stdout.contains("schema_version: pcl.envelope.v1"));
+}
+
+#[test]
+fn auth_ensure_default_output_is_human() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     write_valid_auth_config(temp_dir.path());
 
@@ -128,9 +155,13 @@ fn auth_ensure_default_output_is_toon_envelope() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
-    assert!(stdout.starts_with("status: ok\n"));
-    assert!(stdout.contains("token_valid: true"));
-    assert!(stdout.contains("schema_version: pcl.envelope.v1"));
+    assert!(stdout.starts_with("OK\n"), "{stdout}");
+    assert!(stdout.contains("Authentication"), "{stdout}");
+    assert!(stdout.contains("Status: authenticated"), "{stdout}");
+    assert!(stdout.contains("Time remaining:"), "{stdout}");
+    assert!(stdout.contains("Next:"), "{stdout}");
+    assert!(!stdout.contains("Details:"), "{stdout}");
+    assert!(!stdout.contains("Schema: pcl.envelope.v1"), "{stdout}");
 }
 
 #[test]
@@ -897,7 +928,7 @@ fn global_llms_flag_outputs_json_without_config_read() {
             "--llms",
         ])
         .output()
-        .expect("run pcl --llms");
+        .expect("run pcl --json --llms");
 
     assert!(
         output.status.success(),
@@ -907,7 +938,7 @@ fn global_llms_flag_outputs_json_without_config_read() {
     let envelope: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("json envelope");
     assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
-    assert_eq!(envelope["data"]["default_output"], "toon");
+    assert_eq!(envelope["data"]["default_output"], "human");
     assert_eq!(envelope["data"]["no_mcp_required"], true);
     assert_eq!(
         fs::read_to_string(config_path).expect("read invalid config"),
@@ -1299,7 +1330,7 @@ fn api_request_logs_respect_config_dir() {
 }
 
 #[test]
-fn default_error_output_is_structured_toon_envelope() {
+fn default_error_output_is_human_readable() {
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
         .args(["api", "call", "get", "health"])
         .output()
@@ -1312,13 +1343,10 @@ fn default_error_output_is_structured_toon_envelope() {
         String::from_utf8_lossy(&output.stdout)
     );
     let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
-    assert!(stderr.contains("status: error"), "{stderr}");
-    assert!(stderr.contains("code: input.invalid_path"), "{stderr}");
-    assert!(stderr.contains("next_actions[2]:"), "{stderr}");
-    assert!(
-        stderr.contains("schema_version: pcl.envelope.v1"),
-        "{stderr}"
-    );
+    assert!(stderr.starts_with("Error\n"), "{stderr}");
+    assert!(stderr.contains("Code: input.invalid_path"), "{stderr}");
+    assert!(stderr.contains("Next:"), "{stderr}");
+    assert!(!stderr.contains("Schema: pcl.envelope.v1"), "{stderr}");
 }
 
 #[test]
