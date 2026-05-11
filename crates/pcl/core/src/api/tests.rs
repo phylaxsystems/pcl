@@ -1329,7 +1329,7 @@ fn builds_adopter_assertion_lookup_request() {
 #[test]
 fn project_assertions_require_project_id() {
     let error = assertions_request(&assertions_args(None)).unwrap_err();
-    assert!(error.to_string().contains("--project is required"));
+    assert!(error.to_string().contains("--project-id is required"));
 }
 
 #[test]
@@ -1634,7 +1634,11 @@ fn write_actions_require_target_identifiers() {
         ..projects_args()
     })
     .unwrap_err();
-    assert!(project_error.to_string().contains("--project is required"));
+    assert!(
+        project_error
+            .to_string()
+            .contains("--project-id is required")
+    );
 
     let release_error = releases_request(&ReleasesArgs {
         deploy: true,
@@ -2631,7 +2635,7 @@ fn human_output_formats_project_details_for_people() {
     assert!(output.contains("ID: project-1"));
     assert!(output.contains("Visibility: private"));
     assert!(output.contains("Networks: Linea Mainnet"));
-    assert!(output.contains("Submitted assertions: 0 items"));
+    assert!(output.contains("Submitted assertions: 0 assertions"));
     assert!(!output.contains("Project Id:"));
     assert!(!output.contains("item(s)"));
 }

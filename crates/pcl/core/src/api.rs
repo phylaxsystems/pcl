@@ -143,6 +143,12 @@ pub enum ApiCommandError {
 
     #[error("{message}")]
     InvalidWorkflow { message: String },
+
+    #[error("{message}")]
+    InvalidWorkflowWithActions {
+        message: String,
+        next_actions: Vec<String>,
+    },
 }
 
 impl ApiCommandError {
@@ -181,7 +187,9 @@ impl ApiCommandError {
             }
             Self::MissingPaths => "openapi.missing_paths",
             Self::OperationNotFound(_) => "openapi.operation_not_found",
-            Self::InvalidWorkflow { .. } => "workflow.invalid_arguments",
+            Self::InvalidWorkflow { .. } | Self::InvalidWorkflowWithActions { .. } => {
+                "workflow.invalid_arguments"
+            }
         }
     }
 
@@ -207,7 +215,7 @@ impl ApiCommandError {
             }
             Self::InvalidKeyValue { kind, .. } => {
                 vec![format!(
-                    "Use --{kind} key=value, for example: pcl api call get /views/public/incidents --{kind} limit=5 --toon"
+                    "Use --{kind} key=value, for example: pcl api call get /views/public/incidents --{kind} limit=5"
                 )]
             }
             Self::InvalidHeaderName { .. } | Self::InvalidHeaderValue { .. } => {
@@ -227,11 +235,12 @@ impl ApiCommandError {
                     "pcl api inspect get /views/public/incidents --toon".to_string(),
                 ]
             }
+            Self::InvalidWorkflowWithActions { next_actions, .. } => next_actions.clone(),
             Self::InvalidWorkflow { .. } => {
                 vec![
-                    "pcl api manifest".to_string(),
-                    "pcl incidents --limit 5".to_string(),
-                    "pcl assertions --project-id <project-id>".to_string(),
+                    "pcl projects --mine".to_string(),
+                    "pcl schema list".to_string(),
+                    "pcl workflows".to_string(),
                 ]
             }
             Self::Request(source)
@@ -350,7 +359,8 @@ impl ApiCommandError {
             | Self::InvalidHeaderValue { .. }
             | Self::InvalidPath(_)
             | Self::Json(_)
-            | Self::InvalidWorkflow { .. } => vec!["fix_input", "retry"],
+            | Self::InvalidWorkflow { .. }
+            | Self::InvalidWorkflowWithActions { .. } => vec!["fix_input", "retry"],
             Self::OperationNotFound(_) | Self::MissingPaths => vec!["inspect_manifest"],
             Self::Request(_) | Self::Url(_) => vec!["check_network", "retry"],
             Self::BodyFile { .. } | Self::Stdin(_) => vec!["fix_body_input", "retry"],
@@ -1518,7 +1528,7 @@ struct EventsArgs {
         alias = "project_id",
         help = "Project UUID or slug"
     )]
-    project: String,
+    project: Option<String>,
     #[arg(
         long,
         alias = "audit_log",
@@ -1785,7 +1795,7 @@ impl ApiArgs {
             }
             ApiCommand::Events(args) => {
                 let output = self
-                    .run_workflow(config, cli_args, events_request(args), &request_log_path)
+                    .run_workflow(config, cli_args, events_request(args)?, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -3154,13 +3164,18 @@ fn human_error_message(code: Option<&str>, message: &str) -> String {
 }
 
 fn clean_cli_error_message(message: &str) -> String {
-    message
+    let lines = message
         .lines()
         .take_while(|line| !line.starts_with("Usage:") && !line.starts_with("For more information"))
         .map(|line| line.strip_prefix("error: ").unwrap_or(line).trim_end())
         .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect::<Vec<_>>();
+    if lines.first() == Some(&"the following required arguments were not provided:")
+        && let Some(argument) = lines.get(1)
+    {
+        return format!("Missing required argument: {}", argument.trim());
+    }
+    lines.join("\n")
 }
 
 fn api_error_reason(error: &Value) -> Option<String> {
@@ -4104,8 +4119,24 @@ fn write_u64_field(
 
 fn write_count_field(output: &mut String, label: &str, data: &Value, field: &str) {
     if let Some(values) = data.get(field).and_then(Value::as_array) {
-        writeln!(output, "{label}: {}", plural_count(values.len(), "item"))
-            .expect("write to string");
+        writeln!(
+            output,
+            "{label}: {}",
+            plural_count(values.len(), count_field_unit(label, field))
+        )
+        .expect("write to string");
+    }
+}
+
+fn count_field_unit(label: &str, field: &str) -> &'static str {
+    match (label, field) {
+        ("Available contracts", _) => "contract",
+        ("Submitted assertions", _) | ("Staging assertions", _) => "assertion",
+        (_, "available_contracts") => "contract",
+        (_, "submitted_assertions" | "staging_assertions" | "submitted_assertion_ids") => {
+            "assertion"
+        }
+        _ => "item",
     }
 }
 
@@ -4285,6 +4316,9 @@ fn find_collection_in_value<'a>(
 }
 
 fn infer_collection_field(request_path: &str) -> String {
+    if request_path.contains("assertion_adopters") {
+        return "contracts".to_string();
+    }
     for field in [
         "incidents",
         "projects",
@@ -4305,6 +4339,9 @@ fn infer_collection_field(request_path: &str) -> String {
 }
 
 fn infer_collection_name(field: &str, request_path: &str, items: &[Value]) -> String {
+    if request_path.contains("assertion_adopters") {
+        return "Contracts".to_string();
+    }
     for name in [
         "incidents",
         "assertions",
@@ -5692,8 +5729,13 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
     if args.verified_contract {
         let address = required_arg(args.address.as_deref(), "--address")?;
         let chain_id = args.chain_id.ok_or_else(|| {
-            ApiCommandError::InvalidWorkflow {
+            ApiCommandError::InvalidWorkflowWithActions {
                 message: "--verified-contract requires --chain-id".to_string(),
+                next_actions: vec![
+                    "pcl search --verified-contract --address <address> --chain-id <chain-id>"
+                        .to_string(),
+                    "pcl search --help".to_string(),
+                ],
             }
         })?;
         let mut request = WorkflowRequest::get(
@@ -5706,6 +5748,22 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
         return Ok(request);
     }
 
+    let query = args
+        .query
+        .as_deref()
+        .filter(|query| !query.trim().is_empty())
+        .ok_or_else(|| {
+            ApiCommandError::InvalidWorkflowWithActions {
+                message: "--query is required unless you choose a specific search action"
+                    .to_string(),
+                next_actions: vec![
+                    "pcl search --query <term>".to_string(),
+                    "pcl search --stats".to_string(),
+                    "pcl search --help".to_string(),
+                ],
+            }
+        })?;
+
     let mut request = WorkflowRequest::get(
         "/search",
         false,
@@ -5714,7 +5772,7 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
             "pcl contracts --project <project-ref>".to_string(),
         ],
     );
-    push_query_string(&mut request.query, "query", args.query.as_deref());
+    push_query_string_value(&mut request.query, "query", query.to_string());
     Ok(request)
 }
 
@@ -5838,7 +5896,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
 
 fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
-    let project = required_arg(args.project.as_deref(), "--project")?;
+    let project = required_project_arg(args.project.as_deref(), "releases", "--project")?;
     if args.preview {
         return Ok(workflow_with_body(
             HttpMethod::Post,
@@ -5951,7 +6009,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
 
 fn deployments_request(args: &DeploymentsArgs) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
-    let project = required_arg(args.project.as_deref(), "--project")?;
+    let project = required_project_arg(args.project.as_deref(), "deployments", "--project")?;
     if args.confirm {
         return Ok(workflow_with_body(
             HttpMethod::Post,
@@ -6001,7 +6059,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
             vec![format!("pcl access --token {token} --accept")],
         ));
     }
-    let project = required_arg(args.project.as_deref(), "--project")?;
+    let project = required_project_arg(args.project.as_deref(), "access", "--project")?;
     if args.my_role {
         return Ok(WorkflowRequest::get(
             format!("/projects/{project}/my-role"),
@@ -6077,10 +6135,15 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
 
 fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
-    let project = required_arg(args.project.as_deref(), "--project")?;
+    let project = required_project_arg(args.project.as_deref(), "integrations", "--project")?;
     let Some(provider) = args.provider else {
-        return Err(ApiCommandError::InvalidWorkflow {
+        return Err(ApiCommandError::InvalidWorkflowWithActions {
             message: "--provider is required".to_string(),
+            next_actions: vec![
+                "pcl integrations --project <project-id> --provider slack".to_string(),
+                "pcl integrations --project <project-id> --provider pagerduty".to_string(),
+                "pcl integrations --help".to_string(),
+            ],
         });
     };
     let provider = provider.path();
@@ -6134,7 +6197,7 @@ fn protocol_manager_request(
     args: &ProtocolManagerArgs,
 ) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
-    let project = required_arg(args.project.as_deref(), "--project")?;
+    let project = required_project_arg(args.project.as_deref(), "protocol-manager", "--project")?;
     let base = format!("/projects/{project}/protocol-manager");
     if args.nonce {
         let address = required_arg(args.address.as_deref(), "--address")?;
@@ -6240,18 +6303,19 @@ fn transfers_request(args: &TransfersArgs) -> Result<WorkflowRequest, ApiCommand
     ))
 }
 
-fn events_request(args: &EventsArgs) -> WorkflowRequest {
+fn events_request(args: &EventsArgs) -> Result<WorkflowRequest, ApiCommandError> {
+    let project = required_project_arg(args.project.as_deref(), "events", "--project")?;
     let mut request = if args.audit_log {
         WorkflowRequest::get(
-            format!("/views/projects/{}/audit-log", args.project),
+            format!("/views/projects/{project}/audit-log"),
             true,
-            vec![format!("pcl events --project {}", args.project)],
+            vec![format!("pcl events --project {project}")],
         )
     } else {
         WorkflowRequest::get(
-            format!("/views/projects/{}/events", args.project),
+            format!("/views/projects/{project}/events"),
             true,
-            vec![format!("pcl events --project {} --audit-log", args.project)],
+            vec![format!("pcl events --project {project} --audit-log")],
         )
     };
     push_query(&mut request.query, "page", args.page);
@@ -6261,7 +6325,7 @@ fn events_request(args: &EventsArgs) -> WorkflowRequest {
         "environment",
         args.environment.as_deref(),
     );
-    request
+    Ok(request)
 }
 
 fn workflow_with_body(
@@ -6689,6 +6753,35 @@ fn required_arg(value: Option<&str>, name: &str) -> Result<String, ApiCommandErr
     })
 }
 
+fn required_arg_with_actions(
+    value: Option<&str>,
+    name: &str,
+    next_actions: Vec<String>,
+) -> Result<String, ApiCommandError> {
+    value.map(ToString::to_string).ok_or_else(|| {
+        ApiCommandError::InvalidWorkflowWithActions {
+            message: format!("{name} is required"),
+            next_actions,
+        }
+    })
+}
+
+fn required_project_arg(
+    value: Option<&str>,
+    command: &str,
+    flag: &str,
+) -> Result<String, ApiCommandError> {
+    required_arg_with_actions(
+        value,
+        flag,
+        vec![
+            "pcl projects --mine".to_string(),
+            format!("pcl {command} {flag} <project-id>"),
+            format!("pcl {command} --help"),
+        ],
+    )
+}
+
 fn push_query_string_value(query: &mut Vec<(String, String)>, name: &str, value: String) {
     query.push((name.to_string(), value));
 }
@@ -6984,7 +7077,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
     if args.project_id.is_none()
         && (args.update || args.delete || args.save || args.unsave || args.resolve || args.widget)
     {
-        required_arg(args.project_id.as_deref(), "--project")?;
+        required_project_arg(args.project_id.as_deref(), "projects", "--project-id")?;
     }
     if let Some(project_id) = &args.project_id {
         if args.resolve {
@@ -7095,7 +7188,8 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
         return Ok(request);
     }
 
-    let project_id = required_arg(args.project_id.as_deref(), "--project")?;
+    let project_id =
+        required_project_arg(args.project_id.as_deref(), "assertions", "--project-id")?;
     let mut query = Vec::new();
     push_query(&mut query, "page", args.page);
     push_query(&mut query, "limit", args.limit);
