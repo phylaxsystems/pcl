@@ -515,7 +515,7 @@ impl WhoamiArgs {
                     "auth": auth_value(config.auth.as_ref()),
                 },
                 "next_actions": if config.auth.is_some() {
-                    json!(["pcl account", "pcl projects --limit 10", "pcl doctor"])
+                    json!(["pcl account", "pcl projects --mine", "pcl doctor"])
                 } else {
                     json!(["pcl auth login", "pcl doctor"])
                 },
