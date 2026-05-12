@@ -5,6 +5,7 @@ use crate::cli::{
     Commands,
 };
 use clap::{
+    CommandFactory,
     Parser,
     error::ErrorKind,
 };
@@ -69,26 +70,34 @@ async fn main() -> Result<()> {
         Err(err) => {
             let output_mode = wants_output_mode(env::args_os());
             set_current_output_mode(output_mode);
-            if output_mode.is_json() {
-                let exit_code = err.exit_code();
-                let raw_args = env::args_os().collect::<Vec<_>>();
-                let envelope = with_envelope_metadata(clap_error_envelope(&err, &raw_args));
-                eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
-                std::process::exit(exit_code);
+            let raw_args = env::args_os().collect::<Vec<_>>();
+            if output_mode.is_human() {
+                if should_show_root_help(&err, &raw_args) {
+                    let mut command = Cli::command();
+                    command.print_help()?;
+                    println!();
+                    std::process::exit(0);
+                }
+                err.exit();
             }
             if matches!(
                 err.kind(),
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
-            ) {
+            ) && !output_mode.is_json()
+            {
                 err.exit();
             }
-            let raw_args = env::args_os().collect::<Vec<_>>();
+            if output_mode.is_json() {
+                let exit_code = err.exit_code();
+                eprintln!(
+                    "{}",
+                    serde_json::to_string_pretty(&clap_error_envelope(&err, &raw_args))?
+                );
+                std::process::exit(exit_code);
+            }
             eprint!(
                 "{}",
-                envelope_output_string(
-                    &with_envelope_metadata(clap_error_envelope(&err, &raw_args)),
-                    false
-                )?
+                envelope_output_string(&clap_error_envelope(&err, &raw_args), false)?
             );
             std::process::exit(err.exit_code());
         }
@@ -697,6 +706,13 @@ where
 {
     args.into_iter()
         .any(|arg| arg.as_ref() == OsStr::new("--llms"))
+}
+
+fn should_show_root_help(err: &clap::Error, args: &[OsString]) -> bool {
+    matches!(
+        err.kind(),
+        ErrorKind::MissingSubcommand | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+    ) && parsed_command_name(args).is_none()
 }
 
 fn clap_error_envelope(err: &clap::Error, args: &[OsString]) -> Value {
