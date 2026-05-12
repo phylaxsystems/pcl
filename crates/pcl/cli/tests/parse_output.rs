@@ -86,3 +86,60 @@ fn machine_parse_errors_stay_structured() {
     assert_eq!(envelope["error"]["code"], "cli.argument_conflict");
     assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
 }
+
+#[test]
+fn api_manifest_defaults_to_human_output() {
+    let output = run_pcl(&["api", "manifest"]);
+
+    assert!(
+        output.status.success(),
+        "api manifest failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "human success output should be written to stdout: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    assert!(stdout.starts_with("OK\n"), "{stdout}");
+    assert!(stdout.contains("PCL command surface"), "{stdout}");
+    assert!(!stdout.starts_with("status: ok\n"), "{stdout}");
+    assert!(
+        !stdout.contains("schema_version: pcl.envelope.v1"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn documented_agent_leaf_commands_accept_toon_after_subcommands() {
+    for args in [
+        ["api", "manifest", "--toon"].as_slice(),
+        ["llms", "--toon"].as_slice(),
+        ["schema", "list", "--toon"].as_slice(),
+    ] {
+        let output = run_pcl(args);
+
+        assert!(
+            output.status.success(),
+            "command failed: pcl {}\nstdout:\n{}\nstderr:\n{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "agent success output should be written to stdout: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+        assert!(stdout.starts_with("status: ok\n"), "{stdout}");
+        assert!(
+            stdout.contains("schema_version: pcl.envelope.v1"),
+            "{stdout}"
+        );
+    }
+}
