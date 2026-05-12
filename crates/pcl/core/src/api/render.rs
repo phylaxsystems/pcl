@@ -2068,7 +2068,9 @@ fn humanize_command(command: &str) -> String {
     command
         .replace(" --format toon", "")
         .replace(" --toon", "")
+        .replace(" --json", "")
         .replace("--toon ", "")
+        .replace("--json ", "")
 }
 
 fn is_body_template_key(key: &str) -> bool {
