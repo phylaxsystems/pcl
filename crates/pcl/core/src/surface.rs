@@ -9,6 +9,7 @@ use crate::{
     api::{
         api_manifest,
         envelope_output_string,
+        response_body_value,
         with_envelope_metadata,
     },
     config::{
@@ -1865,19 +1866,6 @@ fn build_api_url(base: &url::Url, path: &str) -> Result<url::Url, ProductSurface
     let mut url = base.clone();
     url.set_path(&format!("/api/v1{path}"));
     Ok(url)
-}
-
-fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {
-    if content_type.contains("application/json") {
-        return serde_json::from_slice(bytes).unwrap_or_else(|_| {
-            json!({
-                "parse_error": "response declared JSON but could not be parsed",
-                "raw": String::from_utf8_lossy(bytes),
-            })
-        });
-    }
-    serde_json::from_slice(bytes)
-        .unwrap_or_else(|_| json!(String::from_utf8_lossy(bytes).to_string()))
 }
 
 fn request_id_from_headers(headers: &HeaderMap) -> Option<String> {
