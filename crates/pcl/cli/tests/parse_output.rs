@@ -85,6 +85,20 @@ fn machine_parse_errors_stay_structured() {
     assert_eq!(envelope["status"], "error");
     assert_eq!(envelope["error"]["code"], "cli.argument_conflict");
     assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+
+    let toon_at_end = run_pcl(&["projects", "--mine", "--saved", "--toon"]);
+
+    assert!(
+        !toon_at_end.status.success(),
+        "conflicting flags should fail\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&toon_at_end.stdout),
+        String::from_utf8_lossy(&toon_at_end.stderr)
+    );
+    assert!(toon_at_end.stdout.is_empty());
+    let toon_at_end_stderr = String::from_utf8(toon_at_end.stderr).expect("utf-8 toon stderr");
+    assert!(toon_at_end_stderr.starts_with("status: error\n"));
+    assert!(toon_at_end_stderr.contains("code: cli.argument_conflict"));
+    assert!(toon_at_end_stderr.contains("schema_version: pcl.envelope.v1"));
 }
 
 #[test]
@@ -116,9 +130,16 @@ fn api_manifest_defaults_to_human_output() {
 #[test]
 fn documented_agent_leaf_commands_accept_toon_after_subcommands() {
     for args in [
+        ["--toon", "--llms"].as_slice(),
         ["api", "manifest", "--toon"].as_slice(),
+        ["doctor", "--offline", "--toon"].as_slice(),
+        ["whoami", "--offline", "--toon"].as_slice(),
         ["llms", "--toon"].as_slice(),
+        ["workflows", "--toon"].as_slice(),
         ["schema", "list", "--toon"].as_slice(),
+        ["jobs", "list", "--toon"].as_slice(),
+        ["artifacts", "list", "--toon"].as_slice(),
+        ["requests", "list", "--toon"].as_slice(),
     ] {
         let output = run_pcl(args);
 

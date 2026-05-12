@@ -255,7 +255,10 @@ fn strip_hidden_completion_options(script: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
+    use clap::{
+        Parser,
+        error::ErrorKind,
+    };
 
     #[test]
     fn parses_config_show_command() {
@@ -448,6 +451,52 @@ mod tests {
                 );
             }
             _ => panic!("expected apply command"),
+        }
+    }
+
+    #[test]
+    fn every_visible_command_accepts_toon_before_help() {
+        let mut command_paths = Vec::new();
+        let command = Cli::command();
+        collect_command_paths(&command, &[], &mut command_paths);
+        assert!(!command_paths.is_empty(), "expected visible commands");
+
+        for path in command_paths {
+            let mut argv = vec!["pcl".to_string()];
+            argv.extend(path.iter().cloned());
+            argv.push("--toon".to_string());
+            argv.push("--help".to_string());
+
+            let Err(err) = Cli::try_parse_from(argv.clone()) else {
+                panic!("expected help display for `{}`", argv.join(" "));
+            };
+            assert_eq!(
+                err.kind(),
+                ErrorKind::DisplayHelp,
+                "`{}` should accept --toon and then display help; got {err}",
+                argv.join(" ")
+            );
+        }
+    }
+
+    fn collect_command_paths(
+        command: &clap::Command,
+        prefix: &[String],
+        paths: &mut Vec<Vec<String>>,
+    ) {
+        let subcommands = command
+            .get_subcommands()
+            .filter(|subcommand| !subcommand.is_hide_set() && subcommand.get_name() != "help")
+            .collect::<Vec<_>>();
+
+        if !prefix.is_empty() {
+            paths.push(prefix.to_owned());
+        }
+
+        for subcommand in subcommands {
+            let mut path = prefix.to_owned();
+            path.push(subcommand.get_name().to_string());
+            collect_command_paths(subcommand, &path, paths);
         }
     }
 }
