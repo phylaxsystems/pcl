@@ -685,77 +685,44 @@ fn config_error_code(err: &ConfigError) -> &'static str {
     }
 }
 
-fn wants_json_output<I, S>(args: I) -> bool
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let mut saw_output_flag = false;
-    for arg in args {
-        let arg = arg.as_ref();
-        if arg == OsStr::new("--json") || arg == OsStr::new("-j") {
-            return true;
-        }
-        if saw_output_flag {
-            saw_output_flag = false;
-            if arg == OsStr::new("json") {
-                return true;
-            }
-            continue;
-        }
-        if arg == OsStr::new("--format") {
-            saw_output_flag = true;
-            continue;
-        }
-        if let Some(value) = arg.to_str().and_then(|arg| arg.strip_prefix("--format="))
-            && value == "json"
-        {
-            return true;
-        }
-    }
-    false
-}
-
-fn wants_toon_output<I, S>(args: I) -> bool
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let mut saw_output_flag = false;
-    for arg in args {
-        let arg = arg.as_ref();
-        if arg == OsStr::new("--toon") {
-            return true;
-        }
-        if saw_output_flag {
-            saw_output_flag = false;
-            if arg == OsStr::new("toon") {
-                return true;
-            }
-            continue;
-        }
-        if arg == OsStr::new("--format") {
-            saw_output_flag = true;
-            continue;
-        }
-        if let Some(value) = arg.to_str().and_then(|arg| arg.strip_prefix("--format="))
-            && value == "toon"
-        {
-            return true;
-        }
-    }
-    false
-}
-
 fn wants_output_mode<I, S>(args: I) -> OutputMode
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let args: Vec<S> = args.into_iter().collect();
-    if wants_json_output(&args) {
+    let mut saw_json = false;
+    let mut saw_toon = false;
+    let mut saw_format_flag = false;
+
+    for arg in args {
+        let arg = arg.as_ref();
+        if saw_format_flag {
+            saw_format_flag = false;
+            match arg.to_str() {
+                Some("json") => saw_json = true,
+                Some("toon") => saw_toon = true,
+                _ => {}
+            }
+            continue;
+        }
+        if arg == OsStr::new("--json") || arg == OsStr::new("-j") {
+            saw_json = true;
+        } else if arg == OsStr::new("--toon") {
+            saw_toon = true;
+        } else if arg == OsStr::new("--format") {
+            saw_format_flag = true;
+        } else if let Some(value) = arg.to_str().and_then(|arg| arg.strip_prefix("--format=")) {
+            match value {
+                "json" => saw_json = true,
+                "toon" => saw_toon = true,
+                _ => {}
+            }
+        }
+    }
+
+    if saw_json {
         OutputMode::Json
-    } else if wants_toon_output(&args) {
+    } else if saw_toon {
         OutputMode::Toon
     } else {
         OutputMode::Human
@@ -937,19 +904,21 @@ mod tests {
     use pcl_core::api::toon_string;
 
     #[test]
-    fn detects_json_flag_before_successful_parse() {
-        assert!(wants_json_output(["pcl", "--json", "api"]));
-        assert!(wants_json_output(["pcl", "api", "projects", "-j"]));
-        assert!(wants_json_output(["pcl", "--format", "json", "api"]));
-        assert!(wants_json_output(["pcl", "--format=json", "api"]));
-        assert!(!wants_json_output(["pcl", "--format", "toon", "api"]));
-        assert!(!wants_json_output(["pcl", "api", "projects"]));
-    }
-
-    #[test]
     fn detects_output_mode_before_successful_parse() {
         assert_eq!(
             wants_output_mode(["pcl", "--json", "api"]),
+            OutputMode::Json
+        );
+        assert_eq!(
+            wants_output_mode(["pcl", "api", "projects", "-j"]),
+            OutputMode::Json
+        );
+        assert_eq!(
+            wants_output_mode(["pcl", "--format", "json", "api"]),
+            OutputMode::Json
+        );
+        assert_eq!(
+            wants_output_mode(["pcl", "--format=json", "api"]),
             OutputMode::Json
         );
         assert_eq!(

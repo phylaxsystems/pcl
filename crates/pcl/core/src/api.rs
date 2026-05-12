@@ -3238,80 +3238,52 @@ fn render_human_special(output: &mut String, envelope: &Value) -> bool {
     };
     let display_data = data.get("data").unwrap_or(data);
 
-    if render_login_challenge(output, display_data) {
-        return true;
-    }
-    if render_request_plan(output, display_data) {
-        return true;
-    }
-    if render_auth_status(output, display_data) {
-        return true;
-    }
-    if render_identity_status(output, display_data) {
-        return true;
-    }
-    if render_doctor(output, display_data) {
-        return true;
+    for render in [
+        render_login_challenge as fn(&mut String, &Value) -> bool,
+        render_request_plan,
+        render_auth_status,
+        render_identity_status,
+        render_doctor,
+    ] {
+        if render(output, display_data) {
+            return true;
+        }
     }
     if render_project_home(output, data, display_data) {
         return true;
     }
-    if render_project_detail(output, display_data) {
-        return true;
-    }
-    if render_incident_detail(output, display_data) {
-        return true;
-    }
-    if render_search_results(output, display_data) {
-        return true;
-    }
-    if render_account_detail(output, display_data) {
-        return true;
-    }
-    if render_deployment_state(output, display_data) {
-        return true;
-    }
-    if render_transfer_state(output, display_data) {
-        return true;
-    }
-    if render_integration_status(output, display_data) {
-        return true;
-    }
-    if render_protocol_manager_status(output, display_data) {
-        return true;
+    for render in [
+        render_project_detail as fn(&mut String, &Value) -> bool,
+        render_incident_detail,
+        render_search_results,
+        render_account_detail,
+        render_deployment_state,
+        render_transfer_state,
+        render_integration_status,
+        render_protocol_manager_status,
+    ] {
+        if render(output, display_data) {
+            return true;
+        }
     }
     if render_mutation_success(output, envelope, display_data) {
         return true;
     }
-    if render_api_manifest(output, display_data) {
-        return true;
-    }
-    if render_llms_guide(output, display_data) {
-        return true;
-    }
-    if render_workflow_detail(output, display_data) {
-        return true;
-    }
-    if render_schema_detail(output, display_data) {
-        return true;
-    }
-    if render_operation_detail(output, display_data) {
-        return true;
-    }
-    if render_api_coverage(output, display_data) {
-        return true;
-    }
-    if render_raw_api_response(output, display_data) {
-        return true;
-    }
-    if render_export_result(output, display_data) {
-        return true;
-    }
-    if render_job_detail(output, display_data) {
-        return true;
-    }
-    if render_path_or_toggle_result(output, display_data) {
-        return true;
+    for render in [
+        render_api_manifest as fn(&mut String, &Value) -> bool,
+        render_llms_guide,
+        render_workflow_detail,
+        render_schema_detail,
+        render_operation_detail,
+        render_api_coverage,
+        render_raw_api_response,
+        render_export_result,
+        render_job_detail,
+        render_path_or_toggle_result,
+    ] {
+        if render(output, display_data) {
+            return true;
+        }
     }
     if render_body_template(output, envelope, display_data) {
         return true;
@@ -3326,7 +3298,7 @@ fn render_login_challenge(output: &mut String, data: &Value) -> bool {
     }
     output.push_str("\nLogin required\n");
     if let Some(reason) = data.get("reason").and_then(Value::as_str) {
-        writeln!(output, "Reason: {}", title_case(reason)).expect("write to string");
+        writeln!(output, "Reason: {}", human_label(reason)).expect("write to string");
     }
     if let Some(url) = data.get("device_url").and_then(Value::as_str) {
         writeln!(output, "Open: {url}").expect("write to string");
@@ -3534,7 +3506,7 @@ fn render_project_detail(output: &mut String, data: &Value) -> bool {
         )
         .expect("write to string");
     }
-    write_network_list(output, data);
+    write_network_list_for_value(output, data);
     write_optional_string_field(output, "Description", data, "project_description");
     write_optional_string_field(output, "GitHub", data, "github_url");
     write_timestamp_field(output, "Created", data, "created_at");
@@ -3600,13 +3572,14 @@ fn render_incident_detail(output: &mut String, data: &Value) -> bool {
     }
 
     output.push_str("\nTrace summary\n");
-    write_u64_count_field(
-        output,
-        "Invalidating transactions",
-        data,
-        "transaction_count",
-        "transaction",
-    );
+    if let Some(value) = data.get("transaction_count").and_then(Value::as_u64) {
+        writeln!(
+            output,
+            "Invalidating transactions: {}",
+            plural_count(value, "transaction")
+        )
+        .expect("write to string");
+    }
     write_u64_field(output, "Traces completed", data, "traces_completed", None);
     write_u64_field(output, "Traces pending", data, "traces_pending", None);
 
@@ -4091,7 +4064,7 @@ fn render_operation_detail(output: &mut String, data: &Value) -> bool {
         writeln!(output, "Summary: {summary}").expect("write to string");
     }
     if let Some(policy) = data.pointer("/raw_api_use/policy").and_then(Value::as_str) {
-        writeln!(output, "Raw API policy: {}", title_case(policy)).expect("write to string");
+        writeln!(output, "Raw API policy: {}", human_label(policy)).expect("write to string");
     }
     if let Some(alternatives) = data.get("workflow_alternatives").and_then(Value::as_array)
         && !alternatives.is_empty()
@@ -4330,17 +4303,6 @@ fn write_u64_field(
     }
 }
 
-fn write_u64_count_field(output: &mut String, label: &str, data: &Value, field: &str, item: &str) {
-    if let Some(value) = data.get(field).and_then(Value::as_u64) {
-        let count = if value == 1 {
-            format!("1 {item}")
-        } else {
-            format!("{value} {item}s")
-        };
-        writeln!(output, "{label}: {count}").expect("write to string");
-    }
-}
-
 fn write_count_field(output: &mut String, label: &str, data: &Value, field: &str) {
     if let Some(values) = data.get(field).and_then(Value::as_array) {
         writeln!(
@@ -4362,10 +4324,6 @@ fn count_field_unit(label: &str, field: &str) -> &'static str {
         }
         _ => "item",
     }
-}
-
-fn write_network_list(output: &mut String, data: &Value) {
-    write_network_list_for_value(output, data);
 }
 
 fn write_network_list_for_value(output: &mut String, data: &Value) {
@@ -4523,12 +4481,11 @@ fn find_collection_in_value<'a>(
         "body_variants",
         "examples",
         "product_surfaces",
-        "requests",
     ] {
         if let Some(items) = data.get(field).and_then(Value::as_array) {
             return Some(HumanCollection {
                 field: field.to_string(),
-                name: title_case(field),
+                name: human_label(field),
                 items,
                 pagination: data.get("pagination"),
                 meta: data.get("_meta"),
@@ -4583,13 +4540,13 @@ fn infer_collection_name(field: &str, request_path: &str, items: &[Value]) -> St
         "requests",
     ] {
         if request_path.contains(name) {
-            return title_case(name);
+            return human_label(name);
         }
     }
     if items.iter().any(has_incident_shape) {
         return "Incidents".to_string();
     }
-    title_case(field)
+    human_label(field)
 }
 
 fn collection_summary(collection: &HumanCollection<'_>) -> String {
@@ -4697,7 +4654,7 @@ fn render_operations_table(output: &mut String, items: &[Value]) {
             method,
             pad(path, 45),
             pad(operation, 36),
-            title_case(policy)
+            human_label(policy)
         )
         .expect("write to string");
     }
@@ -5126,7 +5083,7 @@ fn render_generic_table(output: &mut String, items: &[Value]) {
 
     write!(output, "{:<3}", "#").expect("write to string");
     for column in &columns {
-        write!(output, " {:<22}", title_case(column)).expect("write to string");
+        write!(output, " {:<22}", human_label(column)).expect("write to string");
     }
     output.push('\n');
 
@@ -5448,10 +5405,6 @@ fn format_unix_timestamp(value: u64) -> String {
     )
 }
 
-fn title_case(value: &str) -> String {
-    human_label(value)
-}
-
 fn human_label(value: &str) -> String {
     let words = split_label_words(value);
     let mut rendered = Vec::new();
@@ -5509,8 +5462,9 @@ fn capitalize(value: &str) -> String {
     })
 }
 
-fn plural_count(count: usize, item: &str) -> String {
-    if count == 1 {
+fn plural_count(count: impl std::fmt::Display, item: &str) -> String {
+    let count = count.to_string();
+    if count == "1" {
         format!("1 {item}")
     } else {
         format!("{count} {item}s")
