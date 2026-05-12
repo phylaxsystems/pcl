@@ -912,7 +912,11 @@ struct WorkflowRequest {
 }
 
 impl WorkflowRequest {
-    fn get(path: impl Into<String>, require_auth: bool, next_actions: Vec<String>) -> Self {
+    fn get(
+        path: impl Into<String>,
+        require_auth: bool,
+        next_actions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
         Self::get_with_query(path, Vec::new(), require_auth, next_actions)
     }
 
@@ -920,7 +924,7 @@ impl WorkflowRequest {
         path: impl Into<String>,
         query: Vec<(String, String)>,
         require_auth: bool,
-        next_actions: Vec<String>,
+        next_actions: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         Self {
             method: HttpMethod::Get,
@@ -928,7 +932,7 @@ impl WorkflowRequest {
             query,
             body: None,
             require_auth,
-            next_actions,
+            next_actions: next_actions.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -2987,7 +2991,7 @@ fn write_request_log(
     );
 }
 
-fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {
+pub(crate) fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {
     if content_type.contains("application/json") {
         return serde_json::from_slice(bytes).unwrap_or_else(|_| {
             json!({
@@ -4619,210 +4623,163 @@ fn render_collection_items(output: &mut String, collection: &HumanCollection<'_>
     }
 }
 
+macro_rules! render_rows {
+    ($output:expr, $items:expr, $header:expr, $row:literal, |$item:ident| $($arg:expr),+ $(,)?) => {{
+        writeln!($output, "{}", $header).expect("write to string");
+        for $item in $items {
+            writeln!($output, $row, $($arg),+).expect("write to string");
+        }
+    }};
+}
+
+fn str_field<'a>(item: &'a Value, field: &str) -> &'a str {
+    item.get(field).and_then(Value::as_str).unwrap_or("-")
+}
+
+fn str_any<'a>(item: &'a Value, fields: &[&str], default: &'static str) -> &'a str {
+    fields
+        .iter()
+        .find_map(|field| item.get(*field).and_then(Value::as_str))
+        .unwrap_or(default)
+}
+
 fn render_checks_table(output: &mut String, items: &[Value]) {
-    writeln!(output, "{:<20} {:<10} Details", "Check", "Status").expect("write to string");
-    for item in items {
-        let name = item.get("name").and_then(Value::as_str).unwrap_or("-");
-        let status = item.get("status").and_then(Value::as_str).unwrap_or("-");
-        let details = item
-            .get("details")
+    render_rows!(
+        output,
+        items,
+        format!("{:<20} {:<10} Details", "Check", "Status"),
+        "{:<20} {:<10} {}",
+        |item| pad(str_field(item, "name"), 20),
+        pad(str_field(item, "status"), 10),
+        item.get("details")
             .or_else(|| item.get("path"))
-            .map_or_else(String::new, human_compact_summary);
-        writeln!(
-            output,
-            "{:<20} {:<10} {}",
-            pad(name, 20),
-            pad(status, 10),
-            details
-        )
-        .expect("write to string");
-    }
+            .map_or_else(String::new, human_compact_summary),
+    );
 }
 
 fn render_operations_table(output: &mut String, items: &[Value]) {
-    writeln!(
+    render_rows!(
         output,
-        "{:<7} {:<45} {:<36} Policy",
-        "Method", "Path", "Operation"
-    )
-    .expect("write to string");
-    for item in items {
-        let method = item.get("method").and_then(Value::as_str).unwrap_or("-");
-        let path = item.get("path").and_then(Value::as_str).unwrap_or("-");
-        let operation = item
-            .get("operation_id")
-            .and_then(Value::as_str)
-            .unwrap_or("-");
-        let policy = item
-            .pointer("/raw_api_use/policy")
-            .and_then(Value::as_str)
-            .map_or("-", |value| value);
-        writeln!(
-            output,
-            "{:<7} {:<45} {:<36} {}",
-            method,
-            pad(path, 45),
-            pad(operation, 36),
-            human_label(policy)
-        )
-        .expect("write to string");
-    }
+        items,
+        format!("{:<7} {:<45} {:<36} Policy", "Method", "Path", "Operation"),
+        "{:<7} {:<45} {:<36} {}",
+        |item| str_field(item, "method"),
+        pad(str_field(item, "path"), 45),
+        pad(str_field(item, "operation_id"), 36),
+        human_label(
+            item.pointer("/raw_api_use/policy")
+                .and_then(Value::as_str)
+                .unwrap_or("-"),
+        ),
+    );
 }
 
 fn render_workflows_table(output: &mut String, items: &[Value]) {
-    writeln!(output, "{:<28} Steps  Description", "Workflow").expect("write to string");
-    for item in items {
-        let name = item.get("name").and_then(Value::as_str).unwrap_or("-");
-        let steps = item
-            .get("steps")
+    render_rows!(
+        output,
+        items,
+        format!("{:<28} Steps  Description", "Workflow"),
+        "{:<28} {:<5} {}",
+        |item| pad(str_field(item, "name"), 28),
+        item.get("steps")
             .and_then(Value::as_array)
-            .map_or(0, Vec::len);
-        let description = item
-            .get("description")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        writeln!(
-            output,
-            "{:<28} {:<5} {}",
-            pad(name, 28),
-            steps,
-            truncate(description, 72)
-        )
-        .expect("write to string");
-    }
+            .map_or(0, Vec::len),
+        truncate(
+            item.get("description")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            72,
+        ),
+    );
 }
 
 fn render_schemas_table(output: &mut String, items: &[Value]) {
-    writeln!(output, "{:<24} {:<7} Command", "Workflow", "Actions").expect("write to string");
-    for item in items {
-        let workflow = item.get("workflow").and_then(Value::as_str).unwrap_or("-");
-        let actions = item.get("actions").and_then(Value::as_u64).unwrap_or(0);
-        let command = item.get("command").and_then(Value::as_str).unwrap_or("-");
-        writeln!(
-            output,
-            "{:<24} {:<7} {}",
-            pad(workflow, 24),
-            actions,
-            truncate(&humanize_command(command), 96)
-        )
-        .expect("write to string");
-    }
+    render_rows!(
+        output,
+        items,
+        format!("{:<24} {:<7} Command", "Workflow", "Actions"),
+        "{:<24} {:<7} {}",
+        |item| pad(str_field(item, "workflow"), 24),
+        item.get("actions").and_then(Value::as_u64).unwrap_or(0),
+        truncate(&humanize_command(str_field(item, "command")), 96),
+    );
 }
 
 fn render_request_records_table(output: &mut String, items: &[Value]) {
-    writeln!(
+    render_rows!(
         output,
-        "{:<16} {:<7} {:<45} {:<6} Request ID",
-        "Time", "Method", "Path", "HTTP"
-    )
-    .expect("write to string");
-    for item in items {
-        let time = item
-            .get("timestamp")
-            .and_then(Value::as_str)
-            .map_or_else(String::new, format_timestamp);
-        let method = item.get("method").and_then(Value::as_str).unwrap_or("-");
-        let path = item.get("path").and_then(Value::as_str).unwrap_or("-");
-        let status = item
-            .get("status")
+        items,
+        format!(
+            "{:<16} {:<7} {:<45} {:<6} Request ID",
+            "Time", "Method", "Path", "HTTP"
+        ),
+        "{:<16} {:<7} {:<45} {:<6} {}",
+        |item| {
+            pad(
+                &item
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .map_or_else(String::new, format_timestamp),
+                16,
+            )
+        },
+        str_field(item, "method"),
+        pad(str_field(item, "path"), 45),
+        item.get("status")
             .and_then(Value::as_u64)
-            .map_or_else(|| "-".to_string(), |value| value.to_string());
-        let request_id = item
-            .get("request_id")
-            .and_then(Value::as_str)
-            .unwrap_or("-");
-        writeln!(
-            output,
-            "{:<16} {:<7} {:<45} {:<6} {}",
-            pad(&time, 16),
-            method,
-            pad(path, 45),
-            status,
-            request_id
-        )
-        .expect("write to string");
-    }
+            .map_or_else(|| "-".to_string(), |value| value.to_string()),
+        str_field(item, "request_id"),
+    );
 }
 
 fn render_jobs_table(output: &mut String, items: &[Value]) {
-    writeln!(
+    render_rows!(
         output,
-        "{:<38} {:<16} {:<12} Updated",
-        "Job", "Kind", "Status"
-    )
-    .expect("write to string");
-    for item in items {
-        let job_id = item.get("job_id").and_then(Value::as_str).unwrap_or("-");
-        let kind = item.get("kind").and_then(Value::as_str).unwrap_or("-");
-        let status = item.get("status").and_then(Value::as_str).unwrap_or("-");
-        let updated = item
-            .get("updated_at")
+        items,
+        format!("{:<38} {:<16} {:<12} Updated", "Job", "Kind", "Status"),
+        "{:<38} {:<16} {:<12} {}",
+        |item| pad(str_field(item, "job_id"), 38),
+        pad(str_field(item, "kind"), 16),
+        pad(str_field(item, "status"), 12),
+        item.get("updated_at")
             .and_then(Value::as_str)
-            .map_or_else(String::new, format_timestamp);
-        writeln!(
-            output,
-            "{:<38} {:<16} {:<12} {}",
-            pad(job_id, 38),
-            pad(kind, 16),
-            pad(status, 12),
-            updated
-        )
-        .expect("write to string");
-    }
+            .map_or_else(String::new, format_timestamp),
+    );
 }
 
 fn render_artifacts_table(output: &mut String, items: &[Value]) {
-    writeln!(output, "{:<58} {:>10} Modified", "Path", "Bytes").expect("write to string");
-    for item in items {
-        let path = item.get("path").and_then(Value::as_str).unwrap_or("-");
-        let bytes = item
-            .get("bytes")
+    render_rows!(
+        output,
+        items,
+        format!("{:<58} {:>10} Modified", "Path", "Bytes"),
+        "{:<58} {:>10} {}",
+        |item| pad(str_field(item, "path"), 58),
+        item.get("bytes")
             .and_then(Value::as_u64)
-            .map_or_else(|| "-".to_string(), |value| value.to_string());
-        let modified = item
-            .get("modified")
+            .map_or_else(|| "-".to_string(), |value| value.to_string()),
+        item.get("modified")
             .and_then(Value::as_u64)
-            .map_or_else(String::new, format_unix_timestamp);
-        writeln!(output, "{:<58} {:>10} {}", pad(path, 58), bytes, modified)
-            .expect("write to string");
-    }
+            .map_or_else(String::new, format_unix_timestamp),
+    );
 }
 
 fn render_projects_table(output: &mut String, items: &[Value]) {
-    writeln!(
+    render_rows!(
         output,
-        "{:<28} {:<22} {:<20} {:<10} ID",
-        "Project", "Slug", "Network", "Visibility"
-    )
-    .expect("write to string");
-    for item in items {
-        let name = item
-            .get("project_name")
-            .or_else(|| item.get("name"))
-            .and_then(Value::as_str)
-            .unwrap_or("-");
-        let slug = item.get("slug").and_then(Value::as_str).unwrap_or("-");
-        let network = first_project_network(item);
-        let visibility = item
-            .get("is_private")
+        items,
+        format!(
+            "{:<28} {:<22} {:<20} {:<10} ID",
+            "Project", "Slug", "Network", "Visibility"
+        ),
+        "{:<28} {:<22} {:<20} {:<10} {}",
+        |item| pad(str_any(item, &["project_name", "name"], "-"), 28),
+        pad(str_field(item, "slug"), 22),
+        pad(&first_project_network(item), 20),
+        item.get("is_private")
             .and_then(Value::as_bool)
-            .map_or("-", |private| if private { "private" } else { "public" });
-        let id = item
-            .get("project_id")
-            .or_else(|| item.get("id"))
-            .and_then(Value::as_str)
-            .unwrap_or("-");
-        writeln!(
-            output,
-            "{:<28} {:<22} {:<20} {:<10} {}",
-            pad(name, 28),
-            pad(slug, 22),
-            pad(&network, 20),
-            visibility,
-            id
-        )
-        .expect("write to string");
-    }
+            .map_or("-", |private| if private { "private" } else { "public" }),
+        str_any(item, &["project_id", "id"], "-"),
+    );
 }
 
 fn first_project_network(item: &Value) -> String {
@@ -4838,151 +4795,89 @@ fn first_project_network(item: &Value) -> String {
 }
 
 fn render_members_table(output: &mut String, items: &[Value]) {
-    writeln!(output, "{:<34} {:<12} User ID", "Email", "Role").expect("write to string");
-    for item in items {
-        let email = item.get("email").and_then(Value::as_str).unwrap_or("-");
-        let role = item.get("role").and_then(Value::as_str).unwrap_or("-");
-        let user_id = item.get("user_id").and_then(Value::as_str).unwrap_or("-");
-        writeln!(
-            output,
-            "{:<34} {:<12} {}",
-            pad(email, 34),
-            pad(role, 12),
-            user_id
-        )
-        .expect("write to string");
-    }
+    render_rows!(
+        output,
+        items,
+        format!("{:<34} {:<12} User ID", "Email", "Role"),
+        "{:<34} {:<12} {}",
+        |item| pad(str_field(item, "email"), 34),
+        pad(str_field(item, "role"), 12),
+        str_field(item, "user_id"),
+    );
 }
 
 fn render_invitations_table(output: &mut String, items: &[Value]) {
-    writeln!(output, "{:<34} {:<12} {:<16} ID", "Email", "Role", "Status")
-        .expect("write to string");
-    for item in items {
-        let email = item
-            .get("email")
-            .or_else(|| item.get("identifier"))
-            .or_else(|| item.get("invitee_identifier"))
-            .and_then(Value::as_str)
-            .unwrap_or("-");
-        let role = item.get("role").and_then(Value::as_str).unwrap_or("-");
-        let status = item
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("pending");
-        let id = item
-            .get("id")
-            .or_else(|| item.get("invitation_id"))
-            .and_then(Value::as_str)
-            .unwrap_or("-");
-        writeln!(
-            output,
-            "{:<34} {:<12} {:<16} {}",
-            pad(email, 34),
-            pad(role, 12),
-            pad(status, 16),
-            id
-        )
-        .expect("write to string");
-    }
+    render_rows!(
+        output,
+        items,
+        format!("{:<34} {:<12} {:<16} ID", "Email", "Role", "Status"),
+        "{:<34} {:<12} {:<16} {}",
+        |item| {
+            pad(
+                str_any(item, &["email", "identifier", "invitee_identifier"], "-"),
+                34,
+            )
+        },
+        pad(str_field(item, "role"), 12),
+        pad(str_any(item, &["status"], "pending"), 16),
+        str_any(item, &["id", "invitation_id"], "-"),
+    );
 }
 
 fn render_releases_table(output: &mut String, items: &[Value]) {
-    writeln!(
+    render_rows!(
         output,
-        "{:<36} {:<14} {:<16} Created",
-        "Release", "Environment", "Status"
-    )
-    .expect("write to string");
-    for item in items {
-        let id = item
-            .get("release_id")
-            .or_else(|| item.get("id"))
-            .and_then(Value::as_str)
-            .unwrap_or("-");
-        let environment = item
-            .get("environment")
-            .and_then(Value::as_str)
-            .unwrap_or("-");
-        let status = item.get("status").and_then(Value::as_str).unwrap_or("-");
-        let created = item
-            .get("created_at")
+        items,
+        format!(
+            "{:<36} {:<14} {:<16} Created",
+            "Release", "Environment", "Status"
+        ),
+        "{:<36} {:<14} {:<16} {}",
+        |item| pad(str_any(item, &["release_id", "id"], "-"), 36),
+        pad(str_field(item, "environment"), 14),
+        pad(str_field(item, "status"), 16),
+        item.get("created_at")
             .or_else(|| item.get("createdAt"))
             .and_then(Value::as_str)
-            .map_or_else(String::new, format_timestamp);
-        writeln!(
-            output,
-            "{:<36} {:<14} {:<16} {}",
-            pad(id, 36),
-            pad(environment, 14),
-            pad(status, 16),
-            created
-        )
-        .expect("write to string");
-    }
+            .map_or_else(String::new, format_timestamp),
+    );
 }
 
 fn render_events_table(output: &mut String, items: &[Value]) {
-    writeln!(
+    render_rows!(
         output,
-        "{:<34} {:<14} {:<16} Type",
-        "Event", "Environment", "Time"
-    )
-    .expect("write to string");
-    for item in items {
-        let id = item.get("id").and_then(Value::as_str).unwrap_or("-");
-        let environment = item
-            .get("environment")
-            .and_then(Value::as_str)
-            .unwrap_or("-");
-        let timestamp = item
-            .get("timestamp")
-            .or_else(|| item.get("created_at"))
-            .and_then(Value::as_str)
-            .map_or_else(String::new, format_timestamp);
-        let kind = item
-            .get("type")
-            .or_else(|| item.get("event_type"))
-            .and_then(Value::as_str)
-            .unwrap_or("-");
-        writeln!(
-            output,
-            "{:<34} {:<14} {:<16} {}",
-            pad(id, 34),
-            pad(environment, 14),
-            pad(&timestamp, 16),
-            kind
-        )
-        .expect("write to string");
-    }
+        items,
+        format!("{:<34} {:<14} {:<16} Type", "Event", "Environment", "Time"),
+        "{:<34} {:<14} {:<16} {}",
+        |item| pad(str_field(item, "id"), 34),
+        pad(str_field(item, "environment"), 14),
+        pad(
+            &item
+                .get("timestamp")
+                .or_else(|| item.get("created_at"))
+                .and_then(Value::as_str)
+                .map_or_else(String::new, format_timestamp),
+            16,
+        ),
+        str_any(item, &["type", "event_type"], "-"),
+    );
 }
 
 fn render_coverage_table(output: &mut String, items: &[Value]) {
-    writeln!(
+    render_rows!(
         output,
-        "{:<7} {:<45} {:<7} {:<7} Request ID",
-        "Method", "Path", "Hits", "2xx"
-    )
-    .expect("write to string");
-    for item in items.iter().take(20) {
-        let method = item.get("method").and_then(Value::as_str).unwrap_or("-");
-        let path = item.get("path").and_then(Value::as_str).unwrap_or("-");
-        let hits = item.get("hits").and_then(Value::as_u64).unwrap_or(0);
-        let ok = item.get("ok").and_then(Value::as_u64).unwrap_or(0);
-        let request_id = item
-            .get("latest_request_id")
-            .and_then(Value::as_str)
-            .unwrap_or("-");
-        writeln!(
-            output,
-            "{:<7} {:<45} {:<7} {:<7} {}",
-            method,
-            pad(path, 45),
-            hits,
-            ok,
-            request_id
-        )
-        .expect("write to string");
-    }
+        items.iter().take(20),
+        format!(
+            "{:<7} {:<45} {:<7} {:<7} Request ID",
+            "Method", "Path", "Hits", "2xx"
+        ),
+        "{:<7} {:<45} {:<7} {:<7} {}",
+        |item| str_field(item, "method"),
+        pad(str_field(item, "path"), 45),
+        item.get("hits").and_then(Value::as_u64).unwrap_or(0),
+        item.get("ok").and_then(Value::as_u64).unwrap_or(0),
+        str_field(item, "latest_request_id"),
+    );
     if items.len() > 20 {
         writeln!(output, "... {} more", items.len() - 20).expect("write to string");
     }
@@ -5657,28 +5552,28 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
         return Ok(WorkflowRequest::get(
             "/health",
             false,
-            vec!["pcl search --system-status".to_string()],
+            ["pcl search --system-status"],
         ));
     }
     if args.system_status {
         return Ok(WorkflowRequest::get(
             "/system-status",
             false,
-            vec!["pcl search --stats".to_string()],
+            ["pcl search --stats"],
         ));
     }
     if args.stats {
         return Ok(WorkflowRequest::get(
             "/stats",
             false,
-            vec!["pcl projects --limit 10".to_string()],
+            ["pcl projects --limit 10"],
         ));
     }
     if args.whitelist {
         return Ok(WorkflowRequest::get(
             "/whitelist",
             true,
-            vec!["pcl projects --mine".to_string()],
+            ["pcl projects --mine"],
         ));
     }
     if args.verified_contract {
@@ -5696,7 +5591,7 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
         let mut request = WorkflowRequest::get(
             "/web/verified-contract",
             false,
-            vec!["pcl contracts --project <project-ref>".to_string()],
+            ["pcl contracts --project <project-ref>"],
         );
         push_query(&mut request.query, "address", Some(address));
         push_query(&mut request.query, "chainId", Some(chain_id));
@@ -5724,9 +5619,9 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
     let mut request = WorkflowRequest::get(
         "/search",
         false,
-        vec![
-            "pcl projects --project <project-ref>".to_string(),
-            "pcl contracts --project <project-ref>".to_string(),
+        [
+            "pcl projects --project <project-ref>",
+            "pcl contracts --project <project-ref>",
         ],
     );
     push_query(&mut request.query, "query", Some(query));
@@ -5741,7 +5636,7 @@ fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, ApiCommandErro
             "/web/auth/accept-terms",
             true,
             Some(body_or_empty(body)),
-            vec!["pcl account".to_string(), "pcl projects --mine".to_string()],
+            ["pcl account", "pcl projects --mine"],
         ));
     }
     if args.logout {
@@ -5750,16 +5645,13 @@ fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, ApiCommandErro
             "/web/auth/logout",
             true,
             Some(body_or_empty(body)),
-            vec!["pcl auth logout".to_string()],
+            ["pcl auth logout"],
         ));
     }
     Ok(WorkflowRequest::get(
         "/web/auth/me",
         true,
-        vec![
-            "pcl account --accept-terms".to_string(),
-            "pcl projects --mine".to_string(),
-        ],
+        ["pcl account --accept-terms", "pcl projects --mine"],
     ))
 }
 
@@ -5771,7 +5663,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
             "/assertion_adopters",
             true,
             body,
-            vec!["pcl contracts --unassigned --manager <manager-address>".to_string()],
+            ["pcl contracts --unassigned --manager <manager-address>"],
         ));
     }
     if args.assign_project {
@@ -5780,7 +5672,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
             "/assertion_adopters/assign-project",
             true,
             body,
-            vec!["pcl contracts --project <project-ref>".to_string()],
+            ["pcl contracts --project <project-ref>"],
         ));
     }
     if args.unassigned {
@@ -5788,7 +5680,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
         let mut request = WorkflowRequest::get(
             "/assertion_adopters/no-project",
             true,
-            vec!["pcl contracts --assign-project --body-template".to_string()],
+            ["pcl contracts --assign-project --body-template"],
         );
         push_query(&mut request.query, "manager", Some(manager));
         return Ok(request);
@@ -5803,7 +5695,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
         let mut request = WorkflowRequest::get(
             format!("/assertion_adopters/{address}/remove-assertions-calldata"),
             true,
-            vec!["pcl releases --project <project-ref>".to_string()],
+            ["pcl releases --project <project-ref>"],
         );
         push_query(&mut request.query, "network", args.network.as_deref());
         push_query(
@@ -5847,7 +5739,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
     Ok(WorkflowRequest::get(
         "/assertion_adopters",
         true,
-        vec!["pcl contracts --unassigned --manager <manager-address>".to_string()],
+        ["pcl contracts --unassigned --manager <manager-address>"],
     ))
 }
 
@@ -5989,7 +5881,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
         return Ok(WorkflowRequest::get(
             "/invitations/pending",
             true,
-            vec!["pcl access --token <token> --accept".to_string()],
+            ["pcl access --token <token> --accept"],
         ));
     }
     if args.accept || args.preview {
@@ -6000,7 +5892,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
                 format!("/invitations/{token}/accept"),
                 true,
                 Some(body_or_empty(body)),
-                vec!["pcl projects --mine".to_string()],
+                ["pcl projects --mine"],
             ));
         }
         return Ok(WorkflowRequest::get(
@@ -6243,20 +6135,20 @@ fn transfers_request(args: &TransfersArgs) -> Result<WorkflowRequest, ApiCommand
             "/transfers/reject",
             true,
             body,
-            vec!["pcl transfers --pending".to_string()],
+            ["pcl transfers --pending"],
         ));
     }
     if let Some(transfer_id) = &args.transfer_id {
         return Ok(WorkflowRequest::get(
             format!("/views/transfers/{transfer_id}"),
             true,
-            vec!["pcl transfers --pending".to_string()],
+            ["pcl transfers --pending"],
         ));
     }
     Ok(WorkflowRequest::get(
         "/views/transfers/pending",
         true,
-        vec!["pcl transfers --transfer-id <transfer-id>".to_string()],
+        ["pcl transfers --transfer-id <transfer-id>"],
     ))
 }
 
@@ -6290,7 +6182,7 @@ fn workflow_with_body(
     path: impl Into<String>,
     require_auth: bool,
     body: Option<String>,
-    next_actions: Vec<String>,
+    next_actions: impl IntoIterator<Item = impl Into<String>>,
 ) -> WorkflowRequest {
     WorkflowRequest {
         method,
@@ -6298,7 +6190,7 @@ fn workflow_with_body(
         query: Vec::new(),
         body,
         require_auth,
-        next_actions,
+        next_actions: next_actions.into_iter().map(Into::into).collect(),
     }
 }
 
@@ -7074,7 +6966,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
                 format!("/projects/{project_id}"),
                 true,
                 body,
-                vec!["pcl projects --mine".to_string()],
+                ["pcl projects --mine"],
             ));
         }
         return Ok(WorkflowRequest::get_with_query(
@@ -7092,9 +6984,9 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
         "/views/projects",
         query,
         false,
-        vec![
-            "pcl projects --project-id <project-id>".to_string(),
-            "pcl incidents --limit 5".to_string(),
+        [
+            "pcl projects --project-id <project-id>",
+            "pcl incidents --limit 5",
         ],
     ))
 }
@@ -7112,7 +7004,7 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
         let mut request = WorkflowRequest::get(
             "/assertions",
             false,
-            vec!["pcl contracts --project <project-ref>".to_string()],
+            ["pcl contracts --project <project-ref>"],
         );
         push_query(&mut request.query, "adopter_address", Some(adopter_address));
         push_query(&mut request.query, "network", args.network.as_deref());

@@ -670,7 +670,7 @@ async fn paginates_incident_list_workflows() {
         dry_run: false,
         refresh_after_401: Cell::new(true),
     };
-    let request = WorkflowRequest::get("/views/public/incidents", false, Vec::new());
+    let request = WorkflowRequest::get("/views/public/incidents", false, Vec::<String>::new());
     let mut config = CliConfig::default();
     let cli_args = CliArgs::default();
 
@@ -706,7 +706,7 @@ async fn incident_workflow_pagination_rejects_zero_limit() {
         dry_run: false,
         refresh_after_401: Cell::new(true),
     };
-    let request = WorkflowRequest::get("/views/public/incidents", false, Vec::new());
+    let request = WorkflowRequest::get("/views/public/incidents", false, Vec::<String>::new());
     let mut config = CliConfig::default();
     let cli_args = CliArgs::default();
 
@@ -891,7 +891,7 @@ async fn authenticated_workflow_retries_once_after_refresh_on_401() {
         }),
     };
     config.write_to_file(&cli_args).unwrap();
-    let request = WorkflowRequest::get("/web/auth/me", true, Vec::new());
+    let request = WorkflowRequest::get("/web/auth/me", true, Vec::<String>::new());
 
     let result = api
         .call_workflow_result(&mut config, &cli_args, &request, test_request_log_path())
@@ -1684,7 +1684,7 @@ async fn workflow_http_errors_include_response_body() {
         refresh_after_401: Cell::new(true),
     };
     let mut config = CliConfig::default();
-    let request = WorkflowRequest::get("/health", false, Vec::new());
+    let request = WorkflowRequest::get("/health", false, Vec::<String>::new());
 
     let error = api
         .call_workflow_result(

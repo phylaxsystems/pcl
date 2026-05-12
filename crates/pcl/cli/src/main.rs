@@ -256,70 +256,69 @@ fn simple_error_value(
 }
 
 fn apply_error_envelope(err: &ApplyError) -> Value {
-    let (code, message, next_actions): (&str, String, Vec<&str>) =
-        match err {
-            ApplyError::NoAuthToken => {
-                (
-                    "auth.no_token",
-                    err.to_string(),
-                    vec!["pcl auth login", "pcl auth status"],
-                )
-            }
-            ApplyError::InvalidConfig(message) if message.contains("credible.toml not found") => (
+    let (code, message, next_actions): (&str, String, &[&str]) = match err {
+        ApplyError::NoAuthToken => {
+            (
+                "auth.no_token",
+                err.to_string(),
+                &["pcl auth login", "pcl auth status"],
+            )
+        }
+        ApplyError::InvalidConfig(message) if message.contains("credible.toml not found") => {
+            (
                 "config.credible_toml_not_found",
                 "No credible.toml found. Run from an assertion project or pass --config <path>."
                     .to_string(),
-                vec!["pcl apply --help", "pcl projects --mine"],
-            ),
-            ApplyError::InvalidConfig(_) | ApplyError::Toml(_) => {
-                (
-                    "config.invalid_credible_toml",
-                    err.to_string(),
-                    vec!["pcl apply --help"],
-                )
-            }
-            ApplyError::BuildFailed(_) => {
-                (
-                    "build.failed",
-                    err.to_string(),
-                    vec!["pcl build", "pcl apply --dry-run"],
-                )
-            }
-            ApplyError::NoProjectsFound => {
-                (
-                    "projects.none_for_account",
-                    err.to_string(),
-                    vec!["pcl projects --mine", "pcl account"],
-                )
-            }
-            ApplyError::ApplyCancelled => {
-                ("apply.cancelled", err.to_string(), vec!["pcl apply --help"])
-            }
-            _ => {
-                (
-                    "apply.failed",
-                    err.to_string(),
-                    vec!["pcl apply --help", "pcl doctor"],
-                )
-            }
-        };
-    simple_error_value(code, &message, true, &next_actions)
+                &["pcl apply --help", "pcl projects --mine"],
+            )
+        }
+        ApplyError::InvalidConfig(_) | ApplyError::Toml(_) => {
+            (
+                "config.invalid_credible_toml",
+                err.to_string(),
+                &["pcl apply --help"],
+            )
+        }
+        ApplyError::BuildFailed(_) => {
+            (
+                "build.failed",
+                err.to_string(),
+                &["pcl build", "pcl apply --dry-run"],
+            )
+        }
+        ApplyError::NoProjectsFound => {
+            (
+                "projects.none_for_account",
+                err.to_string(),
+                &["pcl projects --mine", "pcl account"],
+            )
+        }
+        ApplyError::ApplyCancelled => ("apply.cancelled", err.to_string(), &["pcl apply --help"]),
+        _ => {
+            (
+                "apply.failed",
+                err.to_string(),
+                &["pcl apply --help", "pcl doctor"],
+            )
+        }
+    };
+    simple_error_value(code, &message, true, next_actions)
 }
 
 fn download_error_envelope(err: &DownloadError) -> Value {
-    let (code, message, next_actions): (&str, String, Vec<&str>) = match err {
+    let (code, message, next_actions): (&str, String, &[&str]) = match err {
         DownloadError::NoAuthToken => {
             (
                 "auth.no_token",
                 err.to_string(),
-                vec!["pcl auth login", "pcl auth status"],
+                &["pcl auth login", "pcl auth status"],
             )
         }
         DownloadError::MissingIdentifier => {
             (
                 "download.missing_project_id",
                 "--project-id is required".to_string(),
-                vec![
+                &[
                     "pcl projects --mine",
                     "pcl download --project-id <project-id>",
                 ],
@@ -329,94 +328,94 @@ fn download_error_envelope(err: &DownloadError) -> Value {
             (
                 "download.no_assertions",
                 err.to_string(),
-                vec!["pcl assertions --project-id <project-id>"],
+                &["pcl assertions --project-id <project-id>"],
             )
         }
         _ => {
             (
                 "download.failed",
                 err.to_string(),
-                vec!["pcl download --help", "pcl doctor"],
+                &["pcl download --help", "pcl doctor"],
             )
         }
     };
-    simple_error_value(code, &message, true, &next_actions)
+    simple_error_value(code, &message, true, next_actions)
 }
 
 #[cfg(feature = "credible")]
 fn verify_error_envelope(err: &VerifyError) -> Value {
-    let (code, message, next_actions): (&str, String, Vec<&str>) = match err {
+    let (code, message, next_actions): (&str, String, &[&str]) = match err {
         VerifyError::Io { message, .. } if message.starts_with("Project root not found") => {
             (
                 "verify.project_root_not_found",
                 err.to_string(),
-                vec!["pcl verify --help", "Check --root path"],
+                &["pcl verify --help", "Check --root path"],
             )
         }
         VerifyError::Io { .. } => {
             (
                 "verify.io_failed",
                 err.to_string(),
-                vec!["pcl verify --help", "Check file paths and permissions"],
+                &["pcl verify --help", "Check file paths and permissions"],
             )
         }
         VerifyError::Config(_) => {
             (
                 "verify.invalid_config",
                 err.to_string(),
-                vec!["pcl verify --help", "pcl apply --dry-run"],
+                &["pcl verify --help", "pcl apply --dry-run"],
             )
         }
         VerifyError::BuildFailed(_) => {
             (
                 "verify.build_failed",
                 err.to_string(),
-                vec!["pcl build --help", "pcl verify --help"],
+                &["pcl build --help", "pcl verify --help"],
             )
         }
         VerifyError::AbiEncode(_) => {
             (
                 "verify.invalid_constructor_args",
                 err.to_string(),
-                vec!["pcl verify --help"],
+                &["pcl verify --help"],
             )
         }
         VerifyError::Json(_) => {
             (
                 "json.failed",
                 err.to_string(),
-                vec!["Retry without --json to inspect human output"],
+                &["Retry without --json to inspect human output"],
             )
         }
     };
-    simple_error_value(code, &message, true, &next_actions)
+    simple_error_value(code, &message, true, next_actions)
 }
 
 fn phoundry_error_envelope(err: &PhoundryError) -> Value {
-    let (code, message, next_actions): (&str, String, Vec<&str>) = match err {
+    let (code, message, next_actions): (&str, String, &[&str]) = match err {
         PhoundryError::DirectoryNotFound(path) => {
             (
                 "build.source_dir_not_found",
                 format!("Source directory not found: {}", path.display()),
-                vec!["pcl build --help", "pcl apply --help"],
+                &["pcl build --help", "pcl apply --help"],
             )
         }
         PhoundryError::ForgeNotInstalled => {
             (
                 "build.forge_not_installed",
                 err.to_string(),
-                vec!["Install Foundry forge", "pcl doctor"],
+                &["Install Foundry forge", "pcl doctor"],
             )
         }
         _ => {
             (
                 "build.failed",
                 err.to_string(),
-                vec!["pcl build --help", "pcl doctor"],
+                &["pcl build --help", "pcl doctor"],
             )
         }
     };
-    simple_error_value(code, &message, true, &next_actions)
+    simple_error_value(code, &message, true, next_actions)
 }
 
 fn auth_error_envelope(err: &AuthError) -> Value {
