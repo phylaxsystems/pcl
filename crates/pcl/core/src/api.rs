@@ -229,8 +229,8 @@ impl ApiCommandError {
             }
             Self::Json(_) => {
                 vec![
-                    "Pass valid JSON with --body '{\"key\":\"value\"}'".to_string(),
-                    "Use --body-file request.json for larger payloads".to_string(),
+                    "Use --field key=value for simple request bodies".to_string(),
+                    "Use --body-file request.json for nested request bodies".to_string(),
                 ]
             }
             Self::OperationNotFound(_) => {
@@ -292,8 +292,8 @@ impl ApiCommandError {
             }
             Self::HttpStatus { status: 404, .. } => {
                 vec![
-                    "pcl api list --toon".to_string(),
-                    "Check identifiers and required path/query parameters".to_string(),
+                    "Check the project ID, slug, or API path and retry".to_string(),
+                    "pcl projects --mine".to_string(),
                 ]
             }
             Self::HttpStatus {
@@ -619,7 +619,7 @@ enum ApiCommand {
 
     #[command(
         about = "List or manage project contracts and assertion adopters",
-        after_help = "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl contracts --unassigned --manager <manager-address>\n  pcl contracts --create --body '{...}'"
+        after_help = "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl contracts --unassigned --manager <manager-address>\n  pcl contracts --create --body-template"
     )]
     Contracts(ContractsArgs),
 
@@ -631,31 +631,31 @@ enum ApiCommand {
 
     #[command(
         about = "Inspect deployments and confirm deployed assertions",
-        after_help = "Examples:\n  pcl deployments --project <project-ref>\n  pcl deployments --project <project-ref> --confirm --body '{...}'"
+        after_help = "Examples:\n  pcl deployments --project <project-ref>\n  pcl deployments --project <project-ref> --confirm --body-template"
     )]
     Deployments(DeploymentsArgs),
 
     #[command(
         about = "Manage members, roles, and invitations",
-        after_help = "Examples:\n  pcl access --project <project-ref> --members\n  pcl access --project <project-ref> --invite --body '{...}'\n  pcl access --pending\n  pcl access --token <token> --preview"
+        after_help = "Examples:\n  pcl access --project <project-ref> --members\n  pcl access --project <project-ref> --invite --body-template\n  pcl access --pending\n  pcl access --token <token> --preview"
     )]
     Access(AccessArgs),
 
     #[command(
         about = "Manage Slack and PagerDuty integrations",
-        after_help = "Examples:\n  pcl integrations --project <project-ref> --provider slack\n  pcl integrations --project <project-ref> --provider pagerduty --configure --body '{...}'\n  pcl integrations --project <project-ref> --provider slack --test"
+        after_help = "Examples:\n  pcl integrations --project <project-ref> --provider slack\n  pcl integrations --project <project-ref> --provider pagerduty --configure --body-template\n  pcl integrations --project <project-ref> --provider slack --test"
     )]
     Integrations(IntegrationsArgs),
 
     #[command(
         about = "Manage project protocol manager settings",
-        after_help = "Examples:\n  pcl protocol-manager --project <project-ref> --nonce --address <manager-address>\n  pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...\n  pcl protocol-manager --project <project-ref> --set --body '{...}'"
+        after_help = "Examples:\n  pcl protocol-manager --project <project-ref> --nonce --address <manager-address>\n  pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...\n  pcl protocol-manager --project <project-ref> --set --body-template"
     )]
     ProtocolManager(ProtocolManagerArgs),
 
     #[command(
         about = "Inspect or reject protocol manager transfers",
-        after_help = "Examples:\n  pcl transfers --pending\n  pcl transfers --transfer-id <transfer-id>\n  pcl transfers --reject --body '{...}'"
+        after_help = "Examples:\n  pcl transfers --pending\n  pcl transfers --transfer-id <transfer-id>\n  pcl transfers --reject --body-template"
     )]
     Transfers(TransfersArgs),
 
@@ -5181,8 +5181,14 @@ fn human_cell(value: &Value) -> String {
 fn human_action_str(value: &str) -> String {
     if value.trim_start().starts_with("pcl ") {
         humanize_command(value)
-    } else if value == "Use --toon for agent consumption or --json for strict JSON parsing" {
-        "Use --json for strict JSON parsing".to_string()
+    } else if matches!(
+        value,
+        "Use --toon for agent consumption or --json for strict JSON parsing"
+            | "Use --json for strict JSON parsing"
+    ) {
+        String::new()
+    } else if value == "Use --body-template when constructing mutation bodies" {
+        "Use --body-template to start from an example request body".to_string()
     } else {
         value.to_string()
     }
@@ -5797,7 +5803,7 @@ pub fn api_manifest() -> Value {
                 ]
             },
             {
-                "command": "pcl contracts [--project <ref>] [--adopter-id <id>] [--unassigned --manager <address>] [--create --body '{...}']",
+                "command": "pcl contracts [--project <ref>] [--adopter-id <id>] [--unassigned --manager <address>] [--create --body-template]",
                 "description": "List and manage project contracts and assertion adopters.",
                 "output": "contract views, adopter records, assignment results, or remove calldata",
                 "actions": [
@@ -5829,7 +5835,7 @@ pub fn api_manifest() -> Value {
                 ]
             },
             {
-                "command": "pcl deployments --project <ref> [--confirm --body '{...}']",
+                "command": "pcl deployments --project <ref> [--confirm --body-template]",
                 "description": "Inspect deployment state and confirm deployed assertions.",
                 "output": "deployment view or confirmation result",
                 "actions": [
@@ -5881,7 +5887,7 @@ pub fn api_manifest() -> Value {
                 ]
             },
             {
-                "command": "pcl transfers [--pending|--transfer-id <id>|--reject --body '{...}']",
+                "command": "pcl transfers [--pending|--transfer-id <id>|--reject --body-template]",
                 "description": "Inspect and reject protocol manager transfers.",
                 "output": "pending transfers, transfer detail, or reject result",
                 "actions": [
@@ -5914,7 +5920,7 @@ pub fn api_manifest() -> Value {
                 "output": "operation_id, method, path, auth metadata, workflow_alternatives, raw_api_use, path_params, required_query, body_fields, required_body_fields, body_template, response_statuses, example_call",
             },
             {
-                "command": "pcl api call <method> <path[?query]> [--query key=value] [--field key=value] [--body '{...}'] [--paginate <field>] [--page-param page] [--limit-param limit] [--jsonl] [--output <file>] [--dry-run]",
+                "command": "pcl api call <method> <path[?query]> [--query key=value] [--field key=value] [--body-file body.json] [--paginate <field>] [--page-param page] [--limit-param limit] [--jsonl] [--output <file>] [--dry-run]",
                 "description": "Execute any endpoint below /api/v1. Query strings in PATH and repeated --query flags are both accepted; --field merges simple JSON object body fields; GET calls can paginate any array response with --paginate. Add --dry-run to print the request plan without sending it.",
                 "output": "request and response status/body; non-2xx responses return structured error envelopes with request_id when the API provides one. Raw calls log operation_id when the live OpenAPI manifest can resolve the method/path.",
                 "actions": [
@@ -6076,7 +6082,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
         let mut request = WorkflowRequest::get(
             "/assertion_adopters/no-project",
             true,
-            vec!["pcl contracts --assign-project --body '{...}'".to_string()],
+            vec!["pcl contracts --assign-project --body-template".to_string()],
         );
         push_query_string_value(&mut request.query, "manager", manager);
         return Ok(request);
@@ -6432,7 +6438,7 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
         vec![
             format!("pcl integrations --project {project} --provider {provider} --test"),
             format!(
-                "pcl integrations --project {project} --provider {provider} --configure --body '{{...}}'"
+                "pcl integrations --project {project} --provider {provider} --configure --body-template"
             ),
         ],
     ))
@@ -6450,7 +6456,7 @@ fn protocol_manager_request(
             format!("{base}/nonce"),
             true,
             vec![format!(
-                "pcl protocol-manager --project {project} --set --body '{{...}}'"
+                "pcl protocol-manager --project {project} --set --body-template"
             )],
         );
         push_query_string_value(&mut request.query, "address", address);
@@ -6485,7 +6491,7 @@ fn protocol_manager_request(
             format!("{base}/transfer-calldata"),
             true,
             vec![format!(
-                "pcl protocol-manager --project {project} --set --body '{{...}}'"
+                "pcl protocol-manager --project {project} --set --body-template"
             )],
         );
         push_query_string_value(&mut request.query, "new_manager", new_manager);
@@ -6496,7 +6502,7 @@ fn protocol_manager_request(
             format!("{base}/accept-calldata"),
             true,
             vec![format!(
-                "pcl protocol-manager --project {project} --confirm-transfer --body '{{...}}'"
+                "pcl protocol-manager --project {project} --confirm-transfer --body-template"
             )],
         ));
     }

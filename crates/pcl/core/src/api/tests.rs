@@ -3000,8 +3000,42 @@ fn human_output_formats_dry_run_request_plan_for_people() {
     assert!(output.contains("GET /views/projects"));
     assert!(output.contains("Query: limit=2"));
     assert!(output.contains("Auth: not required"));
+    assert!(!output.contains("Use --json"));
     assert!(!output.contains("Use --body-template when constructing mutation bodies"));
     assert!(!output.contains("Details:"));
+}
+
+#[test]
+fn human_output_formats_mutation_dry_run_for_people() {
+    let output = envelope_output_string(
+        &dry_run_envelope(json!({
+            "dry_run": true,
+            "valid": true,
+            "request": {
+                "method": "POST",
+                "path": "/projects/project-1/invitations",
+                "auth": {
+                    "required": true,
+                    "will_attach_stored_token": true,
+                    "stored_token_valid": true,
+                },
+                "body": {
+                    "identifier": "user@example.com",
+                    "role": "viewer"
+                }
+            },
+            "pagination": null,
+        })),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Dry run"));
+    assert!(output.contains("POST /projects/project-1/invitations"));
+    assert!(output.contains("Remove --dry-run to execute this request"));
+    assert!(output.contains("Use --body-template to start from an example request body"));
+    assert!(!output.contains("Use --json"));
+    assert!(!output.contains("Use --body-template when constructing mutation bodies"));
 }
 
 #[test]
