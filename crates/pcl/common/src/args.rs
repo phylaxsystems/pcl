@@ -33,20 +33,6 @@ pub fn current_output_mode() -> OutputMode {
     }
 }
 
-impl OutputMode {
-    pub fn is_json(self) -> bool {
-        self == Self::Json
-    }
-
-    pub fn is_toon(self) -> bool {
-        self == Self::Toon
-    }
-
-    pub fn is_human(self) -> bool {
-        self == Self::Human
-    }
-}
-
 impl fmt::Display for OutputMode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -119,15 +105,15 @@ impl CliArgs {
     }
 
     pub fn json_output(&self) -> bool {
-        self.output_mode().is_json()
+        self.output_mode() == OutputMode::Json
     }
 
     pub fn toon_output(&self) -> bool {
-        self.output_mode().is_toon()
+        self.output_mode() == OutputMode::Toon
     }
 
     pub fn human_output(&self) -> bool {
-        self.output_mode().is_human()
+        self.output_mode() == OutputMode::Human
     }
 }
 

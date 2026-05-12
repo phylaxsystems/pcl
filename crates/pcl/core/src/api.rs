@@ -913,10 +913,19 @@ struct WorkflowRequest {
 
 impl WorkflowRequest {
     fn get(path: impl Into<String>, require_auth: bool, next_actions: Vec<String>) -> Self {
+        Self::get_with_query(path, Vec::new(), require_auth, next_actions)
+    }
+
+    fn get_with_query(
+        path: impl Into<String>,
+        query: Vec<(String, String)>,
+        require_auth: bool,
+        next_actions: Vec<String>,
+    ) -> Self {
         Self {
             method: HttpMethod::Get,
             path: path.into(),
-            query: Vec::new(),
+            query,
             body: None,
             require_auth,
             next_actions,
@@ -1703,7 +1712,7 @@ impl ApiArgs {
             }
             ApiCommand::Account(args) => {
                 if args.body_template {
-                    let output = template_envelope(account_body_template(args));
+                    let output = template_envelope(body_template("empty_object"));
                     print_output(&output, json_output)?;
                     return Ok(());
                 }
@@ -2203,7 +2212,7 @@ impl ApiArgs {
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         if args.body_template {
-            return Ok(template_envelope(assertions_body_template(args)));
+            return Ok(template_envelope(body_template("empty_object")));
         }
         let request = assertions_request(args)?;
         if self.dry_run {
@@ -5689,7 +5698,7 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
             false,
             vec!["pcl contracts --project <project-ref>".to_string()],
         );
-        push_query_string_value(&mut request.query, "address", address);
+        push_query(&mut request.query, "address", Some(address));
         push_query(&mut request.query, "chainId", Some(chain_id));
         return Ok(request);
     }
@@ -5720,7 +5729,7 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
             "pcl contracts --project <project-ref>".to_string(),
         ],
     );
-    push_query_string_value(&mut request.query, "query", query.to_string());
+    push_query(&mut request.query, "query", Some(query));
     Ok(request)
 }
 
@@ -5731,7 +5740,7 @@ fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, ApiCommandErro
             HttpMethod::Post,
             "/web/auth/accept-terms",
             true,
-            body.or_else(|| Some(json!({}).to_string())),
+            Some(body_or_empty(body)),
             vec!["pcl account".to_string(), "pcl projects --mine".to_string()],
         ));
     }
@@ -5740,7 +5749,7 @@ fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, ApiCommandErro
             HttpMethod::Post,
             "/web/auth/logout",
             true,
-            body.or_else(|| Some(json!({}).to_string())),
+            Some(body_or_empty(body)),
             vec!["pcl auth logout".to_string()],
         ));
     }
@@ -5781,7 +5790,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
             true,
             vec!["pcl contracts --assign-project --body-template".to_string()],
         );
-        push_query_string_value(&mut request.query, "manager", manager);
+        push_query(&mut request.query, "manager", Some(manager));
         return Ok(request);
     }
     if args.remove_calldata {
@@ -5796,14 +5805,14 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
             true,
             vec!["pcl releases --project <project-ref>".to_string()],
         );
-        push_query_string(&mut request.query, "network", args.network.as_deref());
-        push_query_string(
+        push_query(&mut request.query, "network", args.network.as_deref());
+        push_query(
             &mut request.query,
             "environment",
             args.environment.as_deref(),
         );
         for assertion_id in &args.assertion_ids {
-            push_query_string_value(&mut request.query, "assertion_ids", assertion_id.clone());
+            push_query(&mut request.query, "assertion_ids", Some(assertion_id));
         }
         return Ok(request);
     }
@@ -5888,7 +5897,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
                 HttpMethod::Post,
                 format!("/projects/{project}/releases/{release_id}/checks/{check_id}/retry"),
                 true,
-                body.or_else(|| Some(empty_json_body())),
+                Some(body_or_empty(body)),
                 vec![format!(
                     "pcl releases --project {project} --release-id {release_id} --backtest-progress"
                 )],
@@ -5923,7 +5932,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
                     "pcl releases --project {project} --release-id {release_id} --deploy"
                 )],
             );
-            push_query_string_value(&mut request.query, "signerAddress", signer_address);
+            push_query(&mut request.query, "signerAddress", Some(signer_address));
             return Ok(request);
         }
         return Ok(WorkflowRequest::get(
@@ -5990,7 +5999,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
                 HttpMethod::Post,
                 format!("/invitations/{token}/accept"),
                 true,
-                body.or_else(|| Some(empty_json_body())),
+                Some(body_or_empty(body)),
                 vec!["pcl projects --mine".to_string()],
             ));
         }
@@ -6031,7 +6040,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
                 HttpMethod::Post,
                 format!("/projects/{project}/invitations/{invitation_id}/resend"),
                 true,
-                body.or_else(|| Some(empty_json_body())),
+                Some(body_or_empty(body)),
                 vec![format!("pcl access --project {project} --invitations")],
             ));
         }
@@ -6112,7 +6121,7 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
             HttpMethod::Post,
             format!("{base}/test"),
             true,
-            body.or_else(|| Some(empty_json_body())),
+            Some(body_or_empty(body)),
             vec![format!(
                 "pcl integrations --project {project} --provider {provider}"
             )],
@@ -6156,7 +6165,7 @@ fn protocol_manager_request(
                 "pcl protocol-manager --project {project} --set --body-template"
             )],
         );
-        push_query_string_value(&mut request.query, "address", address);
+        push_query(&mut request.query, "address", Some(address));
         push_query(&mut request.query, "chain_id", args.chain_id);
         return Ok(request);
     }
@@ -6191,7 +6200,7 @@ fn protocol_manager_request(
                 "pcl protocol-manager --project {project} --set --body-template"
             )],
         );
-        push_query_string_value(&mut request.query, "new_manager", new_manager);
+        push_query(&mut request.query, "new_manager", Some(new_manager));
         return Ok(request);
     }
     if args.accept_calldata {
@@ -6268,7 +6277,7 @@ fn events_request(args: &EventsArgs) -> Result<WorkflowRequest, ApiCommandError>
     };
     push_query(&mut request.query, "page", args.page);
     push_query(&mut request.query, "limit", args.limit);
-    push_query_string(
+    push_query(
         &mut request.query,
         "environment",
         args.environment.as_deref(),
@@ -6293,8 +6302,8 @@ fn workflow_with_body(
     }
 }
 
-fn empty_json_body() -> String {
-    json!({}).to_string()
+fn body_or_empty(body: Option<String>) -> String {
+    body.unwrap_or_else(|| "{}".to_string())
 }
 
 fn request_body(
@@ -6427,14 +6436,6 @@ fn project_body_template(args: &ProjectsArgs) -> Value {
         return body_template("empty_object");
     }
     body_template("project_create")
-}
-
-fn assertions_body_template(_args: &AssertionsArgs) -> Value {
-    body_template("empty_object")
-}
-
-fn account_body_template(_args: &AccountArgs) -> Value {
-    body_template("empty_object")
 }
 
 fn contracts_body_template(args: &ContractsArgs) -> Value {
@@ -6730,10 +6731,6 @@ fn required_project_arg(
     )
 }
 
-fn push_query_string_value(query: &mut Vec<(String, String)>, name: &str, value: String) {
-    query.push((name.to_string(), value));
-}
-
 fn project_segment(path: &str) -> Option<(&'static str, &str, &str)> {
     if let Some(rest) = path.strip_prefix("/projects/") {
         let (segment, suffix) = split_first_segment(rest);
@@ -6807,67 +6804,59 @@ fn incidents_request(args: &IncidentsArgs) -> Result<WorkflowRequest, ApiCommand
             "pcl incidents --limit 5".to_string(),
             format!("pcl api inspect get {}", path),
         ];
-        return Ok(WorkflowRequest {
-            method: HttpMethod::Get,
+        return Ok(WorkflowRequest::get_with_query(
             path,
             query,
-            body: None,
-            require_auth: true,
+            true,
             next_actions,
-        });
+        ));
     }
 
     if let Some(project_id) = &args.project_id {
         if args.stats {
             let path = format!("/projects/{project_id}/incidents/stats");
-            return Ok(WorkflowRequest {
-                method: HttpMethod::Get,
+            return Ok(WorkflowRequest::get_with_query(
                 path,
                 query,
-                body: None,
-                require_auth: true,
-                next_actions: vec![format!(
+                true,
+                vec![format!(
                     "pcl incidents --project-id {project_id} --limit 10"
                 )],
-            });
+            ));
         }
-        push_query_string(&mut query, "assertionId", args.assertion_id.as_deref());
-        push_query_string(
+        push_query(&mut query, "assertionId", args.assertion_id.as_deref());
+        push_query(
             &mut query,
             "assertionAdopterId",
             args.assertion_adopter_id.as_deref(),
         );
-        push_query_string(&mut query, "environment", args.environment.as_deref());
-        push_query_string(&mut query, "fromDate", args.from_date.as_deref());
-        push_query_string(&mut query, "toDate", args.to_date.as_deref());
+        push_query(&mut query, "environment", args.environment.as_deref());
+        push_query(&mut query, "fromDate", args.from_date.as_deref());
+        push_query(&mut query, "toDate", args.to_date.as_deref());
         let path = format!("/views/projects/{project_id}/incidents");
-        return Ok(WorkflowRequest {
-            method: HttpMethod::Get,
+        return Ok(WorkflowRequest::get_with_query(
             path,
             query,
-            body: None,
-            require_auth: true,
-            next_actions: vec![
+            true,
+            vec![
                 format!("pcl assertions --project-id {project_id}"),
                 "pcl incidents --limit 5".to_string(),
             ],
-        });
+        ));
     }
 
     push_query(&mut query, "network", args.network);
-    push_query_string(&mut query, "sort", args.sort.as_deref());
-    push_query_string(&mut query, "devMode", args.dev_mode.as_deref());
-    Ok(WorkflowRequest {
-        method: HttpMethod::Get,
-        path: "/views/public/incidents".to_string(),
+    push_query(&mut query, "sort", args.sort.as_deref());
+    push_query(&mut query, "devMode", args.dev_mode.as_deref());
+    Ok(WorkflowRequest::get_with_query(
+        "/views/public/incidents",
         query,
-        body: None,
-        require_auth: false,
-        next_actions: vec![
+        false,
+        vec![
             "pcl incidents --project-id <project-id> --limit 10".to_string(),
             "pcl projects --limit 10".to_string(),
         ],
-    })
+    ))
 }
 
 fn incidents_next_actions(
@@ -6999,7 +6988,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
     let mut query = Vec::new();
     push_query(&mut query, "page", args.page);
     push_query(&mut query, "limit", args.limit);
-    push_query_string(&mut query, "search", args.search.as_deref());
+    push_query(&mut query, "search", args.search.as_deref());
     let body = project_request_body(args)?;
 
     if args.create {
@@ -7013,29 +7002,25 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
     }
 
     if args.mine {
-        return Ok(WorkflowRequest {
-            method: HttpMethod::Get,
-            path: "/views/projects/home".to_string(),
+        return Ok(WorkflowRequest::get_with_query(
+            "/views/projects/home",
             query,
-            body: None,
-            require_auth: true,
-            next_actions: vec![
+            true,
+            vec![
                 "pcl account".to_string(),
                 "pcl projects --saved --user-id <user-id>".to_string(),
             ],
-        });
+        ));
     }
     if args.saved {
         let user_id = required_arg(args.user_id.as_deref(), "--user-id")?;
-        push_query_string_value(&mut query, "user_id", user_id);
-        return Ok(WorkflowRequest {
-            method: HttpMethod::Get,
-            path: "/projects/saved".to_string(),
+        push_query(&mut query, "user_id", Some(user_id));
+        return Ok(WorkflowRequest::get_with_query(
+            "/projects/saved",
             query,
-            body: None,
-            require_auth: true,
-            next_actions: vec!["pcl projects --mine".to_string()],
-        });
+            true,
+            vec!["pcl projects --mine".to_string()],
+        ));
     }
     if args.project_id.is_none()
         && (args.update || args.delete || args.save || args.unsave || args.resolve || args.widget)
@@ -7044,14 +7029,12 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
     }
     if let Some(project_id) = &args.project_id {
         if args.resolve {
-            return Ok(WorkflowRequest {
-                method: HttpMethod::Get,
-                path: format!("/projects/resolve/{project_id}"),
+            return Ok(WorkflowRequest::get_with_query(
+                format!("/projects/resolve/{project_id}"),
                 query,
-                body: None,
-                require_auth: false,
-                next_actions: vec![format!("pcl projects --project-id {project_id}")],
-            });
+                false,
+                vec![format!("pcl projects --project-id {project_id}")],
+            ));
         }
         if args.widget {
             return Ok(WorkflowRequest::get(
@@ -7094,30 +7077,26 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
                 vec!["pcl projects --mine".to_string()],
             ));
         }
-        return Ok(WorkflowRequest {
-            method: HttpMethod::Get,
-            path: format!("/projects/{project_id}"),
+        return Ok(WorkflowRequest::get_with_query(
+            format!("/projects/{project_id}"),
             query,
-            body: None,
-            require_auth: true,
-            next_actions: vec![
+            true,
+            vec![
                 format!("pcl assertions --project-id {project_id}"),
                 format!("pcl incidents --project-id {project_id} --limit 10"),
             ],
-        });
+        ));
     }
 
-    Ok(WorkflowRequest {
-        method: HttpMethod::Get,
-        path: "/views/projects".to_string(),
+    Ok(WorkflowRequest::get_with_query(
+        "/views/projects",
         query,
-        body: None,
-        require_auth: false,
-        next_actions: vec![
+        false,
+        vec![
             "pcl projects --project-id <project-id>".to_string(),
             "pcl incidents --limit 5".to_string(),
         ],
-    })
+    ))
 }
 
 fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiCommandError> {
@@ -7135,13 +7114,9 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
             false,
             vec!["pcl contracts --project <project-ref>".to_string()],
         );
-        push_query_string_value(
-            &mut request.query,
-            "adopter_address",
-            adopter_address.clone(),
-        );
-        push_query_string(&mut request.query, "network", args.network.as_deref());
-        push_query_string(
+        push_query(&mut request.query, "adopter_address", Some(adopter_address));
+        push_query(&mut request.query, "network", args.network.as_deref());
+        push_query(
             &mut request.query,
             "environment",
             args.environment.as_deref(),
@@ -7159,8 +7134,8 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
     let mut query = Vec::new();
     push_query(&mut query, "page", args.page);
     push_query(&mut query, "limit", args.limit);
-    push_query_string(&mut query, "assertionAdopterId", args.adopter_id.as_deref());
-    push_query_string(&mut query, "environment", args.environment.as_deref());
+    push_query(&mut query, "assertionAdopterId", args.adopter_id.as_deref());
+    push_query(&mut query, "environment", args.environment.as_deref());
 
     if args.registered {
         return Ok(WorkflowRequest::get(
@@ -7187,38 +7162,28 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
     }
 
     if let Some(assertion_id) = &args.assertion_id {
-        return Ok(WorkflowRequest {
-            method: HttpMethod::Get,
-            path: format!("/views/projects/{project_id}/assertions/{assertion_id}"),
+        return Ok(WorkflowRequest::get_with_query(
+            format!("/views/projects/{project_id}/assertions/{assertion_id}"),
             query,
-            body: None,
-            require_auth: true,
-            next_actions: vec![format!(
+            true,
+            vec![format!(
                 "pcl incidents --project-id {project_id} --assertion-id {assertion_id}",
             )],
-        });
+        ));
     }
 
-    Ok(WorkflowRequest {
-        method: HttpMethod::Get,
-        path: format!("/views/projects/{project_id}/assertions"),
+    Ok(WorkflowRequest::get_with_query(
+        format!("/views/projects/{project_id}/assertions"),
         query,
-        body: None,
-        require_auth: true,
-        next_actions: vec![
+        true,
+        vec![
             format!("pcl incidents --project-id {project_id} --limit 10"),
             format!("pcl assertions --project-id {project_id} --assertion-id <assertion-id>"),
         ],
-    })
+    ))
 }
 
 fn push_query<T: ToString>(query: &mut Vec<(String, String)>, name: &str, value: Option<T>) {
-    if let Some(value) = value {
-        query.push((name.to_string(), value.to_string()));
-    }
-}
-
-fn push_query_string(query: &mut Vec<(String, String)>, name: &str, value: Option<&str>) {
     if let Some(value) = value {
         query.push((name.to_string(), value.to_string()));
     }
@@ -8565,22 +8530,9 @@ fn public_raw_call_path(method: HttpMethod, path: &str) -> bool {
 }
 
 fn has_required_authorization_parameter(operation: &Value) -> bool {
-    operation
-        .get("parameters")
-        .and_then(Value::as_array)
-        .is_some_and(|parameters| {
-            parameters.iter().any(|parameter| {
-                parameter.get("in").and_then(Value::as_str) == Some("header")
-                    && parameter
-                        .get("required")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false)
-                    && parameter
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .is_some_and(|name| name.eq_ignore_ascii_case("authorization"))
-            })
-        })
+    required_header_parameters(operation)
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case("authorization"))
 }
 
 fn example_path(path: &str, operation: &Value) -> String {
@@ -8628,45 +8580,11 @@ fn operation_input_placeholders(path: &str, operation: &Value) -> Vec<String> {
 }
 
 fn required_header_parameters(operation: &Value) -> Vec<String> {
-    operation
-        .get("parameters")
-        .and_then(Value::as_array)
-        .map(|parameters| {
-            parameters
-                .iter()
-                .filter(|parameter| {
-                    parameter.get("in").and_then(Value::as_str) == Some("header")
-                        && parameter
-                            .get("required")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false)
-                })
-                .filter_map(|parameter| parameter.get("name").and_then(Value::as_str))
-                .map(ToString::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+    named_parameters(operation, "header", true)
 }
 
 fn required_query_parameters(operation: &Value) -> Vec<String> {
-    operation
-        .get("parameters")
-        .and_then(Value::as_array)
-        .map(|parameters| {
-            parameters
-                .iter()
-                .filter(|parameter| {
-                    parameter.get("in").and_then(Value::as_str) == Some("query")
-                        && parameter
-                            .get("required")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false)
-                })
-                .filter_map(|parameter| parameter.get("name").and_then(Value::as_str))
-                .map(ToString::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+    named_parameters(operation, "query", true)
 }
 
 fn next_actions_for_operations(operations: &[OperationSummary]) -> Vec<String> {

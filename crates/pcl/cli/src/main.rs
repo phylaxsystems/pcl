@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
     if wants_llms_output(env::args_os()) {
         let output_mode = wants_output_mode(env::args_os());
         set_current_output_mode(output_mode);
-        pcl_core::surface::print_llms_guide(output_mode.is_json())?;
+        pcl_core::surface::print_llms_guide(output_mode == OutputMode::Json)?;
         return Ok(());
     }
 
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
             let output_mode = wants_output_mode(env::args_os());
             set_current_output_mode(output_mode);
             let raw_args = env::args_os().collect::<Vec<_>>();
-            if output_mode.is_human() {
+            if output_mode == OutputMode::Human {
                 if should_show_root_help(&err, &raw_args) {
                     let mut command = Cli::command();
                     command.print_help()?;
@@ -85,11 +85,11 @@ async fn main() -> Result<()> {
             if matches!(
                 err.kind(),
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
-            ) && !output_mode.is_json()
+            ) && output_mode != OutputMode::Json
             {
                 err.exit();
             }
-            if output_mode.is_json() {
+            if output_mode == OutputMode::Json {
                 let exit_code = err.exit_code();
                 eprintln!(
                     "{}",
@@ -235,15 +235,24 @@ fn error_envelope(err: &Report) -> Value {
         return with_envelope_metadata(phoundry_error_envelope(phoundry_error));
     }
 
-    with_envelope_metadata(json!({
+    with_envelope_metadata(simple_error_value("unknown", &err.to_string(), false, &[]))
+}
+
+fn simple_error_value(
+    code: &str,
+    message: &str,
+    recoverable: bool,
+    next_actions: &[&str],
+) -> Value {
+    json!({
         "status": "error",
         "error": {
-            "code": "unknown",
-            "message": err.to_string(),
-            "recoverable": false,
+            "code": code,
+            "message": message,
+            "recoverable": recoverable,
         },
-        "next_actions": [],
-    }))
+        "next_actions": next_actions,
+    })
 }
 
 fn apply_error_envelope(err: &ApplyError) -> Value {
@@ -294,15 +303,7 @@ fn apply_error_envelope(err: &ApplyError) -> Value {
                 )
             }
         };
-    json!({
-        "status": "error",
-        "error": {
-            "code": code,
-            "message": message,
-            "recoverable": true,
-        },
-        "next_actions": next_actions,
-    })
+    simple_error_value(code, &message, true, &next_actions)
 }
 
 fn download_error_envelope(err: &DownloadError) -> Value {
@@ -339,15 +340,7 @@ fn download_error_envelope(err: &DownloadError) -> Value {
             )
         }
     };
-    json!({
-        "status": "error",
-        "error": {
-            "code": code,
-            "message": message,
-            "recoverable": true,
-        },
-        "next_actions": next_actions,
-    })
+    simple_error_value(code, &message, true, &next_actions)
 }
 
 #[cfg(feature = "credible")]
@@ -396,15 +389,7 @@ fn verify_error_envelope(err: &VerifyError) -> Value {
             )
         }
     };
-    json!({
-        "status": "error",
-        "error": {
-            "code": code,
-            "message": message,
-            "recoverable": true,
-        },
-        "next_actions": next_actions,
-    })
+    simple_error_value(code, &message, true, &next_actions)
 }
 
 fn phoundry_error_envelope(err: &PhoundryError) -> Value {
@@ -431,15 +416,7 @@ fn phoundry_error_envelope(err: &PhoundryError) -> Value {
             )
         }
     };
-    json!({
-        "status": "error",
-        "error": {
-            "code": code,
-            "message": message,
-            "recoverable": true,
-        },
-        "next_actions": next_actions,
-    })
+    simple_error_value(code, &message, true, &next_actions)
 }
 
 fn auth_error_envelope(err: &AuthError) -> Value {
@@ -480,26 +457,20 @@ fn auth_error_envelope(err: &AuthError) -> Value {
             }))
         }
         AuthError::SessionExpired | AuthError::SessionNotFound | AuthError::InvalidSession(_) => {
-            with_envelope_metadata(json!({
-                "status": "error",
-                "error": {
-                    "code": "auth.session_invalid",
-                    "message": err.to_string(),
-                    "recoverable": true,
-                },
-                "next_actions": ["pcl auth login"],
-            }))
+            with_envelope_metadata(simple_error_value(
+                "auth.session_invalid",
+                &err.to_string(),
+                true,
+                &["pcl auth login"],
+            ))
         }
         AuthError::UserNotFound => {
-            with_envelope_metadata(json!({
-                "status": "error",
-                "error": {
-                    "code": "auth.user_not_found",
-                    "message": err.to_string(),
-                    "recoverable": true,
-                },
-                "next_actions": ["pcl auth login"],
-            }))
+            with_envelope_metadata(simple_error_value(
+                "auth.user_not_found",
+                &err.to_string(),
+                true,
+                &["pcl auth login"],
+            ))
         }
         AuthError::AuthRequestFailed(_)
         | AuthError::StatusRequestFailed(_)
@@ -515,15 +486,12 @@ fn auth_error_envelope(err: &AuthError) -> Value {
         | AuthError::RefreshServerError { .. }
         | AuthError::RefreshRequestFailed(_)
         | AuthError::RefreshLockTimeout => {
-            with_envelope_metadata(json!({
-                "status": "error",
-                "error": {
-                    "code": "auth.request_failed",
-                    "message": err.to_string(),
-                    "recoverable": true,
-                },
-                "next_actions": ["pcl auth login"],
-            }))
+            with_envelope_metadata(simple_error_value(
+                "auth.request_failed",
+                &err.to_string(),
+                true,
+                &["pcl auth login"],
+            ))
         }
     }
 }
@@ -531,15 +499,12 @@ fn auth_error_envelope(err: &AuthError) -> Value {
 fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
     match err {
         AuthError::NoRefreshableSession | AuthError::MissingRefreshToken => {
-            Some(with_envelope_metadata(json!({
-                "status": "error",
-                "error": {
-                    "code": "auth.refresh_unavailable",
-                    "message": err.to_string(),
-                    "recoverable": true,
-                },
-                "next_actions": ["pcl auth login --force"],
-            })))
+            Some(with_envelope_metadata(simple_error_value(
+                "auth.refresh_unavailable",
+                &err.to_string(),
+                true,
+                &["pcl auth login --force"],
+            )))
         }
         AuthError::RefreshRejected {
             status,
@@ -614,15 +579,12 @@ fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
             })))
         }
         AuthError::RefreshRequestFailed(_) | AuthError::RefreshLockTimeout => {
-            Some(with_envelope_metadata(json!({
-                "status": "error",
-                "error": {
-                    "code": "auth.refresh_failed",
-                    "message": err.to_string(),
-                    "recoverable": true,
-                },
-                "next_actions": ["Retry pcl auth refresh --json", "pcl auth login --force"],
-            })))
+            Some(with_envelope_metadata(simple_error_value(
+                "auth.refresh_failed",
+                &err.to_string(),
+                true,
+                &["Retry pcl auth refresh --json", "pcl auth login --force"],
+            )))
         }
         _ => None,
     }
@@ -660,18 +622,12 @@ fn unix_timestamp_now() -> i64 {
 }
 
 fn config_error_envelope(err: &ConfigError) -> Value {
-    with_envelope_metadata(json!({
-        "status": "error",
-        "error": {
-            "code": config_error_code(err),
-            "message": err.to_string(),
-            "recoverable": !matches!(err, ConfigError::ParseError(_) | ConfigError::JsonError(_)),
-        },
-        "next_actions": [
-            "pcl config show",
-            "pcl config delete",
-        ],
-    }))
+    simple_error_value(
+        config_error_code(err),
+        &err.to_string(),
+        !matches!(err, ConfigError::ParseError(_) | ConfigError::JsonError(_)),
+        &["pcl config show", "pcl config delete"],
+    )
 }
 
 fn config_error_code(err: &ConfigError) -> &'static str {
