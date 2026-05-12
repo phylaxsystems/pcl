@@ -2641,6 +2641,39 @@ fn human_output_formats_project_details_for_people() {
 }
 
 #[test]
+fn human_output_names_success_only_mutations() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {"success": true},
+            "request": {"method": "DELETE", "path": "/projects/project-1"},
+            "response": {"status": 200, "request_id": "req_delete"},
+            "next_actions": ["pcl projects --mine"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Project deleted"));
+    assert!(!output.contains("Success: yes"));
+
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {"success": true},
+            "request": {"method": "DELETE", "path": "/projects/project-1/invitations/invite-1"},
+            "response": {"status": 200, "request_id": "req_revoke"},
+            "next_actions": ["pcl access --project project-1 --invitations"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Invitation revoked"));
+    assert!(!output.contains("Success: yes"));
+}
+
+#[test]
 fn human_output_formats_project_home_for_people() {
     let output = envelope_output_string(
         &json!({
@@ -2689,6 +2722,37 @@ fn human_output_formats_project_home_for_people() {
     assert!(output.contains("Contracts without a project: 0 contracts"));
     assert!(!output.contains("Member projects:"));
     assert!(!output.contains("Details:"));
+}
+
+#[test]
+fn human_output_formats_invitations_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "invitations": [
+                    {
+                        "id": "invite-1",
+                        "invitee_identifier": "cli-ux-test@example.invalid",
+                        "role": "viewer"
+                    }
+                ]
+            },
+            "request": {"method": "GET", "path": "/projects/project-1/invitations"},
+            "response": {"status": 200, "request_id": "req_invitations"},
+            "next_actions": ["pcl access --project project-1 --invite --body-template"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Invitations\n"));
+    assert!(output.contains("Showing 1 invitation"));
+    assert!(output.contains("cli-ux-test@example.invalid"));
+    assert!(output.contains("viewer"));
+    assert!(output.contains("pending"));
+    assert!(output.contains("pcl access --project project-1 --invite --body-template"));
+    assert!(!output.contains("--body '{...}'"));
 }
 
 #[test]

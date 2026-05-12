@@ -3276,6 +3276,9 @@ fn render_human_special(output: &mut String, envelope: &Value) -> bool {
     if render_protocol_manager_status(output, display_data) {
         return true;
     }
+    if render_mutation_success(output, envelope, display_data) {
+        return true;
+    }
     if render_api_manifest(output, display_data) {
         return true;
     }
@@ -3864,6 +3867,63 @@ fn render_protocol_manager_status(output: &mut String, data: &Value) -> bool {
     write_u64_field(output, "Contracts pending", data, "contracts_pending", None);
     write_u64_field(output, "Contracts total", data, "contracts_total", None);
     true
+}
+
+fn render_mutation_success(output: &mut String, envelope: &Value, data: &Value) -> bool {
+    if data.get("success").and_then(Value::as_bool) != Some(true)
+        || data
+            .as_object()
+            .is_some_and(|object| object.contains_key("message"))
+    {
+        return false;
+    }
+    let Some(request) = envelope.get("request") else {
+        return false;
+    };
+    let method = request.get("method").and_then(Value::as_str).unwrap_or("");
+    let path = request.get("path").and_then(Value::as_str).unwrap_or("");
+    output.push('\n');
+    output.push_str(mutation_success_message(method, path));
+    output.push('\n');
+    true
+}
+
+fn mutation_success_message(method: &str, path: &str) -> &'static str {
+    match (method, path) {
+        ("POST", "/projects/saved") => "Project saved",
+        ("DELETE", "/projects/saved") => "Project removed from saved projects",
+        _ if method == "DELETE"
+            && path.starts_with("/projects/")
+            && path.contains("/invitations/") =>
+        {
+            "Invitation revoked"
+        }
+        _ if method == "POST" && path.starts_with("/projects/") && path.ends_with("/resend") => {
+            "Invitation resent"
+        }
+        _ if method == "PATCH" && path.starts_with("/projects/") && path.contains("/members/") => {
+            "Member role updated"
+        }
+        _ if method == "DELETE" && path.starts_with("/projects/") && path.contains("/members/") => {
+            "Member removed"
+        }
+        _ if method == "DELETE" && path.ends_with("/protocol-manager") => {
+            "Protocol manager cleared"
+        }
+        _ if method == "POST" && path.ends_with("/confirm-transfer") => {
+            "Protocol manager transfer confirmed"
+        }
+        _ if method == "DELETE"
+            && path.starts_with("/projects/")
+            && !path.contains("/integrations/")
+            && !path.contains("/invitations/")
+            && !path.contains("/members/")
+            && !path.contains("/protocol-manager") =>
+        {
+            "Project deleted"
+        }
+        _ => "Request completed",
+    }
 }
 
 fn render_body_template(output: &mut String, envelope: &Value, data: &Value) -> bool {
@@ -4831,10 +4891,14 @@ fn render_invitations_table(output: &mut String, items: &[Value]) {
         let email = item
             .get("email")
             .or_else(|| item.get("identifier"))
+            .or_else(|| item.get("invitee_identifier"))
             .and_then(Value::as_str)
             .unwrap_or("-");
         let role = item.get("role").and_then(Value::as_str).unwrap_or("-");
-        let status = item.get("status").and_then(Value::as_str).unwrap_or("-");
+        let status = item
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("pending");
         let id = item
             .get("id")
             .or_else(|| item.get("invitation_id"))
@@ -5110,7 +5174,7 @@ fn human_cell(value: &Value) -> String {
                 .map_or_else(|| compact_json(value), ToString::to_string)
         }
         Value::Object(_) | Value::Array(_) => compact_json(value),
-        _ => scalar_string(value),
+        _ => human_scalar(value),
     }
 }
 
@@ -6300,7 +6364,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
             format!("/projects/{project}/invitations"),
             true,
             vec![format!(
-                "pcl access --project {project} --invite --body '{{...}}'"
+                "pcl access --project {project} --invite --body-template"
             )],
         ));
     }
@@ -7303,7 +7367,10 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
                 "/projects/saved",
                 true,
                 Some(json!({ "project_id": project_id }).to_string()),
-                vec!["pcl account".to_string(), "pcl projects --mine".to_string()],
+                vec![
+                    format!("pcl projects --project-id {project_id}"),
+                    "pcl projects --mine".to_string(),
+                ],
             ));
         }
         if args.update {
