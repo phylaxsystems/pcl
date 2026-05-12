@@ -542,25 +542,8 @@ fn synthesizes_missing_operation_ids() {
 #[test]
 fn builds_public_incidents_workflow_request() {
     let request = incidents_request(&IncidentsArgs {
-        project_id: None,
-        incident_id: None,
-        tx_id: None,
-        assertion_id: None,
-        assertion_adopter_id: None,
-        environment: None,
-        from_date: None,
-        to_date: None,
-        page: None,
         limit: Some(5),
-        network: None,
-        sort: None,
-        dev_mode: None,
-        stats: false,
-        retry_trace: false,
-        all: false,
-        max_pages: None,
-        output: None,
-        jsonl: false,
+        ..incidents_args()
     })
     .unwrap();
 
@@ -573,24 +556,10 @@ fn builds_public_incidents_workflow_request() {
 fn builds_project_incidents_workflow_request() {
     let request = incidents_request(&IncidentsArgs {
         project_id: Some("project-1".to_string()),
-        incident_id: None,
-        tx_id: None,
         assertion_id: Some("assertion-1".to_string()),
-        assertion_adopter_id: None,
         environment: Some("production".to_string()),
-        from_date: None,
-        to_date: None,
-        page: None,
         limit: Some(10),
-        network: None,
-        sort: None,
-        dev_mode: None,
-        stats: false,
-        retry_trace: false,
-        all: false,
-        max_pages: None,
-        output: None,
-        jsonl: false,
+        ..incidents_args()
     })
     .unwrap();
 
@@ -617,24 +586,8 @@ fn builds_project_incidents_workflow_request() {
 fn builds_project_incident_stats_workflow_request() {
     let request = incidents_request(&IncidentsArgs {
         project_id: Some("project-1".to_string()),
-        incident_id: None,
-        tx_id: None,
-        assertion_id: None,
-        assertion_adopter_id: None,
-        environment: None,
-        from_date: None,
-        to_date: None,
-        page: None,
-        limit: None,
-        network: None,
-        sort: None,
-        dev_mode: None,
         stats: true,
-        retry_trace: false,
-        all: false,
-        max_pages: None,
-        output: None,
-        jsonl: false,
+        ..incidents_args()
     })
     .unwrap();
 
@@ -646,53 +599,17 @@ fn builds_project_incident_stats_workflow_request() {
 #[test]
 fn incident_detail_and_trace_require_auth() {
     let detail = incidents_request(&IncidentsArgs {
-        project_id: None,
         incident_id: Some("incident-1".to_string()),
-        tx_id: None,
-        assertion_id: None,
-        assertion_adopter_id: None,
-        environment: None,
-        from_date: None,
-        to_date: None,
-        page: None,
-        limit: None,
-        network: None,
-        sort: None,
-        dev_mode: None,
-        stats: false,
-        retry_trace: false,
-        all: false,
-        max_pages: None,
-        output: None,
-        jsonl: false,
+        ..incidents_args()
     })
     .unwrap();
     assert_eq!(detail.path, "/views/incidents/incident-1");
     assert!(detail.require_auth);
 
     let trace = incidents_request(&IncidentsArgs {
+        incident_id: Some("incident-1".to_string()),
         tx_id: Some("tx-1".to_string()),
-        ..IncidentsArgs {
-            project_id: None,
-            incident_id: Some("incident-1".to_string()),
-            tx_id: None,
-            assertion_id: None,
-            assertion_adopter_id: None,
-            environment: None,
-            from_date: None,
-            to_date: None,
-            page: None,
-            limit: None,
-            network: None,
-            sort: None,
-            dev_mode: None,
-            stats: false,
-            retry_trace: false,
-            all: false,
-            max_pages: None,
-            output: None,
-            jsonl: false,
-        }
+        ..incidents_args()
     })
     .unwrap();
     assert_eq!(
@@ -705,25 +622,10 @@ fn incident_detail_and_trace_require_auth() {
 #[test]
 fn builds_incident_trace_retry_request() {
     let request = incidents_request(&IncidentsArgs {
-        project_id: None,
         incident_id: Some("incident-1".to_string()),
         tx_id: Some("tx-1".to_string()),
-        assertion_id: None,
-        assertion_adopter_id: None,
-        environment: None,
-        from_date: None,
-        to_date: None,
-        page: None,
-        limit: None,
-        network: None,
-        sort: None,
-        dev_mode: None,
-        stats: false,
         retry_trace: true,
-        all: false,
-        max_pages: None,
-        output: None,
-        jsonl: false,
+        ..incidents_args()
     })
     .unwrap();
 
@@ -1140,24 +1042,8 @@ async fn incident_stats_401_propagates_original_http_error() {
     config.write_to_file(&cli_args).unwrap();
     let args = IncidentsArgs {
         project_id: Some(project_id.to_string()),
-        incident_id: None,
-        tx_id: None,
-        assertion_id: None,
-        assertion_adopter_id: None,
-        environment: None,
-        from_date: None,
-        to_date: None,
-        page: None,
-        limit: None,
-        network: None,
-        sort: None,
-        dev_mode: None,
         stats: true,
-        retry_trace: false,
-        all: false,
-        max_pages: None,
-        output: None,
-        jsonl: false,
+        ..incidents_args()
     };
 
     let error = api
@@ -2385,91 +2271,36 @@ fn body_templates_are_action_specific() {
     );
     assert_eq!(
         access_body_template(&AccessArgs {
-            project: Some("project-1".to_string()),
             member_user_id: Some("user-1".to_string()),
-            invitation_id: None,
-            token: None,
-            members: false,
-            invitations: false,
-            pending: false,
-            preview: false,
-            accept: false,
-            invite: false,
-            resend: false,
-            revoke: false,
             update_role: true,
-            remove: false,
-            my_role: false,
-            body: None,
-            field: Vec::new(),
-            body_file: None,
             body_template: true,
+            ..access_args()
         }),
         json!({ "role": "viewer" })
     );
     assert_eq!(
         release_body_template(&ReleasesArgs {
-            project: Some("project-1".to_string()),
             release_id: Some("release-1".to_string()),
-            signer_address: None,
-            check_id: None,
-            create: false,
-            preview: false,
             deploy: true,
-            remove: false,
-            deploy_calldata: false,
-            remove_calldata: false,
-            backtest_progress: false,
-            retry_check: false,
-            body: None,
-            field: Vec::new(),
-            body_file: None,
             body_template: true,
+            ..release_args()
         }),
         json!({ "chainId": 1, "txHash": "0x..." })
     );
     assert_eq!(
         release_body_template(&ReleasesArgs {
-            project: Some("project-1".to_string()),
             release_id: Some("release-1".to_string()),
-            signer_address: None,
-            check_id: None,
-            create: false,
-            preview: false,
-            deploy: false,
-            remove: false,
             deploy_calldata: true,
-            remove_calldata: false,
-            backtest_progress: false,
-            retry_check: false,
-            body: None,
-            field: Vec::new(),
-            body_file: None,
             body_template: true,
+            ..release_args()
         }),
         json!({})
     );
     assert_eq!(
         access_body_template(&AccessArgs {
-            project: Some("project-1".to_string()),
-            member_user_id: None,
-            invitation_id: None,
-            token: None,
             members: true,
-            invitations: false,
-            pending: false,
-            preview: false,
-            accept: false,
-            invite: false,
-            resend: false,
-            revoke: false,
-            update_role: false,
-            remove: false,
-            my_role: false,
-            body: None,
-            field: Vec::new(),
-            body_file: None,
             body_template: true,
+            ..access_args()
         }),
         json!({})
     );
