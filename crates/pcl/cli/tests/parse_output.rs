@@ -25,7 +25,10 @@ impl PclOutput {
 }
 
 fn run_pcl(args: &[&str]) -> PclOutput {
+    let config_dir = tempfile::tempdir().expect("temp config dir");
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .arg("--config-dir")
+        .arg(config_dir.path())
         .args(args)
         .output()
         .expect("run pcl");
