@@ -79,7 +79,7 @@ pub struct CliArgs {
         long,
         global = true,
         conflicts_with = "toon",
-        help = "Emit strict JSON output for agents and programmatic consumers"
+        help = "Emit strict JSON output for programmatic consumers"
     )]
     pub json: bool,
     #[clap(

@@ -169,8 +169,12 @@ impl ApiCommandError {
             Self::Json(_) => "input.invalid_json",
             Self::Request(source) => {
                 match source.status().map(|status| status.as_u16()) {
+                    Some(400) => "api.bad_request",
                     Some(401) => "auth.unauthorized",
                     Some(403) => "auth.forbidden",
+                    Some(404) => "api.not_found",
+                    Some(422) => "api.validation_failed",
+                    Some(500..=599) => "api.server_error",
                     _ => "network.request_failed",
                 }
             }
@@ -329,7 +333,15 @@ impl ApiCommandError {
                     "Read error.http.body for API-provided failure details".to_string(),
                 ]
             }
-            Self::Request(_) | Self::Url(_) => vec!["Check --api-url and retry".to_string()],
+            Self::Request(source) if source.status().map(|status| status.as_u16()) == Some(404) => {
+                vec![
+                    "Check the project ID, slug, or API path and retry".to_string(),
+                    "pcl projects --mine".to_string(),
+                ]
+            }
+            Self::Request(_) | Self::Url(_) => {
+                vec!["Check --api-url and your network connection, then retry".to_string()]
+            }
             Self::BodyFile { .. } => {
                 vec!["Check --body-file path or pass --body directly".to_string()]
             }
@@ -362,6 +374,9 @@ impl ApiCommandError {
             | Self::InvalidWorkflow { .. }
             | Self::InvalidWorkflowWithActions { .. } => vec!["fix_input", "retry"],
             Self::OperationNotFound(_) | Self::MissingPaths => vec!["inspect_manifest"],
+            Self::Request(source) if source.status().map(|status| status.as_u16()) == Some(404) => {
+                vec!["check_ids", "retry"]
+            }
             Self::Request(_) | Self::Url(_) => vec!["check_network", "retry"],
             Self::BodyFile { .. } | Self::Stdin(_) => vec!["fix_body_input", "retry"],
             Self::RequestLog { .. } => vec!["inspect_request_log", "retry"],
@@ -909,7 +924,7 @@ impl WorkflowRequest {
 struct IncidentsArgs {
     #[arg(
         long,
-        alias = "project",
+        visible_alias = "project",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -985,7 +1000,7 @@ struct IncidentsArgs {
 struct ProjectsArgs {
     #[arg(
         long,
-        alias = "project",
+        visible_alias = "project",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1056,7 +1071,7 @@ struct ProjectsArgs {
 struct AssertionsArgs {
     #[arg(
         long,
-        alias = "project",
+        visible_alias = "project",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1129,6 +1144,8 @@ struct AssertionsArgs {
         .multiple(false)
 ))]
 struct SearchArgs {
+    #[arg(value_name = "QUERY", help = "Search query")]
+    term: Option<String>,
     #[arg(long, short = 'q', help = "Search query")]
     query: Option<String>,
     #[arg(long, help = "Return network statistics")]
@@ -1187,7 +1204,7 @@ struct AccountArgs {
 struct ContractsArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1255,7 +1272,7 @@ struct ContractsArgs {
 struct ReleasesArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1313,7 +1330,7 @@ struct ReleasesArgs {
 struct DeploymentsArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1343,7 +1360,7 @@ struct DeploymentsArgs {
 struct AccessArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1414,7 +1431,7 @@ impl IntegrationProvider {
 struct IntegrationsArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1450,7 +1467,7 @@ struct IntegrationsArgs {
 struct ProtocolManagerArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1524,7 +1541,7 @@ struct TransfersArgs {
 struct EventsArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -3041,6 +3058,10 @@ fn human_next_actions(envelope: &Value) -> Vec<String> {
         .unwrap_or("ok");
     let is_empty_ok = status == "ok" && envelope_has_empty_results(envelope);
     let terms_accepted = envelope_terms_accepted(envelope);
+    let preserve_agent_flags = envelope
+        .get("data")
+        .and_then(|data| data.get("consumption_order"))
+        .is_some();
     let integration_test_unavailable = envelope
         .pointer("/data/test_available")
         .or_else(|| envelope.pointer("/data/data/test_available"))
@@ -3056,7 +3077,13 @@ fn human_next_actions(envelope: &Value) -> Vec<String> {
         .filter(|action| !(is_empty_ok && is_item_placeholder_action(action)))
         .filter(|action| !(terms_accepted && action.contains("account --accept-terms")))
         .filter(|action| !(integration_test_unavailable && action.contains(" --test")))
-        .map(human_action_str)
+        .map(|action| {
+            if preserve_agent_flags {
+                action.to_string()
+            } else {
+                human_action_str(action)
+            }
+        })
         .filter(|action| !action.is_empty())
         .collect()
 }
@@ -3086,6 +3113,9 @@ fn is_item_placeholder_action(action: &str) -> bool {
         "<release-id>",
         "<transfer-id>",
         "<adopter-id>",
+        "<job-id>",
+        "<project-ref>",
+        "<contract-ref>",
         "<token>",
     ]
     .iter()
@@ -3149,18 +3179,26 @@ fn render_human_error(output: &mut String, error: &Value) {
         output.push_str(request_id);
         output.push('\n');
     }
-    if let Some(code) = code {
-        output.push_str("Code: ");
-        output.push_str(code);
-        output.push('\n');
-    }
 }
 
 fn human_error_message(code: Option<&str>, message: &str) -> String {
     if code.is_some_and(|value| value.starts_with("cli.")) {
         return clean_cli_error_message(message);
     }
-    message.to_string()
+    match code {
+        Some("api.not_found") => {
+            "Resource not found. Check the ID, slug, or API path and try again.".to_string()
+        }
+        Some("network.request_failed") => {
+            "Network request failed. Check --api-url and your network connection, then retry."
+                .to_string()
+        }
+        Some("api.server_error") => {
+            "The platform returned a server error. Retry later or report the request ID."
+                .to_string()
+        }
+        _ => message.to_string(),
+    }
 }
 
 fn clean_cli_error_message(message: &str) -> String {
@@ -3215,6 +3253,9 @@ fn render_human_special(output: &mut String, envelope: &Value) -> bool {
         return true;
     }
     if render_project_detail(output, display_data) {
+        return true;
+    }
+    if render_incident_detail(output, display_data) {
         return true;
     }
     if render_search_results(output, display_data) {
@@ -3510,6 +3551,114 @@ fn render_project_detail(output: &mut String, data: &Value) -> bool {
     true
 }
 
+fn render_incident_detail(output: &mut String, data: &Value) -> bool {
+    let Some(incident_id) = data.get("incident_id").and_then(Value::as_str) else {
+        return false;
+    };
+    if data.get("invalidating_transactions").is_none() && data.get("transaction_count").is_none() {
+        return false;
+    }
+
+    output.push_str("\nIncident\n");
+    writeln!(output, "ID: {incident_id}").expect("write to string");
+    write_optional_string_field(output, "Reference", data, "public_reference_id");
+    write_u64_field(output, "Chain", data, "chain_id", None);
+    write_timestamp_field(output, "Window start", data, "window_start");
+    write_string_field(output, "Environment", data, "environment");
+
+    if let Some(assertion) = data.get("assertion") {
+        output.push_str("\nAssertion\n");
+        write_optional_string_field(output, "Title", assertion, "title");
+        write_optional_string_field(output, "ID", assertion, "assertion_id");
+        if let Some(description) = assertion
+            .get("description")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .filter(|value| !is_hex_blob(value))
+        {
+            writeln!(output, "Description: {}", truncate(description, 96))
+                .expect("write to string");
+        }
+    } else {
+        write_optional_string_field(output, "Assertion ID", data, "assertion_id");
+    }
+
+    if let Some(adopter) = data.get("assertion_adopter") {
+        output.push_str("\nAssertion adopter\n");
+        write_optional_string_field(output, "Name", adopter, "name");
+        write_optional_string_field(output, "Address", adopter, "address");
+        write_optional_string_field(output, "ID", adopter, "id");
+    } else {
+        write_optional_string_field(output, "Assertion adopter ID", data, "assertion_adopter_id");
+    }
+
+    output.push_str("\nTrace summary\n");
+    write_u64_count_field(
+        output,
+        "Invalidating transactions",
+        data,
+        "transaction_count",
+        "transaction",
+    );
+    write_u64_field(output, "Traces completed", data, "traces_completed", None);
+    write_u64_field(output, "Traces pending", data, "traces_pending", None);
+
+    if let Some(transactions) = data
+        .get("invalidating_transactions")
+        .and_then(Value::as_array)
+        .filter(|transactions| !transactions.is_empty())
+    {
+        let shown = transactions.len().min(5);
+        writeln!(
+            output,
+            "\nInvalidating transactions (first {shown} of {})",
+            transactions.len()
+        )
+        .expect("write to string");
+        writeln!(
+            output,
+            "{} {} {} {} Trace",
+            pad("#", 3),
+            pad("Time", 16),
+            pad("Tx hash", 20),
+            pad("Result", 11)
+        )
+        .expect("write to string");
+        for (index, tx) in transactions.iter().take(shown).enumerate() {
+            let time = tx
+                .get("incident_timestamp")
+                .and_then(Value::as_str)
+                .map_or_else(|| "-".to_string(), format_timestamp);
+            let hash = first_string_field(tx, &["transaction_hash", "hash", "tx_hash"])
+                .map_or_else(|| "-".to_string(), |value| truncate(&value, 20));
+            let result = match tx.get("landed_on_chain").and_then(Value::as_bool) {
+                Some(true) => "landed",
+                Some(false) => "invalidated",
+                None => "-",
+            };
+            let trace = tx
+                .get("debug_traces")
+                .and_then(Value::as_array)
+                .and_then(|traces| traces.first())
+                .and_then(|trace| trace.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or("-");
+            writeln!(
+                output,
+                "{} {} {} {} {}",
+                pad(&(index + 1).to_string(), 3),
+                pad(&time, 16),
+                pad(&hash, 20),
+                pad(result, 11),
+                trace
+            )
+            .expect("write to string");
+        }
+    }
+
+    true
+}
+
 fn render_project_home(output: &mut String, envelope_data: &Value, data: &Value) -> bool {
     let Some(member_projects) = data.get("member_projects").and_then(Value::as_array) else {
         return false;
@@ -3800,7 +3949,7 @@ fn render_llms_guide(output: &mut String, data: &Value) -> bool {
     if let Some(order) = data.get("consumption_order").and_then(Value::as_array) {
         output.push_str("\nRecommended order:\n");
         for command in order.iter().filter_map(Value::as_str).take(8) {
-            writeln!(output, "  - {}", humanize_command(command)).expect("write to string");
+            writeln!(output, "  - {command}").expect("write to string");
         }
     }
     true
@@ -4117,6 +4266,17 @@ fn write_u64_field(
     }
 }
 
+fn write_u64_count_field(output: &mut String, label: &str, data: &Value, field: &str, item: &str) {
+    if let Some(value) = data.get(field).and_then(Value::as_u64) {
+        let count = if value == 1 {
+            format!("1 {item}")
+        } else {
+            format!("{value} {item}s")
+        };
+        writeln!(output, "{label}: {count}").expect("write to string");
+    }
+}
+
 fn write_count_field(output: &mut String, label: &str, data: &Value, field: &str) {
     if let Some(values) = data.get(field).and_then(Value::as_array) {
         writeln!(
@@ -4370,7 +4530,6 @@ fn infer_collection_name(field: &str, request_path: &str, items: &[Value]) -> St
 
 fn collection_summary(collection: &HumanCollection<'_>) -> String {
     let shown = collection.items.len();
-    let item_name = collection.name.to_ascii_lowercase();
     if let Some(pagination) = collection.pagination {
         let total = pagination
             .get("total")
@@ -4378,6 +4537,7 @@ fn collection_summary(collection: &HumanCollection<'_>) -> String {
             .unwrap_or(shown as u64);
         let page = pagination.get("page").and_then(Value::as_u64);
         let limit = pagination.get("limit").and_then(Value::as_u64);
+        let item_name = collection_item_name(&collection.name, total);
         let mut summary = if total > shown as u64 {
             format!("Showing {shown} of {total} {item_name}")
         } else {
@@ -4391,7 +4551,19 @@ fn collection_summary(collection: &HumanCollection<'_>) -> String {
         }
         return summary;
     }
+    let item_name = collection_item_name(&collection.name, shown as u64);
     format!("Showing {shown} {item_name}")
+}
+
+fn collection_item_name(name: &str, count: u64) -> String {
+    let lower = name.to_ascii_lowercase();
+    if count != 1 {
+        return lower;
+    }
+    lower.strip_suffix("ies").map_or_else(
+        || lower.strip_suffix("s").unwrap_or(&lower).to_string(),
+        |stem| format!("{stem}y"),
+    )
 }
 
 fn render_collection_items(output: &mut String, collection: &HumanCollection<'_>) {
@@ -5302,6 +5474,13 @@ fn truncate(value: &str, max_chars: usize) -> String {
     format!("{prefix}...")
 }
 
+fn is_hex_blob(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("0x") else {
+        return false;
+    };
+    hex.len() > 64 && hex.chars().all(|character| character.is_ascii_hexdigit())
+}
+
 fn render_human_value(output: &mut String, value: &Value, indent: usize) {
     match value {
         Value::Object(object) => {
@@ -5751,12 +5930,14 @@ fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError>
     let query = args
         .query
         .as_deref()
+        .or(args.term.as_deref())
         .filter(|query| !query.trim().is_empty())
         .ok_or_else(|| {
             ApiCommandError::InvalidWorkflowWithActions {
-                message: "--query is required unless you choose a specific search action"
+                message: "Search query is required unless you choose a specific search action"
                     .to_string(),
                 next_actions: vec![
+                    "pcl search <term>".to_string(),
                     "pcl search --query <term>".to_string(),
                     "pcl search --stats".to_string(),
                     "pcl search --help".to_string(),
@@ -6927,7 +7108,22 @@ fn incidents_next_actions(
     args: &IncidentsArgs,
     fallback: Vec<String>,
 ) -> Vec<String> {
-    if args.incident_id.is_some() {
+    if let Some(incident_id) = &args.incident_id {
+        if args.tx_id.is_none()
+            && let Some(tx_id) = data
+                .get("data")
+                .and_then(|data| data.get("invalidating_transactions"))
+                .and_then(Value::as_array)
+                .and_then(|transactions| transactions.first())
+                .and_then(|transaction| {
+                    first_string_field(transaction, &["transaction_hash", "id", "tx_id"])
+                })
+        {
+            return vec![
+                format!("pcl incidents --incident-id {incident_id} --tx-id {tx_id}"),
+                "pcl incidents --limit 5".to_string(),
+            ];
+        }
         return fallback;
     }
     first_string_field(data, &["id", "incidentId", "incident_id"]).map_or(fallback, |incident_id| {

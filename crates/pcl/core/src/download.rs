@@ -39,7 +39,7 @@ pub struct DownloadArgs {
     )]
     pub output_dir: Option<PathBuf>,
 
-    #[arg(long, help = "Emit machine-readable output for this command")]
+    #[arg(long, help = "Emit strict JSON output for programmatic consumers")]
     pub json: bool,
 
     #[arg(
