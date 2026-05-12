@@ -1344,7 +1344,7 @@ fn default_error_output_is_human_readable() {
     );
     let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
     assert!(stderr.starts_with("Error\n"), "{stderr}");
-    assert!(stderr.contains("Code: input.invalid_path"), "{stderr}");
+    assert!(!stderr.contains("Code:"), "{stderr}");
     assert!(stderr.contains("Next:"), "{stderr}");
     assert!(!stderr.contains("Schema: pcl.envelope.v1"), "{stderr}");
 }

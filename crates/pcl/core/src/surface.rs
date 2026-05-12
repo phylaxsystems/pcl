@@ -197,6 +197,12 @@ impl ProductSurfaceError {
             Self::NoAuthToken | Self::ExpiredAuthToken(_) => {
                 vec!["pcl auth login".to_string(), "pcl doctor".to_string()]
             }
+            Self::InvalidInput(message) if message.starts_with("Unknown job") => {
+                vec![
+                    "pcl jobs list".to_string(),
+                    "pcl export incidents --help".to_string(),
+                ]
+            }
             Self::InvalidInput(_) => {
                 vec!["pcl workflows".to_string(), "pcl schema list".to_string()]
             }
@@ -576,11 +582,20 @@ impl ArtifactsArgs {
                 })
             }
         };
+        let next_actions = match &self.command {
+            Some(ArtifactsCommand::Path) => {
+                json!(["pcl artifacts list", "pcl export incidents --help"])
+            }
+            Some(ArtifactsCommand::Init) => json!(["pcl artifacts list", "pcl artifacts path"]),
+            None | Some(ArtifactsCommand::List { .. }) => {
+                json!(["pcl export incidents --help", "pcl artifacts path"])
+            }
+        };
         print_output(
             &json!({
                 "status": "ok",
                 "data": data,
-                "next_actions": ["pcl export incidents --help", "pcl artifacts path"],
+                "next_actions": next_actions,
             }),
             json_output,
         )
@@ -736,15 +751,31 @@ impl JobsArgs {
                 job
             }
         };
+        let next_actions = match &self.command {
+            None | Some(JobsCommand::List { .. }) => {
+                data.get("jobs")
+                    .and_then(Value::as_array)
+                    .and_then(|jobs| jobs.first())
+                    .and_then(|job| job.get("job_id"))
+                    .and_then(Value::as_str)
+                    .map_or_else(
+                        || json!(["pcl export incidents --help"]),
+                        |job_id| {
+                            json!([
+                                format!("pcl jobs status {job_id}"),
+                                format!("pcl jobs resume {job_id}"),
+                                "pcl export incidents --help",
+                            ])
+                        },
+                    )
+            }
+            _ => json!(["pcl jobs list", "pcl export incidents --help"]),
+        };
         print_output(
             &json!({
                 "status": "ok",
                 "data": data,
-                "next_actions": [
-                    "pcl jobs list",
-                    "pcl jobs resume <job-id>",
-                    "pcl export incidents --help",
-                ],
+                "next_actions": next_actions,
             }),
             json_output,
         )

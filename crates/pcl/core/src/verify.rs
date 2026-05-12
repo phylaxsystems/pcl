@@ -58,7 +58,7 @@ pub struct VerifyArgs {
     #[arg(long, num_args = 1.., help = "Constructor arguments for the assertion")]
     pub args: Vec<String>,
 
-    #[arg(long, help = "Emit machine-readable JSON output")]
+    #[arg(long, help = "Emit strict JSON output for programmatic consumers")]
     pub json: bool,
 }
 

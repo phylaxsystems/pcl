@@ -2754,6 +2754,7 @@ fn human_errors_include_api_reason_and_hide_internal_actions() {
 
     assert!(output.contains("API reason: System status checks are temporarily disabled"));
     assert!(output.contains("Request ID: req_forbidden"));
+    assert!(!output.contains("Code: auth.forbidden"));
     assert!(!output.contains("Read error.http.body"));
 }
 
@@ -2777,6 +2778,78 @@ fn human_cli_errors_strip_raw_usage_dump() {
     assert!(!output.contains("error:"));
     assert!(!output.contains("Usage:"));
     assert!(!output.contains("--toon"));
+}
+
+#[test]
+fn human_llms_guide_keeps_toon_commands() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "purpose": "CLI-native control surface.",
+                "consumption_order": [
+                    "pcl doctor --toon",
+                    "pcl auth ensure --toon",
+                    "pcl api manifest --toon"
+                ]
+            },
+            "next_actions": ["pcl doctor --toon", "pcl api manifest --toon"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("pcl doctor --toon"));
+    assert!(output.contains("pcl api manifest --toon"));
+}
+
+#[test]
+fn human_incident_detail_uses_readable_sections() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "data": {
+                    "incident_id": "incident-1",
+                    "public_reference_id": "ref-1",
+                    "assertion_id": "assertion-1",
+                    "assertion_adopter_id": "adopter-1",
+                    "chain_id": 59144,
+                    "window_start": "2026-05-11T17:59:26+00:00",
+                    "environment": "production",
+                    "assertion": {
+                        "assertion_id": "assertion-1",
+                        "title": "AllowanceAssertion",
+                        "description": "short description"
+                    },
+                    "assertion_adopter": {
+                        "id": "adopter-1",
+                        "name": "LineaSettler",
+                        "address": "0xc026251dc69f6e3556331b2e14e72eb4a34dd55a"
+                    },
+                    "invalidating_transactions": [{
+                        "id": "tx-row-1",
+                        "transaction_hash": "0x8b42e518623666080dcda9fdc5bdd73473834372ccfc8d634d0836f4a55308a1",
+                        "incident_timestamp": "2026-05-11T18:17:01+00:00",
+                        "landed_on_chain": false,
+                        "debug_traces": [{"status": "completed"}]
+                    }],
+                    "transaction_count": 1,
+                    "traces_completed": 1,
+                    "traces_pending": 0
+                }
+            },
+            "next_actions": ["pcl incidents --incident-id incident-1 --tx-id 0x8b42"]
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Incident\nID: incident-1"));
+    assert!(output.contains("Assertion\nTitle: AllowanceAssertion"));
+    assert!(output.contains("Assertion adopter\nName: LineaSettler"));
+    assert!(output.contains("Invalidating transactions (first 1 of 1)"));
+    assert!(!output.contains("Assertion: Assertion ID="));
 }
 
 #[test]
@@ -3126,6 +3199,15 @@ fn parser_accepts_projects_mine_and_home_aliases() {
         panic!("expected projects command");
     };
     assert!(args.mine);
+}
+
+#[test]
+fn parser_accepts_search_query_as_positional_term() {
+    let parsed = ApiArgs::try_parse_from(["api", "search", "settler"]).unwrap();
+    let ApiCommand::Search(args) = parsed.command else {
+        panic!("expected search command");
+    };
+    assert_eq!(args.term.as_deref(), Some("settler"));
 }
 
 #[test]

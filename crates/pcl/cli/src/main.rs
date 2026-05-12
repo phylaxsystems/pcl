@@ -18,6 +18,8 @@ use pcl_common::args::{
     OutputMode,
     set_current_output_mode,
 };
+#[cfg(feature = "credible")]
+use pcl_core::error::VerifyError;
 use pcl_core::{
     api::{
         ApiCommandError,
@@ -219,6 +221,10 @@ fn error_envelope(err: &Report) -> Value {
     if let Some(download_error) = err.downcast_ref::<DownloadError>() {
         return with_envelope_metadata(download_error_envelope(download_error));
     }
+    #[cfg(feature = "credible")]
+    if let Some(verify_error) = err.downcast_ref::<VerifyError>() {
+        return with_envelope_metadata(verify_error_envelope(verify_error));
+    }
     if let Some(surface_error) = err.downcast_ref::<ProductSurfaceError>() {
         return surface_error.json_envelope();
     }
@@ -330,6 +336,63 @@ fn download_error_envelope(err: &DownloadError) -> Value {
                 "download.failed",
                 err.to_string(),
                 vec!["pcl download --help", "pcl doctor"],
+            )
+        }
+    };
+    json!({
+        "status": "error",
+        "error": {
+            "code": code,
+            "message": message,
+            "recoverable": true,
+        },
+        "next_actions": next_actions,
+    })
+}
+
+#[cfg(feature = "credible")]
+fn verify_error_envelope(err: &VerifyError) -> Value {
+    let (code, message, next_actions): (&str, String, Vec<&str>) = match err {
+        VerifyError::Io { message, .. } if message.starts_with("Project root not found") => {
+            (
+                "verify.project_root_not_found",
+                err.to_string(),
+                vec!["pcl verify --help", "Check --root path"],
+            )
+        }
+        VerifyError::Io { .. } => {
+            (
+                "verify.io_failed",
+                err.to_string(),
+                vec!["pcl verify --help", "Check file paths and permissions"],
+            )
+        }
+        VerifyError::Config(_) => {
+            (
+                "verify.invalid_config",
+                err.to_string(),
+                vec!["pcl verify --help", "pcl apply --dry-run"],
+            )
+        }
+        VerifyError::BuildFailed(_) => {
+            (
+                "verify.build_failed",
+                err.to_string(),
+                vec!["pcl build --help", "pcl verify --help"],
+            )
+        }
+        VerifyError::AbiEncode(_) => {
+            (
+                "verify.invalid_constructor_args",
+                err.to_string(),
+                vec!["pcl verify --help"],
+            )
+        }
+        VerifyError::Json(_) => {
+            (
+                "json.failed",
+                err.to_string(),
+                vec!["Retry without --json to inspect human output"],
             )
         }
     };
