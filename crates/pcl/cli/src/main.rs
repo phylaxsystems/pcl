@@ -16,6 +16,7 @@ use color_eyre::{
 use pcl_common::args::{
     CliArgs,
     OutputMode,
+    current_output_mode,
     set_current_output_mode,
 };
 #[cfg(feature = "credible")]
@@ -437,6 +438,9 @@ fn auth_error_envelope(err: &AuthError) -> Value {
             platform_url,
         } => {
             let seconds_remaining = expires_at.timestamp() - unix_timestamp_now();
+            let refresh_command = command_for_current_output("pcl auth refresh");
+            let login_command = command_for_current_output("pcl auth login --force");
+            let logout_command = command_for_current_output("pcl auth logout");
             with_envelope_metadata(json!({
                 "status": "error",
                 "error": {
@@ -456,9 +460,9 @@ fn auth_error_envelope(err: &AuthError) -> Value {
                     },
                 },
                 "next_actions": [
-                    "pcl auth refresh --json",
-                    "pcl auth login --force",
-                    "pcl auth logout",
+                    refresh_command,
+                    login_command,
+                    logout_command,
                 ],
             }))
         }
@@ -550,6 +554,7 @@ fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
             request_id,
             message,
         } => {
+            let refresh_command = command_for_current_output("pcl auth refresh");
             Some(with_envelope_metadata(json!({
                 "status": "error",
                 "error": {
@@ -560,7 +565,7 @@ fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
                     "request_id": request_id,
                     "details": message,
                 },
-                "next_actions": ["Wait for error.retry_after_seconds, then retry pcl auth refresh --json"],
+                "next_actions": [format!("Wait for error.retry_after_seconds, then retry {refresh_command}")],
             })))
         }
         AuthError::RefreshServerError {
@@ -568,6 +573,7 @@ fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
             request_id,
             message,
         } => {
+            let refresh_command = command_for_current_output("pcl auth refresh");
             Some(with_envelope_metadata(json!({
                 "status": "error",
                 "error": {
@@ -581,18 +587,38 @@ fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
                     "request_id": request_id,
                     "details": message,
                 },
-                "next_actions": ["Retry pcl auth refresh --json once before logging in again"],
+                "next_actions": [format!("Retry {refresh_command} once before logging in again")],
             })))
         }
         AuthError::RefreshRequestFailed(_) | AuthError::RefreshLockTimeout => {
-            Some(with_envelope_metadata(simple_error_value(
-                "auth.refresh_failed",
-                &err.to_string(),
-                true,
-                &["Retry pcl auth refresh --json", "pcl auth login --force"],
-            )))
+            Some(auth_refresh_failed_envelope(err))
         }
         _ => None,
+    }
+}
+
+fn auth_refresh_failed_envelope(err: &AuthError) -> Value {
+    let refresh_command = command_for_current_output("pcl auth refresh");
+    let login_command = command_for_current_output("pcl auth login --force");
+    with_envelope_metadata(json!({
+        "status": "error",
+        "error": {
+            "code": "auth.refresh_failed",
+            "message": err.to_string(),
+            "recoverable": true,
+        },
+        "next_actions": [
+            format!("Retry {refresh_command}"),
+            login_command,
+        ],
+    }))
+}
+
+fn command_for_current_output(command: &str) -> String {
+    match current_output_mode() {
+        OutputMode::Human => command.to_string(),
+        OutputMode::Toon => format!("{command} --toon"),
+        OutputMode::Json => format!("{command} --json"),
     }
 }
 
@@ -982,7 +1008,7 @@ mod tests {
         assert_eq!(envelope["status"], "error");
         assert_eq!(envelope["error"]["code"], "auth.expired_token");
         assert_eq!(envelope["error"]["auth"]["token_valid"], false);
-        assert_eq!(envelope["next_actions"][0], "pcl auth refresh --json");
+        assert_eq!(envelope["next_actions"][0], "pcl auth refresh");
         assert_eq!(envelope["next_actions"][1], "pcl auth login --force");
     }
 }
