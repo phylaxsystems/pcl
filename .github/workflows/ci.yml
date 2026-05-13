@@ -71,6 +71,8 @@ jobs:
       deny-preinstalled: true
     secrets:
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      APP_ID: ${{ secrets.APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
 
   release-feature-check:
     name: Release Feature Check
