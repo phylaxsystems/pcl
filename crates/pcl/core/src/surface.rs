@@ -204,6 +204,13 @@ impl ProductSurfaceError {
                     "pcl export incidents --help".to_string(),
                 ]
             }
+            Self::InvalidInput(message) if message.contains("developer pass-through command") => {
+                vec![
+                    "Run the command again without --toon/--json".to_string(),
+                    "pcl verify".to_string(),
+                    "pcl apply --dry-run".to_string(),
+                ]
+            }
             Self::InvalidInput(_) => {
                 vec!["pcl workflows".to_string(), "pcl schema list".to_string()]
             }
@@ -522,7 +529,7 @@ impl WhoamiArgs {
                     "auth": auth_value(config.auth.as_ref()),
                 },
                 "next_actions": if config.auth.is_some() {
-                    json!(["pcl account", "pcl projects --mine", "pcl doctor"])
+                    json!(["pcl account", "pcl projects mine", "pcl doctor"])
                 } else {
                     json!(["pcl auth login", "pcl doctor"])
                 },
@@ -1702,19 +1709,19 @@ fn workflow_recipes() -> Vec<Value> {
             "name": "deploy-release",
             "description": "Create release payloads, preview, create, and fetch deploy calldata.",
             "steps": [
-                {"command": "pcl releases --project <project-id> --body-template --toon", "output": "release body contract"},
-                {"command": "pcl releases --project <project-id> --preview --body-file release.json --toon", "output": "release preview"},
-                {"command": "pcl releases --project <project-id> --create --body-file release.json --toon", "output": "created release"},
-                {"command": "pcl releases --project <project-id> --release-id <release-id> --deploy-calldata --signer-address <address> --toon", "output": "deployment calldata"}
+                {"command": "pcl releases preview <project-id> --body-template --toon", "output": "release body contract"},
+                {"command": "pcl releases preview <project-id> --body-file release.json --toon", "output": "release preview"},
+                {"command": "pcl releases create <project-id> --body-file release.json --toon", "output": "created release"},
+                {"command": "pcl releases calldata deploy <project-id> <release-id> --signer-address <address> --toon", "output": "deployment calldata"}
             ],
         }),
         json!({
             "name": "invite-member",
             "description": "Invite a project member and inspect pending invitations.",
             "steps": [
-                {"command": "pcl access --project <project-id> --invite --body-template --toon", "output": "invite body contract"},
-                {"command": "pcl access --project <project-id> --invite --body-file invite.json --toon", "output": "invitation result"},
-                {"command": "pcl access --project <project-id> --invitations --toon", "output": "project invitations"}
+                {"command": "pcl access invite <project-id> --body-template --toon", "output": "invite body contract"},
+                {"command": "pcl access invite <project-id> --body-file invite.json --toon", "output": "invitation result"},
+                {"command": "pcl access invitations <project-id> --toon", "output": "project invitations"}
             ],
         }),
         json!({

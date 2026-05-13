@@ -42,9 +42,14 @@ use std::{
 mod manifest;
 mod openapi;
 mod render;
+mod spec;
 mod templates;
 mod workflows;
 
+pub use crate::output::{
+    ENVELOPE_SCHEMA_VERSION,
+    with_envelope_metadata,
+};
 pub use manifest::api_manifest;
 pub use render::{
     envelope_output_string,
@@ -96,7 +101,6 @@ use workflows::{
     contracts_request,
     deployments_request,
     events_request,
-    first_string_field,
     incidents_next_actions,
     incidents_request,
     integrations_request,
@@ -110,20 +114,6 @@ use workflows::{
     search_request,
     transfers_request,
 };
-
-pub const ENVELOPE_SCHEMA_VERSION: &str = "pcl.envelope.v1";
-
-pub fn with_envelope_metadata(mut value: Value) -> Value {
-    if let Value::Object(object) = &mut value {
-        object
-            .entry("schema_version")
-            .or_insert_with(|| json!(ENVELOPE_SCHEMA_VERSION));
-        object
-            .entry("pcl_version")
-            .or_insert_with(|| json!(env!("CARGO_PKG_VERSION")));
-    }
-    value
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiCommandError {
@@ -307,7 +297,7 @@ impl ApiCommandError {
             Self::InvalidWorkflowWithActions { next_actions, .. } => next_actions.clone(),
             Self::InvalidWorkflow { .. } => {
                 vec![
-                    "pcl projects --mine".to_string(),
+                    "pcl projects mine".to_string(),
                     "pcl schema list".to_string(),
                     "pcl workflows".to_string(),
                 ]
@@ -358,7 +348,7 @@ impl ApiCommandError {
             Self::HttpStatus { status: 404, .. } => {
                 vec![
                     "Check the project ID, slug, or API path and retry".to_string(),
-                    "pcl projects --mine".to_string(),
+                    "pcl projects mine".to_string(),
                 ]
             }
             Self::HttpStatus {
@@ -401,7 +391,7 @@ impl ApiCommandError {
             Self::Request(source) if source.status().map(|status| status.as_u16()) == Some(404) => {
                 vec![
                     "Check the project ID, slug, or API path and retry".to_string(),
-                    "pcl projects --mine".to_string(),
+                    "pcl projects mine".to_string(),
                 ]
             }
             Self::Request(_) | Self::Url(_) => {
@@ -585,15 +575,21 @@ struct ApiWorkflowOptions {
         long = "api-url",
         env = "PCL_API_URL",
         default_value = DEFAULT_PLATFORM_URL,
+        global = true,
         help = "Base URL for the platform API"
     )]
     api_url: url::Url,
 
-    #[arg(long, help = "Do not attach the stored bearer token to API requests")]
+    #[arg(
+        long,
+        global = true,
+        help = "Do not attach the stored bearer token to API requests"
+    )]
     allow_unauthenticated: bool,
 
     #[arg(
         long = "dry-run",
+        global = true,
         help = "Print the request plan without sending an API request"
     )]
     dry_run: bool,
@@ -660,7 +656,7 @@ enum ApiCommand {
 
     #[command(
         about = "List, inspect, create, update, save, or delete projects",
-        after_help = "Examples:\n  pcl projects --mine\n  pcl projects\n  pcl projects --project-id <project-ref>\n  pcl projects --saved --user-id <user-id>\n  pcl projects --create --project-name demo --chain-id 1\n  pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl projects --project-id <project-ref> --save"
+        after_help = "Examples:\n  pcl projects mine\n  pcl projects list\n  pcl projects show <project-ref>\n  pcl projects saved --user-id <user-id>\n  pcl projects create --project-name demo --chain-id 1\n  pcl projects update <project-ref> --field github_url=https://github.com/org/repo\n  pcl projects save <project-ref>"
     )]
     Projects(ProjectsArgs),
 
@@ -690,7 +686,7 @@ enum ApiCommand {
 
     #[command(
         about = "List, inspect, create, preview, check, retry, deploy, or remove releases",
-        after_help = "Examples:\n  pcl releases --project <project-ref>\n  pcl releases --project <project-ref> --release-id <release-id>\n  pcl releases --project <project-ref> --preview --body-file release.json\n  pcl releases --project <project-ref> --release-id <release-id> --backtest-progress\n  pcl releases --project <project-ref> --release-id <release-id> --check-id <check-id> --retry-check\n  pcl releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address <signer-address>"
+        after_help = "Examples:\n  pcl releases list <project-ref>\n  pcl releases show <project-ref> <release-id>\n  pcl releases preview <project-ref> --body-file release.json\n  pcl releases backtest-progress <project-ref> <release-id>\n  pcl releases retry-check <project-ref> <release-id> <check-id>\n  pcl releases calldata deploy <project-ref> <release-id> --signer-address <signer-address>"
     )]
     Releases(ReleasesArgs),
 
@@ -702,7 +698,7 @@ enum ApiCommand {
 
     #[command(
         about = "Manage members, roles, and invitations",
-        after_help = "Examples:\n  pcl access --project <project-ref> --members\n  pcl access --project <project-ref> --invite --body-template\n  pcl access --pending\n  pcl access --token <token> --preview"
+        after_help = "Examples:\n  pcl access members <project-ref>\n  pcl access invite <project-ref> --body-template\n  pcl access pending\n  pcl access preview <token>"
     )]
     Access(AccessArgs),
 
@@ -1053,7 +1049,7 @@ struct IncidentsArgs {
     jsonl: bool,
 }
 
-#[derive(clap::Args, Debug)]
+#[derive(clap::Args, Debug, Default)]
 #[command(group(
     ArgGroup::new("project_action")
         .args(["mine", "saved", "create", "update", "delete", "save", "unsave", "resolve", "widget"])
@@ -1122,6 +1118,259 @@ struct ProjectsArgs {
     body_file: Option<PathBuf>,
     #[arg(long, alias = "body_template", help = "Print a JSON body template")]
     body_template: bool,
+}
+
+#[derive(clap::Args, Debug)]
+#[command(
+    about = "List, inspect, create, update, save, or delete projects",
+    after_help = "Examples:\n  pcl projects mine\n  pcl projects list\n  pcl projects show <project-ref>\n  pcl projects saved --user-id <user-id>\n  pcl projects create --project-name demo --chain-id 1\n  pcl projects update <project-ref> --field github_url=https://github.com/org/repo\n  pcl projects save <project-ref>\n\nLegacy flag forms are still supported."
+)]
+pub struct ProjectsCommand {
+    #[command(flatten)]
+    globals: ApiWorkflowOptions,
+    #[command(subcommand)]
+    command: Option<ProjectsSubcommand>,
+    #[command(flatten)]
+    legacy: ProjectsArgs,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum ProjectsSubcommand {
+    #[command(about = "List public projects")]
+    List(ProjectListArgs),
+    #[command(about = "Show projects you belong to")]
+    Mine,
+    #[command(about = "Show one project")]
+    Show(ProjectRefArgs),
+    #[command(about = "List projects saved by a user")]
+    Saved(ProjectSavedArgs),
+    #[command(about = "Create a project")]
+    Create(ProjectWriteArgs),
+    #[command(about = "Update a project")]
+    Update(ProjectUpdateArgs),
+    #[command(about = "Delete a project")]
+    Delete(ProjectRefArgs),
+    #[command(about = "Save a project for the current user")]
+    Save(ProjectRefArgs),
+    #[command(about = "Unsave a project for the current user")]
+    Unsave(ProjectRefArgs),
+    #[command(about = "Resolve a project slug or UUID")]
+    Resolve(ProjectRefArgs),
+    #[command(about = "Show lightweight project widget data")]
+    Widget(ProjectRefArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct ProjectRefArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+}
+
+#[derive(clap::Args, Debug, Default)]
+struct ProjectListArgs {
+    #[arg(long, help = "Page number for project explorer")]
+    page: Option<u64>,
+    #[arg(long, help = "Items per page for project explorer")]
+    limit: Option<u64>,
+    #[arg(long, help = "Filter by search term if supported by the API")]
+    search: Option<String>,
+}
+
+#[derive(clap::Args, Debug, Default)]
+struct ProjectSavedArgs {
+    #[arg(long, alias = "user_id", help = "User ID for saved projects")]
+    user_id: Option<String>,
+}
+
+#[derive(clap::Args, Debug, Default)]
+struct ProjectUpdateArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[command(flatten)]
+    write: ProjectWriteArgs,
+}
+
+#[derive(clap::Args, Debug, Default)]
+struct ProjectWriteArgs {
+    #[arg(long, alias = "project_name", help = "Project name for create/update")]
+    project_name: Option<String>,
+    #[arg(long, alias = "project_description", help = "Project description")]
+    project_description: Option<String>,
+    #[arg(long, alias = "profile_image_url", help = "Project profile image URL")]
+    profile_image_url: Option<String>,
+    #[arg(long, alias = "github_url", help = "Project GitHub URL")]
+    github_url: Option<String>,
+    #[arg(long, alias = "chain_id", help = "Chain ID for create")]
+    chain_id: Option<u64>,
+    #[arg(long, alias = "is_private", help = "Project privacy flag")]
+    is_private: Option<bool>,
+    #[arg(long, alias = "is_dev", help = "Project dev-mode flag")]
+    is_dev: Option<bool>,
+    #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
+    field: Vec<String>,
+    #[arg(long, help = "JSON request body")]
+    body: Option<String>,
+    #[arg(
+        long = "body-file",
+        conflicts_with = "body",
+        help = "Path to JSON body, or - for stdin"
+    )]
+    body_file: Option<PathBuf>,
+    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
+    body_template: bool,
+}
+
+impl ProjectsCommand {
+    pub async fn run(
+        self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        json_output: bool,
+    ) -> Result<(), ApiCommandError> {
+        let args = match self.command {
+            Some(command) => command.into_args(),
+            None => self.legacy,
+        };
+        self.globals
+            .run(ApiCommand::Projects(args), config, cli_args, json_output)
+            .await
+    }
+}
+
+impl ProjectsSubcommand {
+    fn into_args(self) -> ProjectsArgs {
+        match self {
+            Self::List(args) => {
+                ProjectsArgs {
+                    page: args.page,
+                    limit: args.limit,
+                    search: args.search,
+                    ..ProjectsArgs::default()
+                }
+            }
+            Self::Mine => {
+                ProjectsArgs {
+                    mine: true,
+                    ..ProjectsArgs::default()
+                }
+            }
+            Self::Show(args) => project_ref_args(args.project),
+            Self::Saved(args) => {
+                ProjectsArgs {
+                    saved: true,
+                    user_id: args.user_id,
+                    ..ProjectsArgs::default()
+                }
+            }
+            Self::Create(args) => {
+                let mut project_args = ProjectsArgs {
+                    create: true,
+                    ..ProjectsArgs::default()
+                };
+                args.apply_to(&mut project_args);
+                project_args
+            }
+            Self::Update(args) => {
+                let mut project_args = ProjectsArgs {
+                    project_id: Some(args.project),
+                    update: true,
+                    ..ProjectsArgs::default()
+                };
+                args.write.apply_to(&mut project_args);
+                project_args
+            }
+            Self::Delete(args) => {
+                ProjectsArgs {
+                    project_id: Some(args.project),
+                    delete: true,
+                    ..ProjectsArgs::default()
+                }
+            }
+            Self::Save(args) => {
+                ProjectsArgs {
+                    project_id: Some(args.project),
+                    save: true,
+                    ..ProjectsArgs::default()
+                }
+            }
+            Self::Unsave(args) => {
+                ProjectsArgs {
+                    project_id: Some(args.project),
+                    unsave: true,
+                    ..ProjectsArgs::default()
+                }
+            }
+            Self::Resolve(args) => {
+                ProjectsArgs {
+                    project_id: Some(args.project),
+                    resolve: true,
+                    ..ProjectsArgs::default()
+                }
+            }
+            Self::Widget(args) => {
+                ProjectsArgs {
+                    project_id: Some(args.project),
+                    widget: true,
+                    ..ProjectsArgs::default()
+                }
+            }
+        }
+    }
+}
+
+impl ProjectWriteArgs {
+    fn apply_to(self, args: &mut ProjectsArgs) {
+        args.project_name = self.project_name;
+        args.project_description = self.project_description;
+        args.profile_image_url = self.profile_image_url;
+        args.github_url = self.github_url;
+        args.chain_id = self.chain_id;
+        args.is_private = self.is_private;
+        args.is_dev = self.is_dev;
+        args.field = self.field;
+        args.body = self.body;
+        args.body_file = self.body_file;
+        args.body_template = self.body_template;
+    }
+}
+
+fn project_ref_args(project: String) -> ProjectsArgs {
+    ProjectsArgs {
+        project_id: Some(project),
+        ..ProjectsArgs::default()
+    }
+}
+
+#[derive(clap::Args, Debug, Default)]
+struct WorkflowBodyArgs {
+    #[arg(long, help = "JSON request body")]
+    body: Option<String>,
+    #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
+    field: Vec<String>,
+    #[arg(
+        long = "body-file",
+        conflicts_with = "body",
+        help = "Path to JSON body, or - for stdin"
+    )]
+    body_file: Option<PathBuf>,
+    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
+    body_template: bool,
+}
+
+impl WorkflowBodyArgs {
+    fn apply_to_release(self, args: &mut ReleasesArgs) {
+        args.body = self.body;
+        args.field = self.field;
+        args.body_file = self.body_file;
+        args.body_template = self.body_template;
+    }
+
+    fn apply_to_access(self, args: &mut AccessArgs) {
+        args.body = self.body;
+        args.field = self.field;
+        args.body_file = self.body_file;
+        args.body_template = self.body_template;
+    }
 }
 
 #[derive(clap::Args, Debug)]
@@ -1325,7 +1574,7 @@ struct ContractsArgs {
     body_template: bool,
 }
 
-#[derive(clap::Args, Debug)]
+#[derive(clap::Args, Debug, Default)]
 #[command(group(
     ArgGroup::new("releases_action")
         .args(["create", "preview", "deploy", "remove", "deploy_calldata", "remove_calldata", "backtest_progress", "retry_check"])
@@ -1384,6 +1633,205 @@ struct ReleasesArgs {
 }
 
 #[derive(clap::Args, Debug)]
+#[command(
+    about = "List, inspect, create, preview, check, retry, deploy, or remove releases",
+    after_help = "Examples:\n  pcl releases list <project-ref>\n  pcl releases show <project-ref> <release-id>\n  pcl releases preview <project-ref> --body-file release.json\n  pcl releases deploy <project-ref> <release-id> --body-file deploy.json\n  pcl releases calldata deploy <project-ref> <release-id> --signer-address <address>\n\nLegacy flag forms are still supported."
+)]
+pub struct ReleasesCommand {
+    #[command(flatten)]
+    globals: ApiWorkflowOptions,
+    #[command(subcommand)]
+    command: Option<ReleasesSubcommand>,
+    #[command(flatten)]
+    legacy: ReleasesArgs,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum ReleasesSubcommand {
+    #[command(about = "List releases for a project")]
+    List(ReleaseProjectArgs),
+    #[command(about = "Show one release")]
+    Show(ReleaseRefArgs),
+    #[command(about = "Create a release")]
+    Create(ReleaseProjectBodyArgs),
+    #[command(about = "Preview a release body without persisting")]
+    Preview(ReleaseProjectBodyArgs),
+    #[command(about = "Confirm release deployment")]
+    Deploy(ReleaseBodyArgs),
+    #[command(about = "Confirm release removal")]
+    Remove(ReleaseBodyArgs),
+    #[command(about = "Build release calldata")]
+    Calldata(ReleaseCalldataArgs),
+    #[command(
+        name = "backtest-progress",
+        about = "Show release backtest/check progress"
+    )]
+    BacktestProgress(ReleaseRefArgs),
+    #[command(name = "retry-check", about = "Retry a failed release check")]
+    RetryCheck(ReleaseRetryCheckArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct ReleaseProjectArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+}
+
+#[derive(clap::Args, Debug)]
+struct ReleaseRefArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "RELEASE_ID")]
+    release_id: String,
+}
+
+#[derive(clap::Args, Debug)]
+struct ReleaseProjectBodyArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[command(flatten)]
+    body: WorkflowBodyArgs,
+}
+
+#[derive(clap::Args, Debug)]
+struct ReleaseBodyArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "RELEASE_ID")]
+    release_id: String,
+    #[command(flatten)]
+    body: WorkflowBodyArgs,
+}
+
+#[derive(clap::Args, Debug)]
+struct ReleaseRetryCheckArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "RELEASE_ID")]
+    release_id: String,
+    #[arg(value_name = "CHECK_ID")]
+    check_id: String,
+    #[command(flatten)]
+    body: WorkflowBodyArgs,
+}
+
+#[derive(clap::Args, Debug)]
+struct ReleaseCalldataArgs {
+    #[command(subcommand)]
+    command: ReleaseCalldataSubcommand,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum ReleaseCalldataSubcommand {
+    #[command(about = "Build deploy calldata")]
+    Deploy(ReleaseDeployCalldataArgs),
+    #[command(about = "Build remove calldata")]
+    Remove(ReleaseRefArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct ReleaseDeployCalldataArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "RELEASE_ID")]
+    release_id: String,
+    #[arg(long, alias = "signer_address", help = "Signer address")]
+    signer_address: String,
+}
+
+impl ReleasesCommand {
+    pub async fn run(
+        self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        json_output: bool,
+    ) -> Result<(), ApiCommandError> {
+        let args = match self.command {
+            Some(command) => command.into_args(),
+            None => self.legacy,
+        };
+        self.globals
+            .run(ApiCommand::Releases(args), config, cli_args, json_output)
+            .await
+    }
+}
+
+impl ReleasesSubcommand {
+    fn into_args(self) -> ReleasesArgs {
+        match self {
+            Self::List(args) => release_project_args(args.project),
+            Self::Show(args) => release_ref_args(args.project, args.release_id),
+            Self::Create(args) => {
+                let mut release_args = release_project_args(args.project);
+                release_args.create = true;
+                args.body.apply_to_release(&mut release_args);
+                release_args
+            }
+            Self::Preview(args) => {
+                let mut release_args = release_project_args(args.project);
+                release_args.preview = true;
+                args.body.apply_to_release(&mut release_args);
+                release_args
+            }
+            Self::Deploy(args) => {
+                let mut release_args = release_ref_args(args.project, args.release_id);
+                release_args.deploy = true;
+                args.body.apply_to_release(&mut release_args);
+                release_args
+            }
+            Self::Remove(args) => {
+                let mut release_args = release_ref_args(args.project, args.release_id);
+                release_args.remove = true;
+                args.body.apply_to_release(&mut release_args);
+                release_args
+            }
+            Self::Calldata(args) => {
+                match args.command {
+                    ReleaseCalldataSubcommand::Deploy(args) => {
+                        let mut release_args = release_ref_args(args.project, args.release_id);
+                        release_args.deploy_calldata = true;
+                        release_args.signer_address = Some(args.signer_address);
+                        release_args
+                    }
+                    ReleaseCalldataSubcommand::Remove(args) => {
+                        let mut release_args = release_ref_args(args.project, args.release_id);
+                        release_args.remove_calldata = true;
+                        release_args
+                    }
+                }
+            }
+            Self::BacktestProgress(args) => {
+                let mut release_args = release_ref_args(args.project, args.release_id);
+                release_args.backtest_progress = true;
+                release_args
+            }
+            Self::RetryCheck(args) => {
+                let mut release_args = release_ref_args(args.project, args.release_id);
+                release_args.retry_check = true;
+                release_args.check_id = Some(args.check_id);
+                args.body.apply_to_release(&mut release_args);
+                release_args
+            }
+        }
+    }
+}
+
+fn release_project_args(project: String) -> ReleasesArgs {
+    ReleasesArgs {
+        project: Some(project),
+        ..ReleasesArgs::default()
+    }
+}
+
+fn release_ref_args(project: String, release_id: String) -> ReleasesArgs {
+    ReleasesArgs {
+        project: Some(project),
+        release_id: Some(release_id),
+        ..ReleasesArgs::default()
+    }
+}
+
+#[derive(clap::Args, Debug)]
 #[command(group(
     ArgGroup::new("deployments_action")
         .args(["confirm"])
@@ -1413,7 +1861,7 @@ struct DeploymentsArgs {
     body_template: bool,
 }
 
-#[derive(clap::Args, Debug)]
+#[derive(clap::Args, Debug, Default)]
 #[command(group(
     ArgGroup::new("access_action")
         .args(["members", "invitations", "pending", "preview", "accept", "invite", "resend", "revoke", "update_role", "remove", "my_role"])
@@ -1467,6 +1915,242 @@ struct AccessArgs {
     body_file: Option<PathBuf>,
     #[arg(long, alias = "body_template", help = "Print a JSON body template")]
     body_template: bool,
+}
+
+#[derive(clap::Args, Debug)]
+#[command(
+    about = "Manage members, roles, and invitations",
+    after_help = "Examples:\n  pcl access members <project-ref>\n  pcl access invitations <project-ref>\n  pcl access pending\n  pcl access preview <token>\n  pcl access invite <project-ref> --body-file invite.json\n  pcl access role update <project-ref> <member-user-id> --field role=admin\n\nLegacy flag forms are still supported."
+)]
+pub struct AccessCommand {
+    #[command(flatten)]
+    globals: ApiWorkflowOptions,
+    #[command(subcommand)]
+    command: Option<AccessSubcommand>,
+    #[command(flatten)]
+    legacy: AccessArgs,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum AccessSubcommand {
+    #[command(about = "List project members")]
+    Members(AccessProjectArgs),
+    #[command(about = "List project invitations")]
+    Invitations(AccessProjectArgs),
+    #[command(about = "List pending invitations for the current user")]
+    Pending,
+    #[command(about = "Preview an invitation token")]
+    Preview(AccessTokenArgs),
+    #[command(about = "Accept an invitation token")]
+    Accept(AccessTokenBodyArgs),
+    #[command(about = "Invite a project member")]
+    Invite(AccessProjectBodyArgs),
+    #[command(about = "Resend a project invitation")]
+    Resend(AccessInvitationArgs),
+    #[command(about = "Revoke a project invitation")]
+    Revoke(AccessInvitationArgs),
+    #[command(about = "Manage project roles")]
+    Role(AccessRoleArgs),
+    #[command(about = "Manage project members")]
+    Member(AccessMemberCommand),
+    #[command(name = "my-role", about = "Show the current user's project role")]
+    MyRole(AccessProjectArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct AccessProjectArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+}
+
+#[derive(clap::Args, Debug)]
+struct AccessTokenArgs {
+    #[arg(value_name = "TOKEN")]
+    token: String,
+}
+
+#[derive(clap::Args, Debug)]
+struct AccessTokenBodyArgs {
+    #[arg(value_name = "TOKEN")]
+    token: String,
+    #[command(flatten)]
+    body: WorkflowBodyArgs,
+}
+
+#[derive(clap::Args, Debug)]
+struct AccessProjectBodyArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[command(flatten)]
+    body: WorkflowBodyArgs,
+}
+
+#[derive(clap::Args, Debug)]
+struct AccessInvitationArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "INVITATION_ID")]
+    invitation_id: String,
+    #[command(flatten)]
+    body: WorkflowBodyArgs,
+}
+
+#[derive(clap::Args, Debug)]
+struct AccessRoleArgs {
+    #[command(subcommand)]
+    command: AccessRoleSubcommand,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum AccessRoleSubcommand {
+    #[command(about = "Update a project member role")]
+    Update(AccessMemberBodyArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct AccessMemberCommand {
+    #[command(subcommand)]
+    command: AccessMemberSubcommand,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum AccessMemberSubcommand {
+    #[command(about = "Remove a project member")]
+    Remove(AccessMemberBodyArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct AccessMemberBodyArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "MEMBER_USER_ID")]
+    member_user_id: String,
+    #[command(flatten)]
+    body: WorkflowBodyArgs,
+}
+
+impl AccessCommand {
+    pub async fn run(
+        self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        json_output: bool,
+    ) -> Result<(), ApiCommandError> {
+        let args = match self.command {
+            Some(command) => command.into_args(),
+            None => self.legacy,
+        };
+        self.globals
+            .run(ApiCommand::Access(args), config, cli_args, json_output)
+            .await
+    }
+}
+
+impl AccessSubcommand {
+    fn into_args(self) -> AccessArgs {
+        match self {
+            Self::Members(args) => {
+                AccessArgs {
+                    project: Some(args.project),
+                    members: true,
+                    ..AccessArgs::default()
+                }
+            }
+            Self::Invitations(args) => {
+                AccessArgs {
+                    project: Some(args.project),
+                    invitations: true,
+                    ..AccessArgs::default()
+                }
+            }
+            Self::Pending => {
+                AccessArgs {
+                    pending: true,
+                    ..AccessArgs::default()
+                }
+            }
+            Self::Preview(args) => {
+                AccessArgs {
+                    token: Some(args.token),
+                    preview: true,
+                    ..AccessArgs::default()
+                }
+            }
+            Self::Accept(args) => {
+                let mut access_args = AccessArgs {
+                    token: Some(args.token),
+                    accept: true,
+                    ..AccessArgs::default()
+                };
+                args.body.apply_to_access(&mut access_args);
+                access_args
+            }
+            Self::Invite(args) => {
+                let mut access_args = AccessArgs {
+                    project: Some(args.project),
+                    invite: true,
+                    ..AccessArgs::default()
+                };
+                args.body.apply_to_access(&mut access_args);
+                access_args
+            }
+            Self::Resend(args) => {
+                let mut access_args = access_invitation_args(args.project, args.invitation_id);
+                access_args.resend = true;
+                args.body.apply_to_access(&mut access_args);
+                access_args
+            }
+            Self::Revoke(args) => {
+                let mut access_args = access_invitation_args(args.project, args.invitation_id);
+                access_args.revoke = true;
+                args.body.apply_to_access(&mut access_args);
+                access_args
+            }
+            Self::Role(args) => {
+                match args.command {
+                    AccessRoleSubcommand::Update(args) => {
+                        let mut access_args = access_member_args(args.project, args.member_user_id);
+                        access_args.update_role = true;
+                        args.body.apply_to_access(&mut access_args);
+                        access_args
+                    }
+                }
+            }
+            Self::Member(args) => {
+                match args.command {
+                    AccessMemberSubcommand::Remove(args) => {
+                        let mut access_args = access_member_args(args.project, args.member_user_id);
+                        access_args.remove = true;
+                        args.body.apply_to_access(&mut access_args);
+                        access_args
+                    }
+                }
+            }
+            Self::MyRole(args) => {
+                AccessArgs {
+                    project: Some(args.project),
+                    my_role: true,
+                    ..AccessArgs::default()
+                }
+            }
+        }
+    }
+}
+
+fn access_invitation_args(project: String, invitation_id: String) -> AccessArgs {
+    AccessArgs {
+        project: Some(project),
+        invitation_id: Some(invitation_id),
+        ..AccessArgs::default()
+    }
+}
+
+fn access_member_args(project: String, member_user_id: String) -> AccessArgs {
+    AccessArgs {
+        project: Some(project),
+        member_user_id: Some(member_user_id),
+        ..AccessArgs::default()
+    }
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -1631,14 +2315,6 @@ top_level_workflow_command!(
 );
 
 top_level_workflow_command!(
-    ProjectsCommand,
-    ProjectsArgs,
-    Projects,
-    "List, inspect, create, update, save, or delete projects",
-    "Examples:\n  pcl projects --mine\n  pcl projects\n  pcl projects --project-id <project-ref>\n  pcl projects --saved --user-id <user-id>\n  pcl projects --create --project-name demo --chain-id 1\n  pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl projects --project-id <project-ref> --save\n\nCompatibility alias:\n  pcl api projects ..."
-);
-
-top_level_workflow_command!(
     AssertionsCommand,
     AssertionsArgs,
     Assertions,
@@ -1671,27 +2347,11 @@ top_level_workflow_command!(
 );
 
 top_level_workflow_command!(
-    ReleasesCommand,
-    ReleasesArgs,
-    Releases,
-    "List, inspect, create, preview, check, retry, deploy, or remove releases",
-    "Examples:\n  pcl releases --project <project-ref>\n  pcl releases --project <project-ref> --release-id <release-id>\n  pcl releases --project <project-ref> --preview --body-file release.json\n  pcl releases --project <project-ref> --release-id <release-id> --backtest-progress\n  pcl releases --project <project-ref> --release-id <release-id> --check-id <check-id> --retry-check\n  pcl releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address <signer-address>\n\nCompatibility alias:\n  pcl api releases ..."
-);
-
-top_level_workflow_command!(
     DeploymentsCommand,
     DeploymentsArgs,
     Deployments,
     "Inspect deployments and confirm deployed assertions",
     "Examples:\n  pcl deployments --project <project-ref>\n  pcl deployments --project <project-ref> --confirm --body-template\n\nCompatibility alias:\n  pcl api deployments ..."
-);
-
-top_level_workflow_command!(
-    AccessCommand,
-    AccessArgs,
-    Access,
-    "Manage members, roles, and invitations",
-    "Examples:\n  pcl access --project <project-ref> --members\n  pcl access --project <project-ref> --invite --body-template\n  pcl access --pending\n  pcl access --token <token> --preview\n\nCompatibility alias:\n  pcl api access ..."
 );
 
 top_level_workflow_command!(

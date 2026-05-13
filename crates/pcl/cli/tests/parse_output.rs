@@ -61,12 +61,108 @@ fn bare_human_invocation_prints_clap_help() {
     for expected in [
         "The Credible CLI for the Credible Layer",
         "Usage: pcl [OPTIONS] <COMMAND>",
-        "Commands:",
+        "Core workflows:",
+        "Agent and discovery:",
+        "Artifacts and provenance:",
+        "Raw API and advanced:",
+        "Developer commands:",
     ] {
         assert!(output.stdout.contains(expected));
     }
     assert!(!output.stdout.contains("\nCode:"));
     assert!(!output.stdout.contains("schema_version:"));
+}
+
+#[test]
+fn pass_through_developer_commands_reject_machine_modes_structurally() {
+    for args in [
+        ["--toon", "build"].as_slice(),
+        ["--json", "build"].as_slice(),
+        #[cfg(feature = "credible")]
+        ["--toon", "test"].as_slice(),
+        #[cfg(feature = "credible")]
+        ["--json", "test"].as_slice(),
+    ] {
+        let output = run_pcl(args);
+
+        output.assert_failure();
+        assert!(output.stdout.is_empty(), "{}", output.stdout);
+        assert!(
+            output.stderr.contains("developer pass-through command"),
+            "{}",
+            output.stderr
+        );
+        assert!(
+            output.stderr.contains("schema_version")
+                || output.stderr.contains("\"schema_version\""),
+            "{}",
+            output.stderr
+        );
+    }
+}
+
+#[test]
+fn new_workflow_subcommands_parse_and_emit_structured_dry_runs() {
+    for args in [
+        [
+            "--json",
+            "projects",
+            "create",
+            "--project-name",
+            "demo",
+            "--chain-id",
+            "1",
+            "--dry-run",
+        ]
+        .as_slice(),
+        [
+            "--json",
+            "projects",
+            "update",
+            "project-1",
+            "--field",
+            "github_url=https://github.com/org/repo",
+            "--dry-run",
+        ]
+        .as_slice(),
+        [
+            "--json",
+            "releases",
+            "preview",
+            "project-1",
+            "--body-template",
+            "--dry-run",
+        ]
+        .as_slice(),
+        [
+            "--json",
+            "access",
+            "invite",
+            "project-1",
+            "--body-template",
+            "--dry-run",
+        ]
+        .as_slice(),
+    ] {
+        let output = run_pcl(args);
+
+        output.assert_success();
+        assert!(output.stderr.is_empty(), "{}", output.stderr);
+        let envelope: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("json envelope");
+        assert_eq!(envelope["status"], "ok", "{envelope}");
+        assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+        assert!(
+            envelope["next_actions"].as_array().is_some_and(|actions| {
+                actions.iter().all(|action| {
+                    action
+                        .as_str()
+                        .is_none_or(|action| !action.contains("--toon"))
+                })
+            }),
+            "{envelope}"
+        );
+    }
 }
 
 #[test]

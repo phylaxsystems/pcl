@@ -43,14 +43,14 @@ pub(super) fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCo
         return Ok(WorkflowRequest::get(
             "/stats",
             false,
-            ["pcl projects --limit 10"],
+            ["pcl projects list --limit 10"],
         ));
     }
     if args.whitelist {
         return Ok(WorkflowRequest::get(
             "/whitelist",
             true,
-            ["pcl projects --mine"],
+            ["pcl projects mine"],
         ));
     }
     if args.verified_contract {
@@ -97,7 +97,7 @@ pub(super) fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCo
         "/search",
         false,
         [
-            "pcl projects --project <project-ref>",
+            "pcl projects show <project-ref>",
             "pcl contracts --project <project-ref>",
         ],
     );
@@ -113,7 +113,7 @@ pub(super) fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, Api
             "/web/auth/accept-terms",
             true,
             Some(body_or_empty(body)),
-            ["pcl account", "pcl projects --mine"],
+            ["pcl account", "pcl projects mine"],
         ));
     }
     if args.logout {
@@ -128,7 +128,7 @@ pub(super) fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, Api
     Ok(WorkflowRequest::get(
         "/web/auth/me",
         true,
-        ["pcl account --accept-terms", "pcl projects --mine"],
+        ["pcl account --accept-terms", "pcl projects mine"],
     ))
 }
 
@@ -172,7 +172,7 @@ pub(super) fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest,
         let mut request = WorkflowRequest::get(
             format!("/assertion_adopters/{address}/remove-assertions-calldata"),
             true,
-            ["pcl releases --project <project-ref>"],
+            ["pcl releases list <project-ref>"],
         );
         push_query(&mut request.query, "network", args.network.as_deref());
         push_query(
@@ -230,7 +230,7 @@ pub(super) fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, A
             true,
             body,
             vec![format!(
-                "pcl releases --project {project} --create --body-file release.json"
+                "pcl releases create {project} --body-file release.json"
             )],
         ));
     }
@@ -240,7 +240,7 @@ pub(super) fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, A
             format!("/projects/{project}/releases"),
             true,
             body,
-            vec![format!("pcl releases --project {project}")],
+            vec![format!("pcl releases list {project}")],
         ));
     }
     if args.deploy
@@ -255,9 +255,7 @@ pub(super) fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, A
             return Ok(WorkflowRequest::get(
                 format!("/projects/{project}/releases/{release_id}/backtest-progress"),
                 true,
-                vec![format!(
-                    "pcl releases --project {project} --release-id {release_id}"
-                )],
+                vec![format!("pcl releases show {project} {release_id}")],
             ));
         }
         if args.retry_check {
@@ -268,7 +266,7 @@ pub(super) fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, A
                 true,
                 Some(body_or_empty(body)),
                 vec![format!(
-                    "pcl releases --project {project} --release-id {release_id} --backtest-progress"
+                    "pcl releases backtest-progress {project} {release_id}"
                 )],
             ));
         }
@@ -278,9 +276,7 @@ pub(super) fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, A
                 format!("/projects/{project}/releases/{release_id}/deploy"),
                 true,
                 body,
-                vec![format!(
-                    "pcl releases --project {project} --release-id {release_id}"
-                )],
+                vec![format!("pcl releases show {project} {release_id}")],
             ));
         }
         if args.remove {
@@ -289,7 +285,7 @@ pub(super) fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, A
                 format!("/projects/{project}/releases/{release_id}/remove"),
                 true,
                 body,
-                vec![format!("pcl releases --project {project}")],
+                vec![format!("pcl releases list {project}")],
             ));
         }
         if args.deploy_calldata {
@@ -297,9 +293,7 @@ pub(super) fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, A
             let mut request = WorkflowRequest::get(
                 format!("/projects/{project}/releases/{release_id}/deploy-calldata"),
                 true,
-                vec![format!(
-                    "pcl releases --project {project} --release-id {release_id} --deploy"
-                )],
+                vec![format!("pcl releases deploy {project} {release_id}")],
             );
             push_query(&mut request.query, "signerAddress", Some(signer_address));
             return Ok(request);
@@ -307,18 +301,14 @@ pub(super) fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, A
         return Ok(WorkflowRequest::get(
             format!("/projects/{project}/releases/{release_id}/remove-calldata"),
             true,
-            vec![format!(
-                "pcl releases --project {project} --release-id {release_id} --remove"
-            )],
+            vec![format!("pcl releases remove {project} {release_id}")],
         ));
     }
     let Some(release_id) = &args.release_id else {
         return Ok(WorkflowRequest::get(
             format!("/projects/{project}/releases"),
             true,
-            vec![format!(
-                "pcl releases --project {project} --release-id <release-id>"
-            )],
+            vec![format!("pcl releases show {project} <release-id>")],
         ));
     };
     Ok(WorkflowRequest::get(
@@ -326,9 +316,9 @@ pub(super) fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, A
         true,
         vec![
             format!(
-                "pcl releases --project {project} --release-id {release_id} --deploy-calldata --signer-address <signer-address>"
+                "pcl releases calldata deploy {project} {release_id} --signer-address <signer-address>"
             ),
-            format!("pcl releases --project {project} --release-id {release_id} --remove-calldata"),
+            format!("pcl releases calldata remove {project} {release_id}"),
         ],
     ))
 }
@@ -350,7 +340,7 @@ pub(super) fn deployments_request(
     Ok(WorkflowRequest::get(
         format!("/views/projects/{project}/deployments"),
         true,
-        vec![format!("pcl releases --project {project}")],
+        vec![format!("pcl releases list {project}")],
     ))
 }
 
@@ -360,7 +350,7 @@ pub(super) fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCo
         return Ok(WorkflowRequest::get(
             "/invitations/pending",
             true,
-            ["pcl access --token <token> --accept"],
+            ["pcl access accept <token>"],
         ));
     }
     if args.accept || args.preview {
@@ -371,20 +361,20 @@ pub(super) fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCo
                 format!("/invitations/{token}/accept"),
                 true,
                 Some(body_or_empty(body)),
-                ["pcl projects --mine"],
+                ["pcl projects mine"],
             ));
         }
         return Ok(WorkflowRequest::get(
             format!("/invitations/{token}/preview"),
             false,
-            vec![format!("pcl access --token {token} --accept")],
+            vec![format!("pcl access accept {token}")],
         ));
     }
     if let Some(token) = &args.token {
         return Ok(WorkflowRequest::get(
             format!("/invitations/{token}/preview"),
             false,
-            vec![format!("pcl access --token {token} --accept")],
+            vec![format!("pcl access accept {token}")],
         ));
     }
     let project = required_project_arg(args.project.as_deref(), "access", "--project")?;
@@ -392,7 +382,7 @@ pub(super) fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCo
         return Ok(WorkflowRequest::get(
             format!("/projects/{project}/my-role"),
             true,
-            vec![format!("pcl access --project {project} --members")],
+            vec![format!("pcl access members {project}")],
         ));
     }
     if args.invite {
@@ -401,7 +391,7 @@ pub(super) fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCo
             format!("/projects/{project}/invitations"),
             true,
             body,
-            vec![format!("pcl access --project {project} --invitations")],
+            vec![format!("pcl access invitations {project}")],
         ));
     }
     if args.resend || args.revoke {
@@ -412,7 +402,7 @@ pub(super) fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCo
                 format!("/projects/{project}/invitations/{invitation_id}/resend"),
                 true,
                 Some(body_or_empty(body)),
-                vec![format!("pcl access --project {project} --invitations")],
+                vec![format!("pcl access invitations {project}")],
             ));
         }
         return Ok(workflow_with_body(
@@ -420,7 +410,7 @@ pub(super) fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCo
             format!("/projects/{project}/invitations/{invitation_id}"),
             true,
             body,
-            vec![format!("pcl access --project {project} --invitations")],
+            vec![format!("pcl access invitations {project}")],
         ));
     }
     if args.update_role || args.remove {
@@ -431,7 +421,7 @@ pub(super) fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCo
                 format!("/projects/{project}/members/{member_user_id}"),
                 true,
                 body,
-                vec![format!("pcl access --project {project} --members")],
+                vec![format!("pcl access members {project}")],
             ));
         }
         return Ok(workflow_with_body(
@@ -439,24 +429,22 @@ pub(super) fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCo
             format!("/projects/{project}/members/{member_user_id}"),
             true,
             body,
-            vec![format!("pcl access --project {project} --members")],
+            vec![format!("pcl access members {project}")],
         ));
     }
     if args.invitations {
         return Ok(WorkflowRequest::get(
             format!("/projects/{project}/invitations"),
             true,
-            vec![format!(
-                "pcl access --project {project} --invite --body-template"
-            )],
+            vec![format!("pcl access invite {project} --body-template")],
         ));
     }
     Ok(WorkflowRequest::get(
         format!("/projects/{project}/members"),
         true,
         vec![
-            format!("pcl access --project {project} --my-role"),
-            format!("pcl access --project {project} --invitations"),
+            format!("pcl access my-role {project}"),
+            format!("pcl access invitations {project}"),
         ],
     ))
 }
@@ -805,7 +793,7 @@ fn required_project_arg(
         value,
         flag,
         vec![
-            "pcl projects --mine".to_string(),
+            "pcl projects mine".to_string(),
             format!("pcl {command} {flag} <project-id>"),
             format!("pcl {command} --help"),
         ],
@@ -935,7 +923,7 @@ pub(super) fn incidents_request(args: &IncidentsArgs) -> Result<WorkflowRequest,
         false,
         vec![
             "pcl incidents --project-id <project-id> --limit 10".to_string(),
-            "pcl projects --limit 10".to_string(),
+            "pcl projects list --limit 10".to_string(),
         ],
     ))
 }
@@ -966,7 +954,7 @@ pub(super) fn incidents_next_actions(
     first_string_field(data, &["id", "incidentId", "incident_id"]).map_or(fallback, |incident_id| {
         vec![
             format!("pcl incidents --incident-id {incident_id}"),
-            "pcl projects --limit 10".to_string(),
+            "pcl projects list --limit 10".to_string(),
         ]
     })
 }
@@ -980,7 +968,7 @@ pub(super) fn projects_next_actions(data: &Value, fallback: Vec<String>) -> Vec<
     }
     first_string_field(data, &["project_id", "projectId", "id"]).map_or(fallback, |project_id| {
         vec![
-            format!("pcl projects --project-id {project_id}"),
+            format!("pcl projects show {project_id}"),
             format!("pcl assertions --project-id {project_id}"),
             format!("pcl incidents --project-id {project_id} --limit 10"),
         ]
@@ -1021,7 +1009,7 @@ pub(super) fn search_next_actions(data: &Value, fallback: Vec<String>) -> Vec<St
         .and_then(|project| first_string_field(project, &["project_id", "projectId", "id", "slug"]))
     {
         return vec![
-            format!("pcl projects --project-id {project_id}"),
+            format!("pcl projects show {project_id}"),
             format!("pcl contracts --project {project_id}"),
         ];
     }
@@ -1037,7 +1025,7 @@ pub(super) fn search_next_actions(data: &Value, fallback: Vec<String>) -> Vec<St
         })
     {
         return vec![
-            format!("pcl projects --project-id {project_id}"),
+            format!("pcl projects show {project_id}"),
             format!("pcl contracts --project {project_id}"),
         ];
     }
@@ -1078,7 +1066,7 @@ pub(super) fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, A
             "/projects",
             true,
             body,
-            vec!["pcl projects --mine".to_string()],
+            vec!["pcl projects mine".to_string()],
         ));
     }
 
@@ -1089,7 +1077,7 @@ pub(super) fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, A
             true,
             vec![
                 "pcl account".to_string(),
-                "pcl projects --saved --user-id <user-id>".to_string(),
+                "pcl projects saved --user-id <user-id>".to_string(),
             ],
         ));
     }
@@ -1100,7 +1088,7 @@ pub(super) fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, A
             "/projects/saved",
             query,
             true,
-            vec!["pcl projects --mine".to_string()],
+            vec!["pcl projects mine".to_string()],
         ));
     }
     if args.project_id.is_none()
@@ -1114,14 +1102,14 @@ pub(super) fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, A
                 format!("/projects/resolve/{project_id}"),
                 query,
                 false,
-                vec![format!("pcl projects --project-id {project_id}")],
+                vec![format!("pcl projects show {project_id}")],
             ));
         }
         if args.widget {
             return Ok(WorkflowRequest::get(
                 format!("/projects/{project_id}/widget"),
                 true,
-                vec![format!("pcl projects --project-id {project_id}")],
+                vec![format!("pcl projects show {project_id}")],
             ));
         }
         if args.save || args.unsave {
@@ -1135,8 +1123,8 @@ pub(super) fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, A
                 true,
                 Some(json!({ "project_id": project_id }).to_string()),
                 vec![
-                    format!("pcl projects --project-id {project_id}"),
-                    "pcl projects --mine".to_string(),
+                    format!("pcl projects show {project_id}"),
+                    "pcl projects mine".to_string(),
                 ],
             ));
         }
@@ -1146,7 +1134,7 @@ pub(super) fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, A
                 format!("/projects/{project_id}"),
                 true,
                 body,
-                vec![format!("pcl projects --project-id {project_id}")],
+                vec![format!("pcl projects show {project_id}")],
             ));
         }
         if args.delete {
@@ -1155,7 +1143,7 @@ pub(super) fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, A
                 format!("/projects/{project_id}"),
                 true,
                 body,
-                ["pcl projects --mine"],
+                ["pcl projects mine"],
             ));
         }
         return Ok(WorkflowRequest::get_with_query(
@@ -1173,10 +1161,7 @@ pub(super) fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, A
         "/views/projects",
         query,
         false,
-        [
-            "pcl projects --project-id <project-id>",
-            "pcl incidents --limit 5",
-        ],
+        ["pcl projects show <project-id>", "pcl incidents --limit 5"],
     ))
 }
 
@@ -1240,7 +1225,7 @@ pub(super) fn assertions_request(
         return Ok(WorkflowRequest::get(
             format!("/projects/{project_id}/remove-assertions-calldata"),
             true,
-            vec![format!("pcl releases --project {project_id}")],
+            vec![format!("pcl releases list {project_id}")],
         ));
     }
 

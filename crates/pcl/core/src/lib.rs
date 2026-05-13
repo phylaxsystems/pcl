@@ -14,6 +14,7 @@ pub mod credible_config;
 pub mod diff;
 pub mod download;
 pub mod error;
+pub mod output;
 pub mod request_log;
 pub mod surface;
 #[cfg(feature = "credible")]
