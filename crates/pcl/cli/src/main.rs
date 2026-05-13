@@ -34,6 +34,7 @@ use pcl_core::{
         AuthError,
         ConfigError,
     },
+    output::command_for_mode,
     surface::ProductSurfaceError,
 };
 use pcl_phoundry::error::PhoundryError;
@@ -115,11 +116,7 @@ async fn main() -> Result<()> {
         }
         Err(err) => {
             let envelope = with_envelope_metadata(config_error_envelope(&err));
-            if cli.args.json_output() {
-                eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
-            } else {
-                eprint!("{}", envelope_output_string(&envelope, false)?);
-            }
+            eprint!("{}", envelope_output_string(&envelope, false)?);
             std::process::exit(1);
         }
     };
@@ -151,11 +148,7 @@ async fn main() -> Result<()> {
 
     if let Err(err) = result {
         let envelope = with_envelope_metadata(error_envelope(&err));
-        if cli.args.json_output() {
-            eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
-        } else {
-            eprint!("{}", envelope_output_string(&envelope, false)?);
-        }
+        eprint!("{}", envelope_output_string(&envelope, false)?);
         std::process::exit(1);
     }
 
@@ -170,7 +163,10 @@ async fn run_command(
 ) -> Result<(), Report> {
     match command {
         #[cfg(feature = "credible")]
-        Commands::Test(phorge) => phorge.run().await?,
+        Commands::Test(phorge) => {
+            ensure_human_pass_through(cli_args, "pcl test")?;
+            phorge.run().await?;
+        }
         Commands::Apply(apply) => apply.run(cli_args, config).await?,
         Commands::Api(api) => api.run(config, cli_args, json_output).await?,
         Commands::Incidents(command) => command.run(config, cli_args, json_output).await?,
@@ -198,12 +194,27 @@ async fn run_command(
         Commands::Completions(command) => command.run(json_output)?,
         Commands::Auth(auth_cmd) => auth_cmd.run(config, cli_args, json_output).await?,
         Commands::Config(config_cmd) => config_cmd.run(config, cli_args)?,
-        Commands::Build(build_cmd) => build_cmd.run()?,
+        Commands::Build(build_cmd) => {
+            ensure_human_pass_through(cli_args, "pcl build")?;
+            build_cmd.run()?;
+        }
         #[cfg(feature = "credible")]
         Commands::Verify(verify_cmd) => verify_cmd.run(cli_args)?,
         Commands::Download(download_cmd) => download_cmd.run(cli_args, config).await?,
     }
     Ok(())
+}
+
+fn ensure_human_pass_through(
+    cli_args: &CliArgs,
+    command: &'static str,
+) -> Result<(), ProductSurfaceError> {
+    if cli_args.human_output() {
+        return Ok(());
+    }
+    Err(ProductSurfaceError::InvalidInput(format!(
+        "{command} is a developer pass-through command and does not support --toon/--json yet. Use human output, or use pcl verify/apply for structured assertion workflows."
+    )))
 }
 
 fn error_envelope(err: &Report) -> Value {
@@ -270,7 +281,7 @@ fn apply_error_envelope(err: &ApplyError) -> Value {
                 "config.credible_toml_not_found",
                 "No credible.toml found. Run from an assertion project or pass --config <path>."
                     .to_string(),
-                &["pcl apply --help", "pcl projects --mine"],
+                &["pcl apply --help", "pcl projects mine"],
             )
         }
         ApplyError::InvalidConfig(_) | ApplyError::Toml(_) => {
@@ -291,7 +302,7 @@ fn apply_error_envelope(err: &ApplyError) -> Value {
             (
                 "projects.none_for_account",
                 err.to_string(),
-                &["pcl projects --mine", "pcl account"],
+                &["pcl projects mine", "pcl account"],
             )
         }
         ApplyError::ApplyCancelled => ("apply.cancelled", err.to_string(), &["pcl apply --help"]),
@@ -320,7 +331,7 @@ fn download_error_envelope(err: &DownloadError) -> Value {
                 "download.missing_project_id",
                 "--project-id is required".to_string(),
                 &[
-                    "pcl projects --mine",
+                    "pcl projects mine",
                     "pcl download --project-id <project-id>",
                 ],
             )
@@ -345,6 +356,28 @@ fn download_error_envelope(err: &DownloadError) -> Value {
 
 #[cfg(feature = "credible")]
 fn verify_error_envelope(err: &VerifyError) -> Value {
+    if let VerifyError::AssertionsFailed(summary) = err {
+        let message = format!(
+            "{} of {} assertion{} failed verification",
+            summary.failed,
+            summary.total,
+            if summary.total == 1 { "" } else { "s" }
+        );
+        return json!({
+            "status": "error",
+            "data": summary.as_ref(),
+            "error": {
+                "code": "verify.assertions_failed",
+                "message": message,
+                "recoverable": true,
+            },
+            "next_actions": [
+                "Inspect data.assertions for failing assertions",
+                "pcl verify --help",
+            ],
+        });
+    }
+
     let (code, message, next_actions): (&str, String, &[&str]) = match err {
         VerifyError::Io { message, .. } if message.starts_with("Project root not found") => {
             (
@@ -388,6 +421,14 @@ fn verify_error_envelope(err: &VerifyError) -> Value {
                 &["Retry without --json to inspect human output"],
             )
         }
+        VerifyError::Output(_) => {
+            (
+                "output.failed",
+                err.to_string(),
+                &["Retry without --toon/--json to inspect human output"],
+            )
+        }
+        VerifyError::AssertionsFailed(_) => unreachable!("handled above"),
     };
     simple_error_value(code, &message, true, next_actions)
 }
@@ -608,11 +649,7 @@ fn auth_refresh_failed_envelope(err: &AuthError) -> Value {
 }
 
 fn command_for_current_output(command: &str) -> String {
-    match current_output_mode() {
-        OutputMode::Human => command.to_string(),
-        OutputMode::Toon => format!("{command} --toon"),
-        OutputMode::Json => format!("{command} --json"),
-    }
+    command_for_mode(command, current_output_mode())
 }
 
 fn auth_refresh_endpoint_not_found_envelope(

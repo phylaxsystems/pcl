@@ -2,6 +2,8 @@ use crate::{
     abi::ConstructorAbiError,
     credible_config::CredibleConfigError,
 };
+#[cfg(feature = "credible")]
+use crate::verify::VerificationSummary;
 use chrono::{
     DateTime,
     Utc,
@@ -63,6 +65,9 @@ pub enum ApplyError {
 
     #[error("Failed to encode JSON output: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("Failed to write structured output: {0}")]
+    Output(#[from] crate::output::OutputError),
 }
 
 impl From<CredibleConfigError> for ApplyError {
@@ -96,6 +101,12 @@ pub enum VerifyError {
 
     #[error("Failed to encode JSON output: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("Assertions failed verification")]
+    AssertionsFailed(Box<VerificationSummary>),
+
+    #[error("Failed to write structured output: {0}")]
+    Output(#[from] crate::output::OutputError),
 }
 
 /// Errors that can occur during configuration operations

@@ -3,6 +3,8 @@ use serde_json::{
     json,
 };
 
+use super::spec::workflow_spec_summary;
+
 pub fn api_manifest() -> Value {
     json!({
         "name": "pcl",
@@ -25,6 +27,7 @@ pub fn api_manifest() -> Value {
             "template_flag": "--body-template",
             "field_flag": "--field key=value parses JSON scalars/objects/arrays when VALUE is valid JSON, otherwise a string"
         },
+        "workflow_specs": workflow_spec_summary(),
         "pagination": {
             "workflow": "Use workflow-specific --all where available, for example pcl incidents --all --limit 50 --output incidents.json.",
             "raw_call": "Use pcl api call get /path --paginate <array-field> --limit 50 --max-pages 100 --output results.json for generic GET pagination.",
@@ -67,21 +70,22 @@ pub fn api_manifest() -> Value {
                 ]
             },
             {
-                "command": "pcl projects [--mine|--project <ref>] [--saved --user-id <id>] [--create|--update|--delete|--save|--unsave|--resolve|--widget]",
+                "command": "pcl projects <list|mine|show|saved|create|update|delete|save|unsave|resolve|widget>",
                 "description": "List, inspect, create, update, save, unsave, resolve, widget, and delete projects.",
                 "output": "project explorer, your projects, project detail, saved projects, widget, or mutation result",
+                "legacy_examples": ["pcl projects --mine", "pcl projects --project <project-ref>", "pcl projects --create --project-name demo --chain-id 1"],
                 "actions": [
-                    {"name": "explorer", "auth": false, "method": "GET", "path": "/views/projects", "example": "pcl projects --limit 10"},
-                    {"name": "mine", "auth": true, "method": "GET", "path": "/views/projects/home", "example": "pcl projects --mine", "aliases": ["pcl projects --home"]},
-                    {"name": "saved", "auth": true, "method": "GET", "path": "/projects/saved", "required_flags": ["--user-id"], "query": {"user_id": "<user-id>"}, "example": "pcl projects --saved --user-id <user-id>"},
-                    {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project_id}", "required_flags": ["--project"], "example": "pcl projects --project <project-ref>"},
-                    {"name": "create", "auth": true, "method": "POST", "path": "/projects", "body_template": "project_create", "required_body_fields": ["project_name", "chain_id"], "example": "pcl projects --create --project-name demo --chain-id 1"},
-                    {"name": "update", "auth": true, "method": "PUT", "path": "/projects/{project_id}", "required_flags": ["--project"], "body_template": "project_update", "example": "pcl projects --project <project-ref> --update --field github_url=https://github.com/org/repo"},
-                    {"name": "delete", "auth": true, "method": "DELETE", "path": "/projects/{project_id}", "required_flags": ["--project"], "example": "pcl projects --project <project-ref> --delete"},
-                    {"name": "save", "auth": true, "method": "POST", "path": "/projects/saved", "required_flags": ["--project"], "body_template": "project_saved", "example": "pcl projects --project <project-ref> --save"},
-                    {"name": "unsave", "auth": true, "method": "DELETE", "path": "/projects/saved", "required_flags": ["--project"], "body_template": "project_saved", "example": "pcl projects --project <project-ref> --unsave"},
-                    {"name": "resolve", "auth": false, "method": "GET", "path": "/projects/resolve/{project_ref}", "required_flags": ["--project"], "example": "pcl projects --project <project-ref> --resolve"},
-                    {"name": "widget", "auth": true, "method": "GET", "path": "/projects/{project_id}/widget", "required_flags": ["--project"], "example": "pcl projects --project <project-ref> --widget"}
+                    {"name": "explorer", "auth": false, "method": "GET", "path": "/views/projects", "example": "pcl projects list --limit 10"},
+                    {"name": "mine", "auth": true, "method": "GET", "path": "/views/projects/home", "example": "pcl projects mine", "legacy_aliases": ["pcl projects --mine", "pcl projects --home"]},
+                    {"name": "saved", "auth": true, "method": "GET", "path": "/projects/saved", "required_flags": ["--user-id"], "query": {"user_id": "<user-id>"}, "example": "pcl projects saved --user-id <user-id>"},
+                    {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project_id}", "required_flags": ["<project-ref>"], "example": "pcl projects show <project-ref>"},
+                    {"name": "create", "auth": true, "method": "POST", "path": "/projects", "body_template": "project_create", "required_body_fields": ["project_name", "chain_id"], "example": "pcl projects create --project-name demo --chain-id 1"},
+                    {"name": "update", "auth": true, "method": "PUT", "path": "/projects/{project_id}", "required_flags": ["<project-ref>"], "body_template": "project_update", "example": "pcl projects update <project-ref> --field github_url=https://github.com/org/repo"},
+                    {"name": "delete", "auth": true, "method": "DELETE", "path": "/projects/{project_id}", "required_flags": ["<project-ref>"], "example": "pcl projects delete <project-ref>"},
+                    {"name": "save", "auth": true, "method": "POST", "path": "/projects/saved", "required_flags": ["<project-ref>"], "body_template": "project_saved", "example": "pcl projects save <project-ref>"},
+                    {"name": "unsave", "auth": true, "method": "DELETE", "path": "/projects/saved", "required_flags": ["<project-ref>"], "body_template": "project_saved", "example": "pcl projects unsave <project-ref>"},
+                    {"name": "resolve", "auth": false, "method": "GET", "path": "/projects/resolve/{project_ref}", "required_flags": ["<project-ref>"], "example": "pcl projects resolve <project-ref>"},
+                    {"name": "widget", "auth": true, "method": "GET", "path": "/projects/{project_id}/widget", "required_flags": ["<project-ref>"], "example": "pcl projects widget <project-ref>"}
                 ]
             },
             {
@@ -136,20 +140,21 @@ pub fn api_manifest() -> Value {
                 ]
             },
             {
-                "command": "pcl releases --project <ref> [--release-id <id>] [--preview|--create|--backtest-progress|--retry-check --check-id <id>|--deploy|--remove|--deploy-calldata --signer-address <address>|--remove-calldata]",
+                "command": "pcl releases <list|show|create|preview|deploy|remove|calldata|backtest-progress|retry-check>",
                 "description": "List, inspect, create, preview, deploy, check progress, retry failed checks, and remove releases.",
                 "output": "release data, diffs, check progress, deployment confirmations, or calldata",
+                "legacy_examples": ["pcl releases --project <project-ref>", "pcl releases --project <project-ref> --release-id <release-id>", "pcl releases --project <project-ref> --preview --body-file release.json"],
                 "actions": [
-                    {"name": "list", "auth": true, "method": "GET", "path": "/projects/{project}/releases", "required_flags": ["--project"], "example": "pcl releases --project <project-ref>"},
-                    {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}", "required_flags": ["--project", "--release-id"], "example": "pcl releases --project <project-ref> --release-id <release-id>"},
-                    {"name": "preview", "auth": true, "method": "POST", "path": "/projects/{project}/releases/preview", "required_flags": ["--project"], "body_template": "release", "example": "pcl releases --project <project-ref> --preview --body-file release.json"},
-                    {"name": "create", "auth": true, "method": "POST", "path": "/projects/{project}/releases", "required_flags": ["--project"], "body_template": "release", "example": "pcl releases --project <project-ref> --create --body-file release.json"},
-                    {"name": "backtest_progress", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/backtest-progress", "required_flags": ["--project", "--release-id"], "example": "pcl releases --project <project-ref> --release-id <release-id> --backtest-progress"},
-                    {"name": "retry_check", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/checks/{check_id}/retry", "required_flags": ["--project", "--release-id", "--check-id"], "body_template": "empty_object", "example": "pcl releases --project <project-ref> --release-id <release-id> --check-id <check-id> --retry-check"},
-                    {"name": "deploy_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/deploy-calldata", "required_flags": ["--project", "--release-id", "--signer-address"], "query": {"signerAddress": "<signer-address>"}, "example": "pcl releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address 0x..."},
-                    {"name": "deploy", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/deploy", "required_flags": ["--project", "--release-id"], "body_template": "release_deploy", "example": "pcl releases --project <project-ref> --release-id <release-id> --deploy --body-template"},
-                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/remove-calldata", "required_flags": ["--project", "--release-id"], "example": "pcl releases --project <project-ref> --release-id <release-id> --remove-calldata"},
-                    {"name": "remove", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/remove", "required_flags": ["--project", "--release-id"], "body_template": "release_remove", "example": "pcl releases --project <project-ref> --release-id <release-id> --remove --body-template"}
+                    {"name": "list", "auth": true, "method": "GET", "path": "/projects/{project}/releases", "required_flags": ["<project-ref>"], "example": "pcl releases list <project-ref>"},
+                    {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}", "required_flags": ["<project-ref>", "<release-id>"], "example": "pcl releases show <project-ref> <release-id>"},
+                    {"name": "preview", "auth": true, "method": "POST", "path": "/projects/{project}/releases/preview", "required_flags": ["<project-ref>"], "body_template": "release", "example": "pcl releases preview <project-ref> --body-file release.json"},
+                    {"name": "create", "auth": true, "method": "POST", "path": "/projects/{project}/releases", "required_flags": ["<project-ref>"], "body_template": "release", "example": "pcl releases create <project-ref> --body-file release.json"},
+                    {"name": "backtest_progress", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/backtest-progress", "required_flags": ["<project-ref>", "<release-id>"], "example": "pcl releases backtest-progress <project-ref> <release-id>"},
+                    {"name": "retry_check", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/checks/{check_id}/retry", "required_flags": ["<project-ref>", "<release-id>", "<check-id>"], "body_template": "empty_object", "example": "pcl releases retry-check <project-ref> <release-id> <check-id>"},
+                    {"name": "deploy_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/deploy-calldata", "required_flags": ["<project-ref>", "<release-id>", "--signer-address"], "query": {"signerAddress": "<signer-address>"}, "example": "pcl releases calldata deploy <project-ref> <release-id> --signer-address 0x..."},
+                    {"name": "deploy", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/deploy", "required_flags": ["<project-ref>", "<release-id>"], "body_template": "release_deploy", "example": "pcl releases deploy <project-ref> <release-id> --body-template"},
+                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/remove-calldata", "required_flags": ["<project-ref>", "<release-id>"], "example": "pcl releases calldata remove <project-ref> <release-id>"},
+                    {"name": "remove", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/remove", "required_flags": ["<project-ref>", "<release-id>"], "body_template": "release_remove", "example": "pcl releases remove <project-ref> <release-id> --body-template"}
                 ]
             },
             {
@@ -162,21 +167,22 @@ pub fn api_manifest() -> Value {
                 ]
             },
             {
-                "command": "pcl access [--project <ref>] [--members|--invitations|--invite|--pending|--token <token>]",
+                "command": "pcl access <members|invitations|pending|preview|accept|invite|resend|revoke|role|member|my-role>",
                 "description": "Manage project members, roles, and invitations.",
                 "output": "member lists, invitation lists, role data, or mutation results",
+                "legacy_examples": ["pcl access --project <project-ref> --members", "pcl access --project <project-ref> --invite --body-template", "pcl access --token <token> --preview"],
                 "actions": [
-                    {"name": "members", "auth": true, "method": "GET", "path": "/projects/{project}/members", "required_flags": ["--project"], "example": "pcl access --project <project-ref> --members"},
-                    {"name": "my_role", "auth": true, "method": "GET", "path": "/projects/{project}/my-role", "required_flags": ["--project"], "example": "pcl access --project <project-ref> --my-role"},
-                    {"name": "invitations", "auth": true, "method": "GET", "path": "/projects/{project}/invitations", "required_flags": ["--project"], "example": "pcl access --project <project-ref> --invitations"},
-                    {"name": "invite", "auth": true, "method": "POST", "path": "/projects/{project}/invitations", "required_flags": ["--project"], "body_template": "access_invite", "example": "pcl access --project <project-ref> --invite --body-template"},
-                    {"name": "resend", "auth": true, "method": "POST", "path": "/projects/{project}/invitations/{invitation_id}/resend", "required_flags": ["--project", "--invitation-id"], "body_template": "empty_object", "example": "pcl access --project <project-ref> --invitation-id <id> --resend"},
-                    {"name": "revoke", "auth": true, "method": "DELETE", "path": "/projects/{project}/invitations/{invitation_id}", "required_flags": ["--project", "--invitation-id"], "body_template": "empty_object", "example": "pcl access --project <project-ref> --invitation-id <id> --revoke"},
-                    {"name": "update_role", "auth": true, "method": "PATCH", "path": "/projects/{project}/members/{member_user_id}", "required_flags": ["--project", "--member-user-id"], "body_template": "role_update", "example": "pcl access --project <project-ref> --member-user-id <user-id> --update-role --body-template"},
-                    {"name": "remove", "auth": true, "method": "DELETE", "path": "/projects/{project}/members/{member_user_id}", "required_flags": ["--project", "--member-user-id"], "body_template": "empty_object", "example": "pcl access --project <project-ref> --member-user-id <user-id> --remove"},
-                    {"name": "pending", "auth": true, "method": "GET", "path": "/invitations/pending", "example": "pcl access --pending"},
-                    {"name": "preview", "auth": false, "method": "GET", "path": "/invitations/{token}/preview", "required_flags": ["--token"], "example": "pcl access --token <token> --preview"},
-                    {"name": "accept", "auth": true, "method": "POST", "path": "/invitations/{token}/accept", "required_flags": ["--token"], "body_template": "empty_object", "example": "pcl access --token <token> --accept"}
+                    {"name": "members", "auth": true, "method": "GET", "path": "/projects/{project}/members", "required_flags": ["<project-ref>"], "example": "pcl access members <project-ref>"},
+                    {"name": "my_role", "auth": true, "method": "GET", "path": "/projects/{project}/my-role", "required_flags": ["<project-ref>"], "example": "pcl access my-role <project-ref>"},
+                    {"name": "invitations", "auth": true, "method": "GET", "path": "/projects/{project}/invitations", "required_flags": ["<project-ref>"], "example": "pcl access invitations <project-ref>"},
+                    {"name": "invite", "auth": true, "method": "POST", "path": "/projects/{project}/invitations", "required_flags": ["<project-ref>"], "body_template": "access_invite", "example": "pcl access invite <project-ref> --body-template"},
+                    {"name": "resend", "auth": true, "method": "POST", "path": "/projects/{project}/invitations/{invitation_id}/resend", "required_flags": ["<project-ref>", "<invitation-id>"], "body_template": "empty_object", "example": "pcl access resend <project-ref> <invitation-id>"},
+                    {"name": "revoke", "auth": true, "method": "DELETE", "path": "/projects/{project}/invitations/{invitation_id}", "required_flags": ["<project-ref>", "<invitation-id>"], "body_template": "empty_object", "example": "pcl access revoke <project-ref> <invitation-id>"},
+                    {"name": "update_role", "auth": true, "method": "PATCH", "path": "/projects/{project}/members/{member_user_id}", "required_flags": ["<project-ref>", "<member-user-id>"], "body_template": "role_update", "example": "pcl access role update <project-ref> <member-user-id> --body-template"},
+                    {"name": "remove", "auth": true, "method": "DELETE", "path": "/projects/{project}/members/{member_user_id}", "required_flags": ["<project-ref>", "<member-user-id>"], "body_template": "empty_object", "example": "pcl access member remove <project-ref> <member-user-id>"},
+                    {"name": "pending", "auth": true, "method": "GET", "path": "/invitations/pending", "example": "pcl access pending"},
+                    {"name": "preview", "auth": false, "method": "GET", "path": "/invitations/{token}/preview", "required_flags": ["<token>"], "example": "pcl access preview <token>"},
+                    {"name": "accept", "auth": true, "method": "POST", "path": "/invitations/{token}/accept", "required_flags": ["<token>"], "body_template": "empty_object", "example": "pcl access accept <token>"}
                 ]
             },
             {
@@ -256,8 +262,8 @@ pub fn api_manifest() -> Value {
         "examples": [
             "pcl incidents --limit 5",
             "pcl search --query settler",
-            "pcl releases --project <project-ref>",
-            "pcl access --project <project-ref> --members",
+            "pcl releases list <project-ref>",
+            "pcl access members <project-ref>",
             "pcl integrations --project <project-ref> --provider slack",
             "pcl api list --filter incidents",
         ],

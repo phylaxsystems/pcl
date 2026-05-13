@@ -773,7 +773,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
                 special_workflow(
                     "releases",
                     "list",
-                    "pcl releases --project <project-ref>",
+                    "pcl releases list <project-ref>",
                     "Submitted assertions were superseded by release and registered-assertion workflows.",
                 ),
                 special_workflow(

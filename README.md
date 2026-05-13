@@ -40,20 +40,20 @@ pcl apply
 For platform work, prefer the natural workflow commands:
 
 ```bash
-pcl projects --mine
-pcl projects --project-id <project-ref>
+pcl projects mine
+pcl projects show <project-ref>
 pcl assertions --project-id <project-ref>
 pcl incidents --project-id <project-ref> --environment production
-pcl releases --project <project-ref>
+pcl releases list <project-ref>
 pcl deployments --project <project-ref>
 ```
 
 When you need a payload for a write, ask the CLI for the shape before sending it:
 
 ```bash
-pcl projects --body-template
+pcl projects create --body-template
 pcl assertions --project-id <project-ref> --body-template
-pcl releases --project <project-ref> --body-template
+pcl releases preview <project-ref> --body-template
 ```
 
 When debugging or checking an endpoint that is not yet first-class, use the raw API surface.
@@ -70,8 +70,8 @@ pcl api coverage --toon
 
 | Command | Description |
 |---------|-------------|
-| `pcl build` | Build assertion contracts |
-| `pcl apply` | Preview and apply declarative deployment changes |
+| `pcl build`, `pcl test` | Developer pass-through commands using native Phorge/Foundry output in human mode |
+| `pcl apply`, `pcl verify` | Structured assertion workflow commands for dry-runs, verification, and deployment prep |
 | `pcl incidents`, `pcl projects`, `pcl assertions` | Natural platform workflow commands |
 | `pcl account`, `pcl contracts`, `pcl releases`, `pcl deployments` | Account, contract, release, and deployment workflows |
 | `pcl access`, `pcl integrations`, `pcl protocol-manager`, `pcl transfers`, `pcl events`, `pcl search` | Access control, integrations, protocol manager, transfer, audit, and search workflows |
@@ -205,17 +205,17 @@ pcl incidents --project-id <project-ref> --environment production --toon
 pcl incidents --project-id <project-ref> --all --limit 50 --output incidents.json --toon
 pcl incidents --incident-id <incident-id> --toon
 pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace --toon
-pcl projects --limit 10 --toon
-pcl projects --project-id <project-ref> --toon
-pcl projects --create --project-name demo --chain-id 1 --dry-run --toon
-pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo --dry-run --toon
+pcl projects list --limit 10 --toon
+pcl projects show <project-ref> --toon
+pcl projects create --project-name demo --chain-id 1 --dry-run --toon
+pcl projects update <project-ref> --field github_url=https://github.com/org/repo --dry-run --toon
 pcl assertions --project-id <project-ref> --toon
 pcl assertions --adopter-address 0x... --network 1 --toon
 pcl account --toon
 pcl contracts --project <project-ref> --toon
-pcl releases --project <project-ref> --toon
+pcl releases list <project-ref> --toon
 pcl deployments --project <project-ref> --toon
-pcl access --project <project-ref> --members --toon
+pcl access members <project-ref> --toon
 pcl integrations --project <project-ref> --provider slack --toon
 pcl protocol-manager --project <project-ref> --pending-transfer --toon
 pcl transfers --pending --toon
@@ -230,10 +230,10 @@ Use `--dry-run` before writes and `--body-template` before constructing mutation
 Prefer typed flags, then `--field key=value`, then `--body-file` for nested payloads.
 
 ```bash
-pcl projects --body-template --toon
+pcl projects create --body-template --toon
 pcl assertions --project-id <project-ref> --body-template --toon
-pcl releases --project <project-ref> --body-template --toon
-pcl access --project <project-ref> --member-user-id <user-id> --update-role --body-template --toon
+pcl releases preview <project-ref> --body-template --toon
+pcl access role update <project-ref> <user-id> --body-template --toon
 pcl protocol-manager --project <project-ref> --confirm-transfer --body-template --toon
 pcl api inspect post_projects --toon
 ```
@@ -257,7 +257,7 @@ For simple JSON object bodies, repeated `--field key=value` works on raw `pcl ap
 pcl api list --filter integrations --toon
 pcl api inspect get_views_projects_project_id_incidents --toon
 pcl incidents --limit 5
-pcl projects --create --field project_name=demo --field chain_id=1
+pcl projects create --field project_name=demo --field chain_id=1
 pcl incidents --project <project-id> --environment production
 pcl incidents --all --limit 50 --output incidents.json
 pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --resume
