@@ -66,12 +66,61 @@ fn version_message() -> &'static str {
         .as_str()
 }
 
+const ROOT_HELP_COMMANDS: &str = "\
+Core workflows:
+  incidents         List, inspect, export, and retry incidents
+  projects          List, inspect, create, update, save, or delete projects
+  assertions        List, inspect, and manage assertions
+  contracts         List or manage project contracts and assertion adopters
+  releases          List, inspect, create, preview, check, retry, deploy, or remove releases
+  deployments       Inspect deployments and confirm deployed assertions
+  access            Manage members, roles, and invitations
+  integrations      Manage Slack and PagerDuty integrations
+  protocol-manager  Manage project protocol manager settings
+  transfers         Inspect or reject protocol manager transfers
+  events            Inspect project events and audit logs
+  search            Search and inspect platform-wide metadata
+  account           Inspect and manage current account onboarding state
+
+Authentication:
+  auth              Authenticate the CLI with your Credible Layer Platform account
+
+Agent and discovery:
+  doctor            Diagnose config, auth, and platform API reachability
+  whoami            Show the current local identity and token state
+  workflows         Show agent-friendly workflow recipes
+  schema            Inspect machine-readable command and body schemas
+  llms              Print a CLI-native LLM usage guide
+
+Artifacts and provenance:
+  export            Export investigation data as resumable artifacts
+  jobs              Inspect and resume local CLI jobs
+  artifacts         Manage generated artifacts
+  requests          Inspect local API request logs
+
+Raw API and advanced:
+  api               Discover and call the platform API
+  completions       Generate shell completion scripts
+  config            Manage configuration
+
+Developer commands:
+  apply             Preview and apply declarative deployment changes from credible.toml
+  verify            Verify assertions locally before deployment
+  download          Download assertion source code for a protocol
+  build             Build contracts using Phorge
+  test              Run assertion tests
+
+Use `pcl <command> --help` for command-specific options.";
+
 #[derive(Parser)]
 #[command(
     name = "pcl",
     version = version_message(),
     long_version = version_message(),
-    about = "The Credible CLI for the Credible Layer"
+    about = "The Credible CLI for the Credible Layer",
+    long_about = "The Credible CLI for the Credible Layer.\n\nUse workflow commands for normal project, assertion, incident, release, and access work. Use --toon for agents and --json for strict parsers. Use `pcl --toon --llms` for agent guidance. Use `pcl api` only when a workflow command does not exist or when debugging the raw API.",
+    after_help = ROOT_HELP_COMMANDS,
+    help_template = "{about-with-newline}\n{usage-heading} {usage}\n\n{all-args}{after-help}\n"
 )]
 pub struct Cli {
     #[command(subcommand)]

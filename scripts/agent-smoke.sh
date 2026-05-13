@@ -29,6 +29,16 @@ toon_envelope() {
   "$bin" --config-dir "$config_dir" --toon "$@" | grep -q "schema_version: pcl.envelope.v1"
 }
 
+toon_error() {
+  set +e
+  output="$("$bin" --config-dir "$config_dir" --toon "$@" 2>&1 >/dev/null)"
+  status=$?
+  set -e
+  test "$status" -ne 0
+  grep -q "schema_version: pcl.envelope.v1" <<<"$output"
+  grep -q "status: error" <<<"$output"
+}
+
 toon_envelope --llms
 toon_envelope llms
 toon_envelope doctor --offline
@@ -40,7 +50,11 @@ toon_envelope schema list
 toon_envelope schema get incidents --action list_public
 toon_envelope api manifest
 toon_envelope api --dry-run --allow-unauthenticated call get '/health?limit=5'
+toon_envelope projects create --project-name demo --chain-id 1 --dry-run
+toon_envelope releases preview project-1 --body-template --dry-run
+toon_envelope access invite project-1 --body-template --dry-run
 toon_envelope completions bash
+toon_error build
 
 json_envelope llms
 json_envelope api manifest

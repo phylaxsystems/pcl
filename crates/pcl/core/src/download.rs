@@ -9,13 +9,25 @@ use crate::{
     DEFAULT_PLATFORM_URL,
     client::authenticated_client,
     config::CliConfig,
+    output::{
+        OutputStream,
+        ok_envelope,
+        print_envelope,
+    },
 };
 use dapp_api_client::generated::client::{
     Client as GeneratedClient,
     types::GetViewsProjectsProjectIdAssertionsAssertionIdAssertionId,
 };
-use pcl_common::args::CliArgs;
+use pcl_common::args::{
+    CliArgs,
+    OutputMode,
+};
 use serde::Serialize;
+use serde_json::{
+    Value,
+    json,
+};
 use std::path::{
     Path,
     PathBuf,
@@ -39,7 +51,7 @@ pub struct DownloadArgs {
     )]
     pub output_dir: Option<PathBuf>,
 
-    #[arg(long, help = "Emit strict JSON output for programmatic consumers")]
+    #[arg(long, hide = true, help = "Deprecated; use global --json")]
     pub json: bool,
 
     #[arg(
@@ -81,18 +93,11 @@ pub enum DownloadError {
     #[error("Failed to encode JSON output: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("Failed to write structured output: {0}")]
+    Output(#[from] crate::output::OutputError),
+
     #[error("Invalid config: {0}")]
     InvalidConfig(String),
-}
-
-#[derive(Debug, Serialize)]
-struct DownloadJsonOutput {
-    status: &'static str,
-    project_id: Uuid,
-    project_name: String,
-    files_downloaded: usize,
-    files_skipped: usize,
-    files: Vec<DownloadedFile>,
 }
 
 #[derive(Debug, Serialize)]
@@ -105,7 +110,11 @@ struct DownloadedFile {
 
 impl DownloadArgs {
     pub async fn run(&self, cli_args: &CliArgs, config: &CliConfig) -> Result<(), DownloadError> {
-        let json_output = cli_args.json_output() || self.json;
+        let output_mode = if self.json {
+            OutputMode::Json
+        } else {
+            cli_args.output_mode()
+        };
 
         let client = self.build_client(config)?;
 
@@ -114,12 +123,12 @@ impl DownloadArgs {
         let assertions = self.fetch_assertions_list(&client, &project_id).await?;
 
         if assertions.is_empty() {
-            return Self::handle_empty_assertions(json_output, project_id, project_name);
+            return Self::handle_empty_assertions(output_mode, project_id, &project_name);
         }
 
         let output_dir = self.prepare_output_dir(&project_name)?;
 
-        if !json_output {
+        if output_mode == OutputMode::Human {
             println!(
                 "Downloading {} assertion{} for project \"{project_name}\"...\n",
                 assertions.len(),
@@ -128,40 +137,33 @@ impl DownloadArgs {
         }
 
         let (downloaded, skipped) = self
-            .download_assertions(&client, &project_id, &assertions, &output_dir, json_output)
+            .download_assertions(&client, &project_id, &assertions, &output_dir, output_mode)
             .await?;
 
         Self::print_result(
-            json_output,
+            output_mode,
             project_id,
-            project_name,
-            downloaded,
+            &project_name,
+            &downloaded,
             skipped,
             &output_dir,
         )
     }
 
     fn handle_empty_assertions(
-        json_output: bool,
+        output_mode: OutputMode,
         project_id: Uuid,
-        project_name: String,
+        project_name: &str,
     ) -> Result<(), DownloadError> {
-        if json_output {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&DownloadJsonOutput {
-                    status: "no_assertions",
-                    project_id,
-                    project_name,
-                    files_downloaded: 0,
-                    files_skipped: 0,
-                    files: vec![],
-                })?
-            );
+        if output_mode == OutputMode::Human {
+            println!("No assertions found for project \"{project_name}\".");
             return Ok(());
         }
-        eprintln!("No assertions found for project.");
-        Err(DownloadError::NoAssertionsFound)
+        let envelope = ok_envelope(
+            download_data("no_assertions", project_id, project_name, None, &[], 0),
+            vec!["pcl assertions --project-id <project-id>".to_string()],
+        );
+        print_envelope(&envelope, output_mode, OutputStream::Stdout).map_err(DownloadError::Output)
     }
 
     fn prepare_output_dir(&self, project_name: &str) -> Result<PathBuf, DownloadError> {
@@ -189,7 +191,7 @@ impl DownloadArgs {
         project_id: &Uuid,
         assertions: &[dapp_api_client::generated::client::types::GetViewsProjectsProjectIdAssertionsResponseDataAssertionsItem],
         output_dir: &Path,
-        json_output: bool,
+        output_mode: OutputMode,
     ) -> Result<(Vec<DownloadedFile>, usize), DownloadError> {
         let mut downloaded = Vec::new();
         let mut skipped = 0usize;
@@ -223,7 +225,7 @@ impl DownloadArgs {
                     }
                 })?;
 
-                if !json_output {
+                if output_mode == OutputMode::Human {
                     println!("  {file_name}");
                 }
 
@@ -250,7 +252,7 @@ impl DownloadArgs {
                 });
             } else {
                 skipped += 1;
-                if !json_output {
+                if output_mode == OutputMode::Human {
                     println!("  [skipped] {contract_name} — no source code available");
                 }
             }
@@ -260,32 +262,36 @@ impl DownloadArgs {
     }
 
     fn print_result(
-        json_output: bool,
+        output_mode: OutputMode,
         project_id: Uuid,
-        project_name: String,
-        downloaded: Vec<DownloadedFile>,
+        project_name: &str,
+        downloaded: &[DownloadedFile],
         skipped: usize,
         output_dir: &Path,
     ) -> Result<(), DownloadError> {
-        if json_output {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&DownloadJsonOutput {
-                    status: "success",
-                    project_id,
-                    project_name,
-                    files_downloaded: downloaded.len(),
-                    files_skipped: skipped,
-                    files: downloaded,
-                })?
-            );
-        } else {
+        if output_mode == OutputMode::Human {
             println!(
                 "\nDone. {} file{} written to {}/ ({skipped} skipped)",
                 downloaded.len(),
                 if downloaded.len() == 1 { "" } else { "s" },
                 output_dir.display(),
             );
+        } else {
+            let envelope = ok_envelope(
+                download_data(
+                    "downloaded",
+                    project_id,
+                    project_name,
+                    Some(output_dir),
+                    downloaded,
+                    skipped,
+                ),
+                vec![
+                    format!("pcl verify --root {}", output_dir.display()),
+                    "pcl artifacts list".to_string(),
+                ],
+            );
+            print_envelope(&envelope, output_mode, OutputStream::Stdout)?;
         }
 
         Ok(())
@@ -374,6 +380,25 @@ impl DownloadArgs {
 
         Ok(response.data)
     }
+}
+
+fn download_data(
+    outcome: &'static str,
+    project_id: Uuid,
+    project_name: &str,
+    output_dir: Option<&Path>,
+    files: &[DownloadedFile],
+    files_skipped: usize,
+) -> Value {
+    json!({
+        "outcome": outcome,
+        "project_id": project_id,
+        "project_name": project_name,
+        "output_dir": output_dir.map(|path| path.display().to_string()),
+        "files_downloaded": files.len(),
+        "files_skipped": files_skipped,
+        "files": files,
+    })
 }
 
 #[cfg(test)]

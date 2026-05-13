@@ -17,6 +17,11 @@ use crate::{
     },
     diff::PreviewResponse,
     error::ApplyError,
+    output::{
+        OutputStream,
+        ok_envelope,
+        print_envelope,
+    },
 };
 use alloy_primitives::Bytes;
 use clap::ValueHint;
@@ -31,12 +36,18 @@ use dapp_api_client::generated::client::{
     },
 };
 use inquire::Select;
-use pcl_common::args::CliArgs;
+use pcl_common::args::{
+    CliArgs,
+    OutputMode,
+};
 use pcl_phoundry::{
     DEFAULT_ASSERTION_CONTRACTS_DIR,
     build_and_flatten::BuildAndFlattenArgs,
 };
-use serde::Serialize;
+use serde_json::{
+    Value,
+    json,
+};
 use std::{
     collections::HashMap,
     io::{
@@ -75,7 +86,7 @@ pub struct ApplyArgs {
     )]
     pub config: PathBuf,
 
-    #[arg(long, help = "Emit strict JSON output for programmatic consumers")]
+    #[arg(long, hide = true, help = "Deprecated; use global --json")]
     pub json: bool,
 
     #[arg(
@@ -102,42 +113,35 @@ pub struct ApplyArgs {
     pub api_url: url::Url,
 }
 
-#[derive(Debug, Serialize)]
-struct ApplyJsonOutput {
-    status: &'static str,
-    project_id: Uuid,
-    #[cfg(feature = "credible")]
-    verification: VerificationSummary,
-    payload: Option<PostProjectsProjectIdReleasesBody>,
-    preview: Option<PreviewResponse>,
-    applied: bool,
-    release: Option<PostProjectsProjectIdReleasesResponse>,
-}
-
 impl ApplyArgs {
     pub async fn run(&self, cli_args: &CliArgs, config: &CliConfig) -> Result<(), ApplyError> {
-        let json_output = cli_args.json_output() || self.json;
+        let output_mode = if self.json {
+            OutputMode::Json
+        } else {
+            cli_args.output_mode()
+        };
         let root = canonicalize_root(&self.root)?;
         let config_path = root.join(&self.config);
         let credible = CredibleToml::from_path(&config_path)?;
         let project_id = match credible.project_id {
             Some(project_id) => project_id,
-            None if json_output => {
+            None if output_mode != OutputMode::Human => {
                 return Err(ApplyError::InvalidConfig(
-                    "`project_id` is required in credible.toml when using --json".to_string(),
+                    "`project_id` is required in credible.toml when using machine output"
+                        .to_string(),
                 ));
             }
             None => self.select_project(config).await?,
         };
         let (payload, _verification_inputs) = Self::build_payload(&credible, &root)?;
         #[cfg(feature = "credible")]
-        let verification = Self::verify_all_assertions(&_verification_inputs, json_output)?;
+        let verification = Self::verify_all_assertions(&_verification_inputs, output_mode)?;
 
         if self.dry_run {
             #[cfg(feature = "credible")]
-            Self::print_dry_run_output(json_output, project_id, payload, verification)?;
+            Self::print_dry_run_output(output_mode, project_id, &payload, &verification)?;
             #[cfg(not(feature = "credible"))]
-            Self::print_dry_run_output(json_output, project_id, payload)?;
+            Self::print_dry_run_output(output_mode, project_id, &payload)?;
             return Ok(());
         }
 
@@ -145,32 +149,33 @@ impl ApplyArgs {
         let preview = Self::call_preview(&http_client, &base_url, &project_id, &payload).await?;
 
         if !preview.has_changes() {
-            if json_output {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&ApplyJsonOutput {
-                        status: "no_changes",
+            if output_mode == OutputMode::Human {
+                println!("{}", crate::diff::NO_CHANGES_MESSAGE);
+            } else {
+                let envelope = ok_envelope(
+                    apply_data(
+                        "no_changes",
                         project_id,
                         #[cfg(feature = "credible")]
-                        verification,
-                        payload: None,
-                        preview: Some(preview),
-                        applied: false,
-                        release: None,
-                    })?
+                        Some(&verification),
+                        None,
+                        Some(&preview),
+                        false,
+                        None,
+                    ),
+                    vec!["pcl projects mine".to_string()],
                 );
-            } else {
-                println!("{}", crate::diff::NO_CHANGES_MESSAGE);
+                print_envelope(&envelope, output_mode, OutputStream::Stdout)?;
             }
             return Ok(());
         }
 
-        if !json_output {
+        if output_mode == OutputMode::Human {
             print!("{}", preview.render_plan());
         }
 
         if !self.yes {
-            if json_output {
+            if output_mode != OutputMode::Human {
                 return Err(ApplyError::JsonConfirmationRequiresYes);
             }
             if !confirm_apply()? {
@@ -192,20 +197,24 @@ impl ApplyArgs {
                 }
             })?;
 
-        if json_output {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&ApplyJsonOutput {
-                    status: "success",
+        if output_mode != OutputMode::Human {
+            let envelope = ok_envelope(
+                apply_data(
+                    "applied",
                     project_id,
                     #[cfg(feature = "credible")]
-                    verification,
-                    payload: None,
-                    preview: Some(preview),
-                    applied: true,
-                    release: Some(release),
-                })?
+                    Some(&verification),
+                    None,
+                    Some(&preview),
+                    true,
+                    Some(&release),
+                ),
+                vec![
+                    format!("pcl releases list {project_id}"),
+                    format!("pcl projects show {project_id}"),
+                ],
             );
+            print_envelope(&envelope, output_mode, OutputStream::Stdout)?;
             return Ok(());
         }
 
@@ -249,52 +258,47 @@ impl ApplyArgs {
 
     #[cfg(feature = "credible")]
     fn print_dry_run_output(
-        json_output: bool,
+        output_mode: OutputMode,
         project_id: Uuid,
-        payload: PostProjectsProjectIdReleasesBody,
-        verification: VerificationSummary,
+        payload: &PostProjectsProjectIdReleasesBody,
+        verification: &VerificationSummary,
     ) -> Result<(), ApplyError> {
-        if json_output {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&ApplyJsonOutput {
-                    status: "dry_run",
-                    project_id,
-                    verification,
-                    payload: Some(payload),
-                    preview: None,
-                    applied: false,
-                    release: None,
-                })?
-            );
-        } else {
+        if output_mode == OutputMode::Human {
             println!(
                 "Dry run complete. Built and verified release payload for project {project_id}."
             );
+        } else {
+            let envelope = ok_envelope(
+                apply_data(
+                    "dry_run",
+                    project_id,
+                    Some(verification),
+                    Some(payload),
+                    None,
+                    false,
+                    None,
+                ),
+                vec!["pcl apply --yes".to_string()],
+            );
+            print_envelope(&envelope, output_mode, OutputStream::Stdout)?;
         }
         Ok(())
     }
 
     #[cfg(not(feature = "credible"))]
     fn print_dry_run_output(
-        json_output: bool,
+        output_mode: OutputMode,
         project_id: Uuid,
-        payload: PostProjectsProjectIdReleasesBody,
+        payload: &PostProjectsProjectIdReleasesBody,
     ) -> Result<(), ApplyError> {
-        if json_output {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&ApplyJsonOutput {
-                    status: "dry_run",
-                    project_id,
-                    payload: Some(payload),
-                    preview: None,
-                    applied: false,
-                    release: None,
-                })?
-            );
-        } else {
+        if output_mode == OutputMode::Human {
             println!("Dry run complete. Built release payload for project {project_id}.");
+        } else {
+            let envelope = ok_envelope(
+                apply_data("dry_run", project_id, Some(payload), None, false, None),
+                vec!["pcl apply --yes".to_string()],
+            );
+            print_envelope(&envelope, output_mode, OutputStream::Stdout)?;
         }
         Ok(())
     }
@@ -405,7 +409,7 @@ impl ApplyArgs {
     #[cfg(feature = "credible")]
     fn verify_all_assertions(
         inputs: &[(String, Bytes)],
-        json_output: bool,
+        output_mode: OutputMode,
     ) -> Result<VerificationSummary, ApplyError> {
         let refs: Vec<(&str, Bytes)> = inputs
             .iter()
@@ -414,15 +418,12 @@ impl ApplyArgs {
 
         let summary = run_verification(&refs);
 
-        if !json_output {
+        if output_mode == OutputMode::Human {
             println!("pcl apply \u{2014} Verifying assertions...\n");
             print_verification_summary(&summary);
         }
 
         if summary.failed > 0 {
-            if json_output {
-                println!("{}", serde_json::to_string_pretty(&summary)?);
-            }
             return Err(ApplyError::VerificationFailed(format!(
                 "{} of {} assertion{} failed verification. Fix errors before applying.",
                 summary.failed,
@@ -502,6 +503,46 @@ impl ApplyArgs {
             )
         );
     }
+}
+
+#[cfg(feature = "credible")]
+fn apply_data(
+    outcome: &'static str,
+    project_id: Uuid,
+    verification: Option<&VerificationSummary>,
+    payload: Option<&PostProjectsProjectIdReleasesBody>,
+    preview: Option<&PreviewResponse>,
+    applied: bool,
+    release: Option<&PostProjectsProjectIdReleasesResponse>,
+) -> Value {
+    json!({
+        "outcome": outcome,
+        "project_id": project_id,
+        "verification": verification,
+        "payload": payload,
+        "preview": preview,
+        "applied": applied,
+        "release": release,
+    })
+}
+
+#[cfg(not(feature = "credible"))]
+fn apply_data(
+    outcome: &'static str,
+    project_id: Uuid,
+    payload: Option<&PostProjectsProjectIdReleasesBody>,
+    preview: Option<&PreviewResponse>,
+    applied: bool,
+    release: Option<&PostProjectsProjectIdReleasesResponse>,
+) -> Value {
+    json!({
+        "outcome": outcome,
+        "project_id": project_id,
+        "payload": payload,
+        "preview": preview,
+        "applied": applied,
+        "release": release,
+    })
 }
 
 /// Parse a string into a generated newtype, mapping the error to `ApplyError`.
