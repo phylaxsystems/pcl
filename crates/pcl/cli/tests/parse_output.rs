@@ -61,14 +61,16 @@ fn bare_human_invocation_prints_clap_help() {
     for expected in [
         "The Credible CLI for the Credible Layer",
         "Usage: pcl [OPTIONS] <COMMAND>",
-        "Core workflows:",
-        "Agent and discovery:",
-        "Artifacts and provenance:",
-        "Raw API and advanced:",
-        "Developer commands:",
+        "Commands:",
+        "  incidents",
+        "  projects",
+        "  api",
+        "Options:",
     ] {
         assert!(output.stdout.contains(expected));
     }
+    assert!(!output.stdout.contains("Core workflows:"));
+    assert!(!output.stdout.contains("Developer commands:"));
     assert!(!output.stdout.contains("\nCode:"));
     assert!(!output.stdout.contains("schema_version:"));
 }
