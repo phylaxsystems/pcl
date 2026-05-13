@@ -168,6 +168,8 @@ jobs:
       requires-private-deps: true
     secrets:
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      APP_ID: ${{ secrets.APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
 
   release-github:
     needs: [create-tag, build-pcl]
@@ -184,6 +186,8 @@ jobs:
       prerelease: false
     secrets:
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      APP_ID: ${{ secrets.APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
 
   update-homebrew:
     needs: [create-tag, build-pcl, release-github]
