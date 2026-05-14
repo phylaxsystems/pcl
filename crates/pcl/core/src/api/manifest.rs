@@ -53,7 +53,7 @@ pub fn api_manifest() -> Value {
             {"command": "pcl requests|logs [path|list|clear] --toon", "description": "Inspect the local API request log with status and request IDs."},
             {"command": "pcl api coverage [--records <n>] [--markdown <path>] --toon", "description": "Compare the local request log with the live OpenAPI manifest and report hit/no-hit/no-2xx coverage."},
             {"command": "pcl schema [list|get <workflow>] --toon", "description": "Inspect workflow/action schemas from the command manifest."},
-            {"command": "pcl completions <shell> --toon", "description": "Generate shell completion scripts for bash, zsh, fish, powershell, and elvish."}
+            {"command": "pcl completions <shell>", "description": "Print raw shell completion scripts for bash, zsh, fish, powershell, and elvish. Use --json only when an installer expects the script inside an envelope."}
         ],
         "commands": [
             {

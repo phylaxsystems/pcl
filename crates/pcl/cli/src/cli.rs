@@ -204,10 +204,10 @@ impl CompletionsArgs {
                 "data": {
                     "shell": self.shell.to_string(),
                     "script": script,
-                    "install_note": "Run without --json and redirect stdout into your shell completion directory.",
+                    "install_note": "Run without --toon/--json and redirect stdout into your shell completion directory.",
                 },
                 "next_actions": [
-                    format!("pcl completions {}", self.shell),
+                    format!("pcl completions {} > <completion-file>", self.shell),
                 ],
             }));
             print!(
