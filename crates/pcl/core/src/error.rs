@@ -1,4 +1,7 @@
-use crate::credible_config::CredibleConfigError;
+use crate::{
+    abi::ConstructorAbiError,
+    credible_config::CredibleConfigError,
+};
 use chrono::{
     DateTime,
     Utc,
@@ -65,6 +68,12 @@ impl From<CredibleConfigError> for ApplyError {
     }
 }
 
+impl From<ConstructorAbiError> for ApplyError {
+    fn from(e: ConstructorAbiError) -> Self {
+        Self::InvalidConfig(e.to_string())
+    }
+}
+
 /// Errors that can occur during assertion verification.
 #[cfg(feature = "credible")]
 #[derive(Error, Debug)]
@@ -84,6 +93,9 @@ pub enum VerifyError {
 
     #[error("Failed to encode constructor arguments: {0}")]
     AbiEncode(String),
+
+    #[error(transparent)]
+    ConstructorAbi(#[from] ConstructorAbiError),
 
     #[error("Failed to encode JSON output: {0}")]
     Json(#[from] serde_json::Error),

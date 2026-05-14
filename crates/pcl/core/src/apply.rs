@@ -8,6 +8,7 @@ use crate::verify::{
 };
 use crate::{
     DEFAULT_PLATFORM_URL,
+    abi,
     client::authenticated_client,
     config::CliConfig,
     credible_config::{
@@ -17,16 +18,7 @@ use crate::{
     diff::PreviewResponse,
     error::ApplyError,
 };
-use alloy_dyn_abi::{
-    DynSolValue,
-    JsonAbiExt,
-    Specifier,
-};
-use alloy_json_abi::JsonAbi;
-use alloy_primitives::{
-    Bytes,
-    hex,
-};
+use alloy_primitives::Bytes;
 use clap::ValueHint;
 use dapp_api_client::generated::client::{
     Client as GeneratedClient,
