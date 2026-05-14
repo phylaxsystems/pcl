@@ -1,14 +1,11 @@
 use crate::{
+    abi,
     credible_config::{
         CredibleConfigError,
         CredibleToml,
         assertion_contract_name,
     },
     error::VerifyError,
-};
-use alloy_dyn_abi::{
-    DynSolType,
-    DynSolValue,
 };
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{
@@ -271,48 +268,11 @@ pub fn build_deployment_bytecode(
         .map_err(|e| VerifyError::AbiEncode(format!("invalid bytecode hex: {e}")))?;
 
     if !args.is_empty() {
-        let encoded = encode_constructor_args(abi, args)?;
+        let encoded = abi::encode_args(abi, args)?;
         bytecode.extend_from_slice(&encoded);
     }
 
     Ok(Bytes::from(bytecode))
-}
-
-pub fn encode_constructor_args(abi: &JsonAbi, args: &[String]) -> Result<Vec<u8>, VerifyError> {
-    let constructor = abi.constructor.as_ref().ok_or_else(|| {
-        VerifyError::AbiEncode(
-            "contract has no constructor but arguments were provided".to_string(),
-        )
-    })?;
-
-    if constructor.inputs.len() != args.len() {
-        return Err(VerifyError::AbiEncode(format!(
-            "expected {} constructor argument{}, got {}",
-            constructor.inputs.len(),
-            if constructor.inputs.len() == 1 {
-                ""
-            } else {
-                "s"
-            },
-            args.len()
-        )));
-    }
-
-    let values: Vec<DynSolValue> = constructor
-        .inputs
-        .iter()
-        .zip(args.iter())
-        .map(|(param, arg)| {
-            let sol_type: DynSolType = param.ty.parse().map_err(|e| {
-                VerifyError::AbiEncode(format!("unsupported type '{}': {e}", param.ty))
-            })?;
-            sol_type.coerce_str(arg).map_err(|e| {
-                VerifyError::AbiEncode(format!("failed to parse '{}' as {}: {e}", arg, param.ty))
-            })
-        })
-        .collect::<Result<_, _>>()?;
-
-    Ok(DynSolValue::Tuple(values).abi_encode_params())
 }
 
 pub fn format_display_name(name: &str, args: &[String]) -> String {
@@ -364,11 +324,6 @@ pub fn print_human_result(display_name: &str, result: &VerificationResult) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_json_abi::{
-        Constructor,
-        Param,
-        StateMutability,
-    };
 
     #[test]
     fn parse_assertion_name_bare() {
@@ -404,56 +359,6 @@ mod tests {
     fn abbreviate_long_hex_arg() {
         let arg = "0x1234567890abcdef";
         assert_eq!(abbreviate_arg(arg), "0x1234...cdef");
-    }
-
-    #[test]
-    fn encode_constructor_args_rejects_missing_constructor() {
-        let abi = JsonAbi {
-            constructor: None,
-            ..Default::default()
-        };
-        let err = encode_constructor_args(&abi, &["42".to_string()]).unwrap_err();
-        assert!(err.to_string().contains("no constructor"));
-    }
-
-    #[test]
-    fn encode_constructor_args_rejects_wrong_count() {
-        let abi = JsonAbi {
-            constructor: Some(Constructor {
-                inputs: vec![Param {
-                    ty: "uint256".to_string(),
-                    name: "x".to_string(),
-                    components: vec![],
-                    internal_type: None,
-                }],
-                state_mutability: StateMutability::NonPayable,
-            }),
-            ..Default::default()
-        };
-        let err = encode_constructor_args(&abi, &["1".to_string(), "2".to_string()]).unwrap_err();
-        assert!(err.to_string().contains("expected 1"));
-    }
-
-    #[test]
-    fn encode_constructor_args_encodes_address() {
-        let abi = JsonAbi {
-            constructor: Some(Constructor {
-                inputs: vec![Param {
-                    ty: "address".to_string(),
-                    name: "addr".to_string(),
-                    components: vec![],
-                    internal_type: None,
-                }],
-                state_mutability: StateMutability::NonPayable,
-            }),
-            ..Default::default()
-        };
-        let result = encode_constructor_args(
-            &abi,
-            &["0x0000000000000000000000000000000000000001".to_string()],
-        );
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 32); // ABI-encoded address is 32 bytes
     }
 
     #[test]

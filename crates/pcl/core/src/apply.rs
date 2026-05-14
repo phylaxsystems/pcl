@@ -526,78 +526,12 @@ fn assertion_contracts_dir(file: &str) -> PathBuf {
         )
 }
 
-fn constructor_inputs(abi: &JsonAbi) -> &[alloy_json_abi::Param] {
-    abi.constructor
-        .as_ref()
-        .map_or(&[], |constructor| constructor.inputs.as_slice())
-}
-
-fn build_constructor_abi_signature(abi: &JsonAbi, args: &[String]) -> Result<String, ApplyError> {
-    let inputs = constructor_inputs(abi);
-    if inputs.len() != args.len() {
-        return Err(ApplyError::InvalidConfig(format!(
-            "expected {} constructor argument{}, got {}",
-            inputs.len(),
-            if inputs.len() == 1 { "" } else { "s" },
-            args.len()
-        )));
-    }
-
-    let types = inputs
-        .iter()
-        .map(|param| param.selector_type().into_owned())
-        .collect::<Vec<_>>();
-    Ok(format!("constructor({})", types.join(",")))
-}
-
-fn encode_constructor_args_hex(abi: &JsonAbi, args: &[String]) -> Result<String, ApplyError> {
-    let inputs = constructor_inputs(abi);
-    if inputs.len() != args.len() {
-        return Err(ApplyError::InvalidConfig(format!(
-            "expected {} constructor argument{}, got {}",
-            inputs.len(),
-            if inputs.len() == 1 { "" } else { "s" },
-            args.len()
-        )));
-    }
-
-    let Some(constructor) = abi.constructor.as_ref() else {
-        return Ok("0x".to_string());
-    };
-
-    let values: Vec<DynSolValue> = inputs
-        .iter()
-        .zip(args.iter())
-        .map(|(param, arg)| {
-            let sol_type = param.resolve().map_err(|e| {
-                ApplyError::InvalidConfig(format!(
-                    "unsupported constructor type '{}': {e}",
-                    param.selector_type()
-                ))
-            })?;
-            sol_type.coerce_str(arg).map_err(|e| {
-                ApplyError::InvalidConfig(format!(
-                    "failed to parse constructor arg '{}' as {}: {e}",
-                    arg,
-                    param.selector_type()
-                ))
-            })
-        })
-        .collect::<Result<_, _>>()?;
-
-    let encoded = constructor.abi_encode_input(&values).map_err(|e| {
-        ApplyError::InvalidConfig(format!("constructor args ABI encode failed: {e}"))
-    })?;
-    Ok(hex::encode_prefixed(encoded))
-}
-
 fn build_assertion_item(
     assertion: &crate::credible_config::CredibleAssertion,
     built: &pcl_phoundry::build_and_flatten::BuildAndFlatOutput,
     contract_name: &str,
 ) -> Result<PostProjectsProjectIdReleasesBodyContractsValueAssertionsItem, ApplyError> {
-    let constructor_abi_signature = build_constructor_abi_signature(&built.abi, &assertion.args)?;
-    let encoded_constructor_args = encode_constructor_args_hex(&built.abi, &assertion.args)?;
+    let constructor_abi_signature = abi::build_signature(&built.abi, &assertion.args)?;
 
     Ok(
         PostProjectsProjectIdReleasesBodyContractsValueAssertionsItem {
@@ -606,10 +540,6 @@ fn build_assertion_item(
             constructor_abi_signature: Some(parse_field(
                 &constructor_abi_signature,
                 "constructor abi signature",
-            )?),
-            encoded_constructor_args: Some(parse_field(
-                &encoded_constructor_args,
-                "encoded constructor args",
             )?),
             bytecode: parse_field(&built.bytecode, "bytecode")?,
             flattened_source: parse_field(&built.flattened_source, "flattened source")?,
@@ -668,136 +598,3 @@ fn confirm_apply() -> Result<bool, ApplyError> {
         || trimmed.eq_ignore_ascii_case("yes"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy_json_abi::{
-        Constructor,
-        Param,
-        StateMutability,
-    };
-
-    #[test]
-    fn constructor_metadata_defaults_to_empty_constructor() {
-        let abi = JsonAbi::default();
-
-        assert_eq!(
-            build_constructor_abi_signature(&abi, &[]).unwrap(),
-            "constructor()"
-        );
-        assert_eq!(encode_constructor_args_hex(&abi, &[]).unwrap(), "0x");
-    }
-
-    #[test]
-    fn constructor_metadata_preserves_address_type() {
-        let abi = JsonAbi {
-            constructor: Some(Constructor {
-                inputs: vec![Param {
-                    ty: "address".to_string(),
-                    name: "_owner".to_string(),
-                    components: vec![],
-                    internal_type: None,
-                }],
-                state_mutability: StateMutability::NonPayable,
-            }),
-            ..Default::default()
-        };
-
-        assert_eq!(
-            build_constructor_abi_signature(
-                &abi,
-                &["0xF31b02F47596AcC7328E9fb04aFc52Fe91Da6071".to_string()]
-            )
-            .unwrap(),
-            "constructor(address)"
-        );
-        assert_eq!(
-            encode_constructor_args_hex(
-                &abi,
-                &["0xF31b02F47596AcC7328E9fb04aFc52Fe91Da6071".to_string()]
-            )
-            .unwrap(),
-            "0x000000000000000000000000f31b02f47596acc7328e9fb04afc52fe91da6071"
-        );
-    }
-
-    #[test]
-    fn constructor_metadata_rejects_wrong_arg_count() {
-        let abi = JsonAbi {
-            constructor: Some(Constructor {
-                inputs: vec![Param {
-                    ty: "uint256".to_string(),
-                    name: "x".to_string(),
-                    components: vec![],
-                    internal_type: None,
-                }],
-                state_mutability: StateMutability::NonPayable,
-            }),
-            ..Default::default()
-        };
-
-        let err = build_constructor_abi_signature(&abi, &[]).unwrap_err();
-        assert!(err.to_string().contains("expected 1 constructor argument"));
-    }
-
-    #[test]
-    fn constructor_metadata_handles_multiple_args() {
-        let abi = JsonAbi {
-            constructor: Some(Constructor {
-                inputs: vec![
-                    Param {
-                        ty: "address".to_string(),
-                        name: "vault".to_string(),
-                        components: vec![],
-                        internal_type: None,
-                    },
-                    Param {
-                        ty: "uint256".to_string(),
-                        name: "threshold".to_string(),
-                        components: vec![],
-                        internal_type: None,
-                    },
-                ],
-                state_mutability: StateMutability::NonPayable,
-            }),
-            ..Default::default()
-        };
-        let args = vec![
-            "0xF31b02F47596AcC7328E9fb04aFc52Fe91Da6071".to_string(),
-            "42".to_string(),
-        ];
-
-        assert_eq!(
-            build_constructor_abi_signature(&abi, &args).unwrap(),
-            "constructor(address,uint256)"
-        );
-        assert_eq!(
-            encode_constructor_args_hex(&abi, &args).unwrap(),
-            "0x000000000000000000000000f31b02f47596acc7328e9fb04afc52fe91da6071\
-             000000000000000000000000000000000000000000000000000000000000002a"
-                .replace(['\n', ' '], "")
-        );
-    }
-
-    #[test]
-    fn constructor_metadata_rejects_unparseable_value() {
-        let abi = JsonAbi {
-            constructor: Some(Constructor {
-                inputs: vec![Param {
-                    ty: "uint256".to_string(),
-                    name: "x".to_string(),
-                    components: vec![],
-                    internal_type: None,
-                }],
-                state_mutability: StateMutability::NonPayable,
-            }),
-            ..Default::default()
-        };
-
-        let err = encode_constructor_args_hex(&abi, &["not_a_number".to_string()]).unwrap_err();
-        assert!(
-            err.to_string().contains("failed to parse constructor arg"),
-            "got: {err}"
-        );
-    }
-}
