@@ -597,4 +597,3 @@ fn confirm_apply() -> Result<bool, ApplyError> {
         || trimmed.eq_ignore_ascii_case("y")
         || trimmed.eq_ignore_ascii_case("yes"))
 }
-

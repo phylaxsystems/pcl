@@ -86,17 +86,19 @@ pub fn encode_args(abi: &JsonAbi, args: &[String]) -> Result<Vec<u8>, Constructo
         .iter()
         .zip(args.iter())
         .map(|(param, arg)| {
-            let sol_type = param.resolve().map_err(|e| ConstructorAbiError::UnsupportedType {
-                ty: param.selector_type().into_owned(),
-                source: e,
+            let sol_type = param.resolve().map_err(|e| {
+                ConstructorAbiError::UnsupportedType {
+                    ty: param.selector_type().into_owned(),
+                    source: e,
+                }
             })?;
-            sol_type
-                .coerce_str(arg)
-                .map_err(|e| ConstructorAbiError::CoerceFailure {
+            sol_type.coerce_str(arg).map_err(|e| {
+                ConstructorAbiError::CoerceFailure {
                     arg: arg.clone(),
                     ty: param.selector_type().into_owned(),
                     source: e,
-                })
+                }
+            })
         })
         .collect::<Result<_, _>>()?;
 
@@ -153,12 +155,18 @@ mod tests {
         let err = build_signature(&abi, &["42".to_string()]).unwrap_err();
         assert!(matches!(
             err,
-            ConstructorAbiError::ArgCountMismatch { expected: 0, actual: 1 }
+            ConstructorAbiError::ArgCountMismatch {
+                expected: 0,
+                actual: 1
+            }
         ));
         let err = encode_args(&abi, &["42".to_string()]).unwrap_err();
         assert!(matches!(
             err,
-            ConstructorAbiError::ArgCountMismatch { expected: 0, actual: 1 }
+            ConstructorAbiError::ArgCountMismatch {
+                expected: 0,
+                actual: 1
+            }
         ));
     }
 
@@ -168,17 +176,19 @@ mod tests {
         let err = build_signature(&abi, &[]).unwrap_err();
         assert!(matches!(
             err,
-            ConstructorAbiError::ArgCountMismatch { expected: 1, actual: 0 }
+            ConstructorAbiError::ArgCountMismatch {
+                expected: 1,
+                actual: 0
+            }
         ));
 
-        let err = encode_args(
-            &abi,
-            &["1".to_string(), "2".to_string()],
-        )
-        .unwrap_err();
+        let err = encode_args(&abi, &["1".to_string(), "2".to_string()]).unwrap_err();
         assert!(matches!(
             err,
-            ConstructorAbiError::ArgCountMismatch { expected: 1, actual: 2 }
+            ConstructorAbiError::ArgCountMismatch {
+                expected: 1,
+                actual: 2
+            }
         ));
     }
 
