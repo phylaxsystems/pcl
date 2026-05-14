@@ -67,8 +67,6 @@ pub struct VerifyArgs {
     #[arg(long, num_args = 1.., help = "Constructor arguments for the assertion")]
     pub args: Vec<String>,
 
-    #[arg(long, hide = true, help = "Deprecated; use global --json")]
-    pub json: bool,
 }
 
 struct VerifyInput {
@@ -85,11 +83,7 @@ pub struct VerifyJsonAssertion {
 
 impl VerifyArgs {
     pub fn run(&self, cli_args: &CliArgs) -> Result<(), VerifyError> {
-        let output_mode = if self.json {
-            OutputMode::Json
-        } else {
-            cli_args.output_mode()
-        };
+        let output_mode = cli_args.output_mode();
         let root = std::fs::canonicalize(&self.root).map_err(|e| {
             VerifyError::Io {
                 message: format!("Project root not found: {}", self.root.display()),

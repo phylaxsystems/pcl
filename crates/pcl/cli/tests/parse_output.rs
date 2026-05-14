@@ -104,6 +104,46 @@ fn pass_through_developer_commands_reject_machine_modes_structurally() {
 }
 
 #[test]
+fn subcommand_help_advertises_global_json_mode() {
+    fn assert_help(command: &str) {
+        let output = run_pcl(&[command, "--help"]);
+        output.assert_success();
+        assert!(output.stderr.is_empty(), "{command}: {}", output.stderr);
+        assert!(
+            output.stdout.contains("--json"),
+            "{command} help should show global --json:\n{}",
+            output.stdout
+        );
+        assert!(
+            output.stdout.contains("--toon"),
+            "{command} help should show global --toon:\n{}",
+            output.stdout
+        );
+        assert!(
+            !output.stdout.contains("Deprecated; use global --json"),
+            "{command} help should not show stale compatibility help:\n{}",
+            output.stdout
+        );
+
+        let trailing_json = run_pcl(&[command, "--json", "--help"]);
+        trailing_json.assert_success();
+        assert!(
+            trailing_json.stdout.contains("--json") || trailing_json.stderr.contains("--json"),
+            "{command} should still accept global --json after the subcommand:\nstdout:\n{}\nstderr:\n{}",
+            trailing_json.stdout,
+            trailing_json.stderr
+        );
+    }
+
+    for command in ["apply", "download"] {
+        assert_help(command);
+    }
+
+    #[cfg(feature = "credible")]
+    assert_help("verify");
+}
+
+#[test]
 fn new_workflow_subcommands_parse_and_emit_structured_dry_runs() {
     for args in [
         [

@@ -86,9 +86,6 @@ pub struct ApplyArgs {
     )]
     pub config: PathBuf,
 
-    #[arg(long, hide = true, help = "Deprecated; use global --json")]
-    pub json: bool,
-
     #[arg(
         long = "yes",
         visible_alias = "auto-approve",
@@ -115,11 +112,7 @@ pub struct ApplyArgs {
 
 impl ApplyArgs {
     pub async fn run(&self, cli_args: &CliArgs, config: &CliConfig) -> Result<(), ApplyError> {
-        let output_mode = if self.json {
-            OutputMode::Json
-        } else {
-            cli_args.output_mode()
-        };
+        let output_mode = cli_args.output_mode();
         let root = canonicalize_root(&self.root)?;
         let config_path = root.join(&self.config);
         let credible = CredibleToml::from_path(&config_path)?;

@@ -51,9 +51,6 @@ pub struct DownloadArgs {
     )]
     pub output_dir: Option<PathBuf>,
 
-    #[arg(long, hide = true, help = "Deprecated; use global --json")]
-    pub json: bool,
-
     #[arg(
         short = 'u',
         long = "api-url",
@@ -110,11 +107,7 @@ struct DownloadedFile {
 
 impl DownloadArgs {
     pub async fn run(&self, cli_args: &CliArgs, config: &CliConfig) -> Result<(), DownloadError> {
-        let output_mode = if self.json {
-            OutputMode::Json
-        } else {
-            cli_args.output_mode()
-        };
+        let output_mode = cli_args.output_mode();
 
         let client = self.build_client(config)?;
 
@@ -456,20 +449,15 @@ mod tests {
     }
 
     #[test]
-    fn parses_download_with_json_flag() {
-        let cli = TestCli::try_parse_from([
+    fn rejects_download_local_json_flag_without_global_cli() {
+        let result = TestCli::try_parse_from([
             "pcl",
             "download",
             "--project-id",
             "550e8400-e29b-41d4-a716-446655440000",
             "--json",
-        ])
-        .unwrap();
-        match cli.command {
-            TestCommand::Download(args) => {
-                assert!(args.json);
-            }
-        }
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]
