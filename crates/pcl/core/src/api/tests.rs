@@ -3150,6 +3150,25 @@ fn manifest_lists_structured_actions_for_every_workflow() {
         }),
         "manifest must include generic raw-call pagination"
     );
+    let completion_surface = manifest["product_surfaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|surface| surface["command"] == "pcl completions <shell>")
+        .expect("completion surface");
+    assert!(
+        completion_surface["description"]
+            .as_str()
+            .is_some_and(|description| description.contains("raw shell completion scripts"))
+    );
+    assert!(
+        manifest["product_surfaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|surface| surface["command"] != "pcl completions <shell> --toon"),
+        "manifest should not advertise envelope mode as the default completions install path"
+    );
 }
 
 #[test]
