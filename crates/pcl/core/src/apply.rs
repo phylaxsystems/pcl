@@ -20,7 +20,7 @@ use crate::{
 use alloy_dyn_abi::{
     DynSolValue,
     JsonAbiExt,
-    ResolveSolType,
+    Specifier,
 };
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{
@@ -797,8 +797,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err =
-            encode_constructor_args_hex(&abi, &["not_a_number".to_string()]).unwrap_err();
+        let err = encode_constructor_args_hex(&abi, &["not_a_number".to_string()]).unwrap_err();
         assert!(
             err.to_string().contains("failed to parse constructor arg"),
             "got: {err}"
