@@ -66,7 +66,6 @@ pub struct VerifyArgs {
 
     #[arg(long, num_args = 1.., help = "Constructor arguments for the assertion")]
     pub args: Vec<String>,
-
 }
 
 struct VerifyInput {
