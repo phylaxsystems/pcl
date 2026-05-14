@@ -3735,26 +3735,24 @@ fn dry_run_envelope(data: Value) -> Value {
         .pointer("/request/auth/stored_token_valid")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let next_actions = if auth_required && !allow_unauthenticated && !stored_token_valid {
+    let method = data
+        .pointer("/request/method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mut next_actions = if auth_required && !allow_unauthenticated && !stored_token_valid {
         vec![
             "pcl auth ensure --toon",
             "Authenticate before removing --dry-run",
-            "Use --body-template when constructing mutation bodies",
         ]
     } else {
-        let mut actions = vec![
+        vec![
             "Remove --dry-run to execute this request",
             "Use --toon for agent consumption or --json for strict JSON parsing",
-        ];
-        let method = data
-            .pointer("/request/method")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if method_side_effecting(method) {
-            actions.push("Use --body-template when constructing mutation bodies");
-        }
-        actions
+        ]
     };
+    if method_side_effecting(method) {
+        next_actions.push("Use --body-template when constructing mutation bodies");
+    }
     with_envelope_metadata(json!({
         "status": "ok",
         "data": data,
