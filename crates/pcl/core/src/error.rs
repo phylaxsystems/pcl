@@ -51,8 +51,9 @@ pub enum ApplyError {
         body: String,
     },
 
-    #[error("{0}")]
-    VerificationFailed(String),
+    #[cfg(feature = "credible")]
+    #[error("Assertions failed verification")]
+    AssertionsFailed(Box<VerificationSummary>),
 
     #[error("Apply cancelled")]
     ApplyCancelled,

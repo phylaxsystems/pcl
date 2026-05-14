@@ -143,6 +143,64 @@ fn apply_dry_run_builds_and_verifies_fixture_payload_without_api() {
 
 #[cfg(feature = "full")]
 #[test]
+fn apply_dry_run_json_preserves_failed_assertion_summary() {
+    let project = fixture_project();
+    fs::write(
+        project
+            .path()
+            .join("assertions/src/NoArgsAssertion.a.sol"),
+        r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+abstract contract Assertion {
+    function triggers() external view virtual;
+}
+
+contract NoArgsAssertion is Assertion {
+    function triggers() external view override {}
+
+    function assertionCheckBool() external pure returns (bool) {
+        return true;
+    }
+}
+"#,
+    )
+    .expect("write failing assertion fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--json",
+            "apply",
+            "--root",
+            project.path().to_str().expect("utf-8 temp path"),
+            "--dry-run",
+        ])
+        .output()
+        .expect("run pcl apply dry-run");
+
+    assert!(
+        !output.status.success(),
+        "pcl apply unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("json error envelope");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["code"], "apply.assertions_failed");
+    assert_eq!(envelope["data"]["status"], "failure");
+    assert_eq!(envelope["data"]["failed"], 1);
+    assert_eq!(envelope["data"]["assertions"][0]["name"], "NoArgsAssertion");
+    assert_eq!(envelope["data"]["assertions"][0]["status"], "no_triggers");
+    assert_eq!(
+        envelope["next_actions"][0],
+        "Inspect data.assertions for failing assertions"
+    );
+}
+
+#[cfg(feature = "full")]
+#[test]
 fn verify_cli_succeeds_for_explicit_fixture_assertion() {
     let project = fixture_project();
 

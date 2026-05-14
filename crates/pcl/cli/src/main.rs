@@ -20,7 +20,10 @@ use pcl_common::args::{
     set_current_output_mode,
 };
 #[cfg(feature = "credible")]
-use pcl_core::error::VerifyError;
+use pcl_core::{
+    error::VerifyError,
+    verify::VerificationSummary,
+};
 use pcl_core::{
     api::{
         ApiCommandError,
@@ -268,6 +271,15 @@ fn simple_error_value(
 }
 
 fn apply_error_envelope(err: &ApplyError) -> Value {
+    #[cfg(feature = "credible")]
+    if let ApplyError::AssertionsFailed(summary) = err {
+        return verification_assertions_failed_envelope(
+            summary,
+            "apply.assertions_failed",
+            "pcl apply --dry-run",
+        );
+    }
+
     let (code, message, next_actions): (&str, String, &[&str]) = match err {
         ApplyError::NoAuthToken => {
             (
@@ -357,25 +369,11 @@ fn download_error_envelope(err: &DownloadError) -> Value {
 #[cfg(feature = "credible")]
 fn verify_error_envelope(err: &VerifyError) -> Value {
     if let VerifyError::AssertionsFailed(summary) = err {
-        let message = format!(
-            "{} of {} assertion{} failed verification",
-            summary.failed,
-            summary.total,
-            if summary.total == 1 { "" } else { "s" }
+        return verification_assertions_failed_envelope(
+            summary,
+            "verify.assertions_failed",
+            "pcl verify --help",
         );
-        return json!({
-            "status": "error",
-            "data": summary.as_ref(),
-            "error": {
-                "code": "verify.assertions_failed",
-                "message": message,
-                "recoverable": true,
-            },
-            "next_actions": [
-                "Inspect data.assertions for failing assertions",
-                "pcl verify --help",
-            ],
-        });
     }
 
     let (code, message, next_actions): (&str, String, &[&str]) = match err {
@@ -438,6 +436,37 @@ fn verify_error_envelope(err: &VerifyError) -> Value {
         VerifyError::AssertionsFailed(_) => unreachable!("handled above"),
     };
     simple_error_value(code, &message, true, next_actions)
+}
+
+#[cfg(feature = "credible")]
+fn verification_assertions_failed_envelope(
+    summary: &VerificationSummary,
+    code: &str,
+    help_command: &str,
+) -> Value {
+    json!({
+        "status": "error",
+        "data": summary,
+        "error": {
+            "code": code,
+            "message": verification_failed_message(summary),
+            "recoverable": true,
+        },
+        "next_actions": [
+            "Inspect data.assertions for failing assertions",
+            help_command,
+        ],
+    })
+}
+
+#[cfg(feature = "credible")]
+fn verification_failed_message(summary: &VerificationSummary) -> String {
+    format!(
+        "{} of {} assertion{} failed verification",
+        summary.failed,
+        summary.total,
+        if summary.total == 1 { "" } else { "s" }
+    )
 }
 
 fn phoundry_error_envelope(err: &PhoundryError) -> Value {
