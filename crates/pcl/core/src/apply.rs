@@ -537,8 +537,7 @@ fn assertion_contracts_dir(file: &str) -> PathBuf {
 fn constructor_inputs(abi: &JsonAbi) -> &[alloy_json_abi::Param] {
     abi.constructor
         .as_ref()
-        .map(|constructor| constructor.inputs.as_slice())
-        .unwrap_or(&[])
+        .map_or(&[], |constructor| constructor.inputs.as_slice())
 }
 
 fn build_constructor_abi_signature(abi: &JsonAbi, args: &[String]) -> Result<String, ApplyError> {
@@ -612,8 +611,14 @@ fn build_assertion_item(
         PostProjectsProjectIdReleasesBodyContractsValueAssertionsItem {
             file: parse_field(&assertion.file, "assertion file")?,
             args: assertion.args.clone(),
-            constructor_abi_signature: Some(constructor_abi_signature),
-            encoded_constructor_args: Some(encoded_constructor_args),
+            constructor_abi_signature: Some(parse_field(
+                &constructor_abi_signature,
+                "constructor abi signature",
+            )?),
+            encoded_constructor_args: Some(parse_field(
+                &encoded_constructor_args,
+                "encoded constructor args",
+            )?),
             bytecode: parse_field(&built.bytecode, "bytecode")?,
             flattened_source: parse_field(&built.flattened_source, "flattened source")?,
             compiler_version: parse_field(&built.compiler_version, "compiler version")?,

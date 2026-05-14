@@ -46314,9 +46314,17 @@ pub mod types {
     ///                  "type": "string",
     ///                  "minLength": 1
     ///                },
+    ///                "constructorAbiSignature": {
+    ///                  "type": "string",
+    ///                  "minLength": 1
+    ///                },
     ///                "contractName": {
     ///                  "type": "string",
     ///                  "minLength": 1
+    ///                },
+    ///                "encodedConstructorArgs": {
+    ///                  "type": "string",
+    ///                  "pattern": "^0x[a-fA-F0-9]*$"
     ///                },
     ///                "evmVersion": {
     ///                  "type": "string",
@@ -46520,9 +46528,17 @@ pub mod types {
     ///            "type": "string",
     ///            "minLength": 1
     ///          },
+    ///          "constructorAbiSignature": {
+    ///            "type": "string",
+    ///            "minLength": 1
+    ///          },
     ///          "contractName": {
     ///            "type": "string",
     ///            "minLength": 1
+    ///          },
+    ///          "encodedConstructorArgs": {
+    ///            "type": "string",
+    ///            "pattern": "^0x[a-fA-F0-9]*$"
     ///          },
     ///          "evmVersion": {
     ///            "type": "string",
@@ -46700,9 +46716,17 @@ pub mod types {
     ///      "type": "string",
     ///      "minLength": 1
     ///    },
+    ///    "constructorAbiSignature": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
     ///    "contractName": {
     ///      "type": "string",
     ///      "minLength": 1
+    ///    },
+    ///    "encodedConstructorArgs": {
+    ///      "type": "string",
+    ///      "pattern": "^0x[a-fA-F0-9]*$"
     ///    },
     ///    "evmVersion": {
     ///      "type": "string",
@@ -46745,8 +46769,24 @@ pub mod types {
         pub bytecode: PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemBytecode,
         #[serde(rename = "compilerVersion")]
         pub compiler_version: PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemCompilerVersion,
+        #[serde(
+            rename = "constructorAbiSignature",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub constructor_abi_signature: ::std::option::Option<
+            PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature,
+        >,
         #[serde(rename = "contractName")]
         pub contract_name: PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemContractName,
+        #[serde(
+            rename = "encodedConstructorArgs",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub encoded_constructor_args: ::std::option::Option<
+            PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs,
+        >,
         #[serde(rename = "evmVersion")]
         pub evm_version: PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEvmVersion,
         pub file: PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemFile,
@@ -46967,6 +47007,100 @@ pub mod types {
                 })
         }
     }
+    ///`PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature,
+    >
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature {
+        fn from(
+            value: &PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemConstructorAbiSignature {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
     ///`PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemContractName`
     ///
     /// <details><summary>JSON schema</summary>
@@ -47049,6 +47183,102 @@ pub mod types {
     }
     impl<'de> ::serde::Deserialize<'de>
     for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemContractName {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "pattern": "^0x[a-fA-F0-9]*$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs,
+    >
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs {
+        fn from(
+            value: &PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^0x[a-fA-F0-9]*$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^0x[a-fA-F0-9]*$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdReleasesBodyContractsValueAssertionsItemEncodedConstructorArgs {
         fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
         where
             D: ::serde::Deserializer<'de>,
@@ -47487,9 +47717,17 @@ pub mod types {
     ///                  "type": "string",
     ///                  "minLength": 1
     ///                },
+    ///                "constructorAbiSignature": {
+    ///                  "type": "string",
+    ///                  "minLength": 1
+    ///                },
     ///                "contractName": {
     ///                  "type": "string",
     ///                  "minLength": 1
+    ///                },
+    ///                "encodedConstructorArgs": {
+    ///                  "type": "string",
+    ///                  "pattern": "^0x[a-fA-F0-9]*$"
     ///                },
     ///                "evmVersion": {
     ///                  "type": "string",
@@ -47695,9 +47933,17 @@ pub mod types {
     ///            "type": "string",
     ///            "minLength": 1
     ///          },
+    ///          "constructorAbiSignature": {
+    ///            "type": "string",
+    ///            "minLength": 1
+    ///          },
     ///          "contractName": {
     ///            "type": "string",
     ///            "minLength": 1
+    ///          },
+    ///          "encodedConstructorArgs": {
+    ///            "type": "string",
+    ///            "pattern": "^0x[a-fA-F0-9]*$"
     ///          },
     ///          "evmVersion": {
     ///            "type": "string",
@@ -47883,9 +48129,17 @@ pub mod types {
     ///      "type": "string",
     ///      "minLength": 1
     ///    },
+    ///    "constructorAbiSignature": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
     ///    "contractName": {
     ///      "type": "string",
     ///      "minLength": 1
+    ///    },
+    ///    "encodedConstructorArgs": {
+    ///      "type": "string",
+    ///      "pattern": "^0x[a-fA-F0-9]*$"
     ///    },
     ///    "evmVersion": {
     ///      "type": "string",
@@ -47928,8 +48182,24 @@ pub mod types {
         pub bytecode: PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemBytecode,
         #[serde(rename = "compilerVersion")]
         pub compiler_version: PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemCompilerVersion,
+        #[serde(
+            rename = "constructorAbiSignature",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub constructor_abi_signature: ::std::option::Option<
+            PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature,
+        >,
         #[serde(rename = "contractName")]
         pub contract_name: PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemContractName,
+        #[serde(
+            rename = "encodedConstructorArgs",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub encoded_constructor_args: ::std::option::Option<
+            PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs,
+        >,
         #[serde(rename = "evmVersion")]
         pub evm_version: PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEvmVersion,
         pub file: PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemFile,
@@ -48151,6 +48421,100 @@ pub mod types {
                 })
         }
     }
+    ///`PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature,
+    >
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature {
+        fn from(
+            value: &PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemConstructorAbiSignature {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
     ///`PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemContractName`
     ///
     /// <details><summary>JSON schema</summary>
@@ -48234,6 +48598,102 @@ pub mod types {
     }
     impl<'de> ::serde::Deserialize<'de>
     for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemContractName {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "pattern": "^0x[a-fA-F0-9]*$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs,
+    >
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs {
+        fn from(
+            value: &PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^0x[a-fA-F0-9]*$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^0x[a-fA-F0-9]*$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdReleasesPreviewBodyContractsValueAssertionsItemEncodedConstructorArgs {
         fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
         where
             D: ::serde::Deserializer<'de>,
