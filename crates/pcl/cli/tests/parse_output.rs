@@ -267,3 +267,40 @@ fn documented_agent_leaf_commands_accept_toon_after_subcommands() {
         );
     }
 }
+
+#[test]
+fn llms_machine_next_actions_leave_completion_redirect_raw() {
+    let completion_install =
+        "pcl completions bash > ~/.local/share/bash-completion/completions/pcl";
+
+    let toon = run_pcl(&["--toon", "--llms"]);
+    toon.assert_success();
+    assert!(toon.stdout.contains(completion_install), "{}", toon.stdout);
+    assert!(
+        !toon
+            .stdout
+            .contains(&format!("{completion_install} --toon")),
+        "{}",
+        toon.stdout
+    );
+
+    let json = run_pcl(&["--json", "--llms"]);
+    json.assert_success();
+    let envelope: serde_json::Value = serde_json::from_str(&json.stdout).expect("json envelope");
+    let actions = envelope["next_actions"]
+        .as_array()
+        .expect("next_actions array");
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.as_str() == Some(completion_install)),
+        "{envelope}"
+    );
+    let json_flagged_install = format!("{completion_install} --json");
+    assert!(
+        actions
+            .iter()
+            .all(|action| action.as_str() != Some(json_flagged_install.as_str())),
+        "{envelope}"
+    );
+}
