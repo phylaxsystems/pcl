@@ -417,12 +417,7 @@ impl ApplyArgs {
         }
 
         if summary.failed > 0 {
-            return Err(ApplyError::VerificationFailed(format!(
-                "{} of {} assertion{} failed verification. Fix errors before applying.",
-                summary.failed,
-                summary.total,
-                if summary.total == 1 { "" } else { "s" }
-            )));
+            return Err(ApplyError::AssertionsFailed(Box::new(summary)));
         }
 
         Ok(summary)
