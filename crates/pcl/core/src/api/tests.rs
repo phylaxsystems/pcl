@@ -2915,6 +2915,49 @@ fn human_output_formats_mutation_dry_run_for_people() {
 }
 
 #[test]
+fn dry_run_auth_recovery_only_suggests_body_templates_for_mutations() {
+    let get = dry_run_envelope(json!({
+        "dry_run": true,
+        "valid": true,
+        "request": {
+            "method": "GET",
+            "path": "/views/projects/home",
+            "auth": {
+                "required": true,
+                "allow_unauthenticated": false,
+                "stored_token_valid": false,
+            }
+        }
+    }));
+    assert_eq!(
+        get["next_actions"],
+        json!(["pcl auth ensure --toon", "Authenticate before removing --dry-run"])
+    );
+
+    let post = dry_run_envelope(json!({
+        "dry_run": true,
+        "valid": true,
+        "request": {
+            "method": "POST",
+            "path": "/projects",
+            "auth": {
+                "required": true,
+                "allow_unauthenticated": false,
+                "stored_token_valid": false,
+            }
+        }
+    }));
+    assert_eq!(
+        post["next_actions"],
+        json!([
+            "pcl auth ensure --toon",
+            "Authenticate before removing --dry-run",
+            "Use --body-template when constructing mutation bodies"
+        ])
+    );
+}
+
+#[test]
 fn human_output_formats_api_discovery_for_people() {
     let output = envelope_output_string(
         &json!({
