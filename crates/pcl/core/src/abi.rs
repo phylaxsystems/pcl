@@ -42,7 +42,7 @@ pub enum ConstructorAbiError {
 }
 
 /// Constructor input params, or an empty slice if the ABI has no constructor.
-pub fn constructor_inputs(abi: &JsonAbi) -> &[Param] {
+fn constructor_inputs(abi: &JsonAbi) -> &[Param] {
     abi.constructor
         .as_ref()
         .map_or(&[], |constructor| constructor.inputs.as_slice())
