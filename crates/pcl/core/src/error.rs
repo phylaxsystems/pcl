@@ -58,18 +58,15 @@ pub enum ApplyError {
     #[error("JSON mode with pending changes requires `--yes`")]
     JsonConfirmationRequiresYes,
 
+    #[error(transparent)]
+    ConstructorAbi(#[from] ConstructorAbiError),
+
     #[error("Failed to encode JSON output: {0}")]
     Json(#[from] serde_json::Error),
 }
 
 impl From<CredibleConfigError> for ApplyError {
     fn from(e: CredibleConfigError) -> Self {
-        Self::InvalidConfig(e.to_string())
-    }
-}
-
-impl From<ConstructorAbiError> for ApplyError {
-    fn from(e: ConstructorAbiError) -> Self {
         Self::InvalidConfig(e.to_string())
     }
 }
@@ -91,8 +88,8 @@ pub enum VerifyError {
     #[error("Build failed: {0}")]
     BuildFailed(#[source] Box<PhoundryError>),
 
-    #[error("Failed to encode constructor arguments: {0}")]
-    AbiEncode(String),
+    #[error("Invalid deployment bytecode hex: {0}")]
+    BytecodeHex(String),
 
     #[error(transparent)]
     ConstructorAbi(#[from] ConstructorAbiError),

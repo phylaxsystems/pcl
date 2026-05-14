@@ -15,7 +15,6 @@ use alloy_json_abi::{
     JsonAbi,
     Param,
 };
-use alloy_primitives::hex;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -107,12 +106,6 @@ pub fn encode_args(abi: &JsonAbi, args: &[String]) -> Result<Vec<u8>, Constructo
         .map_err(|e| ConstructorAbiError::EncodeFailure(e.to_string()))
 }
 
-/// Same as [`encode_args`] but returns a `0x`-prefixed hex string. Returns
-/// `"0x"` when there is no constructor and no args.
-pub fn encode_args_hex(abi: &JsonAbi, args: &[String]) -> Result<String, ConstructorAbiError> {
-    Ok(hex::encode_prefixed(encode_args(abi, args)?))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,6 +114,7 @@ mod tests {
         Param,
         StateMutability,
     };
+    use alloy_primitives::hex;
 
     fn make_param(ty: &str, name: &str) -> Param {
         Param {
@@ -146,7 +140,6 @@ mod tests {
         let abi = JsonAbi::default();
         assert_eq!(build_signature(&abi, &[]).unwrap(), "constructor()");
         assert_eq!(encode_args(&abi, &[]).unwrap(), Vec::<u8>::new());
-        assert_eq!(encode_args_hex(&abi, &[]).unwrap(), "0x");
     }
 
     #[test]
@@ -202,7 +195,7 @@ mod tests {
             "constructor(address)"
         );
         assert_eq!(
-            encode_args_hex(&abi, &args).unwrap(),
+            hex::encode_prefixed(encode_args(&abi, &args).unwrap()),
             "0x000000000000000000000000f31b02f47596acc7328e9fb04afc52fe91da6071"
         );
     }
@@ -223,17 +216,18 @@ mod tests {
             "constructor(address,uint256)"
         );
         assert_eq!(
-            encode_args_hex(&abi, &args).unwrap(),
-            "0x000000000000000000000000f31b02f47596acc7328e9fb04afc52fe91da6071\
-             000000000000000000000000000000000000000000000000000000000000002a"
-                .replace(['\n', ' '], "")
+            hex::encode_prefixed(encode_args(&abi, &args).unwrap()),
+            concat!(
+                "0x000000000000000000000000f31b02f47596acc7328e9fb04afc52fe91da6071",
+                "000000000000000000000000000000000000000000000000000000000000002a",
+            )
         );
     }
 
     #[test]
     fn rejects_unparseable_value() {
         let abi = make_abi(vec![make_param("uint256", "x")]);
-        let err = encode_args_hex(&abi, &["not_a_number".to_string()]).unwrap_err();
+        let err = encode_args(&abi, &["not_a_number".to_string()]).unwrap_err();
         assert!(
             matches!(err, ConstructorAbiError::CoerceFailure { .. }),
             "got: {err}"

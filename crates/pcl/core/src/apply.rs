@@ -597,3 +597,78 @@ fn confirm_apply() -> Result<bool, ApplyError> {
         || trimmed.eq_ignore_ascii_case("y")
         || trimmed.eq_ignore_ascii_case("yes"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credible_config::CredibleAssertion;
+    use alloy_json_abi::{
+        Constructor,
+        JsonAbi,
+        Param,
+        StateMutability,
+    };
+    use pcl_phoundry::build_and_flatten::BuildAndFlatOutput;
+
+    fn make_built(abi: JsonAbi) -> BuildAndFlatOutput {
+        BuildAndFlatOutput {
+            compiler_version: "v0.8.28+commit.7893614a".to_string(),
+            flattened_source: "// SPDX\ncontract A {}".to_string(),
+            abi,
+            bytecode: "0x6080".to_string(),
+            evm_version: "paris".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Regression guard: `build_assertion_item` must forward the typed
+    /// constructor signature so the dApp doesn't fall back to guessing
+    /// `constructor(string,…)`.
+    #[test]
+    fn build_assertion_item_forwards_constructor_signature() {
+        let abi = JsonAbi {
+            constructor: Some(Constructor {
+                inputs: vec![Param {
+                    ty: "address".to_string(),
+                    name: "owner".to_string(),
+                    components: vec![],
+                    internal_type: None,
+                }],
+                state_mutability: StateMutability::NonPayable,
+            }),
+            ..Default::default()
+        };
+        let built = make_built(abi);
+        let assertion = CredibleAssertion {
+            file: "src/A.a.sol:A".to_string(),
+            args: vec!["0xF31b02F47596AcC7328E9fb04aFc52Fe91Da6071".to_string()],
+        };
+
+        let item = build_assertion_item(&assertion, &built, "A").expect("builds item");
+
+        let sig = item
+            .constructor_abi_signature
+            .as_ref()
+            .expect("signature is forwarded");
+        assert_eq!(sig.as_str(), "constructor(address)");
+        assert_eq!(item.args, assertion.args);
+    }
+
+    #[test]
+    fn build_assertion_item_forwards_signature_with_no_constructor() {
+        let built = make_built(JsonAbi::default());
+        let assertion = CredibleAssertion {
+            file: "src/A.a.sol:A".to_string(),
+            args: vec![],
+        };
+
+        let item = build_assertion_item(&assertion, &built, "A").expect("builds item");
+
+        let sig = item
+            .constructor_abi_signature
+            .as_ref()
+            .expect("signature is forwarded");
+        assert_eq!(sig.as_str(), "constructor()");
+        assert!(item.args.is_empty());
+    }
+}

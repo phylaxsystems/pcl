@@ -264,8 +264,8 @@ pub fn build_deployment_bytecode(
     abi: &JsonAbi,
     args: &[String],
 ) -> Result<Bytes, VerifyError> {
-    let mut bytecode = hex::decode(bytecode_hex)
-        .map_err(|e| VerifyError::AbiEncode(format!("invalid bytecode hex: {e}")))?;
+    let mut bytecode =
+        hex::decode(bytecode_hex).map_err(|e| VerifyError::BytecodeHex(e.to_string()))?;
 
     if !args.is_empty() {
         let encoded = abi::encode_args(abi, args)?;
