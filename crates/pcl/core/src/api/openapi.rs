@@ -617,6 +617,7 @@ fn manifest_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> 
     };
 
     let mut alternatives = Vec::new();
+    let mut best_score = None;
     for command in commands {
         let Some(command_text) = command.get("command").and_then(Value::as_str) else {
             continue;
@@ -634,8 +635,17 @@ fn manifest_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> 
         };
 
         for action in actions {
-            if !manifest_action_matches_operation(action, method, path) {
+            let Some(score) = manifest_action_match_score(action, method, path) else {
                 continue;
+            };
+            match best_score {
+                Some(best) if score < best => continue,
+                Some(best) if score > best => {
+                    alternatives.clear();
+                    best_score = Some(score);
+                }
+                None => best_score = Some(score),
+                Some(_) => {}
             }
             let action_name = action.get("name").and_then(Value::as_str);
             let example = workflow_example_for_operation(&workflow, action.get("example"), path);
@@ -670,19 +680,52 @@ fn workflow_example_for_operation(
     Some(example.to_string())
 }
 
-fn manifest_action_matches_operation(action: &Value, method: HttpMethod, path: &str) -> bool {
-    action
+fn manifest_action_match_score(action: &Value, method: HttpMethod, path: &str) -> Option<usize> {
+    let method_matches = action
         .get("method")
         .and_then(Value::as_str)
-        .is_some_and(|action_method| action_method.eq_ignore_ascii_case(method.as_str()))
-        && action
-            .get("path")
-            .and_then(Value::as_str)
-            .is_some_and(|action_path| path_patterns_overlap(action_path, path))
+        .is_some_and(|action_method| action_method.eq_ignore_ascii_case(method.as_str()));
+    if !method_matches {
+        return None;
+    }
+
+    let action_path = action.get("path").and_then(Value::as_str)?;
+    path_match_score(action_path, path)
 }
 
-fn path_patterns_overlap(left: &str, right: &str) -> bool {
-    openapi_path_matches(left, right) || openapi_path_matches(right, left)
+fn path_match_score(pattern: &str, path: &str) -> Option<usize> {
+    if pattern == path {
+        return Some(usize::MAX);
+    }
+    let pattern_segments = path_segments(pattern);
+    let path_segments = path_segments(path);
+    if pattern_segments.len() != path_segments.len() {
+        return None;
+    }
+
+    let mut score = 0;
+    for (expected, observed) in pattern_segments.iter().zip(path_segments) {
+        if is_path_placeholder(expected) {
+            continue;
+        }
+        if *expected != observed {
+            return None;
+        }
+        score += 1;
+    }
+
+    Some(score)
+}
+
+fn path_segments(path: &str) -> Vec<&str> {
+    path.trim_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+fn is_path_placeholder(segment: &str) -> bool {
+    segment.starts_with('{') && segment.ends_with('}')
 }
 
 fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {

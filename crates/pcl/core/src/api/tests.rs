@@ -1441,6 +1441,22 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
         alternative["workflow"] == "incidents"
             && alternative["example"] == "pcl incidents --limit 5"
     }));
+
+    let project_detail = workflow_alternatives(HttpMethod::Get, "/projects/{project_id}");
+    assert_eq!(project_detail.len(), 1);
+    assert_eq!(project_detail[0]["workflow"], "projects");
+    assert_eq!(project_detail[0]["action"], "detail");
+    assert_eq!(project_detail[0]["example"], "pcl projects show <project-ref>");
+
+    let saved_delete = workflow_alternatives(HttpMethod::Delete, "/projects/saved");
+    assert_eq!(saved_delete.len(), 1);
+    assert_eq!(saved_delete[0]["workflow"], "projects");
+    assert_eq!(saved_delete[0]["action"], "unsave");
+    assert_eq!(saved_delete[0]["example"], "pcl projects unsave <project-ref>");
+
+    let project_literal = workflow_alternatives(HttpMethod::Get, "/projects/project-1");
+    assert_eq!(project_literal.len(), 1);
+    assert_eq!(project_literal[0]["action"], "detail");
 }
 
 #[test]
