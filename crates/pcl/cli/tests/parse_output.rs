@@ -304,3 +304,30 @@ fn llms_machine_next_actions_leave_completion_redirect_raw() {
         "{envelope}"
     );
 }
+
+#[test]
+fn completions_machine_next_action_is_raw_redirect() {
+    let output = run_pcl(&["--toon", "completions", "bash"]);
+    output.assert_success();
+    assert!(output.stdout.contains("script:"), "{}", output.stdout);
+    assert!(
+        output
+            .stdout
+            .contains("pcl completions bash > <completion-file>"),
+        "{}",
+        output.stdout
+    );
+    assert!(
+        !output.stdout.contains("pcl completions bash --toon"),
+        "{}",
+        output.stdout
+    );
+
+    let json = run_pcl(&["--json", "completions", "bash"]);
+    json.assert_success();
+    let envelope: serde_json::Value = serde_json::from_str(&json.stdout).expect("json envelope");
+    assert_eq!(
+        envelope["next_actions"],
+        serde_json::json!(["pcl completions bash > <completion-file>"])
+    );
+}
