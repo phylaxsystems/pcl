@@ -292,8 +292,8 @@ mod tests {
                     args.config,
                     std::path::PathBuf::from("assertions/credible.toml")
                 );
-                assert!(!args.json);
                 assert!(!args.yes);
+                assert!(cli.args.human_output());
             }
             _ => panic!("expected apply command"),
         }
