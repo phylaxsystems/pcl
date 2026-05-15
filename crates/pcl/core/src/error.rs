@@ -1,9 +1,9 @@
+#[cfg(feature = "credible")]
+use crate::verify::VerificationSummary;
 use crate::{
     abi::ConstructorAbiError,
     credible_config::CredibleConfigError,
 };
-#[cfg(feature = "credible")]
-use crate::verify::VerificationSummary;
 use chrono::{
     DateTime,
     Utc,
