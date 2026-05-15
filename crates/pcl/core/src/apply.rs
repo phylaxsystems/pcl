@@ -8,6 +8,7 @@ use crate::verify::{
 };
 use crate::{
     DEFAULT_PLATFORM_URL,
+    abi,
     client::authenticated_client,
     config::CliConfig,
     credible_config::{
@@ -530,10 +531,16 @@ fn build_assertion_item(
     built: &pcl_phoundry::build_and_flatten::BuildAndFlatOutput,
     contract_name: &str,
 ) -> Result<PostProjectsProjectIdReleasesBodyContractsValueAssertionsItem, ApplyError> {
+    let constructor_abi_signature = abi::build_signature(&built.abi, &assertion.args)?;
+
     Ok(
         PostProjectsProjectIdReleasesBodyContractsValueAssertionsItem {
             file: parse_field(&assertion.file, "assertion file")?,
             args: assertion.args.clone(),
+            constructor_abi_signature: Some(parse_field(
+                &constructor_abi_signature,
+                "constructor abi signature",
+            )?),
             bytecode: parse_field(&built.bytecode, "bytecode")?,
             flattened_source: parse_field(&built.flattened_source, "flattened source")?,
             compiler_version: parse_field(&built.compiler_version, "compiler version")?,
@@ -589,4 +596,79 @@ fn confirm_apply() -> Result<bool, ApplyError> {
     Ok(trimmed.is_empty()
         || trimmed.eq_ignore_ascii_case("y")
         || trimmed.eq_ignore_ascii_case("yes"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credible_config::CredibleAssertion;
+    use alloy_json_abi::{
+        Constructor,
+        JsonAbi,
+        Param,
+        StateMutability,
+    };
+    use pcl_phoundry::build_and_flatten::BuildAndFlatOutput;
+
+    fn make_built(abi: JsonAbi) -> BuildAndFlatOutput {
+        BuildAndFlatOutput {
+            compiler_version: "v0.8.28+commit.7893614a".to_string(),
+            flattened_source: "// SPDX\ncontract A {}".to_string(),
+            abi,
+            bytecode: "0x6080".to_string(),
+            evm_version: "paris".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Regression guard: `build_assertion_item` must forward the typed
+    /// constructor signature so the dApp doesn't fall back to guessing
+    /// `constructor(string,…)`.
+    #[test]
+    fn build_assertion_item_forwards_constructor_signature() {
+        let abi = JsonAbi {
+            constructor: Some(Constructor {
+                inputs: vec![Param {
+                    ty: "address".to_string(),
+                    name: "owner".to_string(),
+                    components: vec![],
+                    internal_type: None,
+                }],
+                state_mutability: StateMutability::NonPayable,
+            }),
+            ..Default::default()
+        };
+        let built = make_built(abi);
+        let assertion = CredibleAssertion {
+            file: "src/A.a.sol:A".to_string(),
+            args: vec!["0xF31b02F47596AcC7328E9fb04aFc52Fe91Da6071".to_string()],
+        };
+
+        let item = build_assertion_item(&assertion, &built, "A").expect("builds item");
+
+        let sig = item
+            .constructor_abi_signature
+            .as_ref()
+            .expect("signature is forwarded");
+        assert_eq!(sig.as_str(), "constructor(address)");
+        assert_eq!(item.args, assertion.args);
+    }
+
+    #[test]
+    fn build_assertion_item_forwards_signature_with_no_constructor() {
+        let built = make_built(JsonAbi::default());
+        let assertion = CredibleAssertion {
+            file: "src/A.a.sol:A".to_string(),
+            args: vec![],
+        };
+
+        let item = build_assertion_item(&assertion, &built, "A").expect("builds item");
+
+        let sig = item
+            .constructor_abi_signature
+            .as_ref()
+            .expect("signature is forwarded");
+        assert_eq!(sig.as_str(), "constructor()");
+        assert!(item.args.is_empty());
+    }
 }

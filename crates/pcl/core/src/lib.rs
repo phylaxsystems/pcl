@@ -4,6 +4,7 @@
 #![allow(clippy::unreadable_literal)]
 #![recursion_limit = "256"]
 
+pub mod abi;
 pub mod api;
 pub mod apply;
 pub mod auth;

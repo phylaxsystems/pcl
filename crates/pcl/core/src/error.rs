@@ -1,4 +1,7 @@
-use crate::credible_config::CredibleConfigError;
+use crate::{
+    abi::ConstructorAbiError,
+    credible_config::CredibleConfigError,
+};
 use chrono::{
     DateTime,
     Utc,
@@ -55,6 +58,9 @@ pub enum ApplyError {
     #[error("JSON mode with pending changes requires `--yes`")]
     JsonConfirmationRequiresYes,
 
+    #[error(transparent)]
+    ConstructorAbi(#[from] ConstructorAbiError),
+
     #[error("Failed to encode JSON output: {0}")]
     Json(#[from] serde_json::Error),
 }
@@ -82,8 +88,11 @@ pub enum VerifyError {
     #[error("Build failed: {0}")]
     BuildFailed(#[source] Box<PhoundryError>),
 
-    #[error("Failed to encode constructor arguments: {0}")]
-    AbiEncode(String),
+    #[error("Invalid deployment bytecode hex: {0}")]
+    BytecodeHex(String),
+
+    #[error(transparent)]
+    ConstructorAbi(#[from] ConstructorAbiError),
 
     #[error("Failed to encode JSON output: {0}")]
     Json(#[from] serde_json::Error),
