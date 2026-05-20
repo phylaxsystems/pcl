@@ -65,6 +65,7 @@ pub(in crate::api) struct WorkflowRequest {
 }
 
 impl WorkflowRequest {
+    #[cfg(test)]
     pub(in crate::api) fn get(
         path: impl Into<String>,
         require_auth: bool,
@@ -73,6 +74,7 @@ impl WorkflowRequest {
         Self::get_with_query(path, Vec::new(), require_auth, next_actions)
     }
 
+    #[cfg(test)]
     pub(in crate::api) fn get_with_query(
         path: impl Into<String>,
         query: Vec<(String, String)>,

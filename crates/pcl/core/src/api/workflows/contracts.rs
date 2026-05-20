@@ -3,13 +3,16 @@ use super::{
         ApiCommandError,
         ContractsArgs,
         HttpMethod,
+        WorkflowOperation,
         WorkflowRequest,
     },
     first_string_field,
     push_query,
     request_body,
     required_arg,
-    workflow_with_body,
+    workflow_operation_get,
+    workflow_operation_get_with_query,
+    workflow_operation_with_body,
 };
 use serde_json::Value;
 
@@ -18,32 +21,31 @@ pub(in crate::api) fn contracts_request(
 ) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     if args.create {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            "/assertion_adopters",
+        return workflow_operation_with_body(
+            WorkflowOperation::new(HttpMethod::Post, "post_assertion_adopters"),
             true,
             body,
             ["pcl contracts --unassigned --manager <manager-address>"],
-        ));
+        );
     }
     if args.assign_project {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            "/assertion_adopters/assign-project",
+        return workflow_operation_with_body(
+            WorkflowOperation::new(HttpMethod::Post, "post_assertion_adopters_assign_project"),
             true,
             body,
             ["pcl contracts --project <project-ref>"],
-        ));
+        );
     }
     if args.unassigned {
         let manager = required_arg(args.manager.as_deref(), "--manager")?;
-        let mut request = WorkflowRequest::get(
-            "/assertion_adopters/no-project",
+        let mut query = Vec::new();
+        push_query(&mut query, "manager", Some(manager));
+        return workflow_operation_get_with_query(
+            WorkflowOperation::new(HttpMethod::Get, "get_assertion_adopters_no_project"),
+            query,
             true,
             ["pcl contracts --assign-project --body-template"],
         );
-        push_query(&mut request.query, "manager", Some(manager));
-        return Ok(request);
     }
     if args.remove_calldata {
         let address = required_arg(args.aa_address.as_deref(), "--aa-address")?;
@@ -52,55 +54,63 @@ pub(in crate::api) fn contracts_request(
                 message: "--assertion-id is required for --remove-calldata".to_string(),
             });
         }
-        let mut request = WorkflowRequest::get(
-            format!("/assertion_adopters/{address}/remove-assertions-calldata"),
+        let mut query = Vec::new();
+        push_query(&mut query, "network", args.network.as_deref());
+        push_query(&mut query, "environment", args.environment.as_deref());
+        for assertion_id in &args.assertion_ids {
+            push_query(&mut query, "assertion_ids", Some(assertion_id));
+        }
+        return workflow_operation_get_with_query(
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "get_assertion_adopters_aa_address_remove_assertions_calldata",
+            )
+            .path_param("aa_address", &address),
+            query,
             true,
             ["pcl releases list <project-ref>"],
         );
-        push_query(&mut request.query, "network", args.network.as_deref());
-        push_query(
-            &mut request.query,
-            "environment",
-            args.environment.as_deref(),
-        );
-        for assertion_id in &args.assertion_ids {
-            push_query(&mut request.query, "assertion_ids", Some(assertion_id));
-        }
-        return Ok(request);
     }
     if args.remove {
         let project = required_arg(args.project.as_deref(), "--project")?;
         let address = required_arg(args.aa_address.as_deref(), "--aa-address")?;
-        return Ok(workflow_with_body(
-            HttpMethod::Delete,
-            format!("/projects/{project}/{address}"),
+        return workflow_operation_with_body(
+            WorkflowOperation::new(HttpMethod::Delete, "delete_projects_project_id_aa_contract")
+                .path_param("project_id", &project)
+                .path_param("aa_contract", &address),
             true,
             body,
             vec![format!("pcl contracts --project {project}")],
-        ));
+        );
     }
     if let Some(project) = &args.project {
         if let Some(adopter_id) = &args.adopter_id {
-            return Ok(WorkflowRequest::get(
-                format!("/views/projects/{project}/contracts/{adopter_id}"),
+            return workflow_operation_get(
+                WorkflowOperation::new(
+                    HttpMethod::Get,
+                    "get_views_projects_project_id_contracts_adopter_id",
+                )
+                .path_param("projectId", project)
+                .path_param("adopterId", adopter_id),
                 true,
                 vec![format!("pcl contracts --project {project}")],
-            ));
+            );
         }
-        return Ok(WorkflowRequest::get(
-            format!("/views/projects/{project}/contracts"),
+        return workflow_operation_get(
+            WorkflowOperation::new(HttpMethod::Get, "get_views_projects_project_id_contracts")
+                .path_param("projectId", project),
             true,
             vec![format!(
                 "pcl contracts --project {project} --adopter-id <adopter-id>"
             )],
-        ));
+        );
     }
 
-    Ok(WorkflowRequest::get(
-        "/assertion_adopters",
+    workflow_operation_get(
+        WorkflowOperation::new(HttpMethod::Get, "get_assertion_adopters"),
         true,
         ["pcl contracts --unassigned --manager <manager-address>"],
-    ))
+    )
 }
 
 pub(in crate::api) fn contracts_next_actions(

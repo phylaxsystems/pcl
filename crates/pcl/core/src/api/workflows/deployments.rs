@@ -3,12 +3,14 @@ use super::{
         ApiCommandError,
         DeploymentsArgs,
         HttpMethod,
+        WorkflowOperation,
         WorkflowRequest,
     },
     redact_large_artifacts,
     request_body,
     required_project_arg,
-    workflow_with_body,
+    workflow_operation_get,
+    workflow_operation_with_body,
 };
 use serde_json::Value;
 
@@ -18,19 +20,23 @@ pub(in crate::api) fn deployments_request(
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     let project = required_project_arg(args.project.as_deref(), "deployments", "--project")?;
     if args.confirm {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            format!("/projects/{project}/confirm-deployment"),
+        return workflow_operation_with_body(
+            WorkflowOperation::new(
+                HttpMethod::Post,
+                "post_projects_project_id_confirm_deployment",
+            )
+            .path_param("project_id", &project),
             true,
             body,
             vec![format!("pcl deployments --project {project}")],
-        ));
+        );
     }
-    Ok(WorkflowRequest::get(
-        format!("/views/projects/{project}/deployments"),
+    workflow_operation_get(
+        WorkflowOperation::new(HttpMethod::Get, "get_views_projects_project_id_deployments")
+            .path_param("projectId", &project),
         true,
         vec![format!("pcl releases list {project}")],
-    ))
+    )
 }
 
 pub(in crate::api) fn compact_deployment_data(data: &Value) -> Value {

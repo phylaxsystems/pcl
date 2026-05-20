@@ -16,6 +16,7 @@ use super::{
     SearchArgs,
     TransfersArgs,
     WorkflowCallResult,
+    WorkflowOperation,
     WorkflowPaginationOptions,
     WorkflowRequest,
     access_body_template,
@@ -1238,7 +1239,9 @@ impl ApiArgs {
         require_auth: bool,
         request_log_path: &Path,
     ) -> Result<String, ApiCommandError> {
-        let path = format!("/projects/resolve/{project_ref}");
+        let operation = WorkflowOperation::new(HttpMethod::Get, "get_projects_resolve_project_ref")
+            .path_param("project_ref", project_ref);
+        let path = operation.path()?;
         let url = self.api_url(&path)?;
         let client = self.http_client(config, attach_auth, require_auth)?;
         let response = read_api_response(client.get(url).send().await?).await?;
@@ -1249,7 +1252,7 @@ impl ApiArgs {
             &path,
             response.status.as_u16(),
             response.request_id.as_deref(),
-            Some("get_projects_resolve_project_ref"),
+            Some(operation.operation_id),
         );
         if !response.status.is_success() {
             return Err(ApiCommandError::HttpStatus {

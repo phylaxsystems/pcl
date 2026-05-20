@@ -3,11 +3,13 @@ use super::{
         AccountArgs,
         ApiCommandError,
         HttpMethod,
+        WorkflowOperation,
         WorkflowRequest,
     },
     body_or_empty,
     request_body,
-    workflow_with_body,
+    workflow_operation_get,
+    workflow_operation_with_body,
 };
 
 pub(in crate::api) fn account_request(
@@ -15,28 +17,26 @@ pub(in crate::api) fn account_request(
 ) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     if args.accept_terms {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            "/web/auth/accept-terms",
+        return workflow_operation_with_body(
+            WorkflowOperation::new(HttpMethod::Post, "post_web_auth_accept_terms"),
             true,
             Some(body_or_empty(body)),
             ["pcl account", "pcl projects mine"],
-        ));
+        );
     }
     if args.logout {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            "/web/auth/logout",
+        return workflow_operation_with_body(
+            WorkflowOperation::new(HttpMethod::Post, "post_web_auth_logout"),
             true,
             Some(body_or_empty(body)),
             ["pcl auth logout"],
-        ));
+        );
     }
-    Ok(WorkflowRequest::get(
-        "/web/auth/me",
+    workflow_operation_get(
+        WorkflowOperation::new(HttpMethod::Get, "get_web_auth_me"),
         true,
         ["pcl account --accept-terms", "pcl projects mine"],
-    ))
+    )
 }
 
 workflow_definition!(

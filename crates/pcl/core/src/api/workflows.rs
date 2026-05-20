@@ -114,7 +114,6 @@ pub(super) use transfers::{
 
 use super::{
     ApiCommandError,
-    HttpMethod,
     ProjectsArgs,
     WorkflowOperation,
     WorkflowRequest,
@@ -127,25 +126,6 @@ use serde_json::{
 };
 use std::path::PathBuf;
 
-fn workflow_with_body(
-    method: HttpMethod,
-    path: impl Into<String>,
-    require_auth: bool,
-    body: Option<String>,
-    next_actions: impl IntoIterator<Item = impl Into<String>>,
-) -> WorkflowRequest {
-    WorkflowRequest {
-        method,
-        operation_id: None,
-        path: path.into(),
-        query: Vec::new(),
-        body,
-        require_auth,
-        attach_auth: require_auth,
-        next_actions: next_actions.into_iter().map(Into::into).collect(),
-    }
-}
-
 fn workflow_operation_with_body(
     operation: WorkflowOperation,
     require_auth: bool,
@@ -153,6 +133,23 @@ fn workflow_operation_with_body(
     next_actions: impl IntoIterator<Item = impl Into<String>>,
 ) -> Result<WorkflowRequest, ApiCommandError> {
     WorkflowRequest::from_operation(operation, Vec::new(), body, require_auth, next_actions)
+}
+
+fn workflow_operation_get(
+    operation: WorkflowOperation,
+    require_auth: bool,
+    next_actions: impl IntoIterator<Item = impl Into<String>>,
+) -> Result<WorkflowRequest, ApiCommandError> {
+    workflow_operation_get_with_query(operation, Vec::new(), require_auth, next_actions)
+}
+
+fn workflow_operation_get_with_query(
+    operation: WorkflowOperation,
+    query: Vec<(String, String)>,
+    require_auth: bool,
+    next_actions: impl IntoIterator<Item = impl Into<String>>,
+) -> Result<WorkflowRequest, ApiCommandError> {
+    WorkflowRequest::from_operation(operation, query, None, require_auth, next_actions)
 }
 
 fn body_or_empty(body: Option<String>) -> String {
