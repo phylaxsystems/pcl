@@ -148,7 +148,7 @@ The core discovery commands in this section are exercised by `make agent-smoke`,
 Start with CLI-native discovery. Do not scrape human help text unless the structured surfaces are missing the field you need.
 
 1. `pcl --toon --llms` for the current CLI-native agent guide.
-2. `pcl doctor --toon` and `pcl whoami --toon` for readiness and token truthfulness.
+2. `pcl doctor --toon`, `pcl auth ensure --toon`, and `pcl whoami --toon` for readiness and token truthfulness.
 3. `pcl workflows --toon`, `pcl schema list --toon`, and `pcl api manifest --toon` for discovery.
 4. Top-level workflow commands for normal work.
 5. `pcl api list`, `pcl api inspect`, `pcl api call`, and `pcl api coverage` only for debugging, API parity checks, internal/service endpoints, or endpoints without `workflow_alternatives`.

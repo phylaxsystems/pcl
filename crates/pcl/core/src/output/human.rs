@@ -96,11 +96,21 @@ fn envelope_terms_accepted(envelope: &Value) -> bool {
 }
 
 fn is_dangerous_or_internal_action(action: &str) -> bool {
+    let trimmed = action.trim();
+    let has_dangerous_flag = trimmed.split_whitespace().any(|token| {
+        matches!(
+            token,
+            "--delete" | "--remove" | "--revoke" | "--clear" | "--logout"
+        )
+    });
     action.contains(" config delete")
-        || action.contains(" --delete")
-        || action.contains(" --remove")
-        || action.contains(" --revoke")
-        || action.contains(" --logout")
+        || has_dangerous_flag
+        || trimmed.starts_with("pcl projects delete")
+        || trimmed.starts_with("pcl projects unsave")
+        || trimmed.starts_with("pcl releases remove")
+        || trimmed.starts_with("pcl access revoke")
+        || trimmed.starts_with("pcl access member remove")
+        || trimmed.starts_with("pcl transfers reject")
         || action.starts_with("Read error.http.body")
         || action.starts_with("Use data.")
 }
@@ -132,16 +142,23 @@ fn value_has_empty_results(value: &Value) -> bool {
     match value {
         Value::Array(values) => values.is_empty(),
         Value::Object(object) => {
-            if let Some(inner) = object.get("data")
-                && value_has_empty_results(inner)
-            {
-                return true;
+            if let Some(inner) = object.get("data") {
+                return value_has_empty_results(inner);
             }
-            object.iter().any(|(key, value)| {
-                !key.starts_with('_')
-                    && (value.as_array().is_some_and(Vec::is_empty)
-                        || value_has_empty_results(value))
-            })
+
+            let mut saw_collection = false;
+            let mut all_collections_empty = true;
+            for (key, value) in object {
+                if key.starts_with('_') {
+                    continue;
+                }
+                if let Some(items) = value.as_array() {
+                    saw_collection = true;
+                    all_collections_empty &= items.is_empty();
+                }
+            }
+
+            saw_collection && all_collections_empty
         }
         _ => false,
     }
@@ -1628,10 +1645,10 @@ fn infer_collection_field(request_path: &str) -> String {
     }
     for field in [
         "incidents",
-        "projects",
         "assertions",
         "contracts",
         "releases",
+        "projects",
         "deployments",
         "events",
         "members",
@@ -1727,6 +1744,8 @@ fn render_collection_items(output: &mut String, collection: &HumanCollection<'_>
         "members" => render_members_table(output, collection.items),
         "invitations" => render_invitations_table(output, collection.items),
         "projects" => render_projects_table(output, collection.items),
+        "contracts" => render_contracts_table(output, collection.items),
+        "assertions" => render_assertions_table(output, collection.items),
         "releases" => render_releases_table(output, collection.items),
         "events" => render_events_table(output, collection.items),
         "no_hit" | "no_2xx" | "write_no_2xx" => render_coverage_table(output, collection.items),
@@ -1953,6 +1972,44 @@ fn render_releases_table(output: &mut String, items: &[Value]) {
             .or_else(|| item.get("createdAt"))
             .and_then(Value::as_str)
             .map_or_else(String::new, format_timestamp),
+    );
+}
+
+fn render_contracts_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!(
+            "{:<28} {:<8} {:<24} {:<24} ID",
+            "Contract", "Chain", "Address", "Manager"
+        ),
+        "{:<28} {:<8} {:<24} {:<24} {}",
+        |item| pad(str_any(item, &["contract_name", "name"], "-"), 28),
+        item.get("chain_id")
+            .or_else(|| item.get("chainId"))
+            .map_or_else(|| "-".to_string(), human_scalar),
+        pad(str_any(item, &["address", "adopter_address"], "-"), 24),
+        pad(str_field(item, "manager"), 24),
+        str_any(item, &["id", "assertion_adopter_id"], "-"),
+    );
+}
+
+fn render_assertions_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!(
+            "{:<28} {:<12} {:<12} {:<9} ID",
+            "Contract", "Lifecycle", "Environment", "Instances"
+        ),
+        "{:<28} {:<12} {:<12} {:<9} {}",
+        |item| pad(str_any(item, &["contract_name", "name"], "-"), 28),
+        pad(str_field(item, "lifecycle"), 12),
+        pad(str_field(item, "environment"), 12),
+        item.get("deployment_instances")
+            .and_then(Value::as_array)
+            .map_or_else(|| "-".to_string(), |instances| instances.len().to_string()),
+        str_any(item, &["assertion_id", "assertionId", "id"], "-"),
     );
 }
 

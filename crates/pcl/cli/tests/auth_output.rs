@@ -596,6 +596,100 @@ fn auth_login_json_fresh_flow_outputs_pending_and_terminal_events() {
 }
 
 #[test]
+fn auth_login_toon_fresh_flow_returns_challenge_without_polling() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let mut server = mockito::Server::new();
+    let auth_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2099-12-31T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--toon",
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "login",
+        ])
+        .output()
+        .expect("run pcl auth login --toon");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    assert!(stdout.contains("status: action_required"), "{stdout}");
+    assert!(stdout.contains("poll_command:"), "{stdout}");
+    assert!(stdout.contains("--toon"), "{stdout}");
+    assert!(!stdout.contains("auth.login_instructions"), "{stdout}");
+    auth_code.assert();
+}
+
+#[test]
+fn auth_login_toon_with_expired_auth_outputs_only_envelope() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_expired_refreshable_auth_config(temp_dir.path());
+    let mut server = mockito::Server::new();
+    let auth_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2099-12-31T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--toon",
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "login",
+        ])
+        .output()
+        .expect("run pcl auth login --toon");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    assert!(stdout.starts_with("status: action_required\n"), "{stdout}");
+    assert!(
+        !stdout.contains("Stored auth token expired"),
+        "machine output was polluted: {stdout}"
+    );
+    auth_code.assert();
+}
+
+#[test]
 fn auth_login_force_starts_fresh_flow_even_with_existing_auth() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     write_valid_auth_config(temp_dir.path());

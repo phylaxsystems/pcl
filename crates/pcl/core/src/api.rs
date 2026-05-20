@@ -17,7 +17,10 @@ use clap::{
     ArgGroup,
     ValueEnum,
 };
-use pcl_common::args::CliArgs;
+use pcl_common::args::{
+    CliArgs,
+    OutputMode,
+};
 use reqwest::header::{
     HeaderMap,
     HeaderName,
@@ -39,6 +42,7 @@ use std::{
     str::FromStr,
 };
 
+mod definitions;
 mod manifest;
 mod openapi;
 mod render;
@@ -57,6 +61,10 @@ pub use render::{
     toon_string,
 };
 
+use definitions::{
+    WorkflowOutputPolicy,
+    workflow_output_policy,
+};
 use openapi::{
     api_coverage,
     command_next_actions,
@@ -98,6 +106,8 @@ use workflows::{
     account_request,
     assertions_next_actions,
     assertions_request,
+    compact_deployment_data,
+    contracts_next_actions,
     contracts_request,
     deployments_request,
     events_request,
@@ -107,11 +117,14 @@ use workflows::{
     project_segment,
     projects_next_actions,
     projects_request,
+    protocol_manager_next_actions,
     protocol_manager_request,
+    releases_next_actions,
     releases_request,
     request_body,
     search_next_actions,
     search_request,
+    transfers_next_actions,
     transfers_request,
 };
 
@@ -505,7 +518,6 @@ impl ApiCommandError {
         let mut envelope = json!({
             "status": "error",
             "error": error,
-            "recoverable": self.recoverable(),
             "suggested_next_actions": self.suggested_next_actions(),
             "next_actions": self.next_actions(),
         });
@@ -949,6 +961,7 @@ struct WorkflowRequest {
     query: Vec<(String, String)>,
     body: Option<String>,
     require_auth: bool,
+    attach_auth: bool,
     next_actions: Vec<String>,
 }
 
@@ -973,8 +986,14 @@ impl WorkflowRequest {
             query,
             body: None,
             require_auth,
+            attach_auth: require_auth,
             next_actions: next_actions.into_iter().map(Into::into).collect(),
         }
+    }
+
+    fn with_optional_auth(mut self) -> Self {
+        self.attach_auth = true;
+        self
     }
 }
 
@@ -1688,7 +1707,7 @@ struct ReleaseRefArgs {
 #[derive(clap::Args, Debug)]
 struct ReleaseProjectBodyArgs {
     #[arg(value_name = "PROJECT")]
-    project: String,
+    project: Option<String>,
     #[command(flatten)]
     body: WorkflowBodyArgs,
 }
@@ -1696,9 +1715,9 @@ struct ReleaseProjectBodyArgs {
 #[derive(clap::Args, Debug)]
 struct ReleaseBodyArgs {
     #[arg(value_name = "PROJECT")]
-    project: String,
+    project: Option<String>,
     #[arg(value_name = "RELEASE_ID")]
-    release_id: String,
+    release_id: Option<String>,
     #[command(flatten)]
     body: WorkflowBodyArgs,
 }
@@ -1706,11 +1725,11 @@ struct ReleaseBodyArgs {
 #[derive(clap::Args, Debug)]
 struct ReleaseRetryCheckArgs {
     #[arg(value_name = "PROJECT")]
-    project: String,
+    project: Option<String>,
     #[arg(value_name = "RELEASE_ID")]
-    release_id: String,
+    release_id: Option<String>,
     #[arg(value_name = "CHECK_ID")]
-    check_id: String,
+    check_id: Option<String>,
     #[command(flatten)]
     body: WorkflowBodyArgs,
 }
@@ -1759,7 +1778,7 @@ impl ReleasesCommand {
 impl ReleasesSubcommand {
     fn into_args(self) -> ReleasesArgs {
         match self {
-            Self::List(args) => release_project_args(args.project),
+            Self::List(args) => release_project_args(Some(args.project)),
             Self::Show(args) => release_ref_args(args.project, args.release_id),
             Self::Create(args) => {
                 let mut release_args = release_project_args(args.project);
@@ -1774,13 +1793,13 @@ impl ReleasesSubcommand {
                 release_args
             }
             Self::Deploy(args) => {
-                let mut release_args = release_ref_args(args.project, args.release_id);
+                let mut release_args = release_ref_args_optional(args.project, args.release_id);
                 release_args.deploy = true;
                 args.body.apply_to_release(&mut release_args);
                 release_args
             }
             Self::Remove(args) => {
-                let mut release_args = release_ref_args(args.project, args.release_id);
+                let mut release_args = release_ref_args_optional(args.project, args.release_id);
                 release_args.remove = true;
                 args.body.apply_to_release(&mut release_args);
                 release_args
@@ -1806,9 +1825,9 @@ impl ReleasesSubcommand {
                 release_args
             }
             Self::RetryCheck(args) => {
-                let mut release_args = release_ref_args(args.project, args.release_id);
+                let mut release_args = release_ref_args_optional(args.project, args.release_id);
                 release_args.retry_check = true;
-                release_args.check_id = Some(args.check_id);
+                release_args.check_id = args.check_id;
                 args.body.apply_to_release(&mut release_args);
                 release_args
             }
@@ -1816,17 +1835,25 @@ impl ReleasesSubcommand {
     }
 }
 
-fn release_project_args(project: String) -> ReleasesArgs {
+fn release_project_args(project: Option<String>) -> ReleasesArgs {
     ReleasesArgs {
-        project: Some(project),
+        project,
         ..ReleasesArgs::default()
     }
 }
 
-fn release_ref_args(project: String, release_id: String) -> ReleasesArgs {
+fn release_ref_args(project: impl Into<String>, release_id: impl Into<String>) -> ReleasesArgs {
     ReleasesArgs {
-        project: Some(project),
-        release_id: Some(release_id),
+        project: Some(project.into()),
+        release_id: Some(release_id.into()),
+        ..ReleasesArgs::default()
+    }
+}
+
+fn release_ref_args_optional(project: Option<String>, release_id: Option<String>) -> ReleasesArgs {
+    ReleasesArgs {
+        project,
+        release_id,
         ..ReleasesArgs::default()
     }
 }
@@ -1972,7 +1999,7 @@ struct AccessTokenArgs {
 #[derive(clap::Args, Debug)]
 struct AccessTokenBodyArgs {
     #[arg(value_name = "TOKEN")]
-    token: String,
+    token: Option<String>,
     #[command(flatten)]
     body: WorkflowBodyArgs,
 }
@@ -1980,7 +2007,7 @@ struct AccessTokenBodyArgs {
 #[derive(clap::Args, Debug)]
 struct AccessProjectBodyArgs {
     #[arg(value_name = "PROJECT")]
-    project: String,
+    project: Option<String>,
     #[command(flatten)]
     body: WorkflowBodyArgs,
 }
@@ -1988,9 +2015,9 @@ struct AccessProjectBodyArgs {
 #[derive(clap::Args, Debug)]
 struct AccessInvitationArgs {
     #[arg(value_name = "PROJECT")]
-    project: String,
+    project: Option<String>,
     #[arg(value_name = "INVITATION_ID")]
-    invitation_id: String,
+    invitation_id: Option<String>,
     #[command(flatten)]
     body: WorkflowBodyArgs,
 }
@@ -2022,9 +2049,9 @@ enum AccessMemberSubcommand {
 #[derive(clap::Args, Debug)]
 struct AccessMemberBodyArgs {
     #[arg(value_name = "PROJECT")]
-    project: String,
+    project: Option<String>,
     #[arg(value_name = "MEMBER_USER_ID")]
-    member_user_id: String,
+    member_user_id: Option<String>,
     #[command(flatten)]
     body: WorkflowBodyArgs,
 }
@@ -2078,7 +2105,7 @@ impl AccessSubcommand {
             }
             Self::Accept(args) => {
                 let mut access_args = AccessArgs {
-                    token: Some(args.token),
+                    token: args.token,
                     accept: true,
                     ..AccessArgs::default()
                 };
@@ -2087,7 +2114,7 @@ impl AccessSubcommand {
             }
             Self::Invite(args) => {
                 let mut access_args = AccessArgs {
-                    project: Some(args.project),
+                    project: args.project,
                     invite: true,
                     ..AccessArgs::default()
                 };
@@ -2137,18 +2164,18 @@ impl AccessSubcommand {
     }
 }
 
-fn access_invitation_args(project: String, invitation_id: String) -> AccessArgs {
+fn access_invitation_args(project: Option<String>, invitation_id: Option<String>) -> AccessArgs {
     AccessArgs {
-        project: Some(project),
-        invitation_id: Some(invitation_id),
+        project,
+        invitation_id,
         ..AccessArgs::default()
     }
 }
 
-fn access_member_args(project: String, member_user_id: String) -> AccessArgs {
+fn access_member_args(project: Option<String>, member_user_id: Option<String>) -> AccessArgs {
     AccessArgs {
-        project: Some(project),
-        member_user_id: Some(member_user_id),
+        project,
+        member_user_id,
         ..AccessArgs::default()
     }
 }
@@ -2426,7 +2453,13 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, cli_args, account_request(args)?, &request_log_path)
+                    .run_workflow(
+                        config,
+                        cli_args,
+                        "account",
+                        account_request(args)?,
+                        &request_log_path,
+                    )
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -2437,12 +2470,7 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(
-                        config,
-                        cli_args,
-                        contracts_request(args)?,
-                        &request_log_path,
-                    )
+                    .run_contracts(config, cli_args, args, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -2453,7 +2481,7 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, cli_args, releases_request(args)?, &request_log_path)
+                    .run_releases(config, cli_args, args, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -2464,12 +2492,7 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(
-                        config,
-                        cli_args,
-                        deployments_request(args)?,
-                        &request_log_path,
-                    )
+                    .run_deployments(config, cli_args, args, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -2480,7 +2503,13 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(config, cli_args, access_request(args)?, &request_log_path)
+                    .run_workflow(
+                        config,
+                        cli_args,
+                        "access",
+                        access_request(args)?,
+                        &request_log_path,
+                    )
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -2494,6 +2523,7 @@ impl ApiArgs {
                     .run_workflow(
                         config,
                         cli_args,
+                        "integrations",
                         integrations_request(args)?,
                         &request_log_path,
                     )
@@ -2507,12 +2537,7 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(
-                        config,
-                        cli_args,
-                        protocol_manager_request(args)?,
-                        &request_log_path,
-                    )
+                    .run_protocol_manager(config, cli_args, args, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -2523,18 +2548,19 @@ impl ApiArgs {
                     return Ok(());
                 }
                 let output = self
-                    .run_workflow(
-                        config,
-                        cli_args,
-                        transfers_request(args)?,
-                        &request_log_path,
-                    )
+                    .run_transfers(config, cli_args, args, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Events(args) => {
                 let output = self
-                    .run_workflow(config, cli_args, events_request(args)?, &request_log_path)
+                    .run_workflow(
+                        config,
+                        cli_args,
+                        "events",
+                        events_request(args)?,
+                        &request_log_path,
+                    )
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -2901,16 +2927,15 @@ impl ApiArgs {
             return Ok(template_envelope(project_body_template(args)));
         }
         let request = projects_request(args)?;
-        if self.dry_run {
-            return Ok(dry_run_envelope(
-                self.workflow_request_plan(&request, None, config),
-            ));
-        }
-        let result = self
-            .call_workflow_result(config, cli_args, &request, request_log_path)
-            .await?;
-        let next_actions = projects_next_actions(&result.body, request.next_actions);
-        Ok(workflow_success_envelope(result, next_actions))
+        self.run_prepared_workflow(
+            config,
+            cli_args,
+            "projects",
+            request,
+            request_log_path,
+            projects_next_actions,
+        )
+        .await
     }
 
     async fn run_assertions(
@@ -2924,16 +2949,15 @@ impl ApiArgs {
             return Ok(template_envelope(body_template("empty_object")));
         }
         let request = assertions_request(args)?;
-        if self.dry_run {
-            return Ok(dry_run_envelope(
-                self.workflow_request_plan(&request, None, config),
-            ));
-        }
-        let result = self
-            .call_workflow_result(config, cli_args, &request, request_log_path)
-            .await?;
-        let next_actions = assertions_next_actions(&result.body, args, request.next_actions);
-        Ok(workflow_success_envelope(result, next_actions))
+        self.run_prepared_workflow(
+            config,
+            cli_args,
+            "assertions",
+            request,
+            request_log_path,
+            |data, fallback| assertions_next_actions(data, args, fallback),
+        )
+        .await
     }
 
     async fn run_search(
@@ -2944,25 +2968,143 @@ impl ApiArgs {
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         let request = search_request(args)?;
-        if self.dry_run {
-            return Ok(dry_run_envelope(
-                self.workflow_request_plan(&request, None, config),
-            ));
-        }
-        let result = self
-            .call_workflow_result(config, cli_args, &request, request_log_path)
-            .await?;
-        let next_actions = search_next_actions(&result.body, request.next_actions);
-        Ok(workflow_success_envelope(result, next_actions))
+        self.run_prepared_workflow(
+            config,
+            cli_args,
+            "search",
+            request,
+            request_log_path,
+            search_next_actions,
+        )
+        .await
+    }
+
+    async fn run_contracts(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        args: &ContractsArgs,
+        request_log_path: &Path,
+    ) -> Result<Value, ApiCommandError> {
+        let request = contracts_request(args)?;
+        self.run_prepared_workflow(
+            config,
+            cli_args,
+            "contracts",
+            request,
+            request_log_path,
+            |data, fallback| contracts_next_actions(data, args, fallback),
+        )
+        .await
+    }
+
+    async fn run_releases(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        args: &ReleasesArgs,
+        request_log_path: &Path,
+    ) -> Result<Value, ApiCommandError> {
+        let request = releases_request(args)?;
+        self.run_prepared_workflow(
+            config,
+            cli_args,
+            "releases",
+            request,
+            request_log_path,
+            |data, fallback| releases_next_actions(data, args, fallback),
+        )
+        .await
+    }
+
+    async fn run_deployments(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        args: &DeploymentsArgs,
+        request_log_path: &Path,
+    ) -> Result<Value, ApiCommandError> {
+        let request = deployments_request(args)?;
+        self.run_prepared_workflow(
+            config,
+            cli_args,
+            "deployments",
+            request,
+            request_log_path,
+            |_data, fallback| fallback,
+        )
+        .await
+    }
+
+    async fn run_transfers(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        args: &TransfersArgs,
+        request_log_path: &Path,
+    ) -> Result<Value, ApiCommandError> {
+        let request = transfers_request(args)?;
+        self.run_prepared_workflow(
+            config,
+            cli_args,
+            "transfers",
+            request,
+            request_log_path,
+            |data, fallback| transfers_next_actions(data, args, fallback),
+        )
+        .await
+    }
+
+    async fn run_protocol_manager(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        args: &ProtocolManagerArgs,
+        request_log_path: &Path,
+    ) -> Result<Value, ApiCommandError> {
+        let request = protocol_manager_request(args)?;
+        self.run_prepared_workflow(
+            config,
+            cli_args,
+            "protocol-manager",
+            request,
+            request_log_path,
+            |data, fallback| protocol_manager_next_actions(data, args, fallback),
+        )
+        .await
     }
 
     async fn run_workflow(
         &self,
         config: &mut CliConfig,
         cli_args: &CliArgs,
+        workflow: &'static str,
         request: WorkflowRequest,
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
+        self.run_prepared_workflow(
+            config,
+            cli_args,
+            workflow,
+            request,
+            request_log_path,
+            |_data, fallback| fallback,
+        )
+        .await
+    }
+
+    async fn run_prepared_workflow<F>(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        workflow: &'static str,
+        request: WorkflowRequest,
+        request_log_path: &Path,
+        next_actions_for: F,
+    ) -> Result<Value, ApiCommandError>
+    where
+        F: FnOnce(&Value, Vec<String>) -> Vec<String>,
+    {
         if self.dry_run {
             return Ok(dry_run_envelope(
                 self.workflow_request_plan(&request, None, config),
@@ -2971,7 +3113,13 @@ impl ApiArgs {
         let result = self
             .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
-        Ok(workflow_success_envelope(result, request.next_actions))
+        let next_actions = next_actions_for(&result.body, request.next_actions);
+        let data = workflow_data_for_output_mode(workflow, &result.body, cli_args.output_mode());
+        Ok(workflow_success_envelope_with_data(
+            result,
+            data,
+            next_actions,
+        ))
     }
 
     fn workflow_request_plan(
@@ -3006,7 +3154,7 @@ impl ApiArgs {
                 "path": request.path.as_str(),
                 "query": query_pairs_value(&request.query),
                 "body": body,
-                "auth": self.auth_plan(request.require_auth, config),
+                "auth": self.auth_plan(request.require_auth, request.attach_auth, config),
                 "side_effecting": request.method != HttpMethod::Get,
                 "destructive": destructive,
                 "project_resolution": "not_performed",
@@ -3038,7 +3186,7 @@ impl ApiArgs {
                 "query": query_pairs_value(&query),
                 "headers": query_pairs_value(&header),
                 "body": body.unwrap_or(Value::Null),
-                "auth": self.auth_plan(input.require_auth, config),
+                "auth": self.auth_plan(input.require_auth, input.require_auth, config),
                 "side_effecting": input.method != HttpMethod::Get,
                 "destructive": destructive,
             },
@@ -3054,7 +3202,7 @@ impl ApiArgs {
         }))
     }
 
-    fn auth_plan(&self, require_auth: bool, config: &CliConfig) -> Value {
+    fn auth_plan(&self, require_auth: bool, attach_auth: bool, config: &CliConfig) -> Value {
         let now = chrono::Utc::now();
         let stored_token_present = config
             .auth
@@ -3065,7 +3213,7 @@ impl ApiArgs {
             .as_ref()
             .is_some_and(|auth| !auth.access_token.trim().is_empty() && auth.expires_at > now);
         let will_attach_stored_token =
-            require_auth && !self.allow_unauthenticated && stored_token_valid;
+            attach_auth && !self.allow_unauthenticated && stored_token_valid;
         json!({
             "required": require_auth,
             "will_attach_stored_token": will_attach_stored_token,
@@ -3090,8 +3238,27 @@ impl ApiArgs {
     async fn fetch_openapi(&self, config: &CliConfig) -> Result<Value, ApiCommandError> {
         let url = self.api_url("/openapi")?;
         let request = self.http_client(config, false, false)?.get(url);
-        let response = request.send().await?.error_for_status()?;
-        Ok(response.json().await?)
+        let response = request.send().await?;
+        let status = response.status();
+        let request_id = request_id_from_headers(response.headers());
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let bytes = response.bytes().await?;
+        let body = response_body_value(&content_type, &bytes);
+        if !status.is_success() {
+            return Err(ApiCommandError::HttpStatus {
+                method: "GET",
+                path: "/openapi".to_string(),
+                status: status.as_u16(),
+                request_id,
+                body: Box::new(body),
+            });
+        }
+        Ok(body)
     }
 
     async fn try_refresh_after_401(
@@ -3282,13 +3449,32 @@ impl ApiArgs {
         request: &WorkflowRequest,
         request_log_path: &Path,
     ) -> Result<WorkflowCallResult, ApiCommandError> {
-        let path = self.normalize_project_path(config, &request.path).await?;
-        let url = self.api_url(&path)?;
         let requires_auth = request.require_auth && !self.allow_unauthenticated;
         self.ensure_request_auth(config, cli_args, request.require_auth)
             .await?;
+        let attach_auth = self.workflow_attach_auth(request, config);
+        let path = self
+            .normalize_project_path(
+                config,
+                &request.path,
+                attach_auth,
+                requires_auth,
+                request_log_path,
+            )
+            .await?;
+        let url = self.api_url(&path)?;
         let json_body = if let Some(body) = &request.body {
-            Some(self.normalize_request_body(config, &path, body).await?)
+            Some(
+                self.normalize_request_body(
+                    config,
+                    &path,
+                    body,
+                    attach_auth,
+                    requires_auth,
+                    request_log_path,
+                )
+                .await?,
+            )
         } else {
             None
         };
@@ -3358,7 +3544,7 @@ impl ApiArgs {
                 "method": request.method.as_str(),
                 "path": path,
                 "query": query_pairs_value(&request.query),
-                "auth": self.auth_plan(request.require_auth, config),
+                "auth": self.auth_plan(request.require_auth, request.attach_auth, config),
                 "side_effecting": request.method != HttpMethod::Get,
                 "destructive": request_is_destructive(request.method, &request.path),
                 "retried_after_refresh": retried_after_refresh,
@@ -3448,13 +3634,24 @@ impl ApiArgs {
         config: &CliConfig,
         path: &str,
         body: &str,
+        attach_auth: bool,
+        require_auth: bool,
+        request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         let mut json_body: Value = serde_json::from_str(body)?;
         if path == "/projects/saved"
             && let Some(project_ref) = json_body.get("project_id").and_then(Value::as_str)
             && project_ref.parse::<uuid::Uuid>().is_err()
         {
-            let project_id = self.resolve_project_id(config, project_ref).await?;
+            let project_id = self
+                .resolve_project_id(
+                    config,
+                    project_ref,
+                    attach_auth,
+                    require_auth,
+                    request_log_path,
+                )
+                .await?;
             if let Some(object) = json_body.as_object_mut() {
                 object.insert("project_id".to_string(), Value::String(project_id));
             }
@@ -3466,6 +3663,9 @@ impl ApiArgs {
         &self,
         config: &CliConfig,
         path: &str,
+        attach_auth: bool,
+        require_auth: bool,
+        request_log_path: &Path,
     ) -> Result<String, ApiCommandError> {
         let Some((prefix, project_ref, suffix)) = project_segment(path) else {
             return Ok(path.to_string());
@@ -3473,7 +3673,15 @@ impl ApiArgs {
         if project_ref.parse::<uuid::Uuid>().is_ok() {
             return Ok(path.to_string());
         }
-        let project_id = self.resolve_project_id(config, project_ref).await?;
+        let project_id = self
+            .resolve_project_id(
+                config,
+                project_ref,
+                attach_auth,
+                require_auth,
+                request_log_path,
+            )
+            .await?;
         Ok(format!("{prefix}{project_id}{suffix}"))
     }
 
@@ -3481,16 +3689,42 @@ impl ApiArgs {
         &self,
         config: &CliConfig,
         project_ref: &str,
+        attach_auth: bool,
+        require_auth: bool,
+        request_log_path: &Path,
     ) -> Result<String, ApiCommandError> {
-        let url = self.api_url(&format!("/projects/resolve/{project_ref}"))?;
-        let client = self.http_client(config, false, false)?;
-        let response: Value = client
-            .get(url)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+        let path = format!("/projects/resolve/{project_ref}");
+        let url = self.api_url(&path)?;
+        let client = self.http_client(config, attach_auth, require_auth)?;
+        let response = client.get(url).send().await?;
+        let status = response.status();
+        let request_id = request_id_from_headers(response.headers());
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let bytes = response.bytes().await?;
+        let response = response_body_value(&content_type, &bytes);
+        write_request_log(
+            request_log_path,
+            "workflow_project_resolution",
+            "GET",
+            &path,
+            status.as_u16(),
+            request_id.as_deref(),
+            Some("get_projects_resolve_project_ref"),
+        );
+        if !status.is_success() {
+            return Err(ApiCommandError::HttpStatus {
+                method: "GET",
+                path,
+                status: status.as_u16(),
+                request_id,
+                body: Box::new(response),
+            });
+        }
         response
             .get("project_id")
             .or_else(|| response.get("projectId"))
@@ -3552,7 +3786,8 @@ impl ApiArgs {
         body: Option<&Value>,
     ) -> Result<reqwest::Response, ApiCommandError> {
         let requires_auth = request.require_auth && !self.allow_unauthenticated;
-        let client = self.http_client(config, requires_auth, requires_auth)?;
+        let attach_auth = self.workflow_attach_auth(request, config);
+        let client = self.http_client(config, attach_auth, requires_auth)?;
         let mut builder = client.request(request.method.reqwest(), url.clone());
         if !request.query.is_empty() {
             builder = builder.query(&request.query);
@@ -3561,6 +3796,19 @@ impl ApiArgs {
             builder = builder.json(body);
         }
         Ok(builder.send().await?)
+    }
+
+    fn workflow_attach_auth(&self, request: &WorkflowRequest, config: &CliConfig) -> bool {
+        if self.allow_unauthenticated {
+            return false;
+        }
+        if request.require_auth {
+            return true;
+        }
+        request.attach_auth
+            && config.auth.as_ref().is_some_and(|auth| {
+                !auth.access_token.trim().is_empty() && auth.expires_at > chrono::Utc::now()
+            })
     }
 
     fn http_client(
@@ -3641,7 +3889,7 @@ fn split_path_and_inline_query(
     Ok((path.to_string(), query))
 }
 
-fn request_id_from_headers(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn request_id_from_headers(headers: &HeaderMap) -> Option<String> {
     [
         "x-request-id",
         "x-correlation-id",
@@ -3768,6 +4016,29 @@ fn workflow_success_envelope(result: WorkflowCallResult, next_actions: Vec<Strin
         "response": result.response,
         "next_actions": next_actions,
     }))
+}
+
+fn workflow_success_envelope_with_data(
+    result: WorkflowCallResult,
+    data: Value,
+    next_actions: Vec<String>,
+) -> Value {
+    with_envelope_metadata(json!({
+        "status": "ok",
+        "data": data,
+        "request": result.request,
+        "response": result.response,
+        "next_actions": next_actions,
+    }))
+}
+
+fn workflow_data_for_output_mode(workflow: &str, data: &Value, output_mode: OutputMode) -> Value {
+    match (workflow_output_policy(workflow), output_mode) {
+        (WorkflowOutputPolicy::MachineRawHumanCompactArtifacts, OutputMode::Human) => {
+            compact_deployment_data(data)
+        }
+        _ => data.clone(),
+    }
 }
 
 fn request_is_destructive(method: HttpMethod, path: &str) -> bool {
