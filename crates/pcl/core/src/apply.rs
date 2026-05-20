@@ -9,7 +9,12 @@ use crate::verify::{
 use crate::{
     DEFAULT_PLATFORM_URL,
     abi,
-    client::authenticated_client,
+    client::{
+        ClientBuildError,
+        authenticated_client,
+        authorization_header,
+        ensure_fresh_auth,
+    },
     config::CliConfig,
     credible_config::{
         CredibleToml,
@@ -21,6 +26,7 @@ use crate::{
         OutputStream,
         ok_envelope,
         print_envelope,
+        shell_word,
     },
 };
 use alloy_primitives::Bytes;
@@ -111,7 +117,7 @@ pub struct ApplyArgs {
 }
 
 impl ApplyArgs {
-    pub async fn run(&self, cli_args: &CliArgs, config: &CliConfig) -> Result<(), ApplyError> {
+    pub async fn run(&self, cli_args: &CliArgs, config: &mut CliConfig) -> Result<(), ApplyError> {
         let output_mode = cli_args.output_mode();
         let root = canonicalize_root(&self.root)?;
         let config_path = root.join(&self.config);
@@ -124,20 +130,26 @@ impl ApplyArgs {
                         .to_string(),
                 ));
             }
-            None => self.select_project(config).await?,
+            None => {
+                Self::ensure_fresh_auth(config, cli_args, &self.api_url).await?;
+                self.select_project(config).await?
+            }
         };
-        let (payload, _verification_inputs) = Self::build_payload(&credible, &root)?;
+        let (payload, verification_inputs) = Self::build_payload(&credible, &root)?;
         #[cfg(feature = "credible")]
-        let verification = Self::verify_all_assertions(&_verification_inputs, output_mode)?;
+        let verification = Self::verify_all_assertions(&verification_inputs, output_mode)?;
+        #[cfg(not(feature = "credible"))]
+        let _ = verification_inputs;
 
         if self.dry_run {
             #[cfg(feature = "credible")]
-            Self::print_dry_run_output(output_mode, project_id, &payload, &verification)?;
+            self.print_dry_run_output(output_mode, &root, project_id, &payload, &verification)?;
             #[cfg(not(feature = "credible"))]
-            Self::print_dry_run_output(output_mode, project_id, &payload)?;
+            self.print_dry_run_output(output_mode, &root, project_id, &payload)?;
             return Ok(());
         }
 
+        Self::ensure_fresh_auth(config, cli_args, &self.api_url).await?;
         let (http_client, base_url) = Self::build_http_client(config, &self.api_url)?;
         let preview = Self::call_preview(&http_client, &base_url, &project_id, &payload).await?;
 
@@ -215,31 +227,53 @@ impl ApplyArgs {
         Ok(())
     }
 
+    fn apply_command(&self, root: &Path, yes: bool, dry_run: bool) -> String {
+        let mut parts = vec![
+            "pcl".to_string(),
+            "apply".to_string(),
+            "--root".to_string(),
+            shell_word(root.display().to_string()),
+            "--config".to_string(),
+            shell_word(self.config.display().to_string()),
+        ];
+        if yes {
+            parts.push("--yes".to_string());
+        }
+        if dry_run {
+            parts.push("--dry-run".to_string());
+        }
+        if self.api_url.as_str().trim_end_matches('/') != DEFAULT_PLATFORM_URL {
+            parts.push("--api-url".to_string());
+            parts.push(shell_word(self.api_url.as_str()));
+        }
+        parts.join(" ")
+    }
+
     fn build_client(&self, config: &CliConfig) -> Result<GeneratedClient, ApplyError> {
-        authenticated_client(config, &self.api_url).map_err(|e| {
-            match e {
-                crate::client::ClientBuildError::NoAuthToken => ApplyError::NoAuthToken,
-                crate::client::ClientBuildError::InvalidConfig(msg) => {
-                    ApplyError::InvalidConfig(msg)
-                }
-            }
-        })
+        authenticated_client(config, &self.api_url).map_err(client_error_to_apply)
+    }
+
+    async fn ensure_fresh_auth(
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        api_url: &Url,
+    ) -> Result<(), ApplyError> {
+        ensure_fresh_auth(config, api_url, cli_args)
+            .await
+            .map_err(client_error_to_apply)
     }
 
     fn build_http_client(
         config: &CliConfig,
         api_url: &Url,
     ) -> Result<(reqwest::Client, String), ApplyError> {
-        let auth = config.auth.as_ref().ok_or(ApplyError::NoAuthToken)?;
         let mut base = api_url.clone();
         base.set_path("/api/v1");
         let base_url = base.to_string();
 
         let mut headers = reqwest::header::HeaderMap::new();
-        let auth_value = format!("Bearer {}", auth.access_token);
-        let header_val = reqwest::header::HeaderValue::from_str(&auth_value)
-            .map_err(|e| ApplyError::InvalidConfig(format!("Invalid auth token: {e}")))?;
-        headers.insert(reqwest::header::AUTHORIZATION, header_val);
+        let header_value = authorization_header(config).map_err(client_error_to_apply)?;
+        headers.insert(reqwest::header::AUTHORIZATION, header_value);
 
         let http_client = reqwest::Client::builder()
             .default_headers(headers)
@@ -251,7 +285,9 @@ impl ApplyArgs {
 
     #[cfg(feature = "credible")]
     fn print_dry_run_output(
+        &self,
         output_mode: OutputMode,
+        root: &Path,
         project_id: Uuid,
         payload: &PostProjectsProjectIdReleasesBody,
         verification: &VerificationSummary,
@@ -271,7 +307,7 @@ impl ApplyArgs {
                     false,
                     None,
                 ),
-                vec!["pcl apply --yes".to_string()],
+                vec![self.apply_command(root, true, false)],
             );
             print_envelope(&envelope, output_mode, OutputStream::Stdout)?;
         }
@@ -280,7 +316,9 @@ impl ApplyArgs {
 
     #[cfg(not(feature = "credible"))]
     fn print_dry_run_output(
+        &self,
         output_mode: OutputMode,
+        root: &Path,
         project_id: Uuid,
         payload: &PostProjectsProjectIdReleasesBody,
     ) -> Result<(), ApplyError> {
@@ -289,7 +327,7 @@ impl ApplyArgs {
         } else {
             let envelope = ok_envelope(
                 apply_data("dry_run", project_id, Some(payload), None, false, None),
-                vec!["pcl apply --yes".to_string()],
+                vec![self.apply_command(root, true, false)],
             );
             print_envelope(&envelope, output_mode, OutputStream::Stdout)?;
         }
@@ -625,6 +663,15 @@ fn confirm_apply() -> Result<bool, ApplyError> {
     Ok(trimmed.is_empty()
         || trimmed.eq_ignore_ascii_case("y")
         || trimmed.eq_ignore_ascii_case("yes"))
+}
+
+fn client_error_to_apply(error: ClientBuildError) -> ApplyError {
+    match error {
+        ClientBuildError::NoAuthToken => ApplyError::NoAuthToken,
+        ClientBuildError::ExpiredAuthToken(expires_at) => ApplyError::ExpiredAuthToken(expires_at),
+        ClientBuildError::AuthRefresh(error) => ApplyError::AuthRefresh(error),
+        ClientBuildError::InvalidConfig(message) => ApplyError::InvalidConfig(message),
+    }
 }
 
 #[cfg(test)]

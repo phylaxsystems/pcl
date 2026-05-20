@@ -7,17 +7,18 @@
 
 use crate::{
     DEFAULT_PLATFORM_URL,
-    client::authenticated_client,
+    client::{
+        ClientBuildError,
+        authorization_header,
+        ensure_fresh_auth,
+    },
     config::CliConfig,
+    error::AuthError,
     output::{
         OutputStream,
         ok_envelope,
         print_envelope,
     },
-};
-use dapp_api_client::generated::client::{
-    Client as GeneratedClient,
-    types::GetViewsProjectsProjectIdAssertionsAssertionIdAssertionId,
 };
 use pcl_common::args::{
     CliArgs,
@@ -67,17 +68,26 @@ pub enum DownloadError {
     #[error("Run `pcl auth login` first")]
     NoAuthToken,
 
+    #[error(
+        "Stored auth token expired at {0}. Run `pcl auth refresh --toon` or `pcl auth login` again."
+    )]
+    ExpiredAuthToken(chrono::DateTime<chrono::Utc>),
+
+    #[error("Failed to refresh stored auth before downloading assertions: {0}")]
+    AuthRefresh(#[source] AuthError),
+
     #[error("--project-id is required")]
     MissingIdentifier,
 
     #[error("No assertions found for project")]
     NoAssertionsFound,
 
-    #[error("API request to {endpoint} failed{status_part}: {body}", status_part = .status.map_or(String::new(), |s| format!(" with status {s}")))]
+    #[error("API request to {endpoint} failed{status_part}{request_part}: {body}", status_part = .status.map_or(String::new(), |s| format!(" with status {s}")), request_part = .request_id.as_ref().map_or(String::new(), |id| format!(" request_id {id}")))]
     Api {
         endpoint: String,
         status: Option<u16>,
-        body: String,
+        request_id: Option<String>,
+        body: Value,
     },
 
     #[error("{message}: {source}")]
@@ -105,11 +115,24 @@ struct DownloadedFile {
     source: String,
 }
 
+#[derive(Debug)]
+struct AssertionSummary {
+    assertion_id: String,
+    contract_name: Option<String>,
+}
+
 impl DownloadArgs {
-    pub async fn run(&self, cli_args: &CliArgs, config: &CliConfig) -> Result<(), DownloadError> {
+    pub async fn run(
+        &self,
+        cli_args: &CliArgs,
+        config: &mut CliConfig,
+    ) -> Result<(), DownloadError> {
         let output_mode = cli_args.output_mode();
 
-        let client = self.build_client(config)?;
+        ensure_fresh_auth(config, &self.api_url, cli_args)
+            .await
+            .map_err(client_error_to_download)?;
+        let client = Self::build_client(config)?;
 
         let (project_id, project_name) = self.resolve_project(&client).await?;
 
@@ -154,7 +177,7 @@ impl DownloadArgs {
         }
         let envelope = ok_envelope(
             download_data("no_assertions", project_id, project_name, None, &[], 0),
-            vec!["pcl assertions --project-id <project-id>".to_string()],
+            no_assertions_next_actions(project_id),
         );
         print_envelope(&envelope, output_mode, OutputStream::Stdout).map_err(DownloadError::Output)
     }
@@ -163,7 +186,7 @@ impl DownloadArgs {
         let output_dir = self
             .output_dir
             .clone()
-            .unwrap_or_else(|| PathBuf::from(format!("{project_name}-assertions")));
+            .unwrap_or_else(|| default_output_dir(project_name));
 
         std::fs::create_dir_all(&output_dir).map_err(|e| {
             DownloadError::Io {
@@ -180,9 +203,9 @@ impl DownloadArgs {
 
     async fn download_assertions(
         &self,
-        client: &GeneratedClient,
+        client: &reqwest::Client,
         project_id: &Uuid,
-        assertions: &[dapp_api_client::generated::client::types::GetViewsProjectsProjectIdAssertionsResponseDataAssertionsItem],
+        assertions: &[AssertionSummary],
         output_dir: &Path,
         output_mode: OutputMode,
     ) -> Result<(Vec<DownloadedFile>, usize), DownloadError> {
@@ -201,14 +224,19 @@ impl DownloadArgs {
                 .await?;
 
             let source_code = detail
-                .source
-                .as_ref()
-                .and_then(|s| s.source_code.clone())
-                .or_else(|| detail.artifact.as_ref().map(|a| a.solidity_source.clone()));
+                .pointer("/source/source_code")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+                .or_else(|| {
+                    detail
+                        .pointer("/artifact/solidity_source")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                });
 
             if let Some(code) = source_code {
                 let id_prefix = assertion_id.get(..8).unwrap_or(assertion_id);
-                let file_name = format!("{contract_name}_{id_prefix}.sol");
+                let file_name = format!("{}_{}.sol", safe_file_stem(&contract_name), id_prefix);
                 let file_path = output_dir.join(&file_name);
 
                 std::fs::write(&file_path, &code).map_err(|e| {
@@ -223,18 +251,22 @@ impl DownloadArgs {
                 }
 
                 let source_label = detail
-                    .source
-                    .as_ref()
-                    .filter(|s| s.source_code.is_some())
+                    .pointer("/source/source_code")
+                    .and_then(Value::as_str)
                     .map_or_else(
                         || {
                             detail
-                                .artifact
-                                .as_ref()
+                                .get("artifact")
                                 .map(|_| "artifact".to_string())
                                 .unwrap_or_default()
                         },
-                        |s| s.verification_status.to_string(),
+                        |_| {
+                            detail
+                                .pointer("/source/verification_status")
+                                .and_then(Value::as_str)
+                                .unwrap_or("source")
+                                .to_string()
+                        },
                     );
 
                 downloaded.push(DownloadedFile {
@@ -279,10 +311,7 @@ impl DownloadArgs {
                     downloaded,
                     skipped,
                 ),
-                vec![
-                    format!("pcl verify --root {}", output_dir.display()),
-                    "pcl artifacts list".to_string(),
-                ],
+                downloaded_next_actions(project_id, output_dir),
             );
             print_envelope(&envelope, output_mode, OutputStream::Stdout)?;
         }
@@ -290,88 +319,166 @@ impl DownloadArgs {
         Ok(())
     }
 
-    fn build_client(&self, config: &CliConfig) -> Result<GeneratedClient, DownloadError> {
-        authenticated_client(config, &self.api_url).map_err(|e| {
-            match e {
-                crate::client::ClientBuildError::NoAuthToken => DownloadError::NoAuthToken,
-                crate::client::ClientBuildError::InvalidConfig(msg) => {
-                    DownloadError::InvalidConfig(msg)
-                }
-            }
-        })
+    fn build_client(config: &CliConfig) -> Result<reqwest::Client, DownloadError> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::HeaderName::from_static("api-version"),
+            reqwest::header::HeaderValue::from_static("1"),
+        );
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            authorization_header(config).map_err(client_error_to_download)?,
+        );
+
+        reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|error| {
+                DownloadError::InvalidConfig(format!("Failed to build HTTP client: {error}"))
+            })
     }
 
     async fn resolve_project(
         &self,
-        client: &GeneratedClient,
+        client: &reqwest::Client,
     ) -> Result<(Uuid, String), DownloadError> {
         let pid = self.project_id.ok_or(DownloadError::MissingIdentifier)?;
-
-        let project = client
-            .get_projects_project_id(&pid, None)
-            .await
-            .map(dapp_api_client::generated::client::ResponseValue::into_inner)
-            .map_err(|e| {
-                DownloadError::Api {
-                    endpoint: format!("/projects/{pid}"),
-                    status: e.status().map(|s| s.as_u16()),
-                    body: e.to_string(),
-                }
+        let project = self.get_json(client, &format!("/projects/{pid}")).await?;
+        let project_id = project
+            .get("project_id")
+            .or_else(|| project.get("projectId"))
+            .and_then(Value::as_str)
+            .map_or(Ok(pid), Uuid::parse_str)
+            .map_err(|error| {
+                DownloadError::InvalidConfig(format!("Invalid project ID: {error}"))
             })?;
+        let project_name = project
+            .get("project_name")
+            .or_else(|| project.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("project")
+            .to_string();
 
-        Ok((project.project_id, project.project_name.to_string()))
+        Ok((project_id, project_name))
     }
 
     async fn fetch_assertions_list(
         &self,
-        client: &GeneratedClient,
+        client: &reqwest::Client,
         project_id: &Uuid,
-    ) -> Result<
-        Vec<
-            dapp_api_client::generated::client::types::GetViewsProjectsProjectIdAssertionsResponseDataAssertionsItem,
-        >,
-        DownloadError,
-    >{
-        let response = client
-            .get_views_projects_project_id_assertions(project_id, None)
-            .await
-            .map(dapp_api_client::generated::client::ResponseValue::into_inner)
-            .map_err(|e| {
-                DownloadError::Api {
-                    endpoint: format!("/views/projects/{project_id}/assertions"),
-                    status: e.status().map(|s| s.as_u16()),
-                    body: e.to_string(),
-                }
+    ) -> Result<Vec<AssertionSummary>, DownloadError> {
+        let response = self
+            .get_json(client, &format!("/views/projects/{project_id}/assertions"))
+            .await?;
+        let assertions = response
+            .pointer("/data/assertions")
+            .or_else(|| response.get("assertions"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                DownloadError::InvalidConfig(
+                    "Invalid assertions response: missing data.assertions array".to_string(),
+                )
             })?;
 
-        Ok(response.data.assertions)
+        assertions
+            .iter()
+            .map(|assertion| {
+                let assertion_id = assertion
+                    .get("assertion_id")
+                    .or_else(|| assertion.get("assertionId"))
+                    .or_else(|| assertion.get("id"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        DownloadError::InvalidConfig(
+                            "Invalid assertions response: missing assertion_id".to_string(),
+                        )
+                    })?
+                    .to_string();
+                let contract_name = assertion
+                    .get("contract_name")
+                    .or_else(|| assertion.get("contractName"))
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+                Ok(AssertionSummary {
+                    assertion_id,
+                    contract_name,
+                })
+            })
+            .collect()
     }
 
     async fn fetch_assertion_detail(
         &self,
-        client: &GeneratedClient,
+        client: &reqwest::Client,
         project_id: &Uuid,
         assertion_id: &str,
-    ) -> Result<
-        dapp_api_client::generated::client::types::GetViewsProjectsProjectIdAssertionsAssertionIdResponseData,
-        DownloadError,
-    >{
-        let aid = GetViewsProjectsProjectIdAssertionsAssertionIdAssertionId::try_from(assertion_id)
-            .map_err(|e| DownloadError::InvalidConfig(format!("Invalid assertion ID: {e}")))?;
+    ) -> Result<Value, DownloadError> {
+        let response = self
+            .get_json(
+                client,
+                &format!("/views/projects/{project_id}/assertions/{assertion_id}"),
+            )
+            .await?;
+        Ok(response.get("data").cloned().unwrap_or(response))
+    }
 
-        let response = client
-            .get_views_projects_project_id_assertions_assertion_id(project_id, &aid)
-            .await
-            .map(dapp_api_client::generated::client::ResponseValue::into_inner)
-            .map_err(|e| {
-                DownloadError::Api {
-                    endpoint: format!("/views/projects/{project_id}/assertions/{assertion_id}"),
-                    status: e.status().map(|s| s.as_u16()),
-                    body: e.to_string(),
-                }
-            })?;
+    async fn get_json(
+        &self,
+        client: &reqwest::Client,
+        endpoint: &str,
+    ) -> Result<Value, DownloadError> {
+        let url = self.endpoint_url(endpoint);
+        let response = client.get(url).send().await.map_err(|error| {
+            DownloadError::Api {
+                endpoint: endpoint.to_string(),
+                status: error.status().map(|status| status.as_u16()),
+                request_id: None,
+                body: json!(error.to_string()),
+            }
+        })?;
+        let status = response.status();
+        let request_id = crate::api::request_id_from_headers(response.headers());
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let bytes = response.bytes().await.map_err(|error| {
+            DownloadError::Api {
+                endpoint: endpoint.to_string(),
+                status: Some(status.as_u16()),
+                request_id: request_id.clone(),
+                body: json!(error.to_string()),
+            }
+        })?;
+        let body = crate::api::response_body_value(&content_type, &bytes);
+        if !status.is_success() {
+            return Err(DownloadError::Api {
+                endpoint: endpoint.to_string(),
+                status: Some(status.as_u16()),
+                request_id,
+                body,
+            });
+        }
+        Ok(body)
+    }
 
-        Ok(response.data)
+    fn endpoint_url(&self, endpoint: &str) -> url::Url {
+        let mut url = self.api_url.clone();
+        url.set_path(&format!("/api/v1/{}", endpoint.trim_start_matches('/')));
+        url
+    }
+}
+
+fn client_error_to_download(error: ClientBuildError) -> DownloadError {
+    match error {
+        ClientBuildError::NoAuthToken => DownloadError::NoAuthToken,
+        ClientBuildError::ExpiredAuthToken(expires_at) => {
+            DownloadError::ExpiredAuthToken(expires_at)
+        }
+        ClientBuildError::AuthRefresh(error) => DownloadError::AuthRefresh(error),
+        ClientBuildError::InvalidConfig(message) => DownloadError::InvalidConfig(message),
     }
 }
 
@@ -392,6 +499,43 @@ fn download_data(
         "files_skipped": files_skipped,
         "files": files,
     })
+}
+
+fn no_assertions_next_actions(project_id: Uuid) -> Vec<String> {
+    vec![format!("pcl assertions --project-id {project_id}")]
+}
+
+fn downloaded_next_actions(project_id: Uuid, output_dir: &Path) -> Vec<String> {
+    vec![
+        format!(
+            "Inspect downloaded Solidity files in {}",
+            output_dir.display()
+        ),
+        format!("pcl assertions --project-id {project_id}"),
+    ]
+}
+
+fn default_output_dir(project_name: &str) -> PathBuf {
+    PathBuf::from(format!("{}-assertions", safe_file_stem(project_name)))
+}
+
+fn safe_file_stem(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let trimmed = sanitized.trim_matches('_');
+    if trimmed.is_empty() {
+        "assertion".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -469,5 +613,56 @@ mod tests {
             "0x1234567890abcdef1234567890abcdef12345678",
         ]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn no_assertions_next_actions_use_concrete_project_id() {
+        let project_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+
+        assert_eq!(
+            no_assertions_next_actions(project_id),
+            vec!["pcl assertions --project-id 550e8400-e29b-41d4-a716-446655440000"]
+        );
+    }
+
+    #[test]
+    fn downloaded_next_actions_do_not_suggest_invalid_verify_command() {
+        let project_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let actions = downloaded_next_actions(project_id, Path::new("/tmp/pcl review download"));
+
+        assert_eq!(
+            actions[0],
+            "Inspect downloaded Solidity files in /tmp/pcl review download"
+        );
+        assert_eq!(
+            actions[1],
+            "pcl assertions --project-id 550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert!(
+            !actions
+                .iter()
+                .any(|action| action.starts_with("pcl verify"))
+        );
+    }
+
+    #[test]
+    fn default_output_dir_sanitizes_project_name() {
+        assert_eq!(
+            default_output_dir("../escape").display().to_string(),
+            "escape-assertions"
+        );
+        assert_eq!(
+            default_output_dir("private test lea").display().to_string(),
+            "private_test_lea-assertions"
+        );
+    }
+
+    #[test]
+    fn safe_file_stem_removes_path_separators() {
+        assert_eq!(
+            safe_file_stem("../Allowance/Guard.sol"),
+            "Allowance_Guard_sol"
+        );
+        assert_eq!(safe_file_stem("   "), "assertion");
     }
 }

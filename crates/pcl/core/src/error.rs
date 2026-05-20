@@ -22,6 +22,14 @@ pub enum ApplyError {
     #[error("Run `pcl auth login` first")]
     NoAuthToken,
 
+    #[error(
+        "Stored auth token expired at {0}. Run `pcl auth refresh --toon` or `pcl auth login` again."
+    )]
+    ExpiredAuthToken(DateTime<Utc>),
+
+    #[error("Failed to refresh stored auth before applying release changes: {0}")]
+    AuthRefresh(#[source] AuthError),
+
     #[error("{message}: {source}")]
     Io {
         message: String,
