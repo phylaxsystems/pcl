@@ -1561,6 +1561,10 @@ fn release_deploy_calldata_requires_and_sends_signer_address() {
         "/projects/project-1/releases/release-1/deploy-calldata"
     );
     assert_eq!(
+        request.operation_id,
+        Some("get_projects_project_id_releases_release_id_deploy_calldata")
+    );
+    assert_eq!(
         request.query,
         vec![("signerAddress".to_string(), "0xsigner".to_string())]
     );
@@ -1577,6 +1581,10 @@ fn release_check_progress_and_retry_are_first_class_workflows() {
     assert_eq!(
         progress.path,
         "/projects/project-1/releases/release-1/backtest-progress"
+    );
+    assert_eq!(
+        progress.operation_id,
+        Some("get_projects_project_id_releases_release_id_backtest_progress")
     );
     assert!(progress.body.is_none());
 
@@ -1598,6 +1606,10 @@ fn release_check_progress_and_retry_are_first_class_workflows() {
     assert_eq!(
         retry.path,
         "/projects/project-1/releases/release-1/checks/check-1/retry"
+    );
+    assert_eq!(
+        retry.operation_id,
+        Some("post_projects_project_id_releases_release_id_checks_check_id_retry")
     );
     assert_eq!(retry.method, HttpMethod::Post);
     assert_eq!(retry.body, Some(json!({}).to_string()));

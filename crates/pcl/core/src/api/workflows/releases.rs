@@ -3,6 +3,7 @@ use super::{
         ApiCommandError,
         HttpMethod,
         ReleasesArgs,
+        WorkflowOperation,
         WorkflowRequest,
     },
     body_or_empty,
@@ -11,7 +12,7 @@ use super::{
     request_body,
     required_arg,
     required_project_arg,
-    workflow_with_body,
+    workflow_operation_with_body,
 };
 use serde_json::Value;
 
@@ -21,24 +22,27 @@ pub(in crate::api) fn releases_request(
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     let project = required_project_arg(args.project.as_deref(), "releases", "--project")?;
     if args.preview {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            format!("/projects/{project}/releases/preview"),
+        return workflow_operation_with_body(
+            WorkflowOperation::new(
+                HttpMethod::Post,
+                "post_projects_project_id_releases_preview",
+            )
+            .path_param("project_id", &project),
             true,
             body,
             vec![format!(
                 "pcl releases create {project} --body-file release.json"
             )],
-        ));
+        );
     }
     if args.create {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            format!("/projects/{project}/releases"),
+        return workflow_operation_with_body(
+            WorkflowOperation::new(HttpMethod::Post, "post_projects_project_id_releases")
+                .path_param("project_id", &project),
             true,
             body,
             vec![format!("pcl releases list {project}")],
-        ));
+        );
     }
     if args.deploy
         || args.remove
@@ -49,67 +53,111 @@ pub(in crate::api) fn releases_request(
     {
         let release_id = required_arg(args.release_id.as_deref(), "--release-id")?;
         if args.backtest_progress {
-            return Ok(WorkflowRequest::get(
-                format!("/projects/{project}/releases/{release_id}/backtest-progress"),
+            return WorkflowRequest::from_operation(
+                WorkflowOperation::new(
+                    HttpMethod::Get,
+                    "get_projects_project_id_releases_release_id_backtest_progress",
+                )
+                .path_param("project_id", &project)
+                .path_param("release_id", &release_id),
+                Vec::new(),
+                None,
                 true,
                 vec![format!("pcl releases show {project} {release_id}")],
-            ));
+            );
         }
         if args.retry_check {
             let check_id = required_arg(args.check_id.as_deref(), "--check-id")?;
-            return Ok(workflow_with_body(
-                HttpMethod::Post,
-                format!("/projects/{project}/releases/{release_id}/checks/{check_id}/retry"),
+            return workflow_operation_with_body(
+                WorkflowOperation::new(
+                    HttpMethod::Post,
+                    "post_projects_project_id_releases_release_id_checks_check_id_retry",
+                )
+                .path_param("project_id", &project)
+                .path_param("release_id", &release_id)
+                .path_param("check_id", &check_id),
                 true,
                 Some(body_or_empty(body)),
                 vec![format!(
                     "pcl releases backtest-progress {project} {release_id}"
                 )],
-            ));
+            );
         }
         if args.deploy {
-            return Ok(workflow_with_body(
-                HttpMethod::Post,
-                format!("/projects/{project}/releases/{release_id}/deploy"),
+            return workflow_operation_with_body(
+                WorkflowOperation::new(
+                    HttpMethod::Post,
+                    "post_projects_project_id_releases_release_id_deploy",
+                )
+                .path_param("project_id", &project)
+                .path_param("release_id", &release_id),
                 true,
                 body,
                 vec![format!("pcl releases show {project} {release_id}")],
-            ));
+            );
         }
         if args.remove {
-            return Ok(workflow_with_body(
-                HttpMethod::Post,
-                format!("/projects/{project}/releases/{release_id}/remove"),
+            return workflow_operation_with_body(
+                WorkflowOperation::new(
+                    HttpMethod::Post,
+                    "post_projects_project_id_releases_release_id_remove",
+                )
+                .path_param("project_id", &project)
+                .path_param("release_id", &release_id),
                 true,
                 body,
                 vec![format!("pcl releases list {project}")],
-            ));
+            );
         }
         if args.deploy_calldata {
             let signer_address = required_arg(args.signer_address.as_deref(), "--signer-address")?;
-            let mut request = WorkflowRequest::get(
-                format!("/projects/{project}/releases/{release_id}/deploy-calldata"),
+            let mut request = WorkflowRequest::from_operation(
+                WorkflowOperation::new(
+                    HttpMethod::Get,
+                    "get_projects_project_id_releases_release_id_deploy_calldata",
+                )
+                .path_param("project_id", &project)
+                .path_param("release_id", &release_id),
+                Vec::new(),
+                None,
                 true,
                 vec![format!("pcl releases deploy {project} {release_id}")],
-            );
+            )?;
             push_query(&mut request.query, "signerAddress", Some(signer_address));
             return Ok(request);
         }
-        return Ok(WorkflowRequest::get(
-            format!("/projects/{project}/releases/{release_id}/remove-calldata"),
+        return WorkflowRequest::from_operation(
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "get_projects_project_id_releases_release_id_remove_calldata",
+            )
+            .path_param("project_id", &project)
+            .path_param("release_id", &release_id),
+            Vec::new(),
+            None,
             true,
             vec![format!("pcl releases remove {project} {release_id}")],
-        ));
+        );
     }
     let Some(release_id) = &args.release_id else {
-        return Ok(WorkflowRequest::get(
-            format!("/projects/{project}/releases"),
+        return WorkflowRequest::from_operation(
+            WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id_releases")
+                .path_param("project_id", &project),
+            Vec::new(),
+            None,
             true,
             vec![format!("pcl releases show {project} <release-id>")],
-        ));
+        );
     };
-    Ok(WorkflowRequest::get(
-        format!("/projects/{project}/releases/{release_id}"),
+    WorkflowRequest::from_operation(
+        WorkflowOperation::new(
+            HttpMethod::Get,
+            "get_projects_project_id_releases_release_id",
+        )
+        .path_param("project_id", &project)
+        .path_param("release_id", release_id),
+        Vec::new(),
+        None,
         true,
         vec![
             format!(
@@ -117,7 +165,7 @@ pub(in crate::api) fn releases_request(
             ),
             format!("pcl releases calldata remove {project} {release_id}"),
         ],
-    ))
+    )
 }
 
 pub(in crate::api) fn releases_next_actions(
