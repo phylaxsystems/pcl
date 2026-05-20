@@ -1332,6 +1332,7 @@ fn builds_project_create_body_from_typed_flags() {
 
     assert_eq!(request.path, "/projects");
     assert_eq!(request.method.openapi_key(), "post");
+    assert_eq!(request.operation_id, Some("post_projects"));
     assert_eq!(
         serde_json::from_str::<Value>(request.body.as_deref().unwrap()).unwrap(),
         json!({
@@ -1454,6 +1455,7 @@ fn saved_projects_require_and_send_user_id() {
     })
     .unwrap();
     assert_eq!(request.path, "/projects/saved");
+    assert_eq!(request.operation_id, Some("get_projects_saved"));
     assert_eq!(
         request.query,
         vec![("user_id".to_string(), "user-1".to_string())]
@@ -1470,6 +1472,7 @@ fn projects_mine_uses_authenticated_home_view() {
 
     assert_eq!(request.path, "/views/projects/home");
     assert_eq!(request.method.openapi_key(), "get");
+    assert_eq!(request.operation_id, Some("get_views_projects_home"));
     assert!(request.require_auth);
     assert_eq!(
         request.next_actions,

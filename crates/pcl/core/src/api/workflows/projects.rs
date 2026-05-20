@@ -3,6 +3,7 @@ use super::{
         ApiCommandError,
         HttpMethod,
         ProjectsArgs,
+        WorkflowOperation,
         WorkflowRequest,
     },
     first_string_field,
@@ -10,7 +11,7 @@ use super::{
     push_query,
     required_arg,
     required_project_arg,
-    workflow_with_body,
+    workflow_operation_with_body,
 };
 use serde_json::{
     Value,
@@ -43,35 +44,36 @@ pub(in crate::api) fn projects_request(
     let body = project_request_body(args)?;
 
     if args.create {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            "/projects",
+        return workflow_operation_with_body(
+            WorkflowOperation::new(HttpMethod::Post, "post_projects"),
             true,
             body,
             vec!["pcl projects mine".to_string()],
-        ));
+        );
     }
 
     if args.mine {
-        return Ok(WorkflowRequest::get_with_query(
-            "/views/projects/home",
+        return WorkflowRequest::from_operation(
+            WorkflowOperation::new(HttpMethod::Get, "get_views_projects_home"),
             query,
+            None,
             true,
             vec![
                 "pcl account".to_string(),
                 "pcl projects saved --user-id <user-id>".to_string(),
             ],
-        ));
+        );
     }
     if args.saved {
         let user_id = required_arg(args.user_id.as_deref(), "--user-id")?;
         push_query(&mut query, "user_id", Some(user_id));
-        return Ok(WorkflowRequest::get_with_query(
-            "/projects/saved",
+        return WorkflowRequest::from_operation(
+            WorkflowOperation::new(HttpMethod::Get, "get_projects_saved"),
             query,
+            None,
             true,
             vec!["pcl projects mine".to_string()],
-        ));
+        );
     }
     if args.project_id.is_none()
         && (args.update || args.delete || args.save || args.unsave || args.resolve || args.widget)
@@ -80,72 +82,79 @@ pub(in crate::api) fn projects_request(
     }
     if let Some(project_id) = &args.project_id {
         if args.resolve {
-            return Ok(WorkflowRequest::get_with_query(
-                format!("/projects/resolve/{project_id}"),
+            return Ok(WorkflowRequest::from_operation(
+                WorkflowOperation::new(HttpMethod::Get, "get_projects_resolve_project_ref")
+                    .path_param("project_ref", project_id),
                 query,
+                None,
                 false,
                 vec![format!("pcl projects show {project_id}")],
-            )
+            )?
             .with_optional_auth());
         }
         if args.widget {
-            return Ok(WorkflowRequest::get(
-                format!("/projects/{project_id}/widget"),
+            return WorkflowRequest::from_operation(
+                WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id_widget")
+                    .path_param("project_id", project_id),
+                Vec::new(),
+                None,
                 true,
                 vec![format!("pcl projects show {project_id}")],
-            ));
+            );
         }
         if args.save || args.unsave {
-            return Ok(workflow_with_body(
+            return workflow_operation_with_body(
                 if args.save {
-                    HttpMethod::Post
+                    WorkflowOperation::new(HttpMethod::Post, "post_projects_saved")
                 } else {
-                    HttpMethod::Delete
+                    WorkflowOperation::new(HttpMethod::Delete, "delete_projects_saved")
                 },
-                "/projects/saved",
                 true,
                 Some(json!({ "project_id": project_id }).to_string()),
                 vec![
                     format!("pcl projects show {project_id}"),
                     "pcl projects mine".to_string(),
                 ],
-            ));
+            );
         }
         if args.update {
-            return Ok(workflow_with_body(
-                HttpMethod::Put,
-                format!("/projects/{project_id}"),
+            return workflow_operation_with_body(
+                WorkflowOperation::new(HttpMethod::Put, "put_projects_project_id")
+                    .path_param("project_id", project_id),
                 true,
                 body,
                 vec![format!("pcl projects show {project_id}")],
-            ));
+            );
         }
         if args.delete {
-            return Ok(workflow_with_body(
-                HttpMethod::Delete,
-                format!("/projects/{project_id}"),
+            return workflow_operation_with_body(
+                WorkflowOperation::new(HttpMethod::Delete, "delete_projects_project_id")
+                    .path_param("project_id", project_id),
                 true,
                 body,
                 ["pcl projects mine"],
-            ));
+            );
         }
-        return Ok(WorkflowRequest::get_with_query(
-            format!("/projects/{project_id}"),
+        return WorkflowRequest::from_operation(
+            WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id")
+                .path_param("project_id", project_id),
             query,
+            None,
             true,
             vec![
                 format!("pcl assertions --project-id {project_id}"),
                 format!("pcl incidents --project-id {project_id} --limit 10"),
             ],
-        ));
+        );
     }
 
-    Ok(WorkflowRequest::get_with_query(
-        "/views/projects",
+    WorkflowRequest::from_operation(
+        WorkflowOperation::new(HttpMethod::Get, "get_views_projects"),
         query,
+        None,
         false,
         ["pcl projects show <project-id>", "pcl incidents --limit 5"],
-    ))
+    )
 }
 
 workflow_definition!(
