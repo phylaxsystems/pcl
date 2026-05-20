@@ -2,6 +2,7 @@ use crate::{
     DEFAULT_PLATFORM_URL,
     api::{
         envelope_output_string,
+        request_id_from_headers,
         with_envelope_metadata,
     },
     config::{
@@ -29,10 +30,13 @@ use indicatif::{
     ProgressBar,
     ProgressStyle,
 };
-use pcl_common::args::CliArgs;
+use pcl_common::args::{
+    CliArgs,
+    OutputMode,
+    current_output_mode,
+};
 use reqwest::header::{
     CONTENT_TYPE,
-    HeaderMap,
     HeaderName,
     HeaderValue,
     RETRY_AFTER,
@@ -394,7 +398,10 @@ impl AuthCommand {
             if auth.expires_at <= chrono::Utc::now() {
                 expired_auth = Some(auth.expires_at);
             }
-            if auth.expires_at <= chrono::Utc::now() && !json_output {
+            if auth.expires_at <= chrono::Utc::now()
+                && !json_output
+                && current_output_mode() == OutputMode::Human
+            {
                 println!(
                     "{} Stored auth token expired at {}. Starting a fresh login.",
                     "⚠️".yellow(),
@@ -405,7 +412,7 @@ impl AuthCommand {
 
         let client = self.api_client();
         let auth_response = Self::request_auth_code(&client).await?;
-        if no_wait {
+        if no_wait || (!json_output && current_output_mode() == OutputMode::Toon) {
             Self::print_output(
                 &self.login_challenge_envelope(
                     &auth_response,
@@ -524,6 +531,7 @@ impl AuthCommand {
         reason: AuthChallengeReason,
         json_output: bool,
     ) -> Value {
+        let poll_command = self.poll_command(auth_response, json_output);
         let mut device_url = self.effective_auth_url();
         device_url.set_path("/device");
         device_url
@@ -542,11 +550,11 @@ impl AuthCommand {
                 "session_id": auth_response.session_id.to_string(),
                 "device_secret": auth_response.device_secret.as_str(),
                 "expires_at": auth_response.expires_at.to_rfc3339(),
-                "poll_command": self.poll_command(auth_response, json_output),
+                "poll_command": poll_command,
                 "wait_command": if json_output {
-                    "pcl auth login --force --json"
+                    "pcl auth login --force --json".to_string()
                 } else {
-                    "pcl auth login --force --toon"
+                    self.poll_command(auth_response, false)
                 },
             },
             "next_actions": [
@@ -1194,13 +1202,6 @@ async fn refresh_error_details(response: reqwest::Response) -> RefreshErrorDetai
     }
 }
 
-fn request_id_from_headers(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("x-request-id")
-        .and_then(|value| value.to_str().ok())
-        .map(ToOwned::to_owned)
-}
-
 fn finish_timeout_if_needed(spinner: &ProgressBar, json_output: bool, error: &AuthError) {
     if !matches!(error, AuthError::Timeout(_)) {
         return;
@@ -1466,10 +1467,7 @@ mod tests {
                 .as_str()
                 .is_some_and(|command| command.ends_with("--toon"))
         );
-        assert_eq!(
-            toon["data"]["wait_command"],
-            "pcl auth login --force --toon"
-        );
+        assert_eq!(toon["data"]["wait_command"], toon["data"]["poll_command"]);
 
         let json = cmd.login_challenge_envelope(&auth_response, AuthChallengeReason::Missing, true);
         assert!(

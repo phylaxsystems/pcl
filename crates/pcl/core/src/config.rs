@@ -13,7 +13,11 @@ use chrono::{
 use clap::Parser;
 use colored::Colorize;
 use dirs::home_dir;
-use pcl_common::args::CliArgs;
+use pcl_common::args::{
+    CliArgs,
+    OutputMode,
+    current_output_mode,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -333,12 +337,14 @@ impl CliConfig {
             }
             // Move the directory
             std::fs::rename(&legacy_dir, &new_dir).map_err(ConfigError::WriteError)?;
-            eprintln!(
-                "{}: Migrated PCL config from {} to {}",
-                "Warning".yellow().bold(),
-                legacy_dir.display(),
-                new_dir.display()
-            );
+            if current_output_mode() == OutputMode::Human {
+                eprintln!(
+                    "{}: Migrated PCL config from {} to {}",
+                    "Warning".yellow().bold(),
+                    legacy_dir.display(),
+                    new_dir.display()
+                );
+            }
             return Ok(true);
         }
         Ok(false)

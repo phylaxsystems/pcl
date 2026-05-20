@@ -25,7 +25,7 @@ mockito = "1.2"
 tempfile = { workspace = true }
 
 [features]
-default = []
+default = ["credible"]
 credible = ["pcl-phoundry/credible", "pcl-core/credible"]
 full = ["credible"]
 

@@ -9,6 +9,8 @@ use pcl_common::args::{
     current_output_mode,
 };
 #[cfg(feature = "credible")]
+use pcl_core::apply::ApplyArgs;
+#[cfg(feature = "credible")]
 use pcl_core::verify::VerifyArgs;
 use pcl_core::{
     DEFAULT_PLATFORM_URL,
@@ -29,7 +31,6 @@ use pcl_core::{
         TransfersCommand,
         with_envelope_metadata,
     },
-    apply::ApplyArgs,
     auth::AuthCommand,
     config::ConfigArgs,
     download::DownloadArgs,
@@ -135,6 +136,7 @@ pub enum Commands {
     Completions(CompletionsArgs),
     #[command(about = "Manage configuration")]
     Config(ConfigArgs),
+    #[cfg(feature = "credible")]
     #[command(name = "apply")]
     Apply(ApplyArgs),
     #[cfg(feature = "credible")]
@@ -199,13 +201,23 @@ impl CompletionsArgs {
         if output_mode == OutputMode::Human {
             print!("{script}");
         } else {
-            let envelope = with_envelope_metadata(json!({
-                "status": "ok",
-                "data": {
+            let data = if output_mode == OutputMode::Json {
+                json!({
                     "shell": self.shell.to_string(),
                     "script": script,
                     "install_note": "Run without --toon/--json and redirect stdout into your shell completion directory.",
-                },
+                })
+            } else {
+                json!({
+                    "shell": self.shell.to_string(),
+                    "script_omitted": true,
+                    "script_bytes": script.len(),
+                    "install_note": "Run without --toon/--json and redirect stdout into your shell completion directory, or use --json only when an installer expects the script inside an envelope.",
+                })
+            };
+            let envelope = with_envelope_metadata(json!({
+                "status": "ok",
+                "data": data,
                 "next_actions": [
                     format!("pcl completions {} > <completion-file>", self.shell),
                 ],
@@ -278,6 +290,7 @@ mod tests {
         assert!(matches!(cli.command, Commands::Config(_)));
     }
 
+    #[cfg(feature = "credible")]
     #[test]
     fn parses_apply_command() {
         let cli =
@@ -433,6 +446,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "credible")]
     #[test]
     fn parses_apply_command_with_custom_config() {
         let cli = Cli::try_parse_from([

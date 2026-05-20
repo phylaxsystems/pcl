@@ -176,6 +176,18 @@ fn incidents_args() -> IncidentsArgs {
     }
 }
 
+fn transfers_args() -> TransfersArgs {
+    TransfersArgs {
+        transfer_id: None,
+        pending: false,
+        reject: false,
+        body: None,
+        field: Vec::new(),
+        body_file: None,
+        body_template: false,
+    }
+}
+
 #[test]
 fn parses_key_values() {
     let parsed = parse_key_values("query", &["limit=5".to_string()]).unwrap();
@@ -289,6 +301,111 @@ fn openapi_call_commands_include_required_inputs() {
     assert_eq!(
         inspected["input_placeholders"],
         json!(["path:project_id", "query:environment", "body"])
+    );
+}
+
+#[test]
+fn openapi_next_actions_prefer_runnable_safe_workflow_examples() {
+    let spec = json!({
+        "paths": {
+            "/incidents/{incident_id}": {
+                "get": {
+                    "operationId": "get_incidents_incident_id",
+                    "summary": "Get incident details",
+                    "parameters": [
+                        {"name": "incident_id", "in": "path", "required": true, "schema": {"type": "string"}}
+                    ]
+                }
+            },
+            "/views/public/incidents": {
+                "get": {
+                    "operationId": "get_views_public_incidents",
+                    "summary": "Get public incidents"
+                }
+            }
+        }
+    });
+
+    let operations = list_operations(&spec, Some("incidents"), Some(HttpMethod::Get)).unwrap();
+
+    assert_eq!(
+        next_actions_for_operations(&operations),
+        vec![
+            "pcl incidents --limit 5 --toon".to_string(),
+            "pcl api inspect get_views_public_incidents --toon".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn openapi_next_actions_skip_destructive_workflow_examples() {
+    let spec = json!({
+        "paths": {
+            "/projects/{project_id}/protocol-manager": {
+                "delete": {
+                    "operationId": "delete_projects_project_id_protocol_manager",
+                    "summary": "Clear protocol manager for a project",
+                    "tags": ["projects"],
+                    "parameters": [
+                        {"name": "project_id", "in": "path", "required": true, "schema": {"type": "string"}}
+                    ]
+                },
+                "post": {
+                    "operationId": "post_projects_project_id_protocol_manager",
+                    "summary": "Set protocol manager for a project",
+                    "tags": ["projects"],
+                    "parameters": [
+                        {"name": "project_id", "in": "path", "required": true, "schema": {"type": "string"}}
+                    ],
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"type": "object"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let operations = list_operations(&spec, Some("protocol-manager"), None).unwrap();
+
+    assert_eq!(
+        next_actions_for_operations(&operations),
+        vec![
+            "pcl protocol-manager --project <project-ref> --set --body-template --toon".to_string(),
+            "pcl api inspect post_projects_project_id_protocol_manager --toon".to_string(),
+        ]
+    );
+
+    let inspected_delete = inspect_operation(
+        &spec,
+        "delete_projects_project_id_protocol_manager",
+        None,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        command_next_actions(&inspected_delete),
+        vec!["Review data.workflow_alternatives before running mutating workflow commands"]
+    );
+}
+
+#[test]
+fn openapi_next_actions_keep_safe_remove_calldata_examples() {
+    let inspected = json!({
+        "method": "GET",
+        "workflow_alternatives": [
+            {
+                "example": "pcl assertions --project-id <project-ref> --remove-calldata"
+            }
+        ]
+    });
+
+    assert_eq!(
+        command_next_actions(&inspected),
+        vec!["pcl assertions --project-id <project-ref> --remove-calldata"]
     );
 }
 
@@ -734,6 +851,176 @@ async fn incident_workflow_pagination_rejects_zero_limit() {
 }
 
 #[tokio::test]
+async fn authenticated_project_slug_resolution_attaches_auth() {
+    let mut server = mockito::Server::new_async().await;
+    let project_id = "550e8400-e29b-41d4-a716-446655440000";
+    let resolve = server
+        .mock("GET", "/api/v1/projects/resolve/private-slug")
+        .match_header("authorization", "Bearer access-token")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"{{"project_id":"{project_id}"}}"#))
+        .expect(1)
+        .create_async()
+        .await;
+    let detail = server
+        .mock("GET", format!("/api/v1/projects/{project_id}").as_str())
+        .match_header("authorization", "Bearer access-token")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"project_id":"{project_id}","slug":"private-slug"}}"#
+        ))
+        .expect(1)
+        .create_async()
+        .await;
+    let api = ApiArgs {
+        command: ApiCommand::Manifest,
+        api_url: server.url().parse().unwrap(),
+        allow_unauthenticated: false,
+        dry_run: false,
+        refresh_after_401: Cell::new(true),
+    };
+    let mut config = CliConfig {
+        auth: Some(UserAuth {
+            access_token: "access-token".to_string(),
+            refresh_token: "refresh-token".to_string(),
+            expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+            refresh_expires_at: None,
+            user_id: None,
+            wallet_address: None,
+            email: Some("agent@example.com".to_string()),
+        }),
+    };
+    let request = WorkflowRequest::get("/projects/private-slug", true, Vec::<String>::new());
+
+    let result = api
+        .call_workflow_result(
+            &mut config,
+            &CliArgs::default(),
+            &request,
+            test_request_log_path(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.body["slug"], "private-slug");
+    assert_eq!(result.request["path"], format!("/projects/{project_id}"));
+    resolve.assert_async().await;
+    detail.assert_async().await;
+}
+
+#[tokio::test]
+async fn project_slug_resolution_errors_preserve_http_metadata() {
+    let mut server = mockito::Server::new_async().await;
+    let resolve = server
+        .mock("GET", "/api/v1/projects/resolve/missing-slug")
+        .match_header("authorization", "Bearer access-token")
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-resolve-404")
+        .with_body(r#"{"error":"Project not found"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let api = ApiArgs {
+        command: ApiCommand::Manifest,
+        api_url: server.url().parse().unwrap(),
+        allow_unauthenticated: false,
+        dry_run: false,
+        refresh_after_401: Cell::new(true),
+    };
+    let mut config = CliConfig {
+        auth: Some(UserAuth {
+            access_token: "access-token".to_string(),
+            refresh_token: "refresh-token".to_string(),
+            expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+            refresh_expires_at: None,
+            user_id: None,
+            wallet_address: None,
+            email: Some("agent@example.com".to_string()),
+        }),
+    };
+    let request = WorkflowRequest::get("/projects/missing-slug", true, Vec::<String>::new());
+
+    let error = api
+        .call_workflow_result(
+            &mut config,
+            &CliArgs::default(),
+            &request,
+            test_request_log_path(),
+        )
+        .await
+        .unwrap_err();
+
+    let ApiCommandError::HttpStatus {
+        method,
+        path,
+        status,
+        request_id,
+        body,
+    } = &error
+    else {
+        panic!("expected HTTP status error, got {error:?}");
+    };
+    assert_eq!(*method, "GET");
+    assert_eq!(path, "/projects/resolve/missing-slug");
+    assert_eq!(*status, 404);
+    assert_eq!(request_id.as_deref(), Some("req-resolve-404"));
+    assert_eq!(body["error"], "Project not found");
+    assert_eq!(
+        error.json_envelope()["error"]["request_id"],
+        "req-resolve-404"
+    );
+    assert_eq!(error.json_envelope()["http_status"], 404);
+    resolve.assert_async().await;
+}
+
+#[tokio::test]
+async fn openapi_discovery_errors_preserve_http_metadata() {
+    let mut server = mockito::Server::new_async().await;
+    let openapi = server
+        .mock("GET", "/api/v1/openapi")
+        .with_status(503)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-openapi-503")
+        .with_body(r#"{"error":"OpenAPI unavailable"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let api = ApiArgs {
+        command: ApiCommand::Manifest,
+        api_url: server.url().parse().unwrap(),
+        allow_unauthenticated: true,
+        dry_run: false,
+        refresh_after_401: Cell::new(true),
+    };
+
+    let error = api.fetch_openapi(&CliConfig::default()).await.unwrap_err();
+
+    let ApiCommandError::HttpStatus {
+        method,
+        path,
+        status,
+        request_id,
+        body,
+    } = &error
+    else {
+        panic!("expected HTTP status error, got {error:?}");
+    };
+    assert_eq!(*method, "GET");
+    assert_eq!(path, "/openapi");
+    assert_eq!(*status, 503);
+    assert_eq!(request_id.as_deref(), Some("req-openapi-503"));
+    assert_eq!(body["error"], "OpenAPI unavailable");
+    assert_eq!(
+        error.json_envelope()["error"]["request_id"],
+        "req-openapi-503"
+    );
+    openapi.assert_async().await;
+}
+
+#[tokio::test]
 async fn public_workflows_do_not_attach_expired_stored_tokens() {
     let mut server = mockito::Server::new_async().await;
     let mock = server
@@ -767,6 +1054,7 @@ async fn public_workflows_do_not_attach_expired_stored_tokens() {
         .run_workflow(
             &mut config,
             &CliArgs::default(),
+            "search",
             WorkflowRequest::get("/health", false, vec!["pcl search --health".to_string()]),
             test_request_log_path(),
         )
@@ -1439,7 +1727,7 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
     let legacy = workflow_alternatives(HttpMethod::Get, "/public/incidents");
     assert!(legacy.iter().any(|alternative| {
         alternative["workflow"] == "incidents"
-            && alternative["example"] == "pcl incidents --limit 5"
+            && alternative["example"] == "pcl incidents --limit 5 --toon"
     }));
 
     let project_detail = workflow_alternatives(HttpMethod::Get, "/projects/{project_id}");
@@ -1448,7 +1736,7 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
     assert_eq!(project_detail[0]["action"], "detail");
     assert_eq!(
         project_detail[0]["example"],
-        "pcl projects show <project-ref>"
+        "pcl projects show <project-ref> --toon"
     );
 
     let saved_delete = workflow_alternatives(HttpMethod::Delete, "/projects/saved");
@@ -1457,7 +1745,7 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
     assert_eq!(saved_delete[0]["action"], "unsave");
     assert_eq!(
         saved_delete[0]["example"],
-        "pcl projects unsave <project-ref>"
+        "pcl projects unsave <project-ref> --toon"
     );
 
     let project_literal = workflow_alternatives(HttpMethod::Get, "/projects/project-1");
@@ -1766,6 +2054,7 @@ async fn workflow_success_envelopes_include_request_provenance() {
         .run_workflow(
             &mut config,
             &CliArgs::default(),
+            "search",
             request,
             test_request_log_path(),
         )
@@ -1928,6 +2217,7 @@ fn workflow_dry_run_plans_destructive_requests() {
         query: vec![("environment".to_string(), "production".to_string())],
         body: None,
         require_auth: true,
+        attach_auth: true,
         next_actions: Vec::new(),
     };
     let config = CliConfig {
@@ -2248,6 +2538,15 @@ fn mutating_server_errors_mark_outcome_ambiguous() {
 }
 
 #[test]
+fn api_error_envelope_keeps_recoverable_inside_error_object() {
+    let envelope = ApiCommandError::InvalidPath("health".to_string()).json_envelope();
+
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["recoverable"], true);
+    assert!(envelope.get("recoverable").is_none(), "{envelope}");
+}
+
+#[test]
 fn forbidden_errors_preserve_permission_context() {
     let error = ApiCommandError::HttpStatus {
         method: "GET",
@@ -2453,6 +2752,316 @@ fn human_output_formats_empty_workflow_arrays_for_people() {
     assert!(output.contains("Showing 0 releases"));
     assert!(output.contains("No releases found."));
     assert!(!output.contains("<release-id>"));
+}
+
+#[test]
+fn human_output_keeps_placeholder_actions_when_other_collections_are_non_empty() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "projects": [
+                    {"project_id": "project-1", "project_name": "Project 1"}
+                ],
+                "contracts": []
+            },
+            "request": {"method": "GET", "path": "/search"},
+            "response": {"status": 200, "request_id": "req_search"},
+            "next_actions": ["pcl contracts --project <project-ref>"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("pcl contracts --project <project-ref>"));
+}
+
+#[test]
+fn human_output_keeps_safe_remove_calldata_actions() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "assertions": [
+                    {"assertion_id": "assertion-1", "contract_name": "Guard"}
+                ]
+            },
+            "request": {"method": "GET", "path": "/views/projects/project-1/assertions"},
+            "response": {"status": 200, "request_id": "req_assertions"},
+            "next_actions": ["pcl assertions --project-id project-1 --remove-calldata"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("pcl assertions --project-id project-1 --remove-calldata"));
+}
+
+#[test]
+fn release_list_next_actions_use_returned_release_id() {
+    let mut args = release_args();
+    args.project = Some("project-1".to_string());
+    let next_actions = releases_next_actions(
+        &json!([
+            {"id": "release-1", "status": "active"},
+            {"id": "release-2", "status": "inactive"}
+        ]),
+        &args,
+        vec!["pcl releases show project-1 <release-id>".to_string()],
+    );
+
+    assert_eq!(next_actions, vec!["pcl releases show project-1 release-1"]);
+}
+
+#[test]
+fn contract_list_next_actions_use_returned_adopter_id() {
+    let mut args = contracts_args();
+    args.project = Some("project-1".to_string());
+    let next_actions = contracts_next_actions(
+        &json!({
+            "data": {
+                "contracts": [
+                    {"id": "59144_0xabc", "address": "0xabc"},
+                    {"id": "59144_0xdef", "address": "0xdef"}
+                ]
+            }
+        }),
+        &args,
+        vec!["pcl contracts --project project-1 --adopter-id <adopter-id>".to_string()],
+    );
+
+    assert_eq!(
+        next_actions,
+        vec!["pcl contracts --project project-1 --adopter-id 59144_0xabc"]
+    );
+}
+
+#[test]
+fn transfer_list_next_actions_use_returned_transfer_id() {
+    let args = transfers_args();
+    let next_actions = transfers_next_actions(
+        &json!({
+            "incoming": {
+                "project_transfers": [
+                    {"id": "transfer-1", "project_id": "project-1"}
+                ]
+            },
+            "outgoing": {"project_transfers": []}
+        }),
+        &args,
+        vec!["pcl transfers --transfer-id <transfer-id>".to_string()],
+    );
+
+    assert_eq!(next_actions, vec!["pcl transfers --transfer-id transfer-1"]);
+}
+
+#[test]
+fn protocol_manager_pending_next_actions_use_current_manager_address() {
+    let args = protocol_manager_args();
+    let next_actions = protocol_manager_next_actions(
+        &json!({
+            "has_pending_transfer": false,
+            "current_manager_address": "0xmanager",
+            "new_manager_address": null
+        }),
+        &args,
+        vec![
+            concat!(
+                "pcl protocol-manager --project project-1 --nonce ",
+                "--address <manager-address>"
+            )
+            .to_string(),
+        ],
+    );
+
+    assert_eq!(
+        next_actions[0],
+        "pcl protocol-manager --project project-1 --nonce --address 0xmanager"
+    );
+    assert!(
+        next_actions[1].contains("--new-manager <manager-address>"),
+        "{next_actions:?}"
+    );
+}
+
+#[test]
+fn protocol_manager_pending_next_actions_offer_accept_calldata_when_pending() {
+    let args = protocol_manager_args();
+    let next_actions = protocol_manager_next_actions(
+        &json!({
+            "has_pending_transfer": true,
+            "current_manager_address": "0xmanager",
+            "new_manager_address": "0xnew"
+        }),
+        &args,
+        Vec::new(),
+    );
+
+    assert_eq!(
+        next_actions,
+        vec![
+            "pcl protocol-manager --project project-1 --nonce --address 0xmanager",
+            "pcl protocol-manager --project project-1 --accept-calldata",
+        ]
+    );
+}
+
+#[test]
+fn deployment_output_only_redacts_artifacts_for_human_mode() {
+    let deployment_data = json!({
+        "project": {"project_id": "project-1", "project_name": "Demo"},
+        "submitted_assertions": [
+            {
+                "id": "assertion-1",
+                "contract_name": "Guard",
+                "source_code": "contract Guard { function ok() external {} }",
+                "bytecode": "0x6080604052348015600e575f80fd5b50"
+            }
+        ],
+        "staging_assertions": [],
+        "available_contracts": [],
+        "_meta": {"sources": ["offchain"]}
+    });
+
+    let json_data =
+        workflow_data_for_output_mode("deployments", &deployment_data, OutputMode::Json);
+    let toon_data =
+        workflow_data_for_output_mode("deployments", &deployment_data, OutputMode::Toon);
+
+    assert_eq!(
+        json_data["submitted_assertions"][0]["source_code"],
+        "contract Guard { function ok() external {} }"
+    );
+    assert_eq!(
+        json_data["submitted_assertions"][0]["bytecode"],
+        "0x6080604052348015600e575f80fd5b50"
+    );
+    assert_eq!(
+        toon_data["submitted_assertions"][0]["source_code"],
+        "contract Guard { function ok() external {} }"
+    );
+    assert_eq!(
+        toon_data["submitted_assertions"][0]["bytecode"],
+        "0x6080604052348015600e575f80fd5b50"
+    );
+
+    let compact = workflow_data_for_output_mode("deployments", &deployment_data, OutputMode::Human);
+    let rendered = serde_json::to_string(&compact).expect("json render");
+
+    assert!(rendered.contains("\"redacted\":true"), "{rendered}");
+    assert!(!rendered.contains("contract Guard"), "{rendered}");
+    assert!(!rendered.contains("0x608060405234"), "{rendered}");
+    assert_eq!(
+        compact["submitted_assertions"][0]["source_code"]["reason"],
+        "large_artifact"
+    );
+    assert_eq!(
+        compact["submitted_assertions"][0]["bytecode"]["reason"],
+        "large_artifact"
+    );
+}
+
+#[test]
+fn human_output_formats_non_empty_releases_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": [
+                {
+                    "id": "release-1",
+                    "releaseNumber": 2,
+                    "environment": "production",
+                    "status": "active",
+                    "createdAt": "2026-05-18T18:00:00Z"
+                }
+            ],
+            "request": {"method": "GET", "path": "/projects/project-1/releases"},
+            "response": {"status": 200, "request_id": "req_releases"},
+            "next_actions": ["pcl releases show project-1 release-1"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Releases\n"));
+    assert!(output.contains("Release"));
+    assert!(output.contains("Environment"));
+    assert!(output.contains("Status"));
+    assert!(output.contains("release-1"));
+    assert!(output.contains("production"));
+    assert!(!output.contains("Visibility"));
+}
+
+#[test]
+fn human_output_formats_contract_lists_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "data": {
+                    "contracts": [
+                        {
+                            "id": "59144_0xabc",
+                            "address": "0xabc",
+                            "chain_id": 59144,
+                            "manager": "0xmanager",
+                            "contract_name": "LineaSettler"
+                        }
+                    ]
+                },
+                "_meta": {"sources": ["offchain"], "fetchedAt": "2026-05-18T18:00:00Z"}
+            },
+            "request": {"method": "GET", "path": "/views/projects/project-1/contracts"},
+            "response": {"status": 200, "request_id": "req_contracts"},
+            "next_actions": ["pcl contracts --project project-1 --adopter-id 59144_0xabc"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Contracts\n"));
+    assert!(output.contains("Contract"));
+    assert!(output.contains("Chain"));
+    assert!(output.contains("Address"));
+    assert!(output.contains("Manager"));
+    assert!(output.contains("LineaSettler"));
+    assert!(output.contains("0xabc"));
+}
+
+#[test]
+fn human_output_formats_assertion_lists_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "data": {
+                    "assertions": [
+                        {
+                            "assertion_id": "0xassertion",
+                            "contract_name": "AllowanceAssertion",
+                            "environment": "PRODUCTION",
+                            "lifecycle": "enforced",
+                            "deployment_instances": [{ "id": "one" }, { "id": "two" }]
+                        }
+                    ]
+                },
+                "_meta": {"sources": ["offchain"], "fetchedAt": "2026-05-18T18:00:00Z"}
+            },
+            "request": {"method": "GET", "path": "/views/projects/project-1/assertions"},
+            "response": {"status": 200, "request_id": "req_assertions"},
+            "next_actions": ["pcl assertions --project-id project-1 --assertion-id 0xassertion"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Assertions\n"));
+    assert!(output.contains("Contract"));
+    assert!(output.contains("Lifecycle"));
+    assert!(output.contains("Instances"));
+    assert!(output.contains("AllowanceAssertion"));
+    assert!(output.contains("enforced"));
+    assert!(output.contains("0xassertion"));
 }
 
 #[test]
@@ -3093,6 +3702,12 @@ fn manifest_lists_structured_actions_for_every_workflow() {
                 .is_some_and(|value| !value.is_empty()),
             "missing output shape for {command_name}"
         );
+        assert!(
+            command["output_policy"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "missing output policy for {command_name}"
+        );
         let actions = command["actions"].as_array().unwrap_or_else(|| {
             panic!("missing structured actions for manifest command {command_name}")
         });
@@ -3106,6 +3721,12 @@ fn manifest_lists_structured_actions_for_every_workflow() {
                     "missing {field} for {command_name} action {action:?}"
                 );
             }
+            assert!(
+                action["example"]
+                    .as_str()
+                    .is_some_and(|example| example.contains("--toon")),
+                "agent example must include --toon for {command_name} action {action:?}"
+            );
             assert!(
                 action["auth"].as_bool().is_some(),
                 "missing auth for {command_name} action {action:?}"
@@ -3167,6 +3788,14 @@ fn manifest_lists_structured_actions_for_every_workflow() {
             }),
             "preferred examples for {} should use subcommands",
             spec.name
+        );
+    }
+
+    for example in manifest["examples"].as_array().unwrap() {
+        let example = example.as_str().unwrap();
+        assert!(
+            example.contains("--toon"),
+            "top-level manifest example must include --toon: {example}"
         );
     }
 
@@ -3236,6 +3865,41 @@ fn manifest_lists_structured_actions_for_every_workflow() {
             .iter()
             .all(|surface| surface["command"] != "pcl completions <shell> --toon"),
         "manifest should not advertise envelope mode as the default completions install path"
+    );
+}
+
+#[test]
+fn workflow_definitions_are_the_manifest_source_of_truth() {
+    let manifest = api_manifest();
+    let commands = manifest["commands"].as_array().unwrap();
+    let workflow_definitions = definitions::workflow_definitions();
+
+    for definition in workflow_definitions {
+        let command = commands
+            .iter()
+            .find(|command| command["command"] == definition.command)
+            .unwrap_or_else(|| panic!("missing manifest command {}", definition.command));
+        assert_eq!(
+            command["output_policy"],
+            definition.output_policy.as_str(),
+            "manifest should expose output policy from workflow definition {}",
+            definition.name
+        );
+        assert_eq!(
+            command["actions"].as_array().unwrap().len(),
+            definition.actions.len(),
+            "manifest action count should come from workflow definition {}",
+            definition.name
+        );
+    }
+
+    assert_eq!(
+        definitions::workflow_output_policy("deployments"),
+        definitions::WorkflowOutputPolicy::MachineRawHumanCompactArtifacts
+    );
+    assert_eq!(
+        definitions::workflow_output_policy("projects"),
+        definitions::WorkflowOutputPolicy::MachineRaw
     );
 }
 

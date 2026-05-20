@@ -1,0 +1,172 @@
+use super::{
+    super::{
+        ApiCommandError,
+        HttpMethod,
+        ProtocolManagerArgs,
+        WorkflowRequest,
+        definitions::{
+            WorkflowActionDefinition,
+            WorkflowDefinition,
+            WorkflowOutputPolicy,
+        },
+    },
+    first_string_field,
+    push_query,
+    request_body,
+    required_arg,
+    required_project_arg,
+    workflow_with_body,
+};
+use serde_json::Value;
+
+pub(in crate::api) fn protocol_manager_request(
+    args: &ProtocolManagerArgs,
+) -> Result<WorkflowRequest, ApiCommandError> {
+    let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
+    let project = required_project_arg(args.project.as_deref(), "protocol-manager", "--project")?;
+    let base = format!("/projects/{project}/protocol-manager");
+    if args.nonce {
+        let address = required_arg(args.address.as_deref(), "--address")?;
+        let mut request = WorkflowRequest::get(
+            format!("{base}/nonce"),
+            true,
+            vec![format!(
+                "pcl protocol-manager --project {project} --set --body-template"
+            )],
+        );
+        push_query(&mut request.query, "address", Some(address));
+        push_query(&mut request.query, "chain_id", args.chain_id);
+        return Ok(request);
+    }
+    if args.set {
+        return Ok(workflow_with_body(
+            HttpMethod::Post,
+            base,
+            true,
+            body,
+            vec![format!(
+                "pcl protocol-manager --project {project} --pending-transfer"
+            )],
+        ));
+    }
+    if args.clear {
+        return Ok(workflow_with_body(
+            HttpMethod::Delete,
+            base,
+            true,
+            body,
+            vec![format!(
+                "pcl protocol-manager --project {project} --nonce --address <manager-address>"
+            )],
+        ));
+    }
+    if args.transfer_calldata {
+        let new_manager = required_arg(args.new_manager.as_deref(), "--new-manager")?;
+        let mut request = WorkflowRequest::get(
+            format!("{base}/transfer-calldata"),
+            true,
+            vec![format!(
+                "pcl protocol-manager --project {project} --set --body-template"
+            )],
+        );
+        push_query(&mut request.query, "new_manager", Some(new_manager));
+        return Ok(request);
+    }
+    if args.accept_calldata {
+        return Ok(WorkflowRequest::get(
+            format!("{base}/accept-calldata"),
+            true,
+            vec![format!(
+                "pcl protocol-manager --project {project} --confirm-transfer --body-template"
+            )],
+        ));
+    }
+    if args.confirm_transfer {
+        return Ok(workflow_with_body(
+            HttpMethod::Post,
+            format!("{base}/confirm-transfer"),
+            true,
+            body,
+            vec![format!(
+                "pcl protocol-manager --project {project} --pending-transfer"
+            )],
+        ));
+    }
+    Ok(WorkflowRequest::get(
+        format!("{base}/pending-transfer"),
+        true,
+        vec![
+            format!("pcl protocol-manager --project {project} --nonce --address <manager-address>"),
+            format!(
+                "pcl protocol-manager --project {project} --transfer-calldata --new-manager <manager-address>"
+            ),
+        ],
+    ))
+}
+
+pub(in crate::api) fn protocol_manager_next_actions(
+    data: &Value,
+    args: &ProtocolManagerArgs,
+    fallback: Vec<String>,
+) -> Vec<String> {
+    if args.nonce
+        || args.set
+        || args.clear
+        || args.transfer_calldata
+        || args.accept_calldata
+        || args.confirm_transfer
+    {
+        return fallback;
+    }
+    let Some(project) = args.project.as_deref() else {
+        return fallback;
+    };
+    let Some(current_manager) = first_string_field(
+        data,
+        &[
+            "current_manager_address",
+            "currentManagerAddress",
+            "manager_address",
+            "managerAddress",
+        ],
+    ) else {
+        return fallback;
+    };
+
+    let mut next_actions = vec![format!(
+        "pcl protocol-manager --project {project} --nonce --address {current_manager}"
+    )];
+    if data
+        .get("has_pending_transfer")
+        .or_else(|| data.get("hasPendingTransfer"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        next_actions.push(format!(
+            "pcl protocol-manager --project {project} --accept-calldata"
+        ));
+    } else {
+        next_actions.push(format!(
+            "pcl protocol-manager --project {project} --transfer-calldata --new-manager <manager-address>"
+        ));
+    }
+    next_actions
+}
+
+pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
+    name: "protocol-manager",
+    command: "pcl protocol-manager --project <ref> [--nonce --address <address>|--set|--clear|--transfer-calldata|--accept-calldata|--pending-transfer|--confirm-transfer]",
+    description: "Manage protocol manager transfers and calldata.",
+    output: "manager state, nonce, calldata, pending transfer, or mutation result",
+    output_policy: WorkflowOutputPolicy::MachineRaw,
+    legacy_examples: &[],
+    actions: &[
+        action!("pending_transfer", true, "GET", "/projects/{project}/protocol-manager/pending-transfer", "pcl protocol-manager --project <project-ref> --pending-transfer", required: ["--project"]),
+        action!("nonce", true, "GET", "/projects/{project}/protocol-manager/nonce", "pcl protocol-manager --project <project-ref> --nonce --address 0x...", required: ["--project", "--address"], optional: ["--chain-id"], query: {"address" => "<address>", "chain_id" => "<chain-id>"}),
+        action!("set", true, "POST", "/projects/{project}/protocol-manager", "pcl protocol-manager --project <project-ref> --set --body-template", required: ["--project"], body_template: "protocol_manager_set"),
+        action!("clear", true, "DELETE", "/projects/{project}/protocol-manager", "pcl protocol-manager --project <project-ref> --clear", required: ["--project"], body_template: "empty_object"),
+        action!("transfer_calldata", true, "GET", "/projects/{project}/protocol-manager/transfer-calldata", "pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...", required: ["--project", "--new-manager"], query: {"new_manager" => "<address>"}),
+        action!("accept_calldata", true, "GET", "/projects/{project}/protocol-manager/accept-calldata", "pcl protocol-manager --project <project-ref> --accept-calldata", required: ["--project"]),
+        action!("confirm_transfer", true, "POST", "/projects/{project}/protocol-manager/confirm-transfer", "pcl protocol-manager --project <project-ref> --confirm-transfer --body-template", required: ["--project"], body_template: "protocol_manager_confirm"),
+    ],
+};
