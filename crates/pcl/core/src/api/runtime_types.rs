@@ -55,7 +55,7 @@ pub(in crate::api) struct WorkflowCallResult {
 #[derive(Clone, Debug)]
 pub(in crate::api) struct WorkflowRequest {
     pub(in crate::api) method: HttpMethod,
-    pub(in crate::api) operation_id: Option<&'static str>,
+    pub(in crate::api) operation_id: &'static str,
     pub(in crate::api) path: String,
     pub(in crate::api) query: Vec<(String, String)>,
     pub(in crate::api) body: Option<String>,
@@ -65,34 +65,6 @@ pub(in crate::api) struct WorkflowRequest {
 }
 
 impl WorkflowRequest {
-    #[cfg(test)]
-    pub(in crate::api) fn get(
-        path: impl Into<String>,
-        require_auth: bool,
-        next_actions: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
-        Self::get_with_query(path, Vec::new(), require_auth, next_actions)
-    }
-
-    #[cfg(test)]
-    pub(in crate::api) fn get_with_query(
-        path: impl Into<String>,
-        query: Vec<(String, String)>,
-        require_auth: bool,
-        next_actions: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
-        Self {
-            method: HttpMethod::Get,
-            operation_id: None,
-            path: path.into(),
-            query,
-            body: None,
-            require_auth,
-            attach_auth: require_auth,
-            next_actions: next_actions.into_iter().map(Into::into).collect(),
-        }
-    }
-
     pub(in crate::api) fn with_optional_auth(mut self) -> Self {
         self.attach_auth = true;
         self
@@ -107,7 +79,7 @@ impl WorkflowRequest {
     ) -> Result<Self, ApiCommandError> {
         Ok(Self {
             method: operation.method,
-            operation_id: Some(operation.operation_id),
+            operation_id: operation.operation_id,
             path: operation.path()?,
             query,
             body,

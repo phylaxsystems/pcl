@@ -1050,7 +1050,7 @@ impl ApiArgs {
             &path,
             response.status.as_u16(),
             response.request_id.as_deref(),
-            request.operation_id,
+            Some(request.operation_id),
         );
         let mut retried_after_refresh = false;
         if response.status.as_u16() == 401
@@ -1070,7 +1070,7 @@ impl ApiArgs {
                 &path,
                 response.status.as_u16(),
                 response.request_id.as_deref(),
-                request.operation_id,
+                Some(request.operation_id),
             );
         }
         if !response.status.is_success() {
