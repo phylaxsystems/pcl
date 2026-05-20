@@ -80,10 +80,9 @@ toon_envelope workflows show incident-investigation
 toon_envelope schema list
 toon_envelope schema get incidents --action list_public
 toon_envelope api manifest
-toon_envelope api --dry-run --allow-unauthenticated call get '/health?limit=5'
-toon_envelope projects create --project-name demo --chain-id 1 --dry-run
-toon_envelope releases preview project-1 --body-template --dry-run
-toon_envelope access invite project-1 --body-template --dry-run
+toon_envelope projects create --body-template
+toon_envelope releases preview project-1 --body-template
+toon_envelope access invite project-1 --body-template
 toon_envelope completions bash
 toon_error build
 

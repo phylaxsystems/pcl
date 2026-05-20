@@ -3,11 +3,6 @@ use super::{
         ApiCommandError,
         AssertionsArgs,
         WorkflowRequest,
-        definitions::{
-            WorkflowActionDefinition,
-            WorkflowDefinition,
-            WorkflowOutputPolicy,
-        },
     },
     first_string_field,
     push_query,
@@ -127,14 +122,16 @@ pub(in crate::api) fn assertions_request(
     ))
 }
 
-pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
-    name: "assertions",
+workflow_definition!(
+    "assertions",
     command: "pcl assertions --project <ref> [--assertion-id <id>|--registered|--remove-info|--remove-calldata]",
     description: "List, inspect, and manage project assertion lifecycle state.",
     output: "assertion index/detail, registered assertions, or removal info/calldata",
-    output_policy: WorkflowOutputPolicy::MachineRaw,
-    legacy_examples: &[],
-    actions: &[
+    policy: MachineRaw,
+    legacy_examples: [
+
+    ],
+    actions: [
         action!("index", true, "GET", "/views/projects/{projectId}/assertions", "pcl assertions --project <project-ref>", required: ["--project"]),
         action!("detail", true, "GET", "/views/projects/{projectId}/assertions/{assertionId}", "pcl assertions --project <project-ref> --assertion-id <assertion-id>", required: ["--project", "--assertion-id"]),
         action!("adopter_lookup", false, "GET", "/assertions", "pcl assertions --adopter-address 0x... --network 1", required: ["--adopter-address"], optional: ["--network", "--environment", "--include-onchain-only"]),
@@ -142,4 +139,4 @@ pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
         action!("remove_info", true, "GET", "/projects/{project_id}/remove-assertions-info", "pcl assertions --project <project-ref> --remove-info", required: ["--project"]),
         action!("remove_calldata", true, "GET", "/projects/{project_id}/remove-assertions-calldata", "pcl assertions --project <project-ref> --remove-calldata", required: ["--project"]),
     ],
-};
+);

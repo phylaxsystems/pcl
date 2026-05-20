@@ -177,47 +177,17 @@ fn machine_help_requests_stay_structured() {
 }
 
 #[test]
-fn new_workflow_subcommands_parse_and_emit_structured_dry_runs() {
+fn new_workflow_subcommands_parse_and_emit_structured_templates() {
     for args in [
-        [
-            "--json",
-            "projects",
-            "create",
-            "--project-name",
-            "demo",
-            "--chain-id",
-            "1",
-            "--dry-run",
-        ]
-        .as_slice(),
-        [
-            "--json",
-            "projects",
-            "update",
-            "project-1",
-            "--field",
-            "github_url=https://github.com/org/repo",
-            "--dry-run",
-        ]
-        .as_slice(),
         [
             "--json",
             "releases",
             "preview",
             "project-1",
             "--body-template",
-            "--dry-run",
         ]
         .as_slice(),
-        [
-            "--json",
-            "access",
-            "invite",
-            "project-1",
-            "--body-template",
-            "--dry-run",
-        ]
-        .as_slice(),
+        ["--json", "access", "invite", "project-1", "--body-template"].as_slice(),
         ["--json", "releases", "deploy", "--body-template"].as_slice(),
         ["--json", "access", "invite", "--body-template"].as_slice(),
     ] {

@@ -278,7 +278,7 @@ impl DownloadArgs {
             } else {
                 skipped += 1;
                 if output_mode == OutputMode::Human {
-                    println!("  [skipped] {contract_name} — no source code available");
+                    println!("  [skipped] {contract_name} - no source code available");
                 }
             }
         }

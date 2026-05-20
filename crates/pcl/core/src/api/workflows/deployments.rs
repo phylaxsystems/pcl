@@ -4,11 +4,6 @@ use super::{
         DeploymentsArgs,
         HttpMethod,
         WorkflowRequest,
-        definitions::{
-            WorkflowActionDefinition,
-            WorkflowDefinition,
-            WorkflowOutputPolicy,
-        },
     },
     redact_large_artifacts,
     request_body,
@@ -42,15 +37,17 @@ pub(in crate::api) fn compact_deployment_data(data: &Value) -> Value {
     redact_large_artifacts(data)
 }
 
-pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
-    name: "deployments",
+workflow_definition!(
+    "deployments",
     command: "pcl deployments --project <ref> [--confirm --body-template]",
     description: "Inspect deployment state and confirm deployed assertions.",
     output: "deployment view or confirmation result",
-    output_policy: WorkflowOutputPolicy::MachineRawHumanCompactArtifacts,
-    legacy_examples: &[],
-    actions: &[
+    policy: MachineRawHumanCompactArtifacts,
+    legacy_examples: [
+
+    ],
+    actions: [
         action!("list", true, "GET", "/views/projects/{project}/deployments", "pcl deployments --project <project-ref>", required: ["--project"]),
         action!("confirm", true, "POST", "/projects/{project}/confirm-deployment", "pcl deployments --project <project-ref> --confirm --body-template", required: ["--project"], body_template: "deployment_confirmation"),
     ],
-};
+);

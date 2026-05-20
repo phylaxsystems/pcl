@@ -4,11 +4,6 @@ use super::{
         HttpMethod,
         TransfersArgs,
         WorkflowRequest,
-        definitions::{
-            WorkflowActionDefinition,
-            WorkflowDefinition,
-            WorkflowOutputPolicy,
-        },
     },
     first_string_field,
     request_body,
@@ -56,14 +51,16 @@ pub(in crate::api) fn transfers_next_actions(
     })
 }
 
-pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
-    name: "transfers",
+workflow_definition!(
+    "transfers",
     command: "pcl transfers [--pending|--transfer-id <id>|--reject --body-template]",
     description: "Inspect and reject protocol manager transfers.",
     output: "pending transfers, transfer detail, or reject result",
-    output_policy: WorkflowOutputPolicy::MachineRaw,
-    legacy_examples: &[],
-    actions: &[
+    policy: MachineRaw,
+    legacy_examples: [
+
+    ],
+    actions: [
         action!(
             "pending",
             true,
@@ -74,4 +71,4 @@ pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
         action!("detail", true, "GET", "/views/transfers/{transfer_id}", "pcl transfers --transfer-id <transfer-id>", required: ["--transfer-id"]),
         action!("reject", true, "POST", "/transfers/reject", "pcl transfers --reject --body-template", body_template: "transfer_reject"),
     ],
-};
+);

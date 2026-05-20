@@ -4,11 +4,6 @@ use super::{
         HttpMethod,
         ProjectsArgs,
         WorkflowRequest,
-        definitions::{
-            WorkflowActionDefinition,
-            WorkflowDefinition,
-            WorkflowOutputPolicy,
-        },
     },
     first_string_field,
     project_request_body,
@@ -153,18 +148,18 @@ pub(in crate::api) fn projects_request(
     ))
 }
 
-pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
-    name: "projects",
+workflow_definition!(
+    "projects",
     command: "pcl projects <list|mine|show|saved|create|update|delete|save|unsave|resolve|widget>",
     description: "List, inspect, create, update, save, unsave, resolve, widget, and delete projects.",
     output: "project explorer, your projects, project detail, saved projects, widget, or mutation result",
-    output_policy: WorkflowOutputPolicy::MachineRaw,
-    legacy_examples: &[
+    policy: MachineRaw,
+    legacy_examples: [
         "pcl projects --mine",
         "pcl projects --project <project-ref>",
         "pcl projects --create --project-name demo --chain-id 1",
     ],
-    actions: &[
+    actions: [
         action!(
             "explorer",
             false,
@@ -183,4 +178,4 @@ pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
         action!("resolve", false, "GET", "/projects/resolve/{project_ref}", "pcl projects resolve <project-ref>", required: ["<project-ref>"]),
         action!("widget", true, "GET", "/projects/{project_id}/widget", "pcl projects widget <project-ref>", required: ["<project-ref>"]),
     ],
-};
+);

@@ -359,17 +359,8 @@ mod tests {
         .unwrap();
         assert!(matches!(incidents.command, Commands::Incidents(_)));
 
-        let projects = Cli::try_parse_from([
-            "pcl",
-            "projects",
-            "--dry-run",
-            "--create",
-            "--project-name",
-            "demo",
-            "--chain-id",
-            "1",
-        ])
-        .unwrap();
+        let projects =
+            Cli::try_parse_from(["pcl", "projects", "--create", "--body-template"]).unwrap();
         assert!(matches!(projects.command, Commands::Projects(_)));
 
         let manager = Cli::try_parse_from([

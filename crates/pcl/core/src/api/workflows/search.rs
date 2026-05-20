@@ -3,11 +3,6 @@ use super::{
         ApiCommandError,
         SearchArgs,
         WorkflowRequest,
-        definitions::{
-            WorkflowActionDefinition,
-            WorkflowDefinition,
-            WorkflowOutputPolicy,
-        },
     },
     first_string_field,
     push_query,
@@ -129,14 +124,16 @@ pub(in crate::api) fn search_next_actions(data: &Value, fallback: Vec<String>) -
     fallback
 }
 
-pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
-    name: "search",
+workflow_definition!(
+    "search",
     command: "pcl search [--query <term>] [--stats] [--system-status] [--verified-contract --address <addr> --chain-id <id>]",
     description: "Search projects/contracts and inspect platform metadata.",
     output: "search results, stats, system status, health, whitelist, or verified contract data",
-    output_policy: WorkflowOutputPolicy::MachineRaw,
-    legacy_examples: &[],
-    actions: &[
+    policy: MachineRaw,
+    legacy_examples: [
+
+    ],
+    actions: [
         action!("query", false, "GET", "/search", "pcl search --query settler", optional: ["--query"]),
         action!("stats", false, "GET", "/stats", "pcl search --stats"),
         action!(
@@ -156,4 +153,4 @@ pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
         ),
         action!("verified_contract", false, "GET", "/web/verified-contract", "pcl search --verified-contract --address 0x... --chain-id 1", required: ["--address", "--chain-id"]),
     ],
-};
+);

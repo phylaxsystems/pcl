@@ -4,11 +4,6 @@ use super::{
         ApiCommandError,
         HttpMethod,
         WorkflowRequest,
-        definitions::{
-            WorkflowActionDefinition,
-            WorkflowDefinition,
-            WorkflowOutputPolicy,
-        },
     },
     body_or_empty,
     request_body,
@@ -124,18 +119,18 @@ pub(in crate::api) fn access_request(
     ))
 }
 
-pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
-    name: "access",
+workflow_definition!(
+    "access",
     command: "pcl access <members|invitations|pending|preview|accept|invite|resend|revoke|role|member|my-role>",
     description: "Manage project members, roles, and invitations.",
     output: "member lists, invitation lists, role data, or mutation results",
-    output_policy: WorkflowOutputPolicy::MachineRaw,
-    legacy_examples: &[
+    policy: MachineRaw,
+    legacy_examples: [
         "pcl access --project <project-ref> --members",
         "pcl access --project <project-ref> --invite --body-template",
         "pcl access --token <token> --preview",
     ],
-    actions: &[
+    actions: [
         action!("members", true, "GET", "/projects/{project}/members", "pcl access members <project-ref>", required: ["<project-ref>"]),
         action!("my_role", true, "GET", "/projects/{project}/my-role", "pcl access my-role <project-ref>", required: ["<project-ref>"]),
         action!("invitations", true, "GET", "/projects/{project}/invitations", "pcl access invitations <project-ref>", required: ["<project-ref>"]),
@@ -154,4 +149,4 @@ pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
         action!("preview", false, "GET", "/invitations/{token}/preview", "pcl access preview <token>", required: ["<token>"]),
         action!("accept", true, "POST", "/invitations/{token}/accept", "pcl access accept <token>", required: ["<token>"], body_template: "empty_object"),
     ],
-};
+);
