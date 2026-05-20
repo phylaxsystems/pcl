@@ -4,11 +4,6 @@ use super::{
         HttpMethod,
         ReleasesArgs,
         WorkflowRequest,
-        definitions::{
-            WorkflowActionDefinition,
-            WorkflowDefinition,
-            WorkflowOutputPolicy,
-        },
     },
     body_or_empty,
     first_string_field,
@@ -157,18 +152,18 @@ pub(in crate::api) fn releases_next_actions(
     })
 }
 
-pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
-    name: "releases",
+workflow_definition!(
+    "releases",
     command: "pcl releases <list|show|create|preview|deploy|remove|calldata|backtest-progress|retry-check>",
     description: "List, inspect, create, preview, deploy, check progress, retry failed checks, and remove releases.",
     output: "release data, diffs, check progress, deployment confirmations, or calldata",
-    output_policy: WorkflowOutputPolicy::MachineRaw,
-    legacy_examples: &[
+    policy: MachineRaw,
+    legacy_examples: [
         "pcl releases --project <project-ref>",
         "pcl releases --project <project-ref> --release-id <release-id>",
         "pcl releases --project <project-ref> --preview --body-file release.json",
     ],
-    actions: &[
+    actions: [
         action!("list", true, "GET", "/projects/{project}/releases", "pcl releases list <project-ref>", required: ["<project-ref>"]),
         action!("detail", true, "GET", "/projects/{project}/releases/{release_id}", "pcl releases show <project-ref> <release-id>", required: ["<project-ref>", "<release-id>"]),
         action!("preview", true, "POST", "/projects/{project}/releases/preview", "pcl releases preview <project-ref> --body-file release.json", required: ["<project-ref>"], body_template: "release"),
@@ -180,4 +175,4 @@ pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
         action!("remove_calldata", true, "GET", "/projects/{project}/releases/{release_id}/remove-calldata", "pcl releases calldata remove <project-ref> <release-id>", required: ["<project-ref>", "<release-id>"]),
         action!("remove", true, "POST", "/projects/{project}/releases/{release_id}/remove", "pcl releases remove <project-ref> <release-id> --body-template", required: ["<project-ref>", "<release-id>"], body_template: "release_remove"),
     ],
-};
+);

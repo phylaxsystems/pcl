@@ -4,11 +4,6 @@ use super::{
         HttpMethod,
         ProtocolManagerArgs,
         WorkflowRequest,
-        definitions::{
-            WorkflowActionDefinition,
-            WorkflowDefinition,
-            WorkflowOutputPolicy,
-        },
     },
     first_string_field,
     push_query,
@@ -153,14 +148,16 @@ pub(in crate::api) fn protocol_manager_next_actions(
     next_actions
 }
 
-pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
-    name: "protocol-manager",
+workflow_definition!(
+    "protocol-manager",
     command: "pcl protocol-manager --project <ref> [--nonce --address <address>|--set|--clear|--transfer-calldata|--accept-calldata|--pending-transfer|--confirm-transfer]",
     description: "Manage protocol manager transfers and calldata.",
     output: "manager state, nonce, calldata, pending transfer, or mutation result",
-    output_policy: WorkflowOutputPolicy::MachineRaw,
-    legacy_examples: &[],
-    actions: &[
+    policy: MachineRaw,
+    legacy_examples: [
+
+    ],
+    actions: [
         action!("pending_transfer", true, "GET", "/projects/{project}/protocol-manager/pending-transfer", "pcl protocol-manager --project <project-ref> --pending-transfer", required: ["--project"]),
         action!("nonce", true, "GET", "/projects/{project}/protocol-manager/nonce", "pcl protocol-manager --project <project-ref> --nonce --address 0x...", required: ["--project", "--address"], optional: ["--chain-id"], query: {"address" => "<address>", "chain_id" => "<chain-id>"}),
         action!("set", true, "POST", "/projects/{project}/protocol-manager", "pcl protocol-manager --project <project-ref> --set --body-template", required: ["--project"], body_template: "protocol_manager_set"),
@@ -169,4 +166,4 @@ pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
         action!("accept_calldata", true, "GET", "/projects/{project}/protocol-manager/accept-calldata", "pcl protocol-manager --project <project-ref> --accept-calldata", required: ["--project"]),
         action!("confirm_transfer", true, "POST", "/projects/{project}/protocol-manager/confirm-transfer", "pcl protocol-manager --project <project-ref> --confirm-transfer --body-template", required: ["--project"], body_template: "protocol_manager_confirm"),
     ],
-};
+);

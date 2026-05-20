@@ -4,11 +4,6 @@ use super::{
         HttpMethod,
         IntegrationsArgs,
         WorkflowRequest,
-        definitions::{
-            WorkflowActionDefinition,
-            WorkflowDefinition,
-            WorkflowOutputPolicy,
-        },
     },
     body_or_empty,
     request_body,
@@ -78,17 +73,19 @@ pub(in crate::api) fn integrations_request(
     ))
 }
 
-pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
-    name: "integrations",
+workflow_definition!(
+    "integrations",
     command: "pcl integrations --project <ref> --provider <slack|pagerduty> [--configure|--test|--delete]",
     description: "Manage Slack and PagerDuty integrations.",
     output: "integration status or mutation/test results",
-    output_policy: WorkflowOutputPolicy::MachineRaw,
-    legacy_examples: &[],
-    actions: &[
+    policy: MachineRaw,
+    legacy_examples: [
+
+    ],
+    actions: [
         action!("get", true, "GET", "/projects/{project}/integrations/{provider}", "pcl integrations --project <project-ref> --provider slack", required: ["--project", "--provider"]),
         action!("configure", true, "POST", "/projects/{project}/integrations/{provider}", "pcl integrations --project <project-ref> --provider slack --configure --body-template", required: ["--project", "--provider"], body_template: "slack|pagerduty"),
         action!("test", true, "POST", "/projects/{project}/integrations/{provider}/test", "pcl integrations --project <project-ref> --provider slack --test", required: ["--project", "--provider"], body_template: "slack|pagerduty"),
         action!("delete", true, "DELETE", "/projects/{project}/integrations/{provider}", "pcl integrations --project <project-ref> --provider slack --delete", required: ["--project", "--provider"]),
     ],
-};
+);

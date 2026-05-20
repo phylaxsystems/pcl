@@ -42,8 +42,8 @@ pub fn api_manifest() -> serde_json::Value {
             "login_command": "pcl auth login",
         },
         "safety": {
-            "dry_run": "Optional planning mode: add --dry-run to workflow commands before write flags, for example `pcl projects --dry-run --create ...`. Re-run without --dry-run only when ready to execute.",
-            "destructive_detection": "Request plans flag likely destructive paths, but raw api call does not enforce a confirmation gate."
+            "body_templates": "Use --body-template before mutation workflows that require nested payloads.",
+            "execution": "Workflow commands execute when invoked. Use typed flags first, then --field key=value or --body-file body.json for request bodies."
         },
         "product_surfaces": [
             {"command": "pcl --toon --llms | pcl llms --toon", "description": "Print the CLI-native LLM usage guide for agents."},

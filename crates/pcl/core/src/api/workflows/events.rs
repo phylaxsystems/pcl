@@ -3,11 +3,6 @@ use super::{
         ApiCommandError,
         EventsArgs,
         WorkflowRequest,
-        definitions::{
-            WorkflowActionDefinition,
-            WorkflowDefinition,
-            WorkflowOutputPolicy,
-        },
     },
     push_query,
     required_project_arg,
@@ -40,15 +35,17 @@ pub(in crate::api) fn events_request(
     Ok(request)
 }
 
-pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
-    name: "events",
+workflow_definition!(
+    "events",
     command: "pcl events --project <ref> [--audit-log]",
     description: "Inspect project events and audit logs.",
     output: "event or audit log data",
-    output_policy: WorkflowOutputPolicy::MachineRaw,
-    legacy_examples: &[],
-    actions: &[
+    policy: MachineRaw,
+    legacy_examples: [
+
+    ],
+    actions: [
         action!("events", true, "GET", "/views/projects/{project}/events", "pcl events --project <project-ref>", required: ["--project"], optional: ["--page", "--limit", "--environment"]),
         action!("audit_log", true, "GET", "/views/projects/{project}/audit-log", "pcl events --project <project-ref> --audit-log", required: ["--project"], optional: ["--page", "--limit", "--environment"]),
     ],
-};
+);

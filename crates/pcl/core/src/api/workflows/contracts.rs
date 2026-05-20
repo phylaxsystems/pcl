@@ -4,11 +4,6 @@ use super::{
         ContractsArgs,
         HttpMethod,
         WorkflowRequest,
-        definitions::{
-            WorkflowActionDefinition,
-            WorkflowDefinition,
-            WorkflowOutputPolicy,
-        },
     },
     first_string_field,
     push_query,
@@ -143,14 +138,16 @@ pub(in crate::api) fn contracts_next_actions(
     })
 }
 
-pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
-    name: "contracts",
+workflow_definition!(
+    "contracts",
     command: "pcl contracts [--project <ref>] [--adopter-id <id>] [--unassigned --manager <address>] [--create --body-template]",
     description: "List and manage project contracts and assertion adopters.",
     output: "contract views, adopter records, assignment results, or remove calldata",
-    output_policy: WorkflowOutputPolicy::MachineRaw,
-    legacy_examples: &[],
-    actions: &[
+    policy: MachineRaw,
+    legacy_examples: [
+
+    ],
+    actions: [
         action!(
             "list_all",
             true,
@@ -166,4 +163,4 @@ pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
         action!("remove", true, "DELETE", "/projects/{project}/{aa_address}", "pcl contracts --project <project-ref> --aa-address 0x... --remove", required: ["--project", "--aa-address"]),
         action!("remove_calldata", true, "GET", "/assertion_adopters/{aa_address}/remove-assertions-calldata", "pcl contracts --aa-address 0x... --remove-calldata --network 1 --assertion-id 0x...", required: ["--aa-address", "--assertion-id"], optional: ["--network", "--environment"], query: {"assertion_ids" => "<assertion-id>", "network" => "<chain-id>", "environment" => "production|staging"}),
     ],
-};
+);

@@ -1475,9 +1475,9 @@ fn llms_guide() -> Value {
             "logout": "pcl auth logout attempts remote logout first, then clears local credentials; pass --local to skip the remote request."
         },
         "mutation_safety": {
-            "order": ["--body-template", "--dry-run", "typed flags", "--field key=value", "--body-file body.json"],
+            "order": ["--body-template", "typed flags", "--field key=value", "--body-file body.json"],
             "body_templates": "Print payload contracts before writes; choose a concrete body variant when body_variants is returned.",
-            "dry_run": "Use dry-run request plans before destructive project, assertion, release, access, integration, transfer, or protocol-manager operations. Dry-run is a planner, not an enforced confirmation gate."
+            "execution": "Workflow commands execute when invoked; inspect body templates and use typed flags or body files deliberately."
         },
         "raw_api": {
             "policy": "For normal product work, use workflow_alternatives from pcl api list/inspect or a top-level workflow command. Raw api call is for debugging, OpenAPI parity checks, internal/service endpoints, browser-session bridge investigation, or new endpoint exploration before promotion.",
@@ -2208,6 +2208,13 @@ mod tests {
         );
         assert!(
             guide["mutation_safety"]["order"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|step| step == "--body-template")
+        );
+        assert!(
+            !guide["mutation_safety"]["order"]
                 .as_array()
                 .unwrap()
                 .iter()

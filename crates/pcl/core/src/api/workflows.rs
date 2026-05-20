@@ -9,7 +9,7 @@ macro_rules! action {
         $(, aliases: [$($alias:literal),* $(,)?])?
         $(,)?
     ) => {
-        WorkflowActionDefinition {
+        super::super::definitions::WorkflowActionDefinition {
             name: $name,
             auth: $auth,
             method: $method,
@@ -22,6 +22,29 @@ macro_rules! action {
             legacy_aliases: &[$($($alias),*)?],
             example: $example,
         }
+    };
+}
+
+macro_rules! workflow_definition {
+    (
+        $name:literal,
+        command: $command:literal,
+        description: $description:literal,
+        output: $output:literal,
+        policy: $policy:ident,
+        legacy_examples: [$($legacy:literal),* $(,)?],
+        actions: [$($action:expr),* $(,)?],
+    ) => {
+        pub(in crate::api) const DEFINITION: super::super::definitions::WorkflowDefinition =
+            super::super::definitions::WorkflowDefinition {
+                name: $name,
+                command: $command,
+                description: $description,
+                output: $output,
+                output_policy: super::super::definitions::WorkflowOutputPolicy::$policy,
+                legacy_examples: &[$($legacy),*],
+                actions: &[$($action),*],
+            };
     };
 }
 
@@ -93,6 +116,7 @@ use super::{
     ApiCommandError,
     HttpMethod,
     ProjectsArgs,
+    WorkflowOperation,
     WorkflowRequest,
     read_body,
 };
@@ -112,6 +136,7 @@ fn workflow_with_body(
 ) -> WorkflowRequest {
     WorkflowRequest {
         method,
+        operation_id: None,
         path: path.into(),
         query: Vec::new(),
         body,
@@ -119,6 +144,15 @@ fn workflow_with_body(
         attach_auth: require_auth,
         next_actions: next_actions.into_iter().map(Into::into).collect(),
     }
+}
+
+fn workflow_operation_with_body(
+    operation: WorkflowOperation,
+    require_auth: bool,
+    body: Option<String>,
+    next_actions: impl IntoIterator<Item = impl Into<String>>,
+) -> Result<WorkflowRequest, ApiCommandError> {
+    WorkflowRequest::from_operation(operation, Vec::new(), body, require_auth, next_actions)
 }
 
 fn body_or_empty(body: Option<String>) -> String {

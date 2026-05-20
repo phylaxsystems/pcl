@@ -4,11 +4,6 @@ use super::{
         ApiCommandError,
         HttpMethod,
         WorkflowRequest,
-        definitions::{
-            WorkflowActionDefinition,
-            WorkflowDefinition,
-            WorkflowOutputPolicy,
-        },
     },
     body_or_empty,
     request_body,
@@ -44,16 +39,18 @@ pub(in crate::api) fn account_request(
     ))
 }
 
-pub(in crate::api) const DEFINITION: WorkflowDefinition = WorkflowDefinition {
-    name: "account",
+workflow_definition!(
+    "account",
     command: "pcl account [--me|--accept-terms|--logout]",
     description: "Inspect authenticated web user state and perform onboarding actions.",
     output: "current user account state, terms acceptance result, or logout result",
-    output_policy: WorkflowOutputPolicy::MachineRaw,
-    legacy_examples: &[],
-    actions: &[
+    policy: MachineRaw,
+    legacy_examples: [
+
+    ],
+    actions: [
         action!("me", true, "GET", "/web/auth/me", "pcl account"),
         action!("accept_terms", true, "POST", "/web/auth/accept-terms", "pcl account --accept-terms", body_template: "empty_object"),
         action!("logout", true, "POST", "/web/auth/logout", "pcl account --logout", body_template: "empty_object"),
     ],
-};
+);
