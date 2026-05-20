@@ -2,10 +2,13 @@ use super::{
     super::{
         ApiCommandError,
         EventsArgs,
+        HttpMethod,
+        WorkflowOperation,
         WorkflowRequest,
     },
     push_query,
     required_project_arg,
+    workflow_operation_get,
 };
 
 pub(in crate::api) fn events_request(
@@ -13,17 +16,19 @@ pub(in crate::api) fn events_request(
 ) -> Result<WorkflowRequest, ApiCommandError> {
     let project = required_project_arg(args.project.as_deref(), "events", "--project")?;
     let mut request = if args.audit_log {
-        WorkflowRequest::get(
-            format!("/views/projects/{project}/audit-log"),
+        workflow_operation_get(
+            WorkflowOperation::new(HttpMethod::Get, "get_views_projects_project_id_audit_log")
+                .path_param("projectId", &project),
             true,
             vec![format!("pcl events --project {project}")],
-        )
+        )?
     } else {
-        WorkflowRequest::get(
-            format!("/views/projects/{project}/events"),
+        workflow_operation_get(
+            WorkflowOperation::new(HttpMethod::Get, "get_views_projects_project_id_events")
+                .path_param("projectId", &project),
             true,
             vec![format!("pcl events --project {project} --audit-log")],
-        )
+        )?
     };
     push_query(&mut request.query, "page", args.page);
     push_query(&mut request.query, "limit", args.limit);

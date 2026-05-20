@@ -2,11 +2,15 @@ use super::{
     super::{
         ApiCommandError,
         AssertionsArgs,
+        HttpMethod,
+        WorkflowOperation,
         WorkflowRequest,
     },
     first_string_field,
     push_query,
     required_project_arg,
+    workflow_operation_get,
+    workflow_operation_get_with_query,
 };
 use serde_json::Value;
 
@@ -48,24 +52,21 @@ pub(in crate::api) fn assertions_request(
     }
 
     if let Some(adopter_address) = &args.adopter_address {
-        let mut request = WorkflowRequest::get(
-            "/assertions",
-            false,
-            ["pcl contracts --project <project-ref>"],
-        );
-        push_query(&mut request.query, "adopter_address", Some(adopter_address));
-        push_query(&mut request.query, "network", args.network.as_deref());
+        let mut query = Vec::new();
+        push_query(&mut query, "adopter_address", Some(adopter_address));
+        push_query(&mut query, "network", args.network.as_deref());
+        push_query(&mut query, "environment", args.environment.as_deref());
         push_query(
-            &mut request.query,
-            "environment",
-            args.environment.as_deref(),
-        );
-        push_query(
-            &mut request.query,
+            &mut query,
             "include_onchain_only",
             args.include_onchain_only,
         );
-        return Ok(request);
+        return workflow_operation_get_with_query(
+            WorkflowOperation::new(HttpMethod::Get, "get_assertions"),
+            query,
+            false,
+            ["pcl contracts --project <project-ref>"],
+        );
     }
 
     let project_id =
@@ -77,49 +78,67 @@ pub(in crate::api) fn assertions_request(
     push_query(&mut query, "environment", args.environment.as_deref());
 
     if args.registered {
-        return Ok(WorkflowRequest::get(
-            format!("/projects/{project_id}/registered-assertions"),
+        return workflow_operation_get(
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "get_projects_project_id_registered_assertions",
+            )
+            .path_param("project_id", &project_id),
             true,
             vec![format!("pcl assertions --project-id {project_id}")],
-        ));
+        );
     }
     if args.remove_info {
-        return Ok(WorkflowRequest::get(
-            format!("/projects/{project_id}/remove-assertions-info"),
+        return workflow_operation_get(
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "get_projects_project_id_remove_assertions_info",
+            )
+            .path_param("project_id", &project_id),
             true,
             vec![format!(
                 "pcl assertions --project-id {project_id} --remove-calldata"
             )],
-        ));
+        );
     }
     if args.remove_calldata {
-        return Ok(WorkflowRequest::get(
-            format!("/projects/{project_id}/remove-assertions-calldata"),
+        return workflow_operation_get(
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "get_projects_project_id_remove_assertions_calldata",
+            )
+            .path_param("project_id", &project_id),
             true,
             vec![format!("pcl releases list {project_id}")],
-        ));
+        );
     }
 
     if let Some(assertion_id) = &args.assertion_id {
-        return Ok(WorkflowRequest::get_with_query(
-            format!("/views/projects/{project_id}/assertions/{assertion_id}"),
+        return workflow_operation_get_with_query(
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "get_views_projects_project_id_assertions_assertion_id",
+            )
+            .path_param("projectId", &project_id)
+            .path_param("assertionId", assertion_id),
             query,
             true,
             vec![format!(
                 "pcl incidents --project-id {project_id} --assertion-id {assertion_id}",
             )],
-        ));
+        );
     }
 
-    Ok(WorkflowRequest::get_with_query(
-        format!("/views/projects/{project_id}/assertions"),
+    workflow_operation_get_with_query(
+        WorkflowOperation::new(HttpMethod::Get, "get_views_projects_project_id_assertions")
+            .path_param("projectId", &project_id),
         query,
         true,
         vec![
             format!("pcl incidents --project-id {project_id} --limit 10"),
             format!("pcl assertions --project-id {project_id} --assertion-id <assertion-id>"),
         ],
-    ))
+    )
 }
 
 workflow_definition!(

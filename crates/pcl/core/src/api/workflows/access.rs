@@ -3,13 +3,15 @@ use super::{
         AccessArgs,
         ApiCommandError,
         HttpMethod,
+        WorkflowOperation,
         WorkflowRequest,
     },
     body_or_empty,
     request_body,
     required_arg,
     required_project_arg,
-    workflow_with_body,
+    workflow_operation_get,
+    workflow_operation_with_body,
 };
 
 pub(in crate::api) fn access_request(
@@ -17,106 +19,127 @@ pub(in crate::api) fn access_request(
 ) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     if args.pending {
-        return Ok(WorkflowRequest::get(
-            "/invitations/pending",
+        return workflow_operation_get(
+            WorkflowOperation::new(HttpMethod::Get, "get_invitations_pending"),
             true,
             ["pcl access accept <token>"],
-        ));
+        );
     }
     if args.accept || args.preview {
         let token = required_arg(args.token.as_deref(), "--token")?;
         if args.accept {
-            return Ok(workflow_with_body(
-                HttpMethod::Post,
-                format!("/invitations/{token}/accept"),
+            return workflow_operation_with_body(
+                WorkflowOperation::new(HttpMethod::Post, "post_invitations_token_accept")
+                    .path_param("token", &token),
                 true,
                 Some(body_or_empty(body)),
                 ["pcl projects mine"],
-            ));
+            );
         }
-        return Ok(WorkflowRequest::get(
-            format!("/invitations/{token}/preview"),
+        return workflow_operation_get(
+            WorkflowOperation::new(HttpMethod::Get, "get_invitations_token_preview")
+                .path_param("token", &token),
             false,
             vec![format!("pcl access accept {token}")],
-        ));
+        );
     }
     if let Some(token) = &args.token {
-        return Ok(WorkflowRequest::get(
-            format!("/invitations/{token}/preview"),
+        return workflow_operation_get(
+            WorkflowOperation::new(HttpMethod::Get, "get_invitations_token_preview")
+                .path_param("token", token),
             false,
             vec![format!("pcl access accept {token}")],
-        ));
+        );
     }
     let project = required_project_arg(args.project.as_deref(), "access", "--project")?;
     if args.my_role {
-        return Ok(WorkflowRequest::get(
-            format!("/projects/{project}/my-role"),
+        return workflow_operation_get(
+            WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id_my_role")
+                .path_param("project_id", &project),
             true,
             vec![format!("pcl access members {project}")],
-        ));
+        );
     }
     if args.invite {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            format!("/projects/{project}/invitations"),
+        return workflow_operation_with_body(
+            WorkflowOperation::new(HttpMethod::Post, "post_projects_project_id_invitations")
+                .path_param("project_id", &project),
             true,
             body,
             vec![format!("pcl access invitations {project}")],
-        ));
+        );
     }
     if args.resend || args.revoke {
         let invitation_id = required_arg(args.invitation_id.as_deref(), "--invitation-id")?;
         if args.resend {
-            return Ok(workflow_with_body(
-                HttpMethod::Post,
-                format!("/projects/{project}/invitations/{invitation_id}/resend"),
+            return workflow_operation_with_body(
+                WorkflowOperation::new(
+                    HttpMethod::Post,
+                    "post_projects_project_id_invitations_invitation_id_resend",
+                )
+                .path_param("project_id", &project)
+                .path_param("invitation_id", &invitation_id),
                 true,
                 Some(body_or_empty(body)),
                 vec![format!("pcl access invitations {project}")],
-            ));
+            );
         }
-        return Ok(workflow_with_body(
-            HttpMethod::Delete,
-            format!("/projects/{project}/invitations/{invitation_id}"),
+        return workflow_operation_with_body(
+            WorkflowOperation::new(
+                HttpMethod::Delete,
+                "delete_projects_project_id_invitations_invitation_id",
+            )
+            .path_param("project_id", &project)
+            .path_param("invitation_id", &invitation_id),
             true,
             body,
             vec![format!("pcl access invitations {project}")],
-        ));
+        );
     }
     if args.update_role || args.remove {
         let member_user_id = required_arg(args.member_user_id.as_deref(), "--member-user-id")?;
         if args.update_role {
-            return Ok(workflow_with_body(
-                HttpMethod::Patch,
-                format!("/projects/{project}/members/{member_user_id}"),
+            return workflow_operation_with_body(
+                WorkflowOperation::new(
+                    HttpMethod::Patch,
+                    "patch_projects_project_id_members_member_user_id",
+                )
+                .path_param("project_id", &project)
+                .path_param("member_user_id", &member_user_id),
                 true,
                 body,
                 vec![format!("pcl access members {project}")],
-            ));
+            );
         }
-        return Ok(workflow_with_body(
-            HttpMethod::Delete,
-            format!("/projects/{project}/members/{member_user_id}"),
+        return workflow_operation_with_body(
+            WorkflowOperation::new(
+                HttpMethod::Delete,
+                "delete_projects_project_id_members_member_user_id",
+            )
+            .path_param("project_id", &project)
+            .path_param("member_user_id", &member_user_id),
             true,
             body,
             vec![format!("pcl access members {project}")],
-        ));
+        );
     }
     if args.invitations {
-        return Ok(WorkflowRequest::get(
-            format!("/projects/{project}/invitations"),
+        return workflow_operation_get(
+            WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id_invitations")
+                .path_param("project_id", &project),
             true,
             vec![format!("pcl access invite {project} --body-template")],
-        ));
+        );
     }
-    Ok(WorkflowRequest::get(
-        format!("/projects/{project}/members"),
+    workflow_operation_get(
+        WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id_members")
+            .path_param("project_id", &project),
         true,
         vec![
             format!("pcl access my-role {project}"),
             format!("pcl access invitations {project}"),
         ],
-    ))
+    )
 }
 
 workflow_definition!(
