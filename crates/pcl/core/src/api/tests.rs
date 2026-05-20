@@ -36,6 +36,28 @@ fn test_api(api_url: impl AsRef<str>, allow_unauthenticated: bool) -> ApiArgs {
     }
 }
 
+fn test_workflow_request(
+    method: HttpMethod,
+    operation_id: &'static str,
+    require_auth: bool,
+    next_actions: impl IntoIterator<Item = impl Into<String>>,
+) -> WorkflowRequest {
+    test_workflow_request_for_operation(
+        WorkflowOperation::new(method, operation_id),
+        require_auth,
+        next_actions,
+    )
+}
+
+fn test_workflow_request_for_operation(
+    operation: WorkflowOperation,
+    require_auth: bool,
+    next_actions: impl IntoIterator<Item = impl Into<String>>,
+) -> WorkflowRequest {
+    WorkflowRequest::from_operation(operation, Vec::new(), None, require_auth, next_actions)
+        .unwrap()
+}
+
 fn valid_auth_config(access_token: &str, refresh_token: &str) -> CliConfig {
     auth_config(access_token, refresh_token, 2030, Some("agent@example.com"))
 }
@@ -876,7 +898,12 @@ async fn paginates_incident_list_workflows() {
         .create_async()
         .await;
     let api = test_api(server.url(), true);
-    let request = WorkflowRequest::get("/views/public/incidents", false, Vec::<String>::new());
+    let request = test_workflow_request(
+        HttpMethod::Get,
+        "get_views_public_incidents",
+        false,
+        Vec::<String>::new(),
+    );
     let mut config = CliConfig::default();
     let cli_args = CliArgs::default();
 
@@ -906,7 +933,12 @@ async fn paginates_incident_list_workflows() {
 #[tokio::test]
 async fn incident_workflow_pagination_rejects_zero_limit() {
     let api = test_api("https://app.phylax.systems", true);
-    let request = WorkflowRequest::get("/views/public/incidents", false, Vec::<String>::new());
+    let request = test_workflow_request(
+        HttpMethod::Get,
+        "get_views_public_incidents",
+        false,
+        Vec::<String>::new(),
+    );
     let mut config = CliConfig::default();
     let cli_args = CliArgs::default();
 
@@ -959,7 +991,12 @@ async fn authenticated_project_slug_resolution_attaches_auth() {
         .await;
     let api = test_api(server.url(), false);
     let mut config = valid_auth_config("access-token", "refresh-token");
-    let request = WorkflowRequest::get("/projects/private-slug", true, Vec::<String>::new());
+    let request = test_workflow_request_for_operation(
+        WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id")
+            .path_param("project_id", "private-slug"),
+        true,
+        Vec::<String>::new(),
+    );
 
     let result = api
         .call_workflow_result(
@@ -992,7 +1029,12 @@ async fn project_slug_resolution_errors_preserve_http_metadata() {
         .await;
     let api = test_api(server.url(), false);
     let mut config = valid_auth_config("access-token", "refresh-token");
-    let request = WorkflowRequest::get("/projects/missing-slug", true, Vec::<String>::new());
+    let request = test_workflow_request_for_operation(
+        WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id")
+            .path_param("project_id", "missing-slug"),
+        true,
+        Vec::<String>::new(),
+    );
 
     let error = api
         .call_workflow_result(
@@ -1084,7 +1126,12 @@ async fn public_workflows_do_not_attach_expired_stored_tokens() {
             &mut config,
             &CliArgs::default(),
             "search",
-            WorkflowRequest::get("/health", false, vec!["pcl search --health".to_string()]),
+            test_workflow_request(
+                HttpMethod::Get,
+                "get_health",
+                false,
+                vec!["pcl search --health".to_string()],
+            ),
             test_request_log_path(),
         )
         .await
@@ -1176,7 +1223,12 @@ async fn authenticated_workflow_retries_once_after_refresh_on_401() {
     };
     let mut config = valid_auth_config("old_access", "old_refresh");
     config.write_to_file(&cli_args).unwrap();
-    let request = WorkflowRequest::get("/web/auth/me", true, Vec::<String>::new());
+    let request = test_workflow_request(
+        HttpMethod::Get,
+        "get_web_auth_me",
+        true,
+        Vec::<String>::new(),
+    );
 
     let result = api
         .call_workflow_result(&mut config, &cli_args, &request, test_request_log_path())
@@ -1332,7 +1384,7 @@ fn builds_project_create_body_from_typed_flags() {
 
     assert_eq!(request.path, "/projects");
     assert_eq!(request.method.openapi_key(), "post");
-    assert_eq!(request.operation_id, Some("post_projects"));
+    assert_eq!(request.operation_id, "post_projects");
     assert_eq!(
         serde_json::from_str::<Value>(request.body.as_deref().unwrap()).unwrap(),
         json!({
@@ -1455,7 +1507,7 @@ fn saved_projects_require_and_send_user_id() {
     })
     .unwrap();
     assert_eq!(request.path, "/projects/saved");
-    assert_eq!(request.operation_id, Some("get_projects_saved"));
+    assert_eq!(request.operation_id, "get_projects_saved");
     assert_eq!(
         request.query,
         vec![("user_id".to_string(), "user-1".to_string())]
@@ -1472,7 +1524,7 @@ fn projects_mine_uses_authenticated_home_view() {
 
     assert_eq!(request.path, "/views/projects/home");
     assert_eq!(request.method.openapi_key(), "get");
-    assert_eq!(request.operation_id, Some("get_views_projects_home"));
+    assert_eq!(request.operation_id, "get_views_projects_home");
     assert!(request.require_auth);
     assert_eq!(
         request.next_actions,
@@ -1562,7 +1614,7 @@ fn release_deploy_calldata_requires_and_sends_signer_address() {
     );
     assert_eq!(
         request.operation_id,
-        Some("get_projects_project_id_releases_release_id_deploy_calldata")
+        "get_projects_project_id_releases_release_id_deploy_calldata"
     );
     assert_eq!(
         request.query,
@@ -1584,7 +1636,7 @@ fn release_check_progress_and_retry_are_first_class_workflows() {
     );
     assert_eq!(
         progress.operation_id,
-        Some("get_projects_project_id_releases_release_id_backtest_progress")
+        "get_projects_project_id_releases_release_id_backtest_progress"
     );
     assert!(progress.body.is_none());
 
@@ -1609,7 +1661,7 @@ fn release_check_progress_and_retry_are_first_class_workflows() {
     );
     assert_eq!(
         retry.operation_id,
-        Some("post_projects_project_id_releases_release_id_checks_check_id_retry")
+        "post_projects_project_id_releases_release_id_checks_check_id_retry"
     );
     assert_eq!(retry.method, HttpMethod::Post);
     assert_eq!(retry.body, Some(json!({}).to_string()));
@@ -1905,7 +1957,7 @@ async fn workflow_http_errors_include_response_body() {
         .await;
     let api = test_api(server.url(), true);
     let mut config = CliConfig::default();
-    let request = WorkflowRequest::get("/health", false, Vec::<String>::new());
+    let request = test_workflow_request(HttpMethod::Get, "get_health", false, Vec::<String>::new());
 
     let error = api
         .call_workflow_result(
@@ -1952,7 +2004,12 @@ async fn workflow_success_envelopes_include_request_provenance() {
         .create_async()
         .await;
     let api = test_api(server.url(), true);
-    let request = WorkflowRequest::get("/health", false, vec!["next".to_string()]);
+    let request = test_workflow_request(
+        HttpMethod::Get,
+        "get_health",
+        false,
+        vec!["next".to_string()],
+    );
     let mut config = CliConfig::default();
 
     let envelope = api
