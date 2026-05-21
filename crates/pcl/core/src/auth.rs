@@ -21,6 +21,7 @@ use color_eyre::Result;
 use colored::Colorize;
 use dapp_api_client::generated::client::{
     Client as GeneratedClient,
+    Error as GeneratedError,
     types::{
         GetCliAuthCodeResponse,
         GetCliAuthStatusResponse,
@@ -36,7 +37,9 @@ use pcl_common::args::{
     current_output_mode,
 };
 use reqwest::header::{
+    AUTHORIZATION,
     CONTENT_TYPE,
+    HeaderMap,
     HeaderName,
     HeaderValue,
     RETRY_AFTER,
@@ -76,17 +79,19 @@ pub struct RefreshOutcome {
     pub request_id: Option<String>,
 }
 
+struct RefreshErrorDetails {
+    status: Option<u16>,
+    request_id: Option<String>,
+    code: Option<String>,
+    message: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct RefreshResponse {
     token: String,
     refresh_token: String,
     expires_at: chrono::DateTime<chrono::Utc>,
     refresh_expires_at: chrono::DateTime<chrono::Utc>,
-}
-
-struct RefreshErrorDetails {
-    code: Option<String>,
-    message: Option<String>,
 }
 
 struct RefreshLock {
@@ -455,6 +460,24 @@ impl AuthCommand {
         GeneratedClient::new(base.as_str())
     }
 
+    fn authenticated_api_client(&self, access_token: &str) -> Result<GeneratedClient, String> {
+        let mut base = self.effective_auth_url();
+        base.set_path("/api/v1");
+
+        let mut headers = HeaderMap::new();
+        let auth_value = format!("Bearer {access_token}");
+        let auth_header = HeaderValue::from_str(&auth_value)
+            .map_err(|error| format!("Invalid auth token: {error}"))?;
+        headers.insert(AUTHORIZATION, auth_header);
+
+        let http_client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|error| format!("Failed to build HTTP client: {error}"))?;
+
+        Ok(GeneratedClient::new_with_client(base.as_str(), http_client))
+    }
+
     /// Request an authentication code from the server
     async fn request_auth_code(
         client: &GeneratedClient,
@@ -775,6 +798,9 @@ impl AuthCommand {
         auth_url: &url::Url,
         refresh_token: &str,
     ) -> Result<reqwest::Response, AuthError> {
+        // Preserve status, request id, and standard error bodies for token rotation.
+        // The generated method currently drops that metadata when error payloads do not
+        // deserialize as the success response type.
         let mut url = auth_url.clone();
         url.set_path("/api/v1/auth/refresh");
         url.set_query(None);
@@ -809,51 +835,44 @@ impl AuthCommand {
             });
         };
 
-        let mut url = self.effective_auth_url();
-        url.set_path("/api/v1/web/auth/logout");
-        url.set_query(None);
-        let response = reqwest::Client::new()
-            .post(url)
-            .bearer_auth(&auth.access_token)
-            .json(&json!({}))
-            .send()
-            .await;
-        let response = match response {
-            Ok(response) => response,
+        let client = match self.authenticated_api_client(&auth.access_token) {
+            Ok(client) => client,
             Err(error) => {
                 return json!({
                     "attempted": true,
                     "success": false,
                     "mode": "remote",
                     "endpoint": "/api/v1/web/auth/logout",
-                    "error": error.to_string(),
+                    "error": error,
+                });
+            }
+        };
+        let body = serde_json::Map::new();
+        let response = client.post_web_auth_logout(&body).await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                let details = generated_error_details(&error);
+                return json!({
+                    "attempted": true,
+                    "success": false,
+                    "mode": "remote",
+                    "endpoint": "/api/v1/web/auth/logout",
+                    "http_status": details.status,
+                    "request_id": details.request_id,
+                    "error_code": details.code,
+                    "error": details.message,
                 });
             }
         };
 
-        let status = response.status();
-        let request_id = request_id_from_headers(response.headers());
-        if status.is_success() {
-            return json!({
-                "attempted": true,
-                "success": true,
-                "mode": "remote",
-                "endpoint": "/api/v1/web/auth/logout",
-                "http_status": status.as_u16(),
-                "request_id": request_id,
-            });
-        }
-
-        let details = refresh_error_details(response).await;
         json!({
             "attempted": true,
-            "success": false,
+            "success": true,
             "mode": "remote",
             "endpoint": "/api/v1/web/auth/logout",
-            "http_status": status.as_u16(),
-            "request_id": request_id,
-            "error_code": details.code,
-            "error": details.message,
+            "http_status": response.status().as_u16(),
+            "request_id": request_id_from_headers(response.headers()),
         })
     }
 
@@ -1176,6 +1195,8 @@ async fn refresh_error_details(response: reqwest::Response) -> RefreshErrorDetai
         Ok(bytes) => bytes,
         Err(error) => {
             return RefreshErrorDetails {
+                status: None,
+                request_id: None,
                 code: None,
                 message: Some(error.to_string()),
             };
@@ -1185,6 +1206,8 @@ async fn refresh_error_details(response: reqwest::Response) -> RefreshErrorDetai
         && let Ok(body) = serde_json::from_slice::<Value>(&bytes)
     {
         return RefreshErrorDetails {
+            status: None,
+            request_id: None,
             code: body
                 .get("code")
                 .and_then(Value::as_str)
@@ -1197,8 +1220,28 @@ async fn refresh_error_details(response: reqwest::Response) -> RefreshErrorDetai
         };
     }
     RefreshErrorDetails {
+        status: None,
+        request_id: None,
         code: None,
         message: String::from_utf8(bytes.to_vec()).ok(),
+    }
+}
+
+fn generated_error_details<E>(error: &GeneratedError<E>) -> RefreshErrorDetails
+where
+    E: std::fmt::Debug,
+{
+    let status = error.status().map(|status| status.as_u16());
+    let request_id = match &error {
+        GeneratedError::ErrorResponse(response) => request_id_from_headers(response.headers()),
+        GeneratedError::UnexpectedResponse(response) => request_id_from_headers(response.headers()),
+        _ => None,
+    };
+    RefreshErrorDetails {
+        status,
+        request_id,
+        code: None,
+        message: Some(error.to_string()),
     }
 }
 

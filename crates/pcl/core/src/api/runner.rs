@@ -61,6 +61,8 @@ use super::{
     releases_next_actions,
     releases_request,
     request_body,
+    request_id_from_headers,
+    response_body_value,
     search_next_actions,
     search_request,
     split_path_and_inline_query,
@@ -82,6 +84,10 @@ use crate::{
     config::CliConfig,
     error::AuthError,
 };
+use dapp_api_client::generated::client::{
+    Client as GeneratedClient,
+    Error as GeneratedError,
+};
 use pcl_common::args::CliArgs;
 use reqwest::header::{
     HeaderMap,
@@ -93,6 +99,68 @@ use serde_json::{
     json,
 };
 use std::path::Path;
+
+async fn generated_error_to_api_error<E>(
+    method: &'static str,
+    path: &str,
+    error: GeneratedError<E>,
+) -> ApiCommandError
+where
+    E: serde::Serialize + std::fmt::Debug,
+{
+    match error {
+        GeneratedError::ErrorResponse(response) => {
+            let status = response.status().as_u16();
+            let request_id = request_id_from_headers(response.headers());
+            let body = serde_json::to_value(response.as_ref()).unwrap_or_else(|error| {
+                json!({
+                    "error": error.to_string(),
+                    "body": format!("{response:?}"),
+                })
+            });
+            ApiCommandError::HttpStatus {
+                method,
+                path: path.to_string(),
+                status,
+                request_id,
+                body: Box::new(body),
+            }
+        }
+        GeneratedError::UnexpectedResponse(response) => {
+            let status = response.status().as_u16();
+            let request_id = request_id_from_headers(response.headers());
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            let bytes = match response.bytes().await {
+                Ok(bytes) => bytes,
+                Err(error) => return ApiCommandError::Request(error),
+            };
+            ApiCommandError::HttpStatus {
+                method,
+                path: path.to_string(),
+                status,
+                request_id,
+                body: Box::new(response_body_value(&content_type, &bytes)),
+            }
+        }
+        GeneratedError::CommunicationError(error) => ApiCommandError::Request(error),
+        GeneratedError::InvalidUpgrade(error) => ApiCommandError::Request(error),
+        GeneratedError::ResponseBodyError(error) => ApiCommandError::Request(error),
+        GeneratedError::InvalidResponsePayload(bytes, error) => {
+            let body = response_body_value("application/json", &bytes);
+            ApiCommandError::InvalidWorkflow {
+                message: format!("Invalid generated API response payload: {error}; body={body}"),
+            }
+        }
+        GeneratedError::InvalidRequest(message) | GeneratedError::Custom(message) => {
+            ApiCommandError::InvalidWorkflow { message }
+        }
+    }
+}
 
 fn print_api_value(output: Value, json_output: bool) -> Result<(), ApiCommandError> {
     print_output(&output, json_output)
@@ -842,19 +910,11 @@ impl ApiArgs {
         &self,
         config: &CliConfig,
     ) -> Result<Value, ApiCommandError> {
-        let url = self.api_url("/openapi")?;
-        let request = self.http_client(config, false, false)?.get(url);
-        let response = read_api_response(request.send().await?).await?;
-        if !response.status.is_success() {
-            return Err(ApiCommandError::HttpStatus {
-                method: "GET",
-                path: "/openapi".to_string(),
-                status: response.status.as_u16(),
-                request_id: response.request_id,
-                body: Box::new(response.body),
-            });
+        let client = self.generated_client(config, false, false)?;
+        match client.get_openapi().await {
+            Ok(response) => Ok(response.into_inner()),
+            Err(error) => Err(generated_error_to_api_error("GET", "/openapi", error).await),
         }
-        Ok(response.body)
     }
 
     pub(in crate::api) async fn try_refresh_after_401(
@@ -1242,6 +1302,8 @@ impl ApiArgs {
         let operation = WorkflowOperation::new(HttpMethod::Get, "get_projects_resolve_project_ref")
             .path_param("project_ref", project_ref);
         let path = operation.path()?;
+        // Project resolution accepts slugs and must preserve 404 request IDs. The
+        // generated method currently loses that metadata for the shared error schema.
         let url = self.api_url(&path)?;
         let client = self.http_client(config, attach_auth, require_auth)?;
         let response = read_api_response(client.get(url).send().await?).await?;
@@ -1386,6 +1448,18 @@ impl ApiArgs {
             .default_headers(headers)
             .build()
             .map_err(ApiCommandError::Request)
+    }
+
+    pub(in crate::api) fn generated_client(
+        &self,
+        config: &CliConfig,
+        attach_auth: bool,
+        require_auth: bool,
+    ) -> Result<GeneratedClient, ApiCommandError> {
+        let mut base = self.api_url.clone();
+        base.set_path("/api/v1");
+        let http_client = self.http_client(config, attach_auth, require_auth)?;
+        Ok(GeneratedClient::new_with_client(base.as_str(), http_client))
     }
 
     pub(in crate::api) async fn resolve_operation_id(
