@@ -24,8 +24,7 @@ pub fn human_string(value: &Value) -> String {
 
     if let Some(error) = value.get("error") {
         render_human_error(&mut output, error);
-    } else if !render_human_display(&mut output, &value)
-        && !render_human_special(&mut output, &value)
+    } else if !render_human_special(&mut output, &value)
         && !render_human_collection(&mut output, &value)
         && let Some(data) = value.get("data")
     {
@@ -110,7 +109,6 @@ fn is_dangerous_or_internal_action(action: &str) -> bool {
         || trimmed.starts_with("pcl releases remove")
         || trimmed.starts_with("pcl access revoke")
         || trimmed.starts_with("pcl access member remove")
-        || trimmed.starts_with("pcl transfers reject")
         || action.starts_with("Read error.http.body")
         || action.starts_with("Use data.")
 }
@@ -120,7 +118,6 @@ fn is_item_placeholder_action(action: &str) -> bool {
         "<assertion-id>",
         "<incident-id>",
         "<release-id>",
-        "<transfer-id>",
         "<adopter-id>",
         "<job-id>",
         "<project-ref>",
@@ -170,137 +167,6 @@ struct HumanCollection<'a> {
     items: &'a [Value],
     pagination: Option<&'a Value>,
     meta: Option<&'a Value>,
-}
-
-fn render_human_display(output: &mut String, envelope: &Value) -> bool {
-    let Some(data) = envelope.get("data") else {
-        return false;
-    };
-    let Some(display) = data.get("_display").and_then(Value::as_object) else {
-        return false;
-    };
-    match display.get("kind").and_then(Value::as_str) {
-        Some("collection") => render_display_collection(output, data, display),
-        Some("detail") => render_display_detail(output, data, display),
-        Some("mutation") => render_display_mutation(output, data, display),
-        _ => false,
-    }
-}
-
-fn render_display_collection(
-    output: &mut String,
-    data: &Value,
-    display: &serde_json::Map<String, Value>,
-) -> bool {
-    let Some(collection_name) = display.get("collection").and_then(Value::as_str) else {
-        return false;
-    };
-    let Some(items) = data.get(collection_name).and_then(Value::as_array) else {
-        return false;
-    };
-    if let Some(title) = display.get("title").and_then(Value::as_str) {
-        output.push('\n');
-        output.push_str(title);
-        output.push('\n');
-    }
-    if items.is_empty() {
-        let empty = display
-            .get("empty")
-            .and_then(Value::as_str)
-            .unwrap_or("No results found.");
-        output.push_str(empty);
-        output.push('\n');
-        return true;
-    }
-    let columns = display
-        .get("columns")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(display_column)
-        .collect::<Vec<_>>();
-    if columns.is_empty() {
-        render_generic_table(output, items);
-        return true;
-    }
-    write!(output, "{:<3}", "#").expect("write to string");
-    for (label, _) in &columns {
-        write!(output, " {label:<22}").expect("write to string");
-    }
-    output.push('\n');
-    for (index, item) in items.iter().enumerate() {
-        write!(output, "{:<3}", index + 1).expect("write to string");
-        for (_, path) in &columns {
-            let value = value_at_path(item, path).map_or_else(String::new, human_cell);
-            write!(output, " {:<22}", pad(&value, 22)).expect("write to string");
-        }
-        output.push('\n');
-    }
-    true
-}
-
-fn render_display_detail(
-    output: &mut String,
-    data: &Value,
-    display: &serde_json::Map<String, Value>,
-) -> bool {
-    let fields = display
-        .get("fields")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(display_column)
-        .collect::<Vec<_>>();
-    if fields.is_empty() {
-        return false;
-    }
-    if let Some(title) = display.get("title").and_then(Value::as_str) {
-        output.push('\n');
-        output.push_str(title);
-        output.push('\n');
-    }
-    for (label, path) in fields {
-        if let Some(value) = value_at_path(data, &path) {
-            writeln!(output, "{}: {}", label, human_cell(value)).expect("write to string");
-        }
-    }
-    true
-}
-
-fn render_display_mutation(
-    output: &mut String,
-    data: &Value,
-    display: &serde_json::Map<String, Value>,
-) -> bool {
-    let Some(title) = display.get("title").and_then(Value::as_str) else {
-        return false;
-    };
-    output.push('\n');
-    output.push_str(title);
-    if let Some(summary) = display
-        .get("summary_path")
-        .and_then(Value::as_str)
-        .and_then(|path| value_at_path(data, path))
-        .map(human_cell)
-        .filter(|summary| !summary.is_empty())
-    {
-        output.push_str(": ");
-        output.push_str(&summary);
-    }
-    output.push('\n');
-    true
-}
-
-fn display_column(value: &Value) -> Option<(String, String)> {
-    Some((
-        value.get("label")?.as_str()?.to_string(),
-        value.get("path")?.as_str()?.to_string(),
-    ))
-}
-
-fn value_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
-    path.split('.')
-        .try_fold(value, |current, segment| current.get(segment))
 }
 
 fn render_human_error(output: &mut String, error: &Value) {
@@ -401,7 +267,6 @@ fn render_human_special(output: &mut String, envelope: &Value) -> bool {
         render_search_results,
         render_account_detail,
         render_deployment_state,
-        render_transfer_state,
         render_integration_status,
         render_protocol_manager_status,
     ] {
@@ -860,45 +725,13 @@ fn render_search_results(output: &mut String, data: &Value) -> bool {
     }
     if !contracts.is_empty() {
         output.push_str("\nContracts\n");
-        render_search_contracts_table(output, contracts);
+        render_generic_table(output, contracts);
     }
     if !assertions.is_empty() {
         output.push_str("\nAssertions\n");
         render_generic_table(output, assertions);
     }
     true
-}
-
-fn render_search_contracts_table(output: &mut String, items: &[Value]) {
-    writeln!(
-        output,
-        "{:<32} {:<10} {:<22} Project",
-        "Contract", "Network", "Address"
-    )
-    .expect("write to string");
-    for item in items {
-        let data = item.get("data").unwrap_or(item);
-        let name = data
-            .get("contract_name")
-            .and_then(Value::as_str)
-            .unwrap_or("-");
-        let network = data.get("network").and_then(Value::as_str).unwrap_or("-");
-        let address = data.get("address").and_then(Value::as_str).unwrap_or("-");
-        let project = data
-            .get("related_project_slug")
-            .or_else(|| data.get("related_project_id"))
-            .and_then(Value::as_str)
-            .unwrap_or("-");
-        writeln!(
-            output,
-            "{:<32} {:<10} {:<22} {}",
-            pad(name, 32),
-            pad(network, 10),
-            pad(address, 22),
-            project
-        )
-        .expect("write to string");
-    }
 }
 
 fn render_account_detail(output: &mut String, data: &Value) -> bool {
@@ -940,16 +773,6 @@ fn render_deployment_state(output: &mut String, data: &Value) -> bool {
     if let Some(meta) = data.get("_meta") {
         render_collection_meta(output, meta);
     }
-    true
-}
-
-fn render_transfer_state(output: &mut String, data: &Value) -> bool {
-    let (Some(incoming), Some(outgoing)) = (data.get("incoming"), data.get("outgoing")) else {
-        return false;
-    };
-    output.push_str("\nProtocol manager transfers\n");
-    write_transfer_counts(output, "Incoming", incoming);
-    write_transfer_counts(output, "Outgoing", outgoing);
     true
 }
 
@@ -1487,24 +1310,6 @@ fn write_network_list_for_value(output: &mut String, data: &Value) {
     writeln!(output, "Networks: {}", names.join(", ")).expect("write to string");
 }
 
-fn write_transfer_counts(output: &mut String, label: &str, value: &Value) {
-    let projects = value
-        .get("project_transfers")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
-    let contracts = value
-        .get("contract_transfers")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
-    writeln!(
-        output,
-        "{label}: {}, {}",
-        plural_count(projects, "project transfer"),
-        plural_count(contracts, "contract transfer")
-    )
-    .expect("write to string");
-}
-
 fn render_human_collection(output: &mut String, envelope: &Value) -> bool {
     let Some(collection) = find_human_collection(envelope) else {
         return false;
@@ -1615,7 +1420,6 @@ fn find_collection_in_value<'a>(
         "members",
         "invitations",
         "integrations",
-        "transfers",
         "requests",
         "no_hit",
         "no_2xx",
@@ -1653,7 +1457,6 @@ fn infer_collection_field(request_path: &str) -> String {
         "events",
         "members",
         "invitations",
-        "transfers",
     ] {
         if request_path.contains(field) {
             return field.to_string();
@@ -2161,7 +1964,7 @@ fn render_generic_table(output: &mut String, items: &[Value]) {
     }
     output.push('\n');
 
-    for (index, item) in items.iter().enumerate() {
+    for (index, item) in items.iter().map(table_item).enumerate() {
         write!(output, "{:<3}", index + 1).expect("write to string");
         for column in &columns {
             let value = item.get(column).map_or_else(String::new, human_cell);
@@ -2175,8 +1978,12 @@ fn generic_columns(items: &[Value]) -> Vec<String> {
     let mut columns = Vec::new();
     for preferred in [
         "name",
+        "project_name",
+        "contract_name",
         "title",
         "id",
+        "project_id",
+        "address",
         "status",
         "environment",
         "network",
@@ -2184,7 +1991,11 @@ fn generic_columns(items: &[Value]) -> Vec<String> {
         "createdAt",
         "updatedAt",
     ] {
-        if items.iter().any(|item| item.get(preferred).is_some()) {
+        if items
+            .iter()
+            .map(table_item)
+            .any(|item| item.get(preferred).is_some())
+        {
             columns.push(preferred.to_string());
         }
         if columns.len() == 4 {
@@ -2193,11 +2004,15 @@ fn generic_columns(items: &[Value]) -> Vec<String> {
     }
 
     if columns.is_empty()
-        && let Some(object) = items.first().and_then(Value::as_object)
+        && let Some(object) = items.first().map(table_item).and_then(Value::as_object)
     {
         columns.extend(object.keys().take(4).cloned());
     }
     columns
+}
+
+fn table_item(item: &Value) -> &Value {
+    item.get("data").unwrap_or(item)
 }
 
 fn human_cell(value: &Value) -> String {
