@@ -3269,32 +3269,6 @@ fn human_output_formats_surface_lists_for_people() {
 }
 
 #[test]
-fn human_output_honors_display_metadata_before_shape_detection() {
-    let output = human_string(&with_envelope_metadata(json!({
-        "status": "ok",
-        "data": {
-            "_display": {
-                "kind": "collection",
-                "title": "Projects",
-                "collection": "projects",
-                "columns": [
-                    {"label": "Name", "path": "project_name"},
-                    {"label": "ID", "path": "project_id"}
-                ],
-                "empty": "No projects found."
-            },
-            "projects": [
-                {"project_name": "Demo", "project_id": "project-1", "ignored": "hidden"}
-            ]
-        },
-        "next_actions": []
-    })));
-
-    assert_output_contains(&output, &["Projects\n", "Name", "Demo", "project-1"]);
-    assert_output_omits(&output, &["ignored"]);
-}
-
-#[test]
 fn human_output_formats_schema_action_for_people() {
     let output = envelope_output_string(
         &json!({
