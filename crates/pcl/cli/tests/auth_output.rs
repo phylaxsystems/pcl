@@ -1316,7 +1316,7 @@ fn api_manifest_json_exposes_agent_contract_fields() {
 }
 
 #[test]
-fn format_json_global_flag_emits_json_envelope_without_json_shorthand() {
+fn json_global_flag_emits_json_envelope() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     write_valid_auth_config(temp_dir.path());
 
@@ -1324,8 +1324,7 @@ fn format_json_global_flag_emits_json_envelope_without_json_shorthand() {
         .args([
             "--config-dir",
             temp_dir.path().to_str().expect("utf-8 temp path"),
-            "--format",
-            "json",
+            "--json",
             "doctor",
             "--offline",
         ])
@@ -1344,7 +1343,7 @@ fn format_json_global_flag_emits_json_envelope_without_json_shorthand() {
 }
 
 #[test]
-fn format_toon_global_flag_emits_default_toon_envelope() {
+fn toon_global_flag_emits_default_toon_envelope() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     write_valid_auth_config(temp_dir.path());
 
@@ -1352,8 +1351,7 @@ fn format_toon_global_flag_emits_default_toon_envelope() {
         .args([
             "--config-dir",
             temp_dir.path().to_str().expect("utf-8 temp path"),
-            "--format",
-            "toon",
+            "--toon",
             "doctor",
             "--offline",
         ])
@@ -1374,9 +1372,19 @@ fn format_toon_global_flag_emits_default_toon_envelope() {
 }
 
 #[test]
-fn parser_errors_honor_format_json_before_successful_parse() {
+fn parser_errors_honor_json_before_successful_parse() {
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
-        .args(["--format", "json", "api", "projects", "--save", "--unsave"])
+        .args([
+            "--json",
+            "api",
+            "call",
+            "get",
+            "/health",
+            "--body",
+            "{}",
+            "--body-file",
+            "body.json",
+        ])
         .output()
         .expect("run pcl parser error");
 
@@ -1394,7 +1402,7 @@ fn parser_errors_honor_format_json_before_successful_parse() {
 }
 
 #[test]
-fn api_call_accepts_inline_query_string_under_format_json() {
+fn api_call_accepts_inline_query_string_under_json() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     let mut server = mockito::Server::new();
     let health = server
@@ -1411,8 +1419,7 @@ fn api_call_accepts_inline_query_string_under_format_json() {
         .args([
             "--config-dir",
             temp_dir.path().to_str().expect("utf-8 temp path"),
-            "--format",
-            "json",
+            "--json",
             "api",
             "--api-url",
             &server.url(),

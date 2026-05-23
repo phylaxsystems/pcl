@@ -1,25 +1,22 @@
 macro_rules! action {
     (
-        $name:literal, $auth:literal, $method:literal, $path:literal, $example:literal
+        $name:literal, $auth:literal, $operation_id:literal, $example:literal
         $(, required: [$($required:literal),* $(,)?])?
         $(, optional: [$($optional:literal),* $(,)?])?
         $(, body_template: $body_template:literal)?
         $(, required_body: [$($required_body:literal),* $(,)?])?
         $(, query: {$($query_key:literal => $query_value:literal),* $(,)?})?
-        $(, aliases: [$($alias:literal),* $(,)?])?
         $(,)?
     ) => {
         super::super::definitions::WorkflowActionDefinition {
             name: $name,
             auth: $auth,
-            method: $method,
-            path: $path,
+            operation_id: $operation_id,
             required_flags: &[$($($required),*)?],
             optional_flags: &[$($($optional),*)?],
             required_body_fields: &[$($($required_body),*)?],
             body_template: optional_literal!($($body_template)?),
             query: &[$($(($query_key, $query_value)),*)?],
-            legacy_aliases: &[$($($alias),*)?],
             example: $example,
         }
     };
@@ -32,7 +29,6 @@ macro_rules! workflow_definition {
         description: $description:literal,
         output: $output:literal,
         policy: $policy:ident,
-        legacy_examples: [$($legacy:literal),* $(,)?],
         actions: [$($action:expr),* $(,)?],
     ) => {
         pub(in crate::api) const DEFINITION: super::super::definitions::WorkflowDefinition =
@@ -42,7 +38,6 @@ macro_rules! workflow_definition {
                 description: $description,
                 output: $output,
                 output_policy: super::super::definitions::WorkflowOutputPolicy::$policy,
-                legacy_examples: &[$($legacy),*],
                 actions: &[$($action),*],
             };
     };
@@ -69,7 +64,6 @@ pub(in crate::api) mod projects;
 pub(in crate::api) mod protocol_manager;
 pub(in crate::api) mod releases;
 pub(in crate::api) mod search;
-pub(in crate::api) mod transfers;
 
 pub(super) use access::access_request;
 pub(super) use account::account_request;
@@ -106,10 +100,6 @@ pub(super) use releases::{
 pub(super) use search::{
     search_next_actions,
     search_request,
-};
-pub(super) use transfers::{
-    transfers_next_actions,
-    transfers_request,
 };
 
 use super::{
@@ -287,30 +277,6 @@ fn required_project_arg(
             format!("pcl {command} --help"),
         ],
     )
-}
-
-pub(super) fn project_segment(path: &str) -> Option<(&'static str, &str, &str)> {
-    if let Some(rest) = path.strip_prefix("/projects/") {
-        let (segment, suffix) = split_first_segment(rest);
-        if matches!(segment, "saved" | "resolve") {
-            return None;
-        }
-        return Some(("/projects/", segment, suffix));
-    }
-    if let Some(rest) = path.strip_prefix("/views/projects/") {
-        let (segment, suffix) = split_first_segment(rest);
-        if segment == "home" {
-            return None;
-        }
-        return Some(("/views/projects/", segment, suffix));
-    }
-    None
-}
-
-fn split_first_segment(path: &str) -> (&str, &str) {
-    path.split_once('/').map_or((path, ""), |(segment, _rest)| {
-        (segment, &path[segment.len()..])
-    })
 }
 
 pub(super) fn first_string_field(value: &Value, keys: &[&str]) -> Option<String> {

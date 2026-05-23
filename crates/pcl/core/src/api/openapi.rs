@@ -614,7 +614,9 @@ fn manifest_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> 
     let mut best_score = None;
     for definition in workflow_definitions() {
         for action in definition.actions {
-            let Some(score) = manifest_action_match_score(action.method, action.path, method, path)
+            let action_method = action.method();
+            let action_path = action.path();
+            let Some(score) = manifest_action_match_score(action_method, action_path, method, path)
             else {
                 continue;
             };
@@ -642,12 +644,12 @@ fn manifest_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> 
 }
 
 fn manifest_action_match_score(
-    action_method: &str,
+    action_method: HttpMethod,
     action_path: &str,
     method: HttpMethod,
     path: &str,
 ) -> Option<usize> {
-    let method_matches = action_method.eq_ignore_ascii_case(method.as_str());
+    let method_matches = action_method == method;
     if !method_matches {
         return None;
     }
@@ -771,30 +773,6 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
                 "trace",
                 "pcl incidents --incident-id <incident-id> --tx-id <tx-id>",
                 "Incident traces use the normalized incident view endpoint.",
-            )
-        }
-        (HttpMethod::Get, "/projects/{}/submitted-assertions") => {
-            vec![
-                special_workflow(
-                    "releases",
-                    "list",
-                    "pcl releases list <project-ref>",
-                    "Submitted assertions were superseded by release and registered-assertion workflows.",
-                ),
-                special_workflow(
-                    "assertions",
-                    "registered",
-                    "pcl assertions --project <project-ref> --registered",
-                    "Submitted assertions were superseded by release and registered-assertion workflows.",
-                ),
-            ]
-        }
-        (HttpMethod::Post, "/projects/{}/submitted-assertions") => {
-            single_special_workflow(
-                "releases",
-                "create",
-                "pcl apply --json",
-                "Submitting assertions is now represented by creating a release through pcl apply or pcl releases.",
             )
         }
         _ => Vec::new(),
@@ -1206,7 +1184,6 @@ pub(super) fn public_raw_call_path(method: HttpMethod, path: &str) -> bool {
                 || path == "/projects"
                 || path == "/public/incidents"
                 || path == "/stats"
-                || path == "/system-status"
                 || path == "/search"
                 || path == "/assertions"
                 || path == "/views/projects"
@@ -1386,7 +1363,6 @@ fn is_dangerous_workflow_example(example: &str) -> bool {
         || action.starts_with("pcl releases remove")
         || action.starts_with("pcl access revoke")
         || action.starts_with("pcl access member remove")
-        || action.starts_with("pcl transfers reject")
 }
 
 pub(super) fn synthetic_operation_id(method: HttpMethod, path: &str) -> String {

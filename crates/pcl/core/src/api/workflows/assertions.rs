@@ -43,14 +43,6 @@ pub(in crate::api) fn assertions_next_actions(
 pub(in crate::api) fn assertions_request(
     args: &AssertionsArgs,
 ) -> Result<WorkflowRequest, ApiCommandError> {
-    if args.submit || args.submitted {
-        return Err(ApiCommandError::InvalidWorkflow {
-            message:
-                "Submitted assertions have been removed from the API; use releases and registered assertions instead"
-                    .to_string(),
-        });
-    }
-
     if let Some(adopter_address) = &args.adopter_address {
         let mut query = Vec::new();
         push_query(&mut query, "adopter_address", Some(adopter_address));
@@ -78,12 +70,17 @@ pub(in crate::api) fn assertions_request(
     push_query(&mut query, "environment", args.environment.as_deref());
 
     if args.registered {
-        return workflow_operation_get(
-            WorkflowOperation::new(
-                HttpMethod::Get,
-                "get_projects_project_id_registered_assertions",
-            )
-            .path_param("project_id", &project_id),
+        let mut registered_query = Vec::new();
+        push_query(
+            &mut registered_query,
+            "environment",
+            args.environment.as_deref(),
+        );
+        return WorkflowRequest::from_operation(
+            WorkflowOperation::new(HttpMethod::Get, "get_views_projects_project_id_assertions")
+                .path_param("projectId", &project_id),
+            registered_query,
+            None,
             true,
             vec![format!("pcl assertions --project-id {project_id}")],
         );
@@ -147,15 +144,12 @@ workflow_definition!(
     description: "List, inspect, and manage project assertion lifecycle state.",
     output: "assertion index/detail, registered assertions, or removal info/calldata",
     policy: MachineRaw,
-    legacy_examples: [
-
-    ],
     actions: [
-        action!("index", true, "GET", "/views/projects/{projectId}/assertions", "pcl assertions --project <project-ref>", required: ["--project"]),
-        action!("detail", true, "GET", "/views/projects/{projectId}/assertions/{assertionId}", "pcl assertions --project <project-ref> --assertion-id <assertion-id>", required: ["--project", "--assertion-id"]),
-        action!("adopter_lookup", false, "GET", "/assertions", "pcl assertions --adopter-address 0x... --network 1", required: ["--adopter-address"], optional: ["--network", "--environment", "--include-onchain-only"]),
-        action!("registered", true, "GET", "/projects/{project_id}/registered-assertions", "pcl assertions --project <project-ref> --registered", required: ["--project"]),
-        action!("remove_info", true, "GET", "/projects/{project_id}/remove-assertions-info", "pcl assertions --project <project-ref> --remove-info", required: ["--project"]),
-        action!("remove_calldata", true, "GET", "/projects/{project_id}/remove-assertions-calldata", "pcl assertions --project <project-ref> --remove-calldata", required: ["--project"]),
+        action!("index", true, "get_views_projects_project_id_assertions", "pcl assertions --project <project-ref>", required: ["--project"]),
+        action!("detail", true, "get_views_projects_project_id_assertions_assertion_id", "pcl assertions --project <project-ref> --assertion-id <assertion-id>", required: ["--project", "--assertion-id"]),
+        action!("adopter_lookup", false, "get_assertions", "pcl assertions --adopter-address 0x... --network 1", required: ["--adopter-address"], optional: ["--network", "--environment", "--include-onchain-only"]),
+        action!("registered", true, "get_views_projects_project_id_assertions", "pcl assertions --project <project-ref> --registered", required: ["--project"]),
+        action!("remove_info", true, "get_projects_project_id_remove_assertions_info", "pcl assertions --project <project-ref> --remove-info", required: ["--project"]),
+        action!("remove_calldata", true, "get_projects_project_id_remove_assertions_calldata", "pcl assertions --project <project-ref> --remove-calldata", required: ["--project"]),
     ],
 );

@@ -7,12 +7,18 @@
 // Import modules from the build directory
 #[path = "build/codegen.rs"]
 mod codegen;
+#[path = "build/spec_transform.rs"]
+mod spec_transform;
 
 #[cfg(feature = "regenerate")]
 #[path = "build/regenerate.rs"]
 mod regenerate;
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=FORCE_SPEC_REGENERATE");
+    println!("cargo:rerun-if-env-changed=DAPP_ENV");
+    println!("cargo:rerun-if-env-changed=DAPP_OPENAPI_URL");
+
     #[cfg(feature = "regenerate")]
     regenerate_client();
 

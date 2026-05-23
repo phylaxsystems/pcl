@@ -2,6 +2,7 @@ use crate::{
     DEFAULT_PLATFORM_URL,
     api::{
         envelope_output_string,
+        generated_operation_path,
         request_id_from_headers,
         with_envelope_metadata,
     },
@@ -23,8 +24,12 @@ use dapp_api_client::generated::client::{
     Client as GeneratedClient,
     Error as GeneratedError,
     types::{
+        ApiError as GeneratedApiErrorBody,
         GetCliAuthCodeResponse,
         GetCliAuthStatusResponse,
+        PostAuthRefreshBody,
+        PostAuthRefreshBodyRefreshToken,
+        PostAuthRefreshResponse,
     },
 };
 use indicatif::{
@@ -40,11 +45,9 @@ use reqwest::header::{
     AUTHORIZATION,
     CONTENT_TYPE,
     HeaderMap,
-    HeaderName,
     HeaderValue,
     RETRY_AFTER,
 };
-use serde::Deserialize;
 use serde_json::{
     Value,
     json,
@@ -84,14 +87,6 @@ struct RefreshErrorDetails {
     request_id: Option<String>,
     code: Option<String>,
     message: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct RefreshResponse {
-    token: String,
-    refresh_token: String,
-    expires_at: chrono::DateTime<chrono::Utc>,
-    refresh_expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 struct RefreshLock {
@@ -195,6 +190,13 @@ pub enum AuthSubcommands {
         after_help = "Example: pcl auth status"
     )]
     Status,
+}
+
+fn generated_api_endpoint(operation_id: &str) -> String {
+    generated_operation_path(operation_id, &[]).map_or_else(
+        || format!("<generated:{operation_id}>"),
+        |path| format!("/api/v1{path}"),
+    )
 }
 
 impl AuthCommand {
@@ -455,7 +457,11 @@ impl AuthCommand {
 
     // Helper to create a new API client with the base URL set
     fn api_client(&self) -> GeneratedClient {
-        let mut base = self.effective_auth_url();
+        Self::api_client_for_url(&self.effective_auth_url())
+    }
+
+    fn api_client_for_url(auth_url: &url::Url) -> GeneratedClient {
+        let mut base = auth_url.clone();
         base.set_path("/api/v1");
         GeneratedClient::new(base.as_str())
     }
@@ -794,28 +800,6 @@ impl AuthCommand {
             .map_err(AuthError::from)
     }
 
-    async fn refresh_request(
-        auth_url: &url::Url,
-        refresh_token: &str,
-    ) -> Result<reqwest::Response, AuthError> {
-        // Preserve status, request id, and standard error bodies for token rotation.
-        // The generated method currently drops that metadata when error payloads do not
-        // deserialize as the success response type.
-        let mut url = auth_url.clone();
-        url.set_path("/api/v1/auth/refresh");
-        url.set_query(None);
-        reqwest::Client::new()
-            .post(url)
-            .header(
-                HeaderName::from_static("api-version"),
-                HeaderValue::from_static("1"),
-            )
-            .json(&json!({ "refresh_token": refresh_token }))
-            .send()
-            .await
-            .map_err(|error| AuthError::RefreshRequestFailed(error.to_string()))
-    }
-
     async fn remote_logout(&self, config: &CliConfig, local_only: bool) -> Value {
         if local_only {
             return json!({
@@ -838,15 +822,17 @@ impl AuthCommand {
         let client = match self.authenticated_api_client(&auth.access_token) {
             Ok(client) => client,
             Err(error) => {
+                let endpoint = generated_api_endpoint("post_web_auth_logout");
                 return json!({
                     "attempted": true,
                     "success": false,
                     "mode": "remote",
-                    "endpoint": "/api/v1/web/auth/logout",
+                    "endpoint": endpoint,
                     "error": error,
                 });
             }
         };
+        let endpoint = generated_api_endpoint("post_web_auth_logout");
         let body = serde_json::Map::new();
         let response = client.post_web_auth_logout(&body).await;
         let response = match response {
@@ -857,7 +843,7 @@ impl AuthCommand {
                     "attempted": true,
                     "success": false,
                     "mode": "remote",
-                    "endpoint": "/api/v1/web/auth/logout",
+                    "endpoint": endpoint,
                     "http_status": details.status,
                     "request_id": details.request_id,
                     "error_code": details.code,
@@ -870,7 +856,7 @@ impl AuthCommand {
             "attempted": true,
             "success": true,
             "mode": "remote",
-            "endpoint": "/api/v1/web/auth/logout",
+            "endpoint": endpoint,
             "http_status": response.status().as_u16(),
             "request_id": request_id_from_headers(response.headers()),
         })
@@ -1041,77 +1027,87 @@ pub async fn refresh_stored_auth(
     let wallet_address = auth.wallet_address;
     let email = auth.email.clone();
     let refresh_token = auth.refresh_token.clone();
-    let response = AuthCommand::refresh_request(auth_url, &refresh_token).await?;
-    let status = response.status();
-    let request_id = request_id_from_headers(response.headers());
+    let refresh_token =
+        PostAuthRefreshBodyRefreshToken::try_from(refresh_token.as_str()).map_err(|error| {
+            AuthError::InvalidAuthData(format!("Invalid stored refresh token: {error}"))
+        })?;
+    let body = PostAuthRefreshBody { refresh_token };
+    let client = AuthCommand::api_client_for_url(auth_url);
 
-    match status.as_u16() {
-        200 => {
-            let body = response
-                .json::<RefreshResponse>()
-                .await
-                .map_err(|error| AuthError::InvalidAuthData(error.to_string()))?;
+    match client.post_auth_refresh(&body).await {
+        Ok(response) => {
+            let request_id = request_id_from_headers(response.headers());
             persist_refreshed_auth(
                 config,
                 cli_args,
-                body,
+                response.into_inner(),
                 user_id,
                 wallet_address,
                 email,
                 request_id,
             )
         }
-        401 => {
-            let details = refresh_error_details(response).await;
+        Err(error) => handle_refresh_error(config, cli_args, error).await,
+    }
+}
+
+async fn handle_refresh_error(
+    config: &mut CliConfig,
+    cli_args: &CliArgs,
+    error: GeneratedError<GeneratedApiErrorBody>,
+) -> Result<RefreshOutcome, AuthError> {
+    let status = error.status().map(|status| status.as_u16());
+    let retry_after_seconds = generated_error_retry_after(&error);
+    let details = generated_refresh_error_details(error).await;
+    let request_id = details.request_id;
+    match status {
+        Some(401) => {
             config.auth = None;
             config
                 .write_to_file(cli_args)
                 .map_err(AuthError::ConfigError)?;
             Err(AuthError::RefreshRejected {
-                status: status.as_u16(),
+                status: 401,
                 code: details.code,
                 request_id,
                 message: details.message,
             })
         }
-        404 => {
-            let details = refresh_error_details(response).await;
+        Some(404) => {
             Err(AuthError::RefreshEndpointNotFound {
                 request_id,
                 message: details.message,
             })
         }
-        429 => {
-            let retry_after_seconds = response
-                .headers()
-                .get(RETRY_AFTER)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse::<u64>().ok());
-            let details = refresh_error_details(response).await;
+        Some(429) => {
             Err(AuthError::RefreshRateLimited {
                 retry_after_seconds,
                 request_id,
                 message: details.message,
             })
         }
-        500..=599 => {
-            let details = refresh_error_details(response).await;
+        Some(status @ 500..=599) => {
             Err(AuthError::RefreshServerError {
-                status: status.as_u16(),
+                status,
                 request_id,
                 message: details.message,
             })
         }
-        _ => {
-            let details = refresh_error_details(response).await;
+        Some(status) => {
             Err(AuthError::InvalidAuthData(format!(
-                "Refresh endpoint returned HTTP {}{}",
-                status.as_u16(),
+                "Refresh endpoint returned HTTP {status}{}",
                 details
                     .message
                     .map(|message| format!(": {message}"))
                     .unwrap_or_default()
             )))
+        }
+        None => {
+            Err(AuthError::RefreshRequestFailed(
+                details
+                    .message
+                    .unwrap_or_else(|| "Refresh request failed".to_string()),
+            ))
         }
     }
 }
@@ -1119,7 +1115,7 @@ pub async fn refresh_stored_auth(
 fn persist_refreshed_auth(
     config: &mut CliConfig,
     cli_args: &CliArgs,
-    body: RefreshResponse,
+    body: PostAuthRefreshResponse,
     user_id: Option<Uuid>,
     wallet_address: Option<Address>,
     email: Option<String>,
@@ -1225,6 +1221,79 @@ async fn refresh_error_details(response: reqwest::Response) -> RefreshErrorDetai
         code: None,
         message: String::from_utf8(bytes.to_vec()).ok(),
     }
+}
+
+async fn generated_refresh_error_details(
+    error: GeneratedError<GeneratedApiErrorBody>,
+) -> RefreshErrorDetails {
+    match error {
+        GeneratedError::ErrorResponse(response) => {
+            let status = Some(response.status().as_u16());
+            let request_id = request_id_from_headers(response.headers());
+            let body = response.into_inner();
+            RefreshErrorDetails {
+                status,
+                request_id,
+                code: body.code,
+                message: Some(body.error),
+            }
+        }
+        GeneratedError::UnexpectedResponse(response) => {
+            let status = Some(response.status().as_u16());
+            let request_id = request_id_from_headers(response.headers());
+            let mut details = refresh_error_details(response).await;
+            details.status = status;
+            details.request_id = request_id;
+            details
+        }
+        GeneratedError::InvalidResponsePayload(bytes, error) => {
+            if let Ok(body) = serde_json::from_slice::<GeneratedApiErrorBody>(&bytes) {
+                return RefreshErrorDetails {
+                    status: None,
+                    request_id: None,
+                    code: body.code,
+                    message: Some(body.error),
+                };
+            }
+            RefreshErrorDetails {
+                status: None,
+                request_id: None,
+                code: None,
+                message: Some(format!(
+                    "Invalid refresh response payload: {error}; body={}",
+                    String::from_utf8_lossy(&bytes)
+                )),
+            }
+        }
+        GeneratedError::CommunicationError(error)
+        | GeneratedError::InvalidUpgrade(error)
+        | GeneratedError::ResponseBodyError(error) => {
+            RefreshErrorDetails {
+                status: error.status().map(|status| status.as_u16()),
+                request_id: None,
+                code: None,
+                message: Some(error.to_string()),
+            }
+        }
+        GeneratedError::InvalidRequest(message) | GeneratedError::Custom(message) => {
+            RefreshErrorDetails {
+                status: None,
+                request_id: None,
+                code: None,
+                message: Some(message),
+            }
+        }
+    }
+}
+
+fn generated_error_retry_after<E>(error: &GeneratedError<E>) -> Option<u64> {
+    match error {
+        GeneratedError::ErrorResponse(response) => response.headers().get(RETRY_AFTER),
+        GeneratedError::UnexpectedResponse(response) => response.headers().get(RETRY_AFTER),
+        _ => None,
+    }
+    .and_then(|value| value.to_str().ok())
+    .and_then(|value| value.parse::<u64>().ok())
 }
 
 fn generated_error_details<E>(error: &GeneratedError<E>) -> RefreshErrorDetails

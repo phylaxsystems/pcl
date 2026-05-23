@@ -6,7 +6,6 @@ use super::{
     ProjectsArgs,
     ProtocolManagerArgs,
     ReleasesArgs,
-    TransfersArgs,
     with_envelope_metadata,
 };
 use serde_json::{
@@ -54,10 +53,7 @@ pub(super) fn contracts_body_template(args: &ContractsArgs) -> Value {
     if args.assign_project {
         return body_template("contracts_assign_project");
     }
-    if args.unassigned || args.remove || args.remove_calldata || args.adopter_id.is_some() {
-        return body_template("empty_object");
-    }
-    body_template("contracts")
+    body_template("empty_object")
 }
 
 pub(super) fn release_body_template(args: &ReleasesArgs) -> Value {
@@ -144,13 +140,6 @@ pub(super) fn protocol_manager_body_template(args: &ProtocolManagerArgs) -> Valu
         return body_template("empty_object");
     }
     body_template("protocol_manager_set")
-}
-
-pub(super) fn transfer_body_template(args: &TransfersArgs) -> Value {
-    if !args.reject {
-        return body_template("empty_object");
-    }
-    body_template("transfer_reject")
 }
 
 pub(super) fn body_template(kind: &str) -> Value {
@@ -280,19 +269,6 @@ pub(super) fn body_template(kind: &str) -> Value {
                         }
                     }
                 ]
-            })
-        }
-        "transfer_reject" => {
-            json!({
-                "ponder_transfer_id": "<transfer-id>"
-            })
-        }
-        "contracts" => {
-            json!({
-                "network": "1",
-                "address": "0x...",
-                "contract_name": "<contract-name>",
-                "project_id": "<project-uuid>"
             })
         }
         "contracts_assign_project" => {

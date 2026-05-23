@@ -49,11 +49,8 @@ workflow_definition!(
     description: "Inspect deployment state and confirm deployed assertions.",
     output: "deployment view or confirmation result",
     policy: MachineRawHumanCompactArtifacts,
-    legacy_examples: [
-
-    ],
     actions: [
-        action!("list", true, "GET", "/views/projects/{project}/deployments", "pcl deployments --project <project-ref>", required: ["--project"]),
-        action!("confirm", true, "POST", "/projects/{project}/confirm-deployment", "pcl deployments --project <project-ref> --confirm --body-template", required: ["--project"], body_template: "deployment_confirmation"),
+        action!("list", true, "get_views_projects_project_id_deployments", "pcl deployments --project <project-ref>", required: ["--project"]),
+        action!("confirm", true, "post_projects_project_id_confirm_deployment", "pcl deployments --project <project-ref> --confirm --body-template", required: ["--project"], body_template: "deployment_confirmation"),
     ],
 );

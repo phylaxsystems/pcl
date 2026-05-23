@@ -56,6 +56,7 @@ pub(in crate::api) struct WorkflowCallResult {
 pub(in crate::api) struct WorkflowRequest {
     pub(in crate::api) method: HttpMethod,
     pub(in crate::api) operation_id: &'static str,
+    pub(in crate::api) operation: WorkflowOperation,
     pub(in crate::api) path: String,
     pub(in crate::api) query: Vec<(String, String)>,
     pub(in crate::api) body: Option<String>,
@@ -81,6 +82,7 @@ impl WorkflowRequest {
             method: operation.method,
             operation_id: operation.operation_id,
             path: operation.path()?,
+            operation,
             query,
             body,
             require_auth,

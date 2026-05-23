@@ -28,7 +28,6 @@ use pcl_core::{
         ProtocolManagerCommand,
         ReleasesCommand,
         SearchCommand,
-        TransfersCommand,
         with_envelope_metadata,
     },
     auth::AuthCommand,
@@ -107,8 +106,6 @@ pub enum Commands {
     Integrations(IntegrationsCommand),
     #[command(name = "protocol-manager")]
     ProtocolManager(ProtocolManagerCommand),
-    #[command(name = "transfers")]
-    Transfers(TransfersCommand),
     #[command(name = "events")]
     Events(EventsCommand),
     Auth(AuthCommand),
@@ -330,22 +327,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_output_json_as_global_machine_output() {
-        let cli = Cli::try_parse_from([
-            "pcl",
-            "--format",
-            "json",
-            "api",
-            "call",
-            "get",
-            "/views/public/incidents",
-        ])
-        .unwrap();
-        assert!(matches!(cli.command, Commands::Api(_)));
-        assert!(cli.args.json_output());
-    }
-
-    #[test]
     fn parses_top_level_workflow_commands() {
         let incidents = Cli::try_parse_from([
             "pcl",
@@ -360,7 +341,7 @@ mod tests {
         assert!(matches!(incidents.command, Commands::Incidents(_)));
 
         let projects =
-            Cli::try_parse_from(["pcl", "projects", "--create", "--body-template"]).unwrap();
+            Cli::try_parse_from(["pcl", "projects", "create", "--body-template"]).unwrap();
         assert!(matches!(projects.command, Commands::Projects(_)));
 
         let manager = Cli::try_parse_from([

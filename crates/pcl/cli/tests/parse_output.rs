@@ -214,7 +214,16 @@ fn new_workflow_subcommands_parse_and_emit_structured_templates() {
 
 #[test]
 fn human_parse_errors_use_clap_diagnostics() {
-    let output = run_pcl(&["projects", "--mine", "--saved"]);
+    let output = run_pcl(&[
+        "api",
+        "call",
+        "get",
+        "/health",
+        "--body",
+        "{}",
+        "--body-file",
+        "body.json",
+    ]);
 
     output.assert_failure();
     assert!(
@@ -223,11 +232,9 @@ fn human_parse_errors_use_clap_diagnostics() {
         output.stdout
     );
 
-    assert!(
-        output
-            .stderr
-            .contains("error: the argument '--mine' cannot be used with '--saved'")
-    );
+    assert!(output.stderr.contains(
+        "error: the argument '--body <BODY>' cannot be used with '--body-file <BODY_FILE>'"
+    ));
     assert!(output.stderr.contains("Usage:"));
     assert!(!output.stderr.contains("\nCode:"));
     assert!(!output.stderr.contains("\nNext:"));
@@ -236,10 +243,30 @@ fn human_parse_errors_use_clap_diagnostics() {
 
 #[test]
 fn machine_parse_errors_stay_structured() {
-    let toon = run_pcl(&["--toon", "projects", "--mine", "--saved"]);
+    let toon = run_pcl(&[
+        "--toon",
+        "api",
+        "call",
+        "get",
+        "/health",
+        "--body",
+        "{}",
+        "--body-file",
+        "body.json",
+    ]);
     assert_toon_error(&toon, "cli.argument_conflict");
 
-    let json = run_pcl(&["--json", "projects", "--mine", "--saved"]);
+    let json = run_pcl(&[
+        "--json",
+        "api",
+        "call",
+        "get",
+        "/health",
+        "--body",
+        "{}",
+        "--body-file",
+        "body.json",
+    ]);
     json.assert_failure();
     assert!(json.stdout.is_empty());
     let envelope: serde_json::Value =
@@ -267,7 +294,17 @@ fn machine_parse_errors_stay_structured() {
         "{envelope}"
     );
 
-    let toon_at_end = run_pcl(&["projects", "--mine", "--saved", "--toon"]);
+    let toon_at_end = run_pcl(&[
+        "api",
+        "call",
+        "get",
+        "/health",
+        "--body",
+        "{}",
+        "--body-file",
+        "body.json",
+        "--toon",
+    ]);
     assert_toon_error(&toon_at_end, "cli.argument_conflict");
 }
 
@@ -347,7 +384,7 @@ fn schema_list_exposes_output_contract_summary() {
     let schemas = envelope["data"]["schemas"]
         .as_array()
         .expect("schemas array");
-    assert_eq!(schemas.len(), 13);
+    assert_eq!(schemas.len(), 12);
     assert!(
         schemas.iter().all(|schema| schema["workflow"] != "api"),
         "{schemas:?}"

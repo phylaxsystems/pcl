@@ -16,7 +16,7 @@ pub fn api_manifest() -> serde_json::Value {
         "raw_api_policy": {
             "normal_work": "Use workflow_alternatives from pcl api list/inspect when present, or start with pcl workflows and pcl schema.",
             "allowed_uses": ["debugging", "OpenAPI parity checks", "service/internal endpoint investigation", "browser-session bridge investigation", "new endpoint exploration before promotion"],
-            "not_normal_path": "Agents should not call raw endpoints for incidents, projects, assertions, releases, integrations, access, protocol-manager, transfers, events, search, or auth when a workflow alternative is advertised."
+            "not_normal_path": "Agents should not call raw endpoints for incidents, projects, assertions, releases, integrations, access, protocol-manager, events, search, or auth when a workflow alternative is advertised."
         },
         "llms": "pcl --toon --llms | pcl llms --toon",
         "default_output": "human",

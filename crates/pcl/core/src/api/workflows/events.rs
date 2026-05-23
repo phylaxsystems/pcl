@@ -46,11 +46,8 @@ workflow_definition!(
     description: "Inspect project events and audit logs.",
     output: "event or audit log data",
     policy: MachineRaw,
-    legacy_examples: [
-
-    ],
     actions: [
-        action!("events", true, "GET", "/views/projects/{project}/events", "pcl events --project <project-ref>", required: ["--project"], optional: ["--page", "--limit", "--environment"]),
-        action!("audit_log", true, "GET", "/views/projects/{project}/audit-log", "pcl events --project <project-ref> --audit-log", required: ["--project"], optional: ["--page", "--limit", "--environment"]),
+        action!("events", true, "get_views_projects_project_id_events", "pcl events --project <project-ref>", required: ["--project"], optional: ["--page", "--limit", "--environment"]),
+        action!("audit_log", true, "get_views_projects_project_id_audit_log", "pcl events --project <project-ref> --audit-log", required: ["--project"], optional: ["--page", "--limit", "--environment"]),
     ],
 );

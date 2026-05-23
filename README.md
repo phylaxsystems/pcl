@@ -74,7 +74,7 @@ pcl api coverage --toon
 | `pcl apply`, `pcl verify` | Structured assertion workflow commands for dry-runs, verification, and deployment prep |
 | `pcl incidents`, `pcl projects`, `pcl assertions` | Natural platform workflow commands |
 | `pcl account`, `pcl contracts`, `pcl releases`, `pcl deployments` | Account, contract, release, and deployment workflows |
-| `pcl access`, `pcl integrations`, `pcl protocol-manager`, `pcl transfers`, `pcl events`, `pcl search` | Access control, integrations, protocol manager, transfer, audit, and search workflows |
+| `pcl access`, `pcl integrations`, `pcl protocol-manager`, `pcl events`, `pcl search` | Access control, integrations, protocol manager transfer, audit, and search workflows |
 | `pcl doctor`, `pcl whoami` | Diagnose local/API readiness, target auth capability, and identity state |
 | `pcl workflows`, `pcl schema` | Workflow recipes and command/action schemas; agents should add `--toon` |
 | `pcl --toon --llms`, `pcl llms --toon` | Print the CLI-native LLM usage guide for agents |
@@ -218,7 +218,6 @@ pcl deployments --project <project-ref> --toon
 pcl access members <project-ref> --toon
 pcl integrations --project <project-ref> --provider slack --toon
 pcl protocol-manager --project <project-ref> --pending-transfer --toon
-pcl transfers --pending --toon
 pcl events --project <project-ref> --audit-log --toon
 pcl search --query settler --toon
 ```

@@ -14,7 +14,7 @@ use dapp_api_client::{
     generated::client::{
         Error as GeneratedError,
         types::{
-            GetProjectsResponse,
+            ApiError,
             GetProjectsResponseItem,
         },
     },
@@ -174,7 +174,7 @@ fn print_public_project_details(projects: &[GetProjectsResponseItem]) {
     }
 }
 
-fn print_project_error(e: &GeneratedError<GetProjectsResponse>) {
+fn print_project_error(e: &GeneratedError<ApiError>) {
     println!("   ❌ Failed to get projects: {e}");
     println!("   - Error details: {e:?}");
 
