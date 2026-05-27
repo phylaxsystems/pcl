@@ -114,13 +114,14 @@ use templates::{
     template_envelope,
     transfer_body_template,
 };
+pub(crate) use transport::{
+    generated_error_details,
+    request_id_from_headers,
+    response_body_value,
+};
 use transport::{
     read_api_response,
     write_request_log,
-};
-pub(crate) use transport::{
-    request_id_from_headers,
-    response_body_value,
 };
 use workflow_options::ApiWorkflowOptions;
 use workflows::{

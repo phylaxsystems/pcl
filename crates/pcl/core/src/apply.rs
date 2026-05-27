@@ -32,6 +32,7 @@ use alloy_primitives::Bytes;
 use clap::ValueHint;
 use dapp_api_client::generated::client::{
     Client as GeneratedClient,
+    Error as GeneratedError,
     types::{
         GetProjectsResponseItem,
         PostProjectsProjectIdReleasesBody,
@@ -188,17 +189,19 @@ impl ApplyArgs {
             }
         }
 
-        let release = client
+        let release = match client
             .post_projects_project_id_releases(&project_id, None, &payload)
             .await
-            .map(dapp_api_client::generated::client::ResponseValue::into_inner)
-            .map_err(|e| {
-                ApplyError::Api {
-                    endpoint: format!("/projects/{project_id}/releases"),
-                    status: e.status().map(|s| s.as_u16()),
-                    body: e.to_string(),
-                }
-            })?;
+        {
+            Ok(response) => response.into_inner(),
+            Err(error) => {
+                return Err(generated_apply_api_error(
+                    format!("/projects/{project_id}/releases"),
+                    error,
+                )
+                .await);
+            }
+        };
 
         if output_mode != OutputMode::Human {
             let envelope = ok_envelope(
@@ -320,17 +323,15 @@ impl ApplyArgs {
         let endpoint = format!("/projects/{project_id}/releases/preview");
         let body: PostProjectsProjectIdReleasesPreviewBody =
             serde_json::from_value(serde_json::to_value(payload)?)?;
-        let response = client
+        let response = match client
             .post_projects_project_id_releases_preview(project_id, None, &body)
             .await
-            .map(dapp_api_client::generated::client::ResponseValue::into_inner)
-            .map_err(|e| {
-                ApplyError::Api {
-                    endpoint: format!("/projects/{project_id}/releases/preview"),
-                    status: e.status().map(|s| s.as_u16()),
-                    body: e.to_string(),
-                }
-            })?;
+        {
+            Ok(response) => response.into_inner(),
+            Err(error) => {
+                return Err(generated_apply_api_error(endpoint.clone(), error).await);
+            }
+        };
 
         serde_json::from_value(serde_json::to_value(response)?).map_err(|e| {
             ApplyError::Api {
@@ -640,6 +641,23 @@ fn client_error_to_apply(error: ClientBuildError) -> ApplyError {
         ClientBuildError::AuthRefresh(error) => ApplyError::AuthRefresh(error),
         ClientBuildError::InvalidConfig(message) => ApplyError::InvalidConfig(message),
     }
+}
+
+async fn generated_apply_api_error<E>(endpoint: String, error: GeneratedError<E>) -> ApplyError
+where
+    E: serde::Serialize + std::fmt::Debug,
+{
+    let details = crate::api::generated_error_details(error).await;
+    ApplyError::Api {
+        endpoint,
+        status: details.status,
+        body: generated_error_body_string(&details.body),
+    }
+}
+
+fn generated_error_body_string(body: &Value) -> String {
+    body.as_str()
+        .map_or_else(|| body.to_string(), ToString::to_string)
 }
 
 #[cfg(test)]

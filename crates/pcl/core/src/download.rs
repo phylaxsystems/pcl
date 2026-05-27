@@ -333,11 +333,10 @@ impl DownloadArgs {
         client: &GeneratedClient,
     ) -> Result<(Uuid, String), DownloadError> {
         let pid = self.project_id.ok_or(DownloadError::MissingIdentifier)?;
-        let project = client
-            .get_projects_project_id(&pid, None)
-            .await
-            .map(dapp_api_client::generated::client::ResponseValue::into_inner)
-            .map_err(|error| generated_api_error(format!("/projects/{pid}"), &error))?;
+        let project = match client.get_projects_project_id(&pid, None).await {
+            Ok(response) => response.into_inner(),
+            Err(error) => return Err(generated_api_error(format!("/projects/{pid}"), error).await),
+        };
         let project = serde_json::to_value(project)?;
         let project_id = project
             .get("project_id")
@@ -362,13 +361,19 @@ impl DownloadArgs {
         client: &GeneratedClient,
         project_id: &Uuid,
     ) -> Result<Vec<AssertionSummary>, DownloadError> {
-        let response = client
+        let response = match client
             .get_views_projects_project_id_assertions(project_id, None)
             .await
-            .map(dapp_api_client::generated::client::ResponseValue::into_inner)
-            .map_err(|error| {
-                generated_api_error(format!("/views/projects/{project_id}/assertions"), &error)
-            })?;
+        {
+            Ok(response) => response.into_inner(),
+            Err(error) => {
+                return Err(generated_api_error(
+                    format!("/views/projects/{project_id}/assertions"),
+                    error,
+                )
+                .await);
+            }
+        };
         let response = serde_json::to_value(response)?;
         let assertions = response
             .pointer("/data/assertions")
@@ -418,42 +423,40 @@ impl DownloadArgs {
             .map_err(|error| {
                 DownloadError::InvalidConfig(format!("Invalid assertion ID: {error}"))
             })?;
-        let response = client
+        let response = match client
             .get_views_projects_project_id_assertions_assertion_id(
                 project_id,
                 &generated_assertion_id,
             )
             .await
-            .map(dapp_api_client::generated::client::ResponseValue::into_inner)
-            .map_err(|error| {
-                generated_api_error(
+        {
+            Ok(response) => response.into_inner(),
+            Err(error) => {
+                return Err(generated_api_error(
                     format!("/views/projects/{project_id}/assertions/{assertion_id}"),
-                    &error,
+                    error,
                 )
-            })?;
+                .await);
+            }
+        };
         let response = serde_json::to_value(response)?;
         Ok(response.get("data").cloned().unwrap_or(response))
     }
 }
 
-fn generated_api_error<E>(endpoint: impl Into<String>, error: &GeneratedError<E>) -> DownloadError
+async fn generated_api_error<E>(
+    endpoint: impl Into<String>,
+    error: GeneratedError<E>,
+) -> DownloadError
 where
-    E: std::fmt::Debug,
+    E: Serialize + std::fmt::Debug,
 {
-    let request_id = match &error {
-        GeneratedError::ErrorResponse(response) => {
-            crate::api::request_id_from_headers(response.headers())
-        }
-        GeneratedError::UnexpectedResponse(response) => {
-            crate::api::request_id_from_headers(response.headers())
-        }
-        _ => None,
-    };
+    let details = crate::api::generated_error_details(error).await;
     DownloadError::Api {
         endpoint: endpoint.into(),
-        status: error.status().map(|status| status.as_u16()),
-        request_id,
-        body: json!(error.to_string()),
+        status: details.status,
+        request_id: details.request_id,
+        body: details.body,
     }
 }
 

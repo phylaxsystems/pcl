@@ -1,5 +1,7 @@
 use super::ApiCommandError;
+use dapp_api_client::generated::client::Error as GeneratedError;
 use reqwest::header::HeaderMap;
+use serde::Serialize;
 use serde_json::{
     Map,
     Value,
@@ -12,6 +14,12 @@ pub(in crate::api) struct ApiResponsePayload {
     pub(in crate::api) request_id: Option<String>,
     pub(in crate::api) headers: Map<String, Value>,
     pub(in crate::api) body: Value,
+}
+
+pub(crate) struct GeneratedErrorDetails {
+    pub(crate) status: Option<u16>,
+    pub(crate) request_id: Option<String>,
+    pub(crate) body: Value,
 }
 
 pub(crate) fn request_id_from_headers(headers: &HeaderMap) -> Option<String> {
@@ -113,4 +121,75 @@ pub(crate) fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {
 
     serde_json::from_slice(bytes)
         .unwrap_or_else(|_| json!(String::from_utf8_lossy(bytes).to_string()))
+}
+
+pub(crate) async fn generated_error_details<E>(error: GeneratedError<E>) -> GeneratedErrorDetails
+where
+    E: Serialize + std::fmt::Debug,
+{
+    match error {
+        GeneratedError::ErrorResponse(response) => {
+            GeneratedErrorDetails {
+                status: Some(response.status().as_u16()),
+                request_id: request_id_from_headers(response.headers()),
+                body: serde_json::to_value(response.as_ref()).unwrap_or_else(|error| {
+                    json!({
+                        "error": error.to_string(),
+                        "body": format!("{response:?}"),
+                    })
+                }),
+            }
+        }
+        GeneratedError::UnexpectedResponse(response) => {
+            let status = response.status().as_u16();
+            let request_id = request_id_from_headers(response.headers());
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            let body = match response.bytes().await {
+                Ok(bytes) => response_body_value(&content_type, &bytes),
+                Err(error) => {
+                    json!({
+                        "error": "failed to read generated error response body",
+                        "message": error.to_string(),
+                    })
+                }
+            };
+            GeneratedErrorDetails {
+                status: Some(status),
+                request_id,
+                body,
+            }
+        }
+        GeneratedError::InvalidResponsePayload(bytes, error) => {
+            GeneratedErrorDetails {
+                status: None,
+                request_id: None,
+                body: json!({
+                    "error": "invalid generated API response payload",
+                    "message": error.to_string(),
+                    "body": response_body_value("application/json", &bytes),
+                }),
+            }
+        }
+        GeneratedError::CommunicationError(error)
+        | GeneratedError::InvalidUpgrade(error)
+        | GeneratedError::ResponseBodyError(error) => {
+            GeneratedErrorDetails {
+                status: error.status().map(|status| status.as_u16()),
+                request_id: None,
+                body: json!(error.to_string()),
+            }
+        }
+        GeneratedError::InvalidRequest(message) | GeneratedError::Custom(message) => {
+            GeneratedErrorDetails {
+                status: None,
+                request_id: None,
+                body: json!(message),
+            }
+        }
+    }
 }
