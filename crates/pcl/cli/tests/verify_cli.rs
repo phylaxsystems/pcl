@@ -146,9 +146,7 @@ fn apply_dry_run_builds_and_verifies_fixture_payload_without_api() {
 fn apply_dry_run_json_preserves_failed_assertion_summary() {
     let project = fixture_project();
     fs::write(
-        project
-            .path()
-            .join("assertions/src/NoArgsAssertion.a.sol"),
+        project.path().join("assertions/src/NoArgsAssertion.a.sol"),
         r#"// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 

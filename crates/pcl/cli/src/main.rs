@@ -19,11 +19,6 @@ use pcl_common::args::{
     current_output_mode,
     set_current_output_mode,
 };
-#[cfg(feature = "credible")]
-use pcl_core::{
-    error::VerifyError,
-    verify::VerificationSummary,
-};
 use pcl_core::{
     api::{
         ApiCommandError,
@@ -39,6 +34,11 @@ use pcl_core::{
     },
     output::command_for_mode,
     surface::ProductSurfaceError,
+};
+#[cfg(feature = "credible")]
+use pcl_core::{
+    error::VerifyError,
+    verify::VerificationSummary,
 };
 use pcl_phoundry::error::PhoundryError;
 use serde_json::{
