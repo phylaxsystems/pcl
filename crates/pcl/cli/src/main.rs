@@ -373,6 +373,13 @@ fn verify_error_envelope(err: &VerifyError) -> Value {
                 &["pcl build --help", "pcl verify --help"],
             )
         }
+        VerifyError::BytecodeHex(_) => {
+            (
+                "verify.invalid_bytecode_hex",
+                err.to_string(),
+                &["pcl verify --help"],
+            )
+        }
         VerifyError::ConstructorAbi(_) => {
             (
                 "verify.invalid_constructor_args",
