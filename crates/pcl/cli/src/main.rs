@@ -373,7 +373,7 @@ fn verify_error_envelope(err: &VerifyError) -> Value {
                 &["pcl build --help", "pcl verify --help"],
             )
         }
-        VerifyError::AbiEncode(_) => {
+        VerifyError::ConstructorAbi(_) => {
             (
                 "verify.invalid_constructor_args",
                 err.to_string(),
