@@ -4,6 +4,12 @@ All notable user-facing changes should be recorded here.
 
 ## Unreleased
 
+## 1.4.3 - 2026-05-10
+
+- Made default CLI output human-first across command surfaces, including auth, config, workflow, schema, API discovery, dry-run, export, job, artifact, request log, collection, incident, and raw API response views.
+- Added `--toon` as the compact agent-readable output mode while preserving `--json` and hidden legacy `--format` compatibility.
+- Updated agent-facing docs and smoke checks to use `--toon`.
+
 ## 1.4.2 - 2026-05-09
 
 - Updated Credible SDK assertion dependencies to the latest 1.4 assertion runtime graph.

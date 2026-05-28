@@ -17,7 +17,11 @@ use clap::{
     ArgGroup,
     ValueEnum,
 };
-use pcl_common::args::CliArgs;
+use pcl_common::args::{
+    CliArgs,
+    OutputMode,
+    current_output_mode,
+};
 use reqwest::header::{
     HeaderMap,
     HeaderName,
@@ -42,6 +46,10 @@ use std::{
     str::FromStr,
 };
 
+mod manifest;
+
+pub use manifest::api_manifest;
+
 pub const ENVELOPE_SCHEMA_VERSION: &str = "pcl.envelope.v1";
 
 pub fn with_envelope_metadata(mut value: Value) -> Value {
@@ -62,7 +70,7 @@ pub enum ApiCommandError {
     NoAuthToken,
 
     #[error(
-        "Stored auth token expired at {0}. Run `pcl auth refresh --json` or `pcl auth login` again, or pass `--allow-unauthenticated` for public endpoints."
+        "Stored auth token expired at {0}. Run `pcl auth refresh --toon` or `pcl auth login` again, or pass `--allow-unauthenticated` for public endpoints."
     )]
     ExpiredAuthToken(chrono::DateTime<chrono::Utc>),
 
@@ -139,6 +147,12 @@ pub enum ApiCommandError {
 
     #[error("{message}")]
     InvalidWorkflow { message: String },
+
+    #[error("{message}")]
+    InvalidWorkflowWithActions {
+        message: String,
+        next_actions: Vec<String>,
+    },
 }
 
 impl ApiCommandError {
@@ -159,8 +173,12 @@ impl ApiCommandError {
             Self::Json(_) => "input.invalid_json",
             Self::Request(source) => {
                 match source.status().map(|status| status.as_u16()) {
+                    Some(400) => "api.bad_request",
                     Some(401) => "auth.unauthorized",
                     Some(403) => "auth.forbidden",
+                    Some(404) => "api.not_found",
+                    Some(422) => "api.validation_failed",
+                    Some(500..=599) => "api.server_error",
                     _ => "network.request_failed",
                 }
             }
@@ -177,7 +195,9 @@ impl ApiCommandError {
             }
             Self::MissingPaths => "openapi.missing_paths",
             Self::OperationNotFound(_) => "openapi.operation_not_found",
-            Self::InvalidWorkflow { .. } => "workflow.invalid_arguments",
+            Self::InvalidWorkflow { .. } | Self::InvalidWorkflowWithActions { .. } => {
+                "workflow.invalid_arguments"
+            }
         }
     }
 
@@ -189,21 +209,21 @@ impl ApiCommandError {
         match self {
             Self::NoAuthToken | Self::ExpiredAuthToken(_) | Self::AuthRefresh(_) => {
                 vec![
-                    "pcl auth refresh --json".to_string(),
+                    "pcl auth refresh --toon".to_string(),
                     "pcl auth login".to_string(),
-                    "pcl api list --allow-unauthenticated --json".to_string(),
+                    "pcl api list --allow-unauthenticated --toon".to_string(),
                 ]
             }
             Self::InvalidPath(_) => {
                 vec![
-                    "pcl api list --json".to_string(),
-                    "pcl api call get /views/public/incidents --allow-unauthenticated --json"
+                    "pcl api list --toon".to_string(),
+                    "pcl api call get /views/public/incidents --allow-unauthenticated --toon"
                         .to_string(),
                 ]
             }
             Self::InvalidKeyValue { kind, .. } => {
                 vec![format!(
-                    "Use --{kind} key=value, for example: pcl api call get /views/public/incidents --{kind} limit=5 --json"
+                    "Use --{kind} key=value, for example: pcl api call get /views/public/incidents --{kind} limit=5"
                 )]
             }
             Self::InvalidHeaderName { .. } | Self::InvalidHeaderValue { .. } => {
@@ -213,21 +233,22 @@ impl ApiCommandError {
             }
             Self::Json(_) => {
                 vec![
-                    "Pass valid JSON with --body '{\"key\":\"value\"}'".to_string(),
-                    "Use --body-file request.json for larger payloads".to_string(),
+                    "Use --field key=value for simple request bodies".to_string(),
+                    "Use --body-file request.json for nested request bodies".to_string(),
                 ]
             }
             Self::OperationNotFound(_) => {
                 vec![
-                    "pcl api list --json".to_string(),
-                    "pcl api inspect get /views/public/incidents --json".to_string(),
+                    "pcl api list --toon".to_string(),
+                    "pcl api inspect get /views/public/incidents --toon".to_string(),
                 ]
             }
+            Self::InvalidWorkflowWithActions { next_actions, .. } => next_actions.clone(),
             Self::InvalidWorkflow { .. } => {
                 vec![
-                    "pcl api manifest".to_string(),
-                    "pcl incidents --limit 5".to_string(),
-                    "pcl assertions --project-id <project-id>".to_string(),
+                    "pcl projects --mine".to_string(),
+                    "pcl schema list".to_string(),
+                    "pcl workflows".to_string(),
                 ]
             }
             Self::Request(source)
@@ -243,7 +264,7 @@ impl ApiCommandError {
             }
             Self::HttpStatus { status: 401, .. } => {
                 vec![
-                    "pcl auth refresh --json".to_string(),
+                    "pcl auth refresh --toon".to_string(),
                     "pcl auth login".to_string(),
                     "Use --allow-unauthenticated only for public endpoints".to_string(),
                 ]
@@ -265,18 +286,18 @@ impl ApiCommandError {
             } => {
                 vec![
                     format!(
-                        "pcl api inspect {} {} --json",
+                        "pcl api inspect {} {} --toon",
                         method.to_ascii_lowercase(),
                         path
                     ),
-                    "pcl api manifest --json".to_string(),
+                    "pcl api manifest --toon".to_string(),
                     "Read error.http.body for the rejected field details".to_string(),
                 ]
             }
             Self::HttpStatus { status: 404, .. } => {
                 vec![
-                    "pcl api list --json".to_string(),
-                    "Check identifiers and required path/query parameters".to_string(),
+                    "Check the project ID, slug, or API path and retry".to_string(),
+                    "pcl projects --mine".to_string(),
                 ]
             }
             Self::HttpStatus {
@@ -293,13 +314,13 @@ impl ApiCommandError {
                             method.to_ascii_lowercase(),
                             path
                         ),
-                        "pcl requests list --json".to_string(),
+                        "pcl requests list --toon".to_string(),
                         "Read error.http.body for API-provided failure details".to_string(),
                     ]
                 } else {
                     vec![
                         "Retry the same command once; server errors can be transient".to_string(),
-                        "pcl api manifest --json".to_string(),
+                        "pcl api manifest --toon".to_string(),
                         "Read error.http.body for API-provided failure details".to_string(),
                     ]
                 };
@@ -312,17 +333,25 @@ impl ApiCommandError {
             }
             Self::HttpStatus { .. } => {
                 vec![
-                    "pcl api manifest --json".to_string(),
+                    "pcl api manifest --toon".to_string(),
                     "Read error.http.body for API-provided failure details".to_string(),
                 ]
             }
-            Self::Request(_) | Self::Url(_) => vec!["Check --api-url and retry".to_string()],
+            Self::Request(source) if source.status().map(|status| status.as_u16()) == Some(404) => {
+                vec![
+                    "Check the project ID, slug, or API path and retry".to_string(),
+                    "pcl projects --mine".to_string(),
+                ]
+            }
+            Self::Request(_) | Self::Url(_) => {
+                vec!["Check --api-url and your network connection, then retry".to_string()]
+            }
             Self::BodyFile { .. } => {
                 vec!["Check --body-file path or pass --body directly".to_string()]
             }
             Self::RequestLog { .. } => {
                 vec![
-                    "pcl requests path --json".to_string(),
+                    "pcl requests path --toon".to_string(),
                     "Check request log permissions or move the PCL state directory".to_string(),
                 ]
             }
@@ -346,8 +375,12 @@ impl ApiCommandError {
             | Self::InvalidHeaderValue { .. }
             | Self::InvalidPath(_)
             | Self::Json(_)
-            | Self::InvalidWorkflow { .. } => vec!["fix_input", "retry"],
+            | Self::InvalidWorkflow { .. }
+            | Self::InvalidWorkflowWithActions { .. } => vec!["fix_input", "retry"],
             Self::OperationNotFound(_) | Self::MissingPaths => vec!["inspect_manifest"],
+            Self::Request(source) if source.status().map(|status| status.as_u16()) == Some(404) => {
+                vec!["check_ids", "retry"]
+            }
             Self::Request(_) | Self::Url(_) => vec!["check_network", "retry"],
             Self::BodyFile { .. } | Self::Stdin(_) => vec!["fix_body_input", "retry"],
             Self::RequestLog { .. } => vec!["inspect_request_log", "retry"],
@@ -452,7 +485,7 @@ impl ApiCommandError {
 #[derive(clap::Parser, Debug)]
 #[command(
     about = "Discover and call the platform API",
-    long_about = "Discover and call the Credible Layer platform API. Commands return compact structured TOON by default, including error envelopes and next actions. Pass --json for full JSON envelopes."
+    long_about = "Discover and call the Credible Layer platform API. Commands use human-readable output by default. Pass --toon for compact agent envelopes or --json for strict JSON envelopes."
 )]
 pub struct ApiArgs {
     #[command(subcommand)]
@@ -566,7 +599,7 @@ enum ApiCommand {
 
     #[command(
         about = "List, inspect, create, update, save, or delete projects",
-        after_help = "Examples:\n  pcl projects\n  pcl projects --project-id <project-ref>\n  pcl projects --saved --user-id <user-id>\n  pcl projects --create --project-name demo --chain-id 1\n  pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl projects --project-id <project-ref> --save"
+        after_help = "Examples:\n  pcl projects --mine\n  pcl projects\n  pcl projects --project-id <project-ref>\n  pcl projects --saved --user-id <user-id>\n  pcl projects --create --project-name demo --chain-id 1\n  pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl projects --project-id <project-ref> --save"
     )]
     Projects(ProjectsArgs),
 
@@ -590,7 +623,7 @@ enum ApiCommand {
 
     #[command(
         about = "List or manage project contracts and assertion adopters",
-        after_help = "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl contracts --unassigned --manager <manager-address>\n  pcl contracts --create --body '{...}'"
+        after_help = "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl contracts --unassigned --manager <manager-address>\n  pcl contracts --create --body-template"
     )]
     Contracts(ContractsArgs),
 
@@ -602,31 +635,31 @@ enum ApiCommand {
 
     #[command(
         about = "Inspect deployments and confirm deployed assertions",
-        after_help = "Examples:\n  pcl deployments --project <project-ref>\n  pcl deployments --project <project-ref> --confirm --body '{...}'"
+        after_help = "Examples:\n  pcl deployments --project <project-ref>\n  pcl deployments --project <project-ref> --confirm --body-template"
     )]
     Deployments(DeploymentsArgs),
 
     #[command(
         about = "Manage members, roles, and invitations",
-        after_help = "Examples:\n  pcl access --project <project-ref> --members\n  pcl access --project <project-ref> --invite --body '{...}'\n  pcl access --pending\n  pcl access --token <token> --preview"
+        after_help = "Examples:\n  pcl access --project <project-ref> --members\n  pcl access --project <project-ref> --invite --body-template\n  pcl access --pending\n  pcl access --token <token> --preview"
     )]
     Access(AccessArgs),
 
     #[command(
         about = "Manage Slack and PagerDuty integrations",
-        after_help = "Examples:\n  pcl integrations --project <project-ref> --provider slack\n  pcl integrations --project <project-ref> --provider pagerduty --configure --body '{...}'\n  pcl integrations --project <project-ref> --provider slack --test"
+        after_help = "Examples:\n  pcl integrations --project <project-ref> --provider slack\n  pcl integrations --project <project-ref> --provider pagerduty --configure --body-template\n  pcl integrations --project <project-ref> --provider slack --test"
     )]
     Integrations(IntegrationsArgs),
 
     #[command(
         about = "Manage project protocol manager settings",
-        after_help = "Examples:\n  pcl protocol-manager --project <project-ref> --nonce --address <manager-address>\n  pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...\n  pcl protocol-manager --project <project-ref> --set --body '{...}'"
+        after_help = "Examples:\n  pcl protocol-manager --project <project-ref> --nonce --address <manager-address>\n  pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...\n  pcl protocol-manager --project <project-ref> --set --body-template"
     )]
     ProtocolManager(ProtocolManagerArgs),
 
     #[command(
         about = "Inspect or reject protocol manager transfers",
-        after_help = "Examples:\n  pcl transfers --pending\n  pcl transfers --transfer-id <transfer-id>\n  pcl transfers --reject --body '{...}'"
+        after_help = "Examples:\n  pcl transfers --pending\n  pcl transfers --transfer-id <transfer-id>\n  pcl transfers --reject --body-template"
     )]
     Transfers(TransfersArgs),
 
@@ -638,24 +671,24 @@ enum ApiCommand {
 
     #[command(
         about = "Print an agent-readable command manifest",
-        after_help = "Examples:\n  pcl api manifest\n  pcl api manifest --json"
+        after_help = "Examples:\n  pcl api manifest\n  pcl api manifest --toon\n  pcl api manifest --json"
     )]
     Manifest,
 
     #[command(
         about = "List OpenAPI operations",
-        after_help = "Examples:\n  pcl api list\n  pcl api list --filter incidents\n  pcl api list --method get\n  pcl api list --json"
+        after_help = "Examples:\n  pcl api list\n  pcl api list --filter incidents\n  pcl api list --method get\n  pcl api list --toon\n  pcl api list --json"
     )]
     List {
         #[arg(long, help = "Filter operation id, summary, tags, or path")]
         filter: Option<String>,
-        #[arg(long, value_enum, help = "Filter by HTTP method")]
+        #[arg(long, value_enum, ignore_case = true, help = "Filter by HTTP method")]
         method: Option<HttpMethod>,
     },
 
     #[command(
         about = "Inspect one OpenAPI operation",
-        after_help = "Examples:\n  pcl api inspect get_views_projects_project_id_incidents\n  pcl api inspect get /views/public/incidents\n  pcl api inspect get_views_projects_project_id_incidents --json"
+        after_help = "Examples:\n  pcl api inspect get_views_projects_project_id_incidents\n  pcl api inspect get /views/public/incidents\n  pcl api inspect get_views_projects_project_id_incidents --toon\n  pcl api inspect get_views_projects_project_id_incidents --json"
     )]
     Inspect {
         #[arg(help = "Operation id, or HTTP method when PATH is also provided")]
@@ -670,7 +703,7 @@ enum ApiCommand {
         name = "coverage",
         alias = "audit",
         about = "Compare the local request log against the live OpenAPI surface",
-        after_help = "Examples:\n  pcl api coverage --json\n  pcl api coverage --records 5000 --markdown /tmp/pcl-api-coverage.md"
+        after_help = "Examples:\n  pcl api coverage --toon\n  pcl api coverage --json\n  pcl api coverage --records 5000 --markdown /tmp/pcl-api-coverage.md"
     )]
     Coverage {
         #[arg(
@@ -685,10 +718,10 @@ enum ApiCommand {
 
     #[command(
         about = "Call any platform API endpoint",
-        after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json"
+        after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --toon"
     )]
     Call {
-        #[arg(value_enum, help = "HTTP method")]
+        #[arg(value_enum, ignore_case = true, help = "HTTP method")]
         method: HttpMethod,
         #[arg(help = "API path below /api/v1, for example /views/public/incidents")]
         path: String,
@@ -879,14 +912,27 @@ struct WorkflowRequest {
 }
 
 impl WorkflowRequest {
-    fn get(path: impl Into<String>, require_auth: bool, next_actions: Vec<String>) -> Self {
+    fn get(
+        path: impl Into<String>,
+        require_auth: bool,
+        next_actions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self::get_with_query(path, Vec::new(), require_auth, next_actions)
+    }
+
+    fn get_with_query(
+        path: impl Into<String>,
+        query: Vec<(String, String)>,
+        require_auth: bool,
+        next_actions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
         Self {
             method: HttpMethod::Get,
             path: path.into(),
-            query: Vec::new(),
+            query,
             body: None,
             require_auth,
-            next_actions,
+            next_actions: next_actions.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -895,7 +941,7 @@ impl WorkflowRequest {
 struct IncidentsArgs {
     #[arg(
         long,
-        alias = "project",
+        visible_alias = "project",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -965,19 +1011,19 @@ struct IncidentsArgs {
 #[derive(clap::Args, Debug)]
 #[command(group(
     ArgGroup::new("project_action")
-        .args(["home", "saved", "create", "update", "delete", "save", "unsave", "resolve", "widget"])
+        .args(["mine", "saved", "create", "update", "delete", "save", "unsave", "resolve", "widget"])
         .multiple(false)
 ))]
 struct ProjectsArgs {
     #[arg(
         long,
-        alias = "project",
+        visible_alias = "project",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
     project_id: Option<String>,
-    #[arg(long, help = "Return authenticated projects home view")]
-    home: bool,
+    #[arg(long, visible_alias = "home", help = "Show projects you belong to")]
+    mine: bool,
     #[arg(long, help = "Return saved projects")]
     saved: bool,
     #[arg(long, alias = "user_id", help = "User ID for --saved")]
@@ -1042,7 +1088,7 @@ struct ProjectsArgs {
 struct AssertionsArgs {
     #[arg(
         long,
-        alias = "project",
+        visible_alias = "project",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1115,6 +1161,8 @@ struct AssertionsArgs {
         .multiple(false)
 ))]
 struct SearchArgs {
+    #[arg(value_name = "QUERY", help = "Search query")]
+    term: Option<String>,
     #[arg(long, short = 'q', help = "Search query")]
     query: Option<String>,
     #[arg(long, help = "Return network statistics")]
@@ -1173,7 +1221,7 @@ struct AccountArgs {
 struct ContractsArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1241,7 +1289,7 @@ struct ContractsArgs {
 struct ReleasesArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1299,7 +1347,7 @@ struct ReleasesArgs {
 struct DeploymentsArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1329,7 +1377,7 @@ struct DeploymentsArgs {
 struct AccessArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1400,7 +1448,7 @@ impl IntegrationProvider {
 struct IntegrationsArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1436,7 +1484,7 @@ struct IntegrationsArgs {
 struct ProtocolManagerArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
@@ -1510,11 +1558,11 @@ struct TransfersArgs {
 struct EventsArgs {
     #[arg(
         long,
-        alias = "project-id",
+        visible_alias = "project-id",
         alias = "project_id",
         help = "Project UUID or slug"
     )]
-    project: String,
+    project: Option<String>,
     #[arg(
         long,
         alias = "audit_log",
@@ -1542,7 +1590,7 @@ top_level_workflow_command!(
     ProjectsArgs,
     Projects,
     "List, inspect, create, update, save, or delete projects",
-    "Examples:\n  pcl projects\n  pcl projects --project-id <project-ref>\n  pcl projects --saved --user-id <user-id>\n  pcl projects --create --project-name demo --chain-id 1\n  pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl projects --project-id <project-ref> --save\n\nCompatibility alias:\n  pcl api projects ..."
+    "Examples:\n  pcl projects --mine\n  pcl projects\n  pcl projects --project-id <project-ref>\n  pcl projects --saved --user-id <user-id>\n  pcl projects --create --project-name demo --chain-id 1\n  pcl projects --project-id <project-ref> --update --field github_url=https://github.com/org/repo\n  pcl projects --project-id <project-ref> --save\n\nCompatibility alias:\n  pcl api projects ..."
 );
 
 top_level_workflow_command!(
@@ -1662,13 +1710,13 @@ impl ApiArgs {
             }
             ApiCommand::Search(args) => {
                 let output = self
-                    .run_workflow(config, cli_args, search_request(args)?, &request_log_path)
+                    .run_search(config, cli_args, args, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
             ApiCommand::Account(args) => {
                 if args.body_template {
-                    let output = template_envelope(account_body_template(args));
+                    let output = template_envelope(body_template("empty_object"));
                     print_output(&output, json_output)?;
                     return Ok(());
                 }
@@ -1781,7 +1829,7 @@ impl ApiArgs {
             }
             ApiCommand::Events(args) => {
                 let output = self
-                    .run_workflow(config, cli_args, events_request(args), &request_log_path)
+                    .run_workflow(config, cli_args, events_request(args)?, &request_log_path)
                     .await?;
                 print_output(&output, json_output)?;
             }
@@ -1828,8 +1876,8 @@ impl ApiArgs {
                     "status": "ok",
                     "data": coverage,
                     "next_actions": [
-                        "pcl requests list --json",
-                        "pcl api list --json",
+                        "pcl requests list --toon",
+                        "pcl api list --toon",
                         "pcl api coverage --markdown api-coverage.md",
                     ],
                 });
@@ -1893,7 +1941,7 @@ impl ApiArgs {
                             "Adjust --limit or --max-pages if the result set was truncated"
                                 .to_string(),
                             "Use --output results.json to save paginated data".to_string(),
-                            "pcl api manifest --json".to_string(),
+                            "pcl api manifest --toon".to_string(),
                         ],
                     )
                 } else {
@@ -1903,8 +1951,8 @@ impl ApiArgs {
                     (
                         response,
                         vec![
-                            "pcl api list --json".to_string(),
-                            "pcl api manifest --json".to_string(),
+                            "pcl api list --toon".to_string(),
+                            "pcl api manifest --toon".to_string(),
                         ],
                     )
                 };
@@ -2168,7 +2216,7 @@ impl ApiArgs {
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         if args.body_template {
-            return Ok(template_envelope(assertions_body_template(args)));
+            return Ok(template_envelope(body_template("empty_object")));
         }
         let request = assertions_request(args)?;
         if self.dry_run {
@@ -2180,6 +2228,26 @@ impl ApiArgs {
             .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
         let next_actions = assertions_next_actions(&result.body, args, request.next_actions);
+        Ok(workflow_success_envelope(result, next_actions))
+    }
+
+    async fn run_search(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        args: &SearchArgs,
+        request_log_path: &Path,
+    ) -> Result<Value, ApiCommandError> {
+        let request = search_request(args)?;
+        if self.dry_run {
+            return Ok(dry_run_envelope(
+                self.workflow_request_plan(&request, None, config),
+            ));
+        }
+        let result = self
+            .call_workflow_result(config, cli_args, &request, request_log_path)
+            .await?;
+        let next_actions = search_next_actions(&result.body, request.next_actions);
         Ok(workflow_success_envelope(result, next_actions))
     }
 
@@ -2923,7 +2991,7 @@ fn write_request_log(
     );
 }
 
-fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {
+pub(crate) fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {
     if content_type.contains("application/json") {
         return serde_json::from_slice(bytes).unwrap_or_else(|_| {
             json!({
@@ -2938,17 +3006,2475 @@ fn response_body_value(content_type: &str, bytes: &[u8]) -> Value {
 }
 
 fn print_output(value: &Value, json_output: bool) -> Result<(), ApiCommandError> {
-    print!("{}", output_string(value, json_output)?);
+    print!("{}", envelope_output_string(value, json_output)?);
     Ok(())
 }
 
-fn output_string(value: &Value, json_output: bool) -> Result<String, ApiCommandError> {
+pub fn envelope_output_string(
+    value: &Value,
+    json_output: bool,
+) -> Result<String, serde_json::Error> {
     let value = with_envelope_metadata(value.clone());
-    if json_output {
-        Ok(format!("{}\n", serde_json::to_string_pretty(&value)?))
+    let output_mode = if json_output {
+        OutputMode::Json
     } else {
-        Ok(toon_string(&value))
+        current_output_mode()
+    };
+    match output_mode {
+        OutputMode::Json => Ok(format!("{}\n", serde_json::to_string_pretty(&value)?)),
+        OutputMode::Toon => Ok(toon_string(&value)),
+        OutputMode::Human => Ok(human_string(&value)),
     }
+}
+
+/// Render an envelope for interactive humans.
+pub fn human_string(value: &Value) -> String {
+    let value = with_envelope_metadata(value.clone());
+    let status = value.get("status").and_then(Value::as_str).unwrap_or("ok");
+    let mut output = String::new();
+    output.push_str(match status {
+        "ok" => "OK",
+        "error" => "Error",
+        "action_required" => "Action required",
+        "pending" => "Pending",
+        other => other,
+    });
+    output.push('\n');
+
+    if let Some(error) = value.get("error") {
+        render_human_error(&mut output, error);
+    } else if !render_human_special(&mut output, &value)
+        && !render_human_collection(&mut output, &value)
+        && let Some(data) = value.get("data")
+    {
+        render_human_summary(&mut output, data);
+    }
+
+    let human_actions = human_next_actions(&value);
+    if !human_actions.is_empty() {
+        output.push_str("\nNext:\n");
+        for (index, action) in human_actions.iter().enumerate() {
+            output.push_str("  ");
+            output.push_str(&(index + 1).to_string());
+            output.push_str(". ");
+            output.push_str(action);
+            output.push('\n');
+        }
+    }
+    render_human_request_id(&mut output, &value);
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output
+}
+
+fn human_next_actions(envelope: &Value) -> Vec<String> {
+    let status = envelope
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("ok");
+    let is_empty_ok = status == "ok" && envelope_has_empty_results(envelope);
+    let terms_accepted = envelope_terms_accepted(envelope);
+    let preserve_agent_flags = envelope
+        .get("data")
+        .and_then(|data| data.get("consumption_order"))
+        .is_some();
+    let integration_test_unavailable = envelope
+        .pointer("/data/test_available")
+        .or_else(|| envelope.pointer("/data/data/test_available"))
+        .and_then(Value::as_bool)
+        == Some(false);
+    envelope
+        .get("next_actions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|action| !is_dangerous_or_internal_action(action))
+        .filter(|action| !(is_empty_ok && is_item_placeholder_action(action)))
+        .filter(|action| !(terms_accepted && action.contains("account --accept-terms")))
+        .filter(|action| !(integration_test_unavailable && action.contains(" --test")))
+        .map(|action| {
+            if preserve_agent_flags {
+                action.to_string()
+            } else {
+                human_action_str(action)
+            }
+        })
+        .filter(|action| !action.is_empty())
+        .collect()
+}
+
+fn envelope_terms_accepted(envelope: &Value) -> bool {
+    envelope
+        .pointer("/data/terms_accepted")
+        .or_else(|| envelope.pointer("/data/data/terms_accepted"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn is_dangerous_or_internal_action(action: &str) -> bool {
+    action.contains(" config delete")
+        || action.contains(" --delete")
+        || action.contains(" --remove")
+        || action.contains(" --revoke")
+        || action.contains(" --logout")
+        || action.starts_with("Read error.http.body")
+        || action.starts_with("Use data.")
+}
+
+fn is_item_placeholder_action(action: &str) -> bool {
+    [
+        "<assertion-id>",
+        "<incident-id>",
+        "<release-id>",
+        "<transfer-id>",
+        "<adopter-id>",
+        "<job-id>",
+        "<project-ref>",
+        "<contract-ref>",
+        "<token>",
+    ]
+    .iter()
+    .any(|placeholder| action.contains(placeholder))
+}
+
+fn envelope_has_empty_results(envelope: &Value) -> bool {
+    let Some(data) = envelope.get("data") else {
+        return false;
+    };
+    value_has_empty_results(data)
+}
+
+fn value_has_empty_results(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.is_empty(),
+        Value::Object(object) => {
+            if let Some(inner) = object.get("data")
+                && value_has_empty_results(inner)
+            {
+                return true;
+            }
+            object.iter().any(|(key, value)| {
+                !key.starts_with('_')
+                    && (value.as_array().is_some_and(Vec::is_empty)
+                        || value_has_empty_results(value))
+            })
+        }
+        _ => false,
+    }
+}
+
+struct HumanCollection<'a> {
+    field: String,
+    name: String,
+    items: &'a [Value],
+    pagination: Option<&'a Value>,
+    meta: Option<&'a Value>,
+}
+
+fn render_human_error(output: &mut String, error: &Value) {
+    output.push('\n');
+    let code = error.get("code").and_then(Value::as_str);
+    if let Some(message) = error.get("message").and_then(Value::as_str) {
+        output.push_str(&human_error_message(code, message));
+        output.push('\n');
+    } else if let Some(error) = error.as_str() {
+        output.push_str(error);
+        output.push('\n');
+    } else {
+        render_human_value(output, error, 0);
+    }
+
+    if let Some(reason) = api_error_reason(error) {
+        output.push_str("API reason: ");
+        output.push_str(&reason);
+        output.push('\n');
+    }
+    if let Some(request_id) = error.get("request_id").and_then(Value::as_str) {
+        output.push_str("Request ID: ");
+        output.push_str(request_id);
+        output.push('\n');
+    }
+}
+
+fn human_error_message(code: Option<&str>, message: &str) -> String {
+    if code.is_some_and(|value| value.starts_with("cli.")) {
+        return clean_cli_error_message(message);
+    }
+    match code {
+        Some("api.not_found") => {
+            "Resource not found. Check the ID, slug, or API path and try again.".to_string()
+        }
+        Some("network.request_failed") => {
+            "Network request failed. Check --api-url and your network connection, then retry."
+                .to_string()
+        }
+        Some("api.server_error") => {
+            "The platform returned a server error. Retry later or report the request ID."
+                .to_string()
+        }
+        _ => message.to_string(),
+    }
+}
+
+fn clean_cli_error_message(message: &str) -> String {
+    let lines = message
+        .lines()
+        .take_while(|line| !line.starts_with("Usage:") && !line.starts_with("For more information"))
+        .map(|line| line.strip_prefix("error: ").unwrap_or(line).trim_end())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.first() == Some(&"the following required arguments were not provided:")
+        && let Some(argument) = lines.get(1)
+    {
+        return format!("Missing required argument: {}", argument.trim());
+    }
+    lines.join("\n")
+}
+
+fn api_error_reason(error: &Value) -> Option<String> {
+    let body = error.pointer("/http/body")?;
+    for key in ["message", "error", "detail", "reason"] {
+        if let Some(value) = body.get(key).and_then(Value::as_str)
+            && !value.is_empty()
+        {
+            return Some(value.to_string());
+        }
+    }
+    body.as_str().map(ToString::to_string)
+}
+
+fn render_human_special(output: &mut String, envelope: &Value) -> bool {
+    let Some(data) = envelope.get("data") else {
+        return false;
+    };
+    let display_data = data.get("data").unwrap_or(data);
+
+    for render in [
+        render_login_challenge as fn(&mut String, &Value) -> bool,
+        render_request_plan,
+        render_auth_status,
+        render_identity_status,
+        render_doctor,
+    ] {
+        if render(output, display_data) {
+            return true;
+        }
+    }
+    if render_project_home(output, data, display_data) {
+        return true;
+    }
+    for render in [
+        render_project_detail as fn(&mut String, &Value) -> bool,
+        render_incident_detail,
+        render_search_results,
+        render_account_detail,
+        render_deployment_state,
+        render_transfer_state,
+        render_integration_status,
+        render_protocol_manager_status,
+    ] {
+        if render(output, display_data) {
+            return true;
+        }
+    }
+    if render_mutation_success(output, envelope, display_data) {
+        return true;
+    }
+    for render in [
+        render_api_manifest as fn(&mut String, &Value) -> bool,
+        render_llms_guide,
+        render_workflow_detail,
+        render_schema_detail,
+        render_operation_detail,
+        render_api_coverage,
+        render_raw_api_response,
+        render_export_result,
+        render_job_detail,
+        render_path_or_toggle_result,
+    ] {
+        if render(output, display_data) {
+            return true;
+        }
+    }
+    if render_body_template(output, envelope, display_data) {
+        return true;
+    }
+
+    false
+}
+
+fn render_login_challenge(output: &mut String, data: &Value) -> bool {
+    if data.get("state").and_then(Value::as_str) != Some("login_required") {
+        return false;
+    }
+    output.push_str("\nLogin required\n");
+    if let Some(reason) = data.get("reason").and_then(Value::as_str) {
+        writeln!(output, "Reason: {}", human_label(reason)).expect("write to string");
+    }
+    if let Some(url) = data.get("device_url").and_then(Value::as_str) {
+        writeln!(output, "Open: {url}").expect("write to string");
+    }
+    if let Some(code) = data.get("code").and_then(Value::as_str) {
+        writeln!(output, "Code: {code}").expect("write to string");
+    }
+    if let Some(expires_at) = data.get("expires_at").and_then(Value::as_str) {
+        writeln!(output, "Expires: {}", format_timestamp(expires_at)).expect("write to string");
+    }
+    if let Some(command) = data.get("poll_command").and_then(Value::as_str) {
+        writeln!(output, "Poll: {}", humanize_command(command)).expect("write to string");
+    }
+    true
+}
+
+fn render_request_plan(output: &mut String, data: &Value) -> bool {
+    if data.get("dry_run").and_then(Value::as_bool) != Some(true) {
+        return false;
+    }
+
+    output.push_str("\nDry run\n");
+    if data.get("valid").and_then(Value::as_bool) == Some(false) {
+        output.push_str("Request is not valid.\n");
+        if let Some(error) = data.get("error") {
+            render_human_error(output, error);
+        }
+        return true;
+    }
+
+    let request = data.get("request").unwrap_or(data);
+    let method = request.get("method").and_then(Value::as_str).unwrap_or("-");
+    let path = request.get("path").and_then(Value::as_str).unwrap_or("-");
+    writeln!(output, "{method} {path}").expect("write to string");
+    if let Some(query) = request.get("query").and_then(Value::as_array)
+        && !query.is_empty()
+    {
+        output.push_str("Query: ");
+        output.push_str(&name_value_pairs(query));
+        output.push('\n');
+    }
+    if let Some(auth) = request.get("auth") {
+        let required = auth
+            .get("required")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let attached = auth
+            .get("will_attach_stored_token")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        writeln!(
+            output,
+            "Auth: {}{}",
+            if required { "required" } else { "not required" },
+            if attached {
+                ", stored token will be attached"
+            } else {
+                ""
+            }
+        )
+        .expect("write to string");
+    }
+    if let Some(body) = request.get("body")
+        && !body.is_null()
+    {
+        output.push_str("Body: ");
+        output.push_str(&human_compact_summary(body));
+        output.push('\n');
+    }
+    if let Some(pagination) = data.get("pagination")
+        && !pagination.is_null()
+    {
+        output.push_str("Pagination: ");
+        output.push_str(&human_compact_summary(pagination));
+        output.push('\n');
+    }
+    true
+}
+
+fn render_auth_status(output: &mut String, data: &Value) -> bool {
+    if !data.get("authenticated").is_some_and(Value::is_boolean)
+        || data.get("auth").is_some()
+        || data.get("config_path").is_some()
+    {
+        return false;
+    }
+
+    output.push_str("\nAuthentication\n");
+    let authenticated = data
+        .get("authenticated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    writeln!(
+        output,
+        "Status: {}",
+        if authenticated {
+            "authenticated"
+        } else {
+            "not logged in"
+        }
+    )
+    .expect("write to string");
+    if let Some(user) = data.get("user").and_then(Value::as_str) {
+        writeln!(output, "User: {user}").expect("write to string");
+    }
+    if let Some(email) = data.get("email").and_then(Value::as_str)
+        && data.get("user").and_then(Value::as_str) != Some(email)
+    {
+        writeln!(output, "Email: {email}").expect("write to string");
+    }
+    if let Some(wallet) = data.get("wallet_address").and_then(Value::as_str) {
+        writeln!(output, "Wallet: {wallet}").expect("write to string");
+    }
+    if let Some(expires_at) = data.get("expires_at").and_then(Value::as_str) {
+        writeln!(output, "Token expires: {}", format_timestamp(expires_at))
+            .expect("write to string");
+    }
+    if let Some(seconds) = data.get("seconds_remaining").and_then(Value::as_i64) {
+        writeln!(output, "Time remaining: {}", format_duration(seconds)).expect("write to string");
+    }
+    if data.get("refreshed").and_then(Value::as_bool) == Some(true) {
+        output.push_str("Token refreshed.\n");
+    }
+    if let Some(request_id) = data.get("request_id").and_then(Value::as_str) {
+        writeln!(output, "Request ID: {request_id}").expect("write to string");
+    }
+    true
+}
+
+fn render_identity_status(output: &mut String, data: &Value) -> bool {
+    let Some(auth) = data.get("auth") else {
+        return false;
+    };
+    if !auth.get("authenticated").is_some_and(Value::is_boolean) {
+        return false;
+    }
+    output.push_str("\nIdentity\n");
+    let authenticated = auth
+        .get("authenticated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    writeln!(
+        output,
+        "Status: {}",
+        if authenticated {
+            "authenticated"
+        } else {
+            "not logged in"
+        }
+    )
+    .expect("write to string");
+    if let Some(user) = auth.get("user").and_then(Value::as_str) {
+        writeln!(output, "User: {user}").expect("write to string");
+    }
+    if let Some(user_id) = auth.get("user_id").and_then(Value::as_str) {
+        writeln!(output, "User ID: {user_id}").expect("write to string");
+    }
+    if let Some(expires_at) = auth.get("expires_at").and_then(Value::as_str) {
+        writeln!(output, "Token expires: {}", format_timestamp(expires_at))
+            .expect("write to string");
+    }
+    if let Some(config_path) = data.get("config_path").and_then(Value::as_str) {
+        writeln!(output, "Config: {config_path}").expect("write to string");
+    }
+    if data.get("offline").and_then(Value::as_bool) == Some(true) {
+        output.push_str("Network checks skipped.\n");
+    }
+    true
+}
+
+fn render_doctor(output: &mut String, data: &Value) -> bool {
+    let Some(checks) = data.get("checks").and_then(Value::as_array) else {
+        return false;
+    };
+    output.push_str("\nDoctor\n");
+    render_checks_table(output, checks);
+    if let Some(api_url) = data.get("api_url").and_then(Value::as_str) {
+        writeln!(output, "\nAPI: {api_url}").expect("write to string");
+    }
+    output.push_str("Default output: human. Agents should pass --toon; scripts can pass --json.\n");
+    true
+}
+
+fn render_project_detail(output: &mut String, data: &Value) -> bool {
+    if data.get("project_id").is_none() || data.get("project_name").is_none() {
+        return false;
+    }
+    output.push_str("\nProject\n");
+    write_string_field(output, "Name", data, "project_name");
+    write_string_field(output, "ID", data, "project_id");
+    write_string_field(output, "Slug", data, "slug");
+    if let Some(private) = data.get("is_private").and_then(Value::as_bool) {
+        writeln!(
+            output,
+            "Visibility: {}",
+            if private { "private" } else { "public" }
+        )
+        .expect("write to string");
+    }
+    if let Some(dev) = data.get("is_dev").and_then(Value::as_bool) {
+        writeln!(
+            output,
+            "Mode: {}",
+            if dev { "development" } else { "production" }
+        )
+        .expect("write to string");
+    }
+    write_network_list_for_value(output, data);
+    write_optional_string_field(output, "Description", data, "project_description");
+    write_optional_string_field(output, "GitHub", data, "github_url");
+    write_timestamp_field(output, "Created", data, "created_at");
+    write_timestamp_field(output, "Updated", data, "updated_at");
+    if let Some(manager) = data
+        .get("protocol_manager_address")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        writeln!(output, "Protocol manager: {manager}").expect("write to string");
+    } else {
+        output.push_str("Protocol manager: not set\n");
+    }
+    write_count_field(
+        output,
+        "Submitted assertions",
+        data,
+        "submitted_assertion_ids",
+    );
+    write_u64_field(output, "Saved by", data, "saved_count", Some("users"));
+    true
+}
+
+fn render_incident_detail(output: &mut String, data: &Value) -> bool {
+    let Some(incident_id) = data.get("incident_id").and_then(Value::as_str) else {
+        return false;
+    };
+    if data.get("invalidating_transactions").is_none() && data.get("transaction_count").is_none() {
+        return false;
+    }
+
+    output.push_str("\nIncident\n");
+    writeln!(output, "ID: {incident_id}").expect("write to string");
+    write_optional_string_field(output, "Reference", data, "public_reference_id");
+    write_u64_field(output, "Chain", data, "chain_id", None);
+    write_timestamp_field(output, "Window start", data, "window_start");
+    write_string_field(output, "Environment", data, "environment");
+
+    if let Some(assertion) = data.get("assertion") {
+        output.push_str("\nAssertion\n");
+        write_optional_string_field(output, "Title", assertion, "title");
+        write_optional_string_field(output, "ID", assertion, "assertion_id");
+        if let Some(description) = assertion
+            .get("description")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .filter(|value| !is_hex_blob(value))
+        {
+            writeln!(output, "Description: {}", truncate(description, 96))
+                .expect("write to string");
+        }
+    } else {
+        write_optional_string_field(output, "Assertion ID", data, "assertion_id");
+    }
+
+    if let Some(adopter) = data.get("assertion_adopter") {
+        output.push_str("\nAssertion adopter\n");
+        write_optional_string_field(output, "Name", adopter, "name");
+        write_optional_string_field(output, "Address", adopter, "address");
+        write_optional_string_field(output, "ID", adopter, "id");
+    } else {
+        write_optional_string_field(output, "Assertion adopter ID", data, "assertion_adopter_id");
+    }
+
+    output.push_str("\nTrace summary\n");
+    if let Some(value) = data.get("transaction_count").and_then(Value::as_u64) {
+        writeln!(
+            output,
+            "Invalidating transactions: {}",
+            plural_count(value, "transaction")
+        )
+        .expect("write to string");
+    }
+    write_u64_field(output, "Traces completed", data, "traces_completed", None);
+    write_u64_field(output, "Traces pending", data, "traces_pending", None);
+
+    if let Some(transactions) = data
+        .get("invalidating_transactions")
+        .and_then(Value::as_array)
+        .filter(|transactions| !transactions.is_empty())
+    {
+        let shown = transactions.len().min(5);
+        writeln!(
+            output,
+            "\nInvalidating transactions (first {shown} of {})",
+            transactions.len()
+        )
+        .expect("write to string");
+        writeln!(
+            output,
+            "{} {} {} {} Trace",
+            pad("#", 3),
+            pad("Time", 16),
+            pad("Tx hash", 20),
+            pad("Result", 11)
+        )
+        .expect("write to string");
+        for (index, tx) in transactions.iter().take(shown).enumerate() {
+            let time = tx
+                .get("incident_timestamp")
+                .and_then(Value::as_str)
+                .map_or_else(|| "-".to_string(), format_timestamp);
+            let hash = first_string_field(tx, &["transaction_hash", "hash", "tx_hash"])
+                .map_or_else(|| "-".to_string(), |value| truncate(&value, 20));
+            let result = match tx.get("landed_on_chain").and_then(Value::as_bool) {
+                Some(true) => "landed",
+                Some(false) => "invalidated",
+                None => "-",
+            };
+            let trace = tx
+                .get("debug_traces")
+                .and_then(Value::as_array)
+                .and_then(|traces| traces.first())
+                .and_then(|trace| trace.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or("-");
+            writeln!(
+                output,
+                "{} {} {} {} {}",
+                pad(&(index + 1).to_string(), 3),
+                pad(&time, 16),
+                pad(&hash, 20),
+                pad(result, 11),
+                trace
+            )
+            .expect("write to string");
+        }
+    }
+
+    true
+}
+
+fn render_project_home(output: &mut String, envelope_data: &Value, data: &Value) -> bool {
+    let Some(member_projects) = data.get("member_projects").and_then(Value::as_array) else {
+        return false;
+    };
+    let saved_projects = data
+        .get("saved_projects")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let no_project_adopters = data
+        .get("no_project_adopters")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+
+    output.push_str("\nYour projects\n");
+    writeln!(
+        output,
+        "Showing {} you belong to",
+        plural_count(member_projects.len(), "project")
+    )
+    .expect("write to string");
+    if let Some(meta) = envelope_data.get("_meta") {
+        render_collection_meta(output, meta);
+    }
+    output.push('\n');
+
+    if member_projects.is_empty() {
+        output.push_str("No projects found for your account.\n");
+    } else {
+        render_projects_table(output, member_projects);
+    }
+
+    writeln!(
+        output,
+        "\nSaved projects: {}",
+        plural_count(saved_projects.len(), "project")
+    )
+    .expect("write to string");
+    if !saved_projects.is_empty() {
+        render_projects_table(output, saved_projects);
+    }
+    writeln!(
+        output,
+        "Contracts without a project: {}",
+        plural_count(no_project_adopters.len(), "contract")
+    )
+    .expect("write to string");
+    true
+}
+
+fn render_search_results(output: &mut String, data: &Value) -> bool {
+    let Some(projects) = data.get("projects").and_then(Value::as_array) else {
+        return false;
+    };
+    let contracts = data
+        .get("contracts")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let assertions = data
+        .get("assertions")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+
+    output.push_str("\nSearch results\n");
+    writeln!(output, "Projects: {}", projects.len()).expect("write to string");
+    writeln!(output, "Contracts: {}", contracts.len()).expect("write to string");
+    writeln!(output, "Assertions: {}", assertions.len()).expect("write to string");
+
+    if projects.is_empty() && contracts.is_empty() && assertions.is_empty() {
+        output.push_str("\nNo search results found.\n");
+        return true;
+    }
+
+    if !projects.is_empty() {
+        output.push_str("\nProjects\n");
+        render_generic_table(output, projects);
+    }
+    if !contracts.is_empty() {
+        output.push_str("\nContracts\n");
+        render_search_contracts_table(output, contracts);
+    }
+    if !assertions.is_empty() {
+        output.push_str("\nAssertions\n");
+        render_generic_table(output, assertions);
+    }
+    true
+}
+
+fn render_search_contracts_table(output: &mut String, items: &[Value]) {
+    writeln!(
+        output,
+        "{:<32} {:<10} {:<22} Project",
+        "Contract", "Network", "Address"
+    )
+    .expect("write to string");
+    for item in items {
+        let data = item.get("data").unwrap_or(item);
+        let name = data
+            .get("contract_name")
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        let network = data.get("network").and_then(Value::as_str).unwrap_or("-");
+        let address = data.get("address").and_then(Value::as_str).unwrap_or("-");
+        let project = data
+            .get("related_project_slug")
+            .or_else(|| data.get("related_project_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        writeln!(
+            output,
+            "{:<32} {:<10} {:<22} {}",
+            pad(name, 32),
+            pad(network, 10),
+            pad(address, 22),
+            project
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_account_detail(output: &mut String, data: &Value) -> bool {
+    if data.get("email").is_none() || data.get("authMethod").is_none() {
+        return false;
+    }
+    output.push_str("\nAccount\n");
+    write_string_field(output, "Email", data, "email");
+    write_string_field(output, "User ID", data, "id");
+    write_string_field(output, "Auth method", data, "authMethod");
+    write_string_field(output, "Scope", data, "scope");
+    write_bool_field(output, "Whitelisted", data, "whitelisted");
+    write_bool_field(output, "Terms accepted", data, "terms_accepted");
+    write_timestamp_field(output, "Terms accepted at", data, "terms_accepted_at");
+    true
+}
+
+fn render_deployment_state(output: &mut String, data: &Value) -> bool {
+    let Some(project) = data.get("project") else {
+        return false;
+    };
+    if data.get("available_contracts").is_none()
+        || data.get("submitted_assertions").is_none()
+        || data.get("staging_assertions").is_none()
+    {
+        return false;
+    }
+    output.push_str("\nDeployments\n");
+    if let Some(name) = project.get("project_name").and_then(Value::as_str) {
+        writeln!(output, "Project: {name}").expect("write to string");
+    }
+    if let Some(id) = project.get("project_id").and_then(Value::as_str) {
+        writeln!(output, "Project ID: {id}").expect("write to string");
+    }
+    write_network_list_for_value(output, project);
+    write_count_field(output, "Available contracts", data, "available_contracts");
+    write_count_field(output, "Submitted assertions", data, "submitted_assertions");
+    write_count_field(output, "Staging assertions", data, "staging_assertions");
+    if let Some(meta) = data.get("_meta") {
+        render_collection_meta(output, meta);
+    }
+    true
+}
+
+fn render_transfer_state(output: &mut String, data: &Value) -> bool {
+    let (Some(incoming), Some(outgoing)) = (data.get("incoming"), data.get("outgoing")) else {
+        return false;
+    };
+    output.push_str("\nProtocol manager transfers\n");
+    write_transfer_counts(output, "Incoming", incoming);
+    write_transfer_counts(output, "Outgoing", outgoing);
+    true
+}
+
+fn render_integration_status(output: &mut String, data: &Value) -> bool {
+    if data.get("configured").is_none() || data.get("enabled").is_none() {
+        return false;
+    }
+    output.push_str("\nIntegration\n");
+    write_bool_field(output, "Configured", data, "configured");
+    write_bool_field(output, "Enabled", data, "enabled");
+    write_optional_string_field(output, "Webhook URL", data, "webhook_url");
+    write_timestamp_field(output, "Last notification", data, "last_notification_at");
+    write_u64_field(
+        output,
+        "Notifications sent",
+        data,
+        "notification_count",
+        None,
+    );
+    write_bool_field(output, "Test available", data, "test_available");
+    true
+}
+
+fn render_protocol_manager_status(output: &mut String, data: &Value) -> bool {
+    if data.get("has_pending_transfer").is_none()
+        || data.get("contracts_pending").is_none()
+        || data.get("contracts_total").is_none()
+    {
+        return false;
+    }
+    output.push_str("\nProtocol manager\n");
+    write_bool_field(output, "Pending transfer", data, "has_pending_transfer");
+    write_optional_string_field(output, "Current manager", data, "current_manager_address");
+    write_optional_string_field(output, "New manager", data, "new_manager_address");
+    write_u64_field(output, "Contracts pending", data, "contracts_pending", None);
+    write_u64_field(output, "Contracts total", data, "contracts_total", None);
+    true
+}
+
+fn render_mutation_success(output: &mut String, envelope: &Value, data: &Value) -> bool {
+    if data.get("success").and_then(Value::as_bool) != Some(true)
+        || data
+            .as_object()
+            .is_some_and(|object| object.contains_key("message"))
+    {
+        return false;
+    }
+    let Some(request) = envelope.get("request") else {
+        return false;
+    };
+    let method = request.get("method").and_then(Value::as_str).unwrap_or("");
+    let path = request.get("path").and_then(Value::as_str).unwrap_or("");
+    output.push('\n');
+    output.push_str(mutation_success_message(method, path));
+    output.push('\n');
+    true
+}
+
+fn mutation_success_message(method: &str, path: &str) -> &'static str {
+    match (method, path) {
+        ("POST", "/projects/saved") => "Project saved",
+        ("DELETE", "/projects/saved") => "Project removed from saved projects",
+        _ if method == "DELETE"
+            && path.starts_with("/projects/")
+            && path.contains("/invitations/") =>
+        {
+            "Invitation revoked"
+        }
+        _ if method == "POST" && path.starts_with("/projects/") && path.ends_with("/resend") => {
+            "Invitation resent"
+        }
+        _ if method == "PATCH" && path.starts_with("/projects/") && path.contains("/members/") => {
+            "Member role updated"
+        }
+        _ if method == "DELETE" && path.starts_with("/projects/") && path.contains("/members/") => {
+            "Member removed"
+        }
+        _ if method == "DELETE" && path.ends_with("/protocol-manager") => {
+            "Protocol manager cleared"
+        }
+        _ if method == "POST" && path.ends_with("/confirm-transfer") => {
+            "Protocol manager transfer confirmed"
+        }
+        _ if method == "DELETE"
+            && path.starts_with("/projects/")
+            && !path.contains("/integrations/")
+            && !path.contains("/invitations/")
+            && !path.contains("/members/")
+            && !path.contains("/protocol-manager") =>
+        {
+            "Project deleted"
+        }
+        _ => "Request completed",
+    }
+}
+
+fn render_body_template(output: &mut String, envelope: &Value, data: &Value) -> bool {
+    if !is_body_template_envelope(envelope) {
+        return false;
+    }
+    if let Some(variants) = data.get("body_variants").and_then(Value::as_array) {
+        output.push_str("\nBody variants\n");
+        for variant in variants {
+            let name = variant
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("variant");
+            writeln!(output, "- {name}").expect("write to string");
+            if let Some(body) = variant.get("body") {
+                render_human_value(output, body, 4);
+            }
+        }
+        return true;
+    }
+
+    let Some(object) = data.as_object() else {
+        return false;
+    };
+    if object.is_empty()
+        || !object
+            .values()
+            .all(|value| is_scalar(value) || value.is_object() || value.is_array())
+    {
+        return false;
+    }
+    if !object.keys().any(|key| is_body_template_key(key)) {
+        return false;
+    }
+    output.push_str("\nBody template\n");
+    render_human_value(output, data, 2);
+    true
+}
+
+fn is_body_template_envelope(envelope: &Value) -> bool {
+    envelope
+        .get("next_actions")
+        .and_then(Value::as_array)
+        .is_some_and(|actions| {
+            actions.iter().filter_map(Value::as_str).any(|action| {
+                action.starts_with("Pass the template")
+                    || action.starts_with("Choose one entry from data.body_variants")
+            })
+        })
+}
+
+fn render_api_manifest(output: &mut String, data: &Value) -> bool {
+    if data.get("name").and_then(Value::as_str) != Some("pcl") || data.get("commands").is_none() {
+        return false;
+    }
+    output.push_str("\nPCL command surface\n");
+    if let Some(description) = data.get("description").and_then(Value::as_str) {
+        writeln!(output, "{description}").expect("write to string");
+    }
+    output.push_str("\nStart here:\n");
+    for command in ["pcl --llms", "pcl workflows", "pcl schema list"] {
+        writeln!(output, "  - {command}").expect("write to string");
+    }
+    if let Some(commands) = data.get("commands").and_then(Value::as_array) {
+        writeln!(
+            output,
+            "\n{} workflow/API command groups available.",
+            commands.len()
+        )
+        .expect("write to string");
+    }
+    true
+}
+
+fn render_llms_guide(output: &mut String, data: &Value) -> bool {
+    if data.get("purpose").is_none() || data.get("consumption_order").is_none() {
+        return false;
+    }
+    output.push_str("\nLLM guide\n");
+    if let Some(purpose) = data.get("purpose").and_then(Value::as_str) {
+        writeln!(output, "{purpose}").expect("write to string");
+    }
+    if let Some(order) = data.get("consumption_order").and_then(Value::as_array) {
+        output.push_str("\nRecommended order:\n");
+        for command in order.iter().filter_map(Value::as_str).take(8) {
+            writeln!(output, "  - {command}").expect("write to string");
+        }
+    }
+    true
+}
+
+fn render_workflow_detail(output: &mut String, data: &Value) -> bool {
+    if data.get("steps").is_none() || data.get("name").is_none() {
+        return false;
+    }
+    output.push('\n');
+    if let Some(name) = data.get("name").and_then(Value::as_str) {
+        writeln!(output, "Workflow: {name}").expect("write to string");
+    }
+    if let Some(description) = data.get("description").and_then(Value::as_str) {
+        writeln!(output, "{description}").expect("write to string");
+    }
+    if let Some(steps) = data.get("steps").and_then(Value::as_array) {
+        output.push_str("\nSteps:\n");
+        for (index, step) in steps.iter().enumerate() {
+            let command = step.get("command").and_then(Value::as_str).unwrap_or("-");
+            let description = step.get("output").and_then(Value::as_str).unwrap_or("");
+            writeln!(
+                output,
+                "  {}. {}{}",
+                index + 1,
+                humanize_command(command),
+                if description.is_empty() {
+                    String::new()
+                } else {
+                    format!(" -> {description}")
+                }
+            )
+            .expect("write to string");
+        }
+    }
+    true
+}
+
+fn render_schema_detail(output: &mut String, data: &Value) -> bool {
+    if data.get("workflow").is_none()
+        || !(data.get("actions").is_some() || data.get("action").is_some())
+    {
+        return false;
+    }
+    output.push('\n');
+    if let Some(workflow) = data.get("workflow").and_then(Value::as_str) {
+        writeln!(output, "Schema: {workflow}").expect("write to string");
+    }
+    if let Some(command) = data.get("command").and_then(Value::as_str) {
+        writeln!(output, "Command: {}", humanize_command(command)).expect("write to string");
+    }
+    if let Some(actions) = data.get("actions").and_then(Value::as_array) {
+        render_actions_table(output, actions);
+    } else if let Some(action) = data.get("action") {
+        render_action_detail(output, action);
+    }
+    true
+}
+
+fn render_operation_detail(output: &mut String, data: &Value) -> bool {
+    if data.get("operation_id").is_none()
+        || data.get("method").is_none()
+        || data.get("path").is_none()
+    {
+        return false;
+    }
+    output.push_str("\nAPI operation\n");
+    let method = data.get("method").and_then(Value::as_str).unwrap_or("-");
+    let path = data.get("path").and_then(Value::as_str).unwrap_or("-");
+    writeln!(output, "{method} {path}").expect("write to string");
+    if let Some(operation_id) = data.get("operation_id").and_then(Value::as_str) {
+        writeln!(output, "Operation: {operation_id}").expect("write to string");
+    }
+    if let Some(summary) = data.get("summary").and_then(Value::as_str) {
+        writeln!(output, "Summary: {summary}").expect("write to string");
+    }
+    if let Some(policy) = data.pointer("/raw_api_use/policy").and_then(Value::as_str) {
+        writeln!(output, "Raw API policy: {}", human_label(policy)).expect("write to string");
+    }
+    if let Some(alternatives) = data.get("workflow_alternatives").and_then(Value::as_array)
+        && !alternatives.is_empty()
+    {
+        output.push_str("Prefer:\n");
+        for alternative in alternatives {
+            if let Some(example) = alternative.get("example").and_then(Value::as_str) {
+                writeln!(output, "  - {}", humanize_command(example)).expect("write to string");
+            }
+        }
+    }
+    if let Some(command) = data.get("call_command").and_then(Value::as_str) {
+        writeln!(output, "Raw call: {}", humanize_command(command)).expect("write to string");
+    }
+    true
+}
+
+fn render_api_coverage(output: &mut String, data: &Value) -> bool {
+    let Some(total) = data.get("total_operations").and_then(Value::as_u64) else {
+        return false;
+    };
+    output.push_str("\nAPI coverage\n");
+    writeln!(output, "Operations: {total}").expect("write to string");
+    for (label, field) in [
+        ("No request-log hit", "no_hit_count"),
+        ("Hit without 2xx", "no_2xx_count"),
+        ("Write hit without 2xx", "write_no_2xx_count"),
+        ("Unmatched records", "unmatched_record_count"),
+    ] {
+        if let Some(count) = data.get(field).and_then(Value::as_u64) {
+            writeln!(output, "{label}: {count}").expect("write to string");
+        }
+    }
+    if let Some(by_method) = data.get("by_method").and_then(Value::as_object) {
+        output.push_str("\nBy method:\n");
+        for (method, stats) in by_method {
+            let total = stats.get("total").and_then(Value::as_u64).unwrap_or(0);
+            let hit = stats.get("hit").and_then(Value::as_u64).unwrap_or(0);
+            let ok = stats.get("ok").and_then(Value::as_u64).unwrap_or(0);
+            writeln!(output, "  {method}: {ok}/{total} 2xx, {hit} hit").expect("write to string");
+        }
+    }
+    true
+}
+
+fn render_raw_api_response(output: &mut String, data: &Value) -> bool {
+    if data.get("request").is_none() || data.get("response").is_none() {
+        return false;
+    }
+    let request = data.get("request").unwrap_or(&Value::Null);
+    let response = data.get("response").unwrap_or(&Value::Null);
+    output.push_str("\nAPI response\n");
+    if let (Some(method), Some(path)) = (
+        request.get("method").and_then(Value::as_str),
+        request.get("path").and_then(Value::as_str),
+    ) {
+        writeln!(output, "{method} {path}").expect("write to string");
+    }
+    if let Some(status) = response.get("status").and_then(Value::as_u64) {
+        writeln!(output, "HTTP {status}").expect("write to string");
+    }
+    if let Some(request_id) = response.get("request_id").and_then(Value::as_str) {
+        writeln!(output, "Request ID: {request_id}").expect("write to string");
+    }
+    if let Some(body) = response.get("body") {
+        if let Some(collection) = find_collection_in_value(body, "") {
+            output.push('\n');
+            output.push_str(&collection.name);
+            output.push('\n');
+            output.push_str(&collection_summary(&collection));
+            output.push_str("\n\n");
+            if collection.items.is_empty() {
+                writeln!(output, "No {} found.", collection.name.to_ascii_lowercase())
+                    .expect("write to string");
+            } else {
+                render_collection_items(output, &collection);
+            }
+        } else {
+            output.push_str("Body: ");
+            output.push_str(&human_compact_summary(body));
+            output.push('\n');
+        }
+    }
+    if let Some(path) = data.get("output_path").and_then(Value::as_str) {
+        writeln!(output, "Wrote: {path}").expect("write to string");
+    }
+    true
+}
+
+fn render_export_result(output: &mut String, data: &Value) -> bool {
+    if data.get("export").and_then(Value::as_str) != Some("incidents")
+        && !(data.get("plan").is_some() && data.get("job_id").is_some())
+    {
+        return false;
+    }
+    output.push_str("\nIncident export\n");
+    if let Some(job_id) = data.get("job_id").and_then(Value::as_str) {
+        writeln!(output, "Job: {job_id}").expect("write to string");
+    }
+    let source = data.get("plan").unwrap_or(data);
+    for (label, field) in [
+        ("Output", "out"),
+        ("Errors", "errors"),
+        ("Checkpoint", "checkpoint"),
+    ] {
+        if let Some(path) = source.get(field).and_then(Value::as_str) {
+            writeln!(output, "{label}: {path}").expect("write to string");
+        }
+    }
+    for (label, field) in [
+        ("Pages fetched", "pages_fetched"),
+        ("Incidents written", "incidents_written"),
+        ("Errors written", "errors_written"),
+        ("Retries", "retries_attempted"),
+    ] {
+        if let Some(count) = data.get(field).and_then(Value::as_u64) {
+            writeln!(output, "{label}: {count}").expect("write to string");
+        }
+    }
+    if let Some(command) = data.get("resume_command").and_then(Value::as_str) {
+        writeln!(output, "Resume: {}", humanize_command(command)).expect("write to string");
+    }
+    true
+}
+
+fn render_job_detail(output: &mut String, data: &Value) -> bool {
+    let job = data.get("job").unwrap_or(data);
+    if job.get("job_id").is_none() {
+        return false;
+    }
+    output.push_str("\nJob\n");
+    for (label, field) in [
+        ("ID", "job_id"),
+        ("Kind", "kind"),
+        ("Status", "status"),
+        ("Updated", "updated_at"),
+    ] {
+        if let Some(value) = job.get(field) {
+            writeln!(output, "{label}: {}", human_cell(value)).expect("write to string");
+        }
+    }
+    if let Some(stats) = job.get("stats") {
+        output.push_str("Stats: ");
+        output.push_str(&human_compact_summary(stats));
+        output.push('\n');
+    }
+    if let Some(command) = data
+        .get("resume_command")
+        .or_else(|| job.get("resume_command"))
+        .and_then(Value::as_str)
+    {
+        writeln!(output, "Resume: {}", humanize_command(command)).expect("write to string");
+    }
+    true
+}
+
+fn render_path_or_toggle_result(output: &mut String, data: &Value) -> bool {
+    if data
+        .as_object()
+        .is_some_and(|object| object.values().any(Value::is_array))
+    {
+        return false;
+    }
+    let path_fields = [
+        ("Config", "config_path"),
+        ("Artifacts", "artifact_dir"),
+        ("Request log", "request_log"),
+        ("Jobs", "jobs_path"),
+    ];
+    let mut rendered = false;
+    for (label, field) in path_fields {
+        if let Some(path) = data.get(field).and_then(Value::as_str) {
+            if !rendered {
+                output.push('\n');
+                rendered = true;
+            }
+            writeln!(output, "{label}: {path}").expect("write to string");
+        }
+    }
+    for (label, field) in [("Created", "created"), ("Deleted", "deleted")] {
+        if let Some(value) = data.get(field).and_then(Value::as_bool) {
+            if !rendered {
+                output.push('\n');
+                rendered = true;
+            }
+            writeln!(output, "{label}: {}", yes_no(value)).expect("write to string");
+        }
+    }
+    rendered
+}
+
+fn write_string_field(output: &mut String, label: &str, data: &Value, field: &str) {
+    if let Some(value) = data.get(field).and_then(Value::as_str) {
+        writeln!(output, "{label}: {value}").expect("write to string");
+    }
+}
+
+fn write_optional_string_field(output: &mut String, label: &str, data: &Value, field: &str) {
+    match data.get(field) {
+        Some(Value::String(value)) if !value.is_empty() => {
+            writeln!(output, "{label}: {value}").expect("write to string");
+        }
+        Some(Value::Null) | None => {}
+        Some(value) if is_scalar(value) => {
+            writeln!(output, "{label}: {}", scalar_string(value)).expect("write to string");
+        }
+        Some(_) => {}
+    }
+}
+
+fn write_timestamp_field(output: &mut String, label: &str, data: &Value, field: &str) {
+    if let Some(value) = data.get(field).and_then(Value::as_str) {
+        writeln!(output, "{label}: {}", format_timestamp(value)).expect("write to string");
+    }
+}
+
+fn write_bool_field(output: &mut String, label: &str, data: &Value, field: &str) {
+    if let Some(value) = data.get(field).and_then(Value::as_bool) {
+        writeln!(output, "{label}: {}", yes_no(value)).expect("write to string");
+    }
+}
+
+fn write_u64_field(
+    output: &mut String,
+    label: &str,
+    data: &Value,
+    field: &str,
+    unit: Option<&str>,
+) {
+    if let Some(value) = data.get(field).and_then(Value::as_u64) {
+        if let Some(unit) = unit {
+            writeln!(output, "{label}: {value} {unit}").expect("write to string");
+        } else {
+            writeln!(output, "{label}: {value}").expect("write to string");
+        }
+    }
+}
+
+fn write_count_field(output: &mut String, label: &str, data: &Value, field: &str) {
+    if let Some(values) = data.get(field).and_then(Value::as_array) {
+        writeln!(
+            output,
+            "{label}: {}",
+            plural_count(values.len(), count_field_unit(label, field))
+        )
+        .expect("write to string");
+    }
+}
+
+fn count_field_unit(label: &str, field: &str) -> &'static str {
+    match (label, field) {
+        ("Available contracts", _) => "contract",
+        ("Submitted assertions", _) | ("Staging assertions", _) => "assertion",
+        (_, "available_contracts") => "contract",
+        (_, "submitted_assertions" | "staging_assertions" | "submitted_assertion_ids") => {
+            "assertion"
+        }
+        _ => "item",
+    }
+}
+
+fn write_network_list_for_value(output: &mut String, data: &Value) {
+    let names = data
+        .get("chain_names")
+        .or_else(|| data.get("project_networks"))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(ToString::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if names.is_empty() {
+        return;
+    }
+    writeln!(output, "Networks: {}", names.join(", ")).expect("write to string");
+}
+
+fn write_transfer_counts(output: &mut String, label: &str, value: &Value) {
+    let projects = value
+        .get("project_transfers")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let contracts = value
+        .get("contract_transfers")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    writeln!(
+        output,
+        "{label}: {}, {}",
+        plural_count(projects, "project transfer"),
+        plural_count(contracts, "contract transfer")
+    )
+    .expect("write to string");
+}
+
+fn render_human_collection(output: &mut String, envelope: &Value) -> bool {
+    let Some(collection) = find_human_collection(envelope) else {
+        return false;
+    };
+
+    output.push('\n');
+    output.push_str(&collection.name);
+    output.push('\n');
+    output.push_str(&collection_summary(&collection));
+    output.push('\n');
+    if let Some(meta) = collection.meta {
+        render_collection_meta(output, meta);
+    }
+    output.push('\n');
+
+    if collection.items.is_empty() {
+        writeln!(output, "No {} found.", collection.name.to_ascii_lowercase())
+            .expect("write to string");
+        return true;
+    }
+
+    render_collection_items(output, &collection);
+
+    if let Some(pagination) = collection.pagination
+        && pagination
+            .get("hasMore")
+            .or_else(|| pagination.get("has_more"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        let next_page = pagination
+            .get("page")
+            .and_then(Value::as_u64)
+            .map_or(2, |page| page.saturating_add(1));
+        let limit = pagination
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(collection.items.len() as u64);
+        output.push('\n');
+        writeln!(
+            output,
+            "More results available. Try --page {next_page} --limit {limit}."
+        )
+        .expect("write to string");
+    }
+
+    true
+}
+
+fn find_human_collection(envelope: &Value) -> Option<HumanCollection<'_>> {
+    let data = envelope.get("data")?;
+    let request_path = envelope
+        .pointer("/request/path")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    find_collection_in_value(data, request_path)
+}
+
+fn find_collection_in_value<'a>(
+    data: &'a Value,
+    request_path: &str,
+) -> Option<HumanCollection<'a>> {
+    if let Some(inner) = data.get("data")
+        && let Some(collection) = find_collection_in_value(inner, request_path)
+    {
+        return Some(HumanCollection {
+            meta: data.get("_meta").or(collection.meta),
+            ..collection
+        });
+    }
+
+    if let Some(items) = data.as_array() {
+        return Some(HumanCollection {
+            field: infer_collection_field(request_path),
+            name: infer_collection_name("items", request_path, items),
+            items,
+            pagination: None,
+            meta: None,
+        });
+    }
+
+    if let Some(items) = data.get("items").and_then(Value::as_array) {
+        return Some(HumanCollection {
+            field: "items".to_string(),
+            name: infer_collection_name("items", request_path, items),
+            items,
+            pagination: data.get("pagination"),
+            meta: data.get("_meta"),
+        });
+    }
+
+    for field in [
+        "incidents",
+        "assertions",
+        "contracts",
+        "releases",
+        "projects",
+        "deployments",
+        "events",
+        "operations",
+        "workflows",
+        "schemas",
+        "checks",
+        "records",
+        "jobs",
+        "artifacts",
+        "members",
+        "invitations",
+        "integrations",
+        "transfers",
+        "requests",
+        "no_hit",
+        "no_2xx",
+        "write_no_2xx",
+        "unmatched_records",
+        "body_variants",
+        "examples",
+        "product_surfaces",
+    ] {
+        if let Some(items) = data.get(field).and_then(Value::as_array) {
+            return Some(HumanCollection {
+                field: field.to_string(),
+                name: human_label(field),
+                items,
+                pagination: data.get("pagination"),
+                meta: data.get("_meta"),
+            });
+        }
+    }
+
+    None
+}
+
+fn infer_collection_field(request_path: &str) -> String {
+    if request_path.contains("assertion_adopters") {
+        return "contracts".to_string();
+    }
+    for field in [
+        "incidents",
+        "projects",
+        "assertions",
+        "contracts",
+        "releases",
+        "deployments",
+        "events",
+        "members",
+        "invitations",
+        "transfers",
+    ] {
+        if request_path.contains(field) {
+            return field.to_string();
+        }
+    }
+    "items".to_string()
+}
+
+fn infer_collection_name(field: &str, request_path: &str, items: &[Value]) -> String {
+    if request_path.contains("assertion_adopters") {
+        return "Contracts".to_string();
+    }
+    for name in [
+        "incidents",
+        "assertions",
+        "contracts",
+        "releases",
+        "projects",
+        "deployments",
+        "events",
+        "operations",
+        "workflows",
+        "schemas",
+        "records",
+        "jobs",
+        "artifacts",
+        "requests",
+    ] {
+        if request_path.contains(name) {
+            return human_label(name);
+        }
+    }
+    if items.iter().any(has_incident_shape) {
+        return "Incidents".to_string();
+    }
+    human_label(field)
+}
+
+fn collection_summary(collection: &HumanCollection<'_>) -> String {
+    let shown = collection.items.len();
+    if let Some(pagination) = collection.pagination {
+        let total = pagination
+            .get("total")
+            .and_then(Value::as_u64)
+            .unwrap_or(shown as u64);
+        let page = pagination.get("page").and_then(Value::as_u64);
+        let limit = pagination.get("limit").and_then(Value::as_u64);
+        let item_name = collection_item_name(&collection.name, total);
+        let mut summary = if total > shown as u64 {
+            format!("Showing {shown} of {total} {item_name}")
+        } else {
+            format!("Showing {shown} {item_name}")
+        };
+        if let Some(page) = page {
+            write!(summary, " on page {page}").expect("write to string");
+        }
+        if let Some(limit) = limit {
+            write!(summary, " (limit {limit})").expect("write to string");
+        }
+        return summary;
+    }
+    let item_name = collection_item_name(&collection.name, shown as u64);
+    format!("Showing {shown} {item_name}")
+}
+
+fn collection_item_name(name: &str, count: u64) -> String {
+    let lower = name.to_ascii_lowercase();
+    if count != 1 {
+        return lower;
+    }
+    lower.strip_suffix("ies").map_or_else(
+        || lower.strip_suffix("s").unwrap_or(&lower).to_string(),
+        |stem| format!("{stem}y"),
+    )
+}
+
+fn render_collection_items(output: &mut String, collection: &HumanCollection<'_>) {
+    match collection.field.as_str() {
+        "checks" => render_checks_table(output, collection.items),
+        "operations" => render_operations_table(output, collection.items),
+        "workflows" => render_workflows_table(output, collection.items),
+        "schemas" => render_schemas_table(output, collection.items),
+        "records" | "requests" | "unmatched_records" => {
+            render_request_records_table(output, collection.items);
+        }
+        "jobs" => render_jobs_table(output, collection.items),
+        "artifacts" => render_artifacts_table(output, collection.items),
+        "members" => render_members_table(output, collection.items),
+        "invitations" => render_invitations_table(output, collection.items),
+        "projects" => render_projects_table(output, collection.items),
+        "releases" => render_releases_table(output, collection.items),
+        "events" => render_events_table(output, collection.items),
+        "no_hit" | "no_2xx" | "write_no_2xx" => render_coverage_table(output, collection.items),
+        "body_variants" => render_body_variant_table(output, collection.items),
+        _ if is_incident_collection(collection) => render_incident_table(output, collection.items),
+        _ => render_generic_table(output, collection.items),
+    }
+}
+
+macro_rules! render_rows {
+    ($output:expr, $items:expr, $header:expr, $row:literal, |$item:ident| $($arg:expr),+ $(,)?) => {{
+        writeln!($output, "{}", $header).expect("write to string");
+        for $item in $items {
+            writeln!($output, $row, $($arg),+).expect("write to string");
+        }
+    }};
+}
+
+fn str_field<'a>(item: &'a Value, field: &str) -> &'a str {
+    item.get(field).and_then(Value::as_str).unwrap_or("-")
+}
+
+fn str_any<'a>(item: &'a Value, fields: &[&str], default: &'static str) -> &'a str {
+    fields
+        .iter()
+        .find_map(|field| item.get(*field).and_then(Value::as_str))
+        .unwrap_or(default)
+}
+
+fn render_checks_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!("{:<20} {:<10} Details", "Check", "Status"),
+        "{:<20} {:<10} {}",
+        |item| pad(str_field(item, "name"), 20),
+        pad(str_field(item, "status"), 10),
+        item.get("details")
+            .or_else(|| item.get("path"))
+            .map_or_else(String::new, human_compact_summary),
+    );
+}
+
+fn render_operations_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!("{:<7} {:<45} {:<36} Policy", "Method", "Path", "Operation"),
+        "{:<7} {:<45} {:<36} {}",
+        |item| str_field(item, "method"),
+        pad(str_field(item, "path"), 45),
+        pad(str_field(item, "operation_id"), 36),
+        human_label(
+            item.pointer("/raw_api_use/policy")
+                .and_then(Value::as_str)
+                .unwrap_or("-"),
+        ),
+    );
+}
+
+fn render_workflows_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!("{:<28} Steps  Description", "Workflow"),
+        "{:<28} {:<5} {}",
+        |item| pad(str_field(item, "name"), 28),
+        item.get("steps")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len),
+        truncate(
+            item.get("description")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            72,
+        ),
+    );
+}
+
+fn render_schemas_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!("{:<24} {:<7} Command", "Workflow", "Actions"),
+        "{:<24} {:<7} {}",
+        |item| pad(str_field(item, "workflow"), 24),
+        item.get("actions").and_then(Value::as_u64).unwrap_or(0),
+        truncate(&humanize_command(str_field(item, "command")), 96),
+    );
+}
+
+fn render_request_records_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!(
+            "{:<16} {:<7} {:<45} {:<6} Request ID",
+            "Time", "Method", "Path", "HTTP"
+        ),
+        "{:<16} {:<7} {:<45} {:<6} {}",
+        |item| {
+            pad(
+                &item
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .map_or_else(String::new, format_timestamp),
+                16,
+            )
+        },
+        str_field(item, "method"),
+        pad(str_field(item, "path"), 45),
+        item.get("status")
+            .and_then(Value::as_u64)
+            .map_or_else(|| "-".to_string(), |value| value.to_string()),
+        str_field(item, "request_id"),
+    );
+}
+
+fn render_jobs_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!("{:<38} {:<16} {:<12} Updated", "Job", "Kind", "Status"),
+        "{:<38} {:<16} {:<12} {}",
+        |item| pad(str_field(item, "job_id"), 38),
+        pad(str_field(item, "kind"), 16),
+        pad(str_field(item, "status"), 12),
+        item.get("updated_at")
+            .and_then(Value::as_str)
+            .map_or_else(String::new, format_timestamp),
+    );
+}
+
+fn render_artifacts_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!("{:<58} {:>10} Modified", "Path", "Bytes"),
+        "{:<58} {:>10} {}",
+        |item| pad(str_field(item, "path"), 58),
+        item.get("bytes")
+            .and_then(Value::as_u64)
+            .map_or_else(|| "-".to_string(), |value| value.to_string()),
+        item.get("modified")
+            .and_then(Value::as_u64)
+            .map_or_else(String::new, format_unix_timestamp),
+    );
+}
+
+fn render_projects_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!(
+            "{:<28} {:<22} {:<20} {:<10} ID",
+            "Project", "Slug", "Network", "Visibility"
+        ),
+        "{:<28} {:<22} {:<20} {:<10} {}",
+        |item| pad(str_any(item, &["project_name", "name"], "-"), 28),
+        pad(str_field(item, "slug"), 22),
+        pad(&first_project_network(item), 20),
+        item.get("is_private")
+            .and_then(Value::as_bool)
+            .map_or("-", |private| if private { "private" } else { "public" }),
+        str_any(item, &["project_id", "id"], "-"),
+    );
+}
+
+fn first_project_network(item: &Value) -> String {
+    item.get("chain_names")
+        .and_then(Value::as_array)
+        .and_then(|values| values.first())
+        .or_else(|| {
+            item.get("project_networks")
+                .and_then(Value::as_array)
+                .and_then(|values| values.first())
+        })
+        .map_or_else(|| "-".to_string(), human_scalar)
+}
+
+fn render_members_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!("{:<34} {:<12} User ID", "Email", "Role"),
+        "{:<34} {:<12} {}",
+        |item| pad(str_field(item, "email"), 34),
+        pad(str_field(item, "role"), 12),
+        str_field(item, "user_id"),
+    );
+}
+
+fn render_invitations_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!("{:<34} {:<12} {:<16} ID", "Email", "Role", "Status"),
+        "{:<34} {:<12} {:<16} {}",
+        |item| {
+            pad(
+                str_any(item, &["email", "identifier", "invitee_identifier"], "-"),
+                34,
+            )
+        },
+        pad(str_field(item, "role"), 12),
+        pad(str_any(item, &["status"], "pending"), 16),
+        str_any(item, &["id", "invitation_id"], "-"),
+    );
+}
+
+fn render_releases_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!(
+            "{:<36} {:<14} {:<16} Created",
+            "Release", "Environment", "Status"
+        ),
+        "{:<36} {:<14} {:<16} {}",
+        |item| pad(str_any(item, &["release_id", "id"], "-"), 36),
+        pad(str_field(item, "environment"), 14),
+        pad(str_field(item, "status"), 16),
+        item.get("created_at")
+            .or_else(|| item.get("createdAt"))
+            .and_then(Value::as_str)
+            .map_or_else(String::new, format_timestamp),
+    );
+}
+
+fn render_events_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items,
+        format!("{:<34} {:<14} {:<16} Type", "Event", "Environment", "Time"),
+        "{:<34} {:<14} {:<16} {}",
+        |item| pad(str_field(item, "id"), 34),
+        pad(str_field(item, "environment"), 14),
+        pad(
+            &item
+                .get("timestamp")
+                .or_else(|| item.get("created_at"))
+                .and_then(Value::as_str)
+                .map_or_else(String::new, format_timestamp),
+            16,
+        ),
+        str_any(item, &["type", "event_type"], "-"),
+    );
+}
+
+fn render_coverage_table(output: &mut String, items: &[Value]) {
+    render_rows!(
+        output,
+        items.iter().take(20),
+        format!(
+            "{:<7} {:<45} {:<7} {:<7} Request ID",
+            "Method", "Path", "Hits", "2xx"
+        ),
+        "{:<7} {:<45} {:<7} {:<7} {}",
+        |item| str_field(item, "method"),
+        pad(str_field(item, "path"), 45),
+        item.get("hits").and_then(Value::as_u64).unwrap_or(0),
+        item.get("ok").and_then(Value::as_u64).unwrap_or(0),
+        str_field(item, "latest_request_id"),
+    );
+    if items.len() > 20 {
+        writeln!(output, "... {} more", items.len() - 20).expect("write to string");
+    }
+}
+
+fn render_body_variant_table(output: &mut String, items: &[Value]) {
+    for item in items {
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("variant");
+        writeln!(output, "- {name}").expect("write to string");
+        if let Some(body) = item.get("body") {
+            render_human_value(output, body, 4);
+        }
+    }
+}
+
+fn render_collection_meta(output: &mut String, meta: &Value) {
+    let fetched_at = meta
+        .get("fetchedAt")
+        .or_else(|| meta.get("fetched_at"))
+        .and_then(Value::as_str);
+    let sources = meta.get("sources").and_then(Value::as_array);
+    if fetched_at.is_none() && sources.is_none_or(Vec::is_empty) {
+        return;
+    }
+
+    if let Some(fetched_at) = fetched_at {
+        output.push_str("Updated: ");
+        output.push_str(&format_timestamp(fetched_at));
+        output.push('\n');
+    }
+    if let Some(sources) = sources {
+        let source_names = sources
+            .iter()
+            .filter_map(Value::as_str)
+            .map(human_source_name)
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !source_names.is_empty() {
+            output.push_str("Source: ");
+            output.push_str(&source_names);
+            output.push('\n');
+        }
+    }
+}
+
+fn human_source_name(source: &str) -> String {
+    match source {
+        "offchain" => "Phylax platform index".to_string(),
+        "onchain" => "on-chain data".to_string(),
+        "cache" => "cache".to_string(),
+        other => human_label(other),
+    }
+}
+
+fn is_incident_collection(collection: &HumanCollection<'_>) -> bool {
+    collection.name == "Incidents" || collection.items.iter().any(has_incident_shape)
+}
+
+fn has_incident_shape(value: &Value) -> bool {
+    value.get("referenceId").is_some()
+        || value.get("reference_id").is_some()
+        || (value.get("timestamp").is_some()
+            && value.get("network").is_some()
+            && value.get("title").is_some())
+}
+
+fn render_incident_table(output: &mut String, items: &[Value]) {
+    writeln!(
+        output,
+        "{:<3} {:<16} {:<24} {:<29} ID",
+        "#", "Time", "Network", "Title"
+    )
+    .expect("write to string");
+    for (index, item) in items.iter().enumerate() {
+        let timestamp = item
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .map_or_else(String::new, format_timestamp);
+        let network = format_network(item.get("network"));
+        let title = item
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("Untitled");
+        let id = item.get("id").and_then(Value::as_str).unwrap_or("-");
+        writeln!(
+            output,
+            "{:<3} {:<16} {:<24} {:<29} {}",
+            index + 1,
+            pad(&timestamp, 16),
+            pad(&network, 24),
+            pad(title, 29),
+            id
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_generic_table(output: &mut String, items: &[Value]) {
+    let columns = generic_columns(items);
+    if columns.is_empty() {
+        render_human_value(output, &Value::Array(items.to_vec()), 0);
+        return;
+    }
+
+    write!(output, "{:<3}", "#").expect("write to string");
+    for column in &columns {
+        write!(output, " {:<22}", human_label(column)).expect("write to string");
+    }
+    output.push('\n');
+
+    for (index, item) in items.iter().enumerate() {
+        write!(output, "{:<3}", index + 1).expect("write to string");
+        for column in &columns {
+            let value = item.get(column).map_or_else(String::new, human_cell);
+            write!(output, " {:<22}", pad(&value, 22)).expect("write to string");
+        }
+        output.push('\n');
+    }
+}
+
+fn generic_columns(items: &[Value]) -> Vec<String> {
+    let mut columns = Vec::new();
+    for preferred in [
+        "name",
+        "title",
+        "id",
+        "status",
+        "environment",
+        "network",
+        "timestamp",
+        "createdAt",
+        "updatedAt",
+    ] {
+        if items.iter().any(|item| item.get(preferred).is_some()) {
+            columns.push(preferred.to_string());
+        }
+        if columns.len() == 4 {
+            return columns;
+        }
+    }
+
+    if columns.is_empty()
+        && let Some(object) = items.first().and_then(Value::as_object)
+    {
+        columns.extend(object.keys().take(4).cloned());
+    }
+    columns
+}
+
+fn human_cell(value: &Value) -> String {
+    match value {
+        Value::Object(object) if object.contains_key("name") => {
+            object
+                .get("name")
+                .and_then(Value::as_str)
+                .map_or_else(|| compact_json(value), ToString::to_string)
+        }
+        Value::Object(_) | Value::Array(_) => compact_json(value),
+        _ => human_scalar(value),
+    }
+}
+
+fn human_action_str(value: &str) -> String {
+    if value.trim_start().starts_with("pcl ") {
+        humanize_command(value)
+    } else if matches!(
+        value,
+        "Use --toon for agent consumption or --json for strict JSON parsing"
+            | "Use --json for strict JSON parsing"
+    ) {
+        String::new()
+    } else if value == "Use --body-template when constructing mutation bodies" {
+        "Use --body-template to start from an example request body".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn humanize_command(command: &str) -> String {
+    command
+        .replace(" --format toon", "")
+        .replace(" --toon", "")
+        .replace("--toon ", "")
+}
+
+fn is_body_template_key(key: &str) -> bool {
+    matches!(
+        key,
+        "project_name"
+            | "project_description"
+            | "profile_image_url"
+            | "github_url"
+            | "chain_id"
+            | "is_private"
+            | "is_dev"
+            | "project_id"
+            | "identifier"
+            | "identifier_type"
+            | "role"
+            | "provider"
+            | "webhook_url"
+            | "routing_key"
+            | "enabled"
+            | "address"
+            | "signature"
+            | "nonce"
+            | "tx_hash"
+            | "contract_name"
+            | "assertions"
+            | "assertionsDir"
+            | "contracts"
+            | "environment"
+            | "mode"
+            | "new_manager_address"
+            | "ponder_transfer_id"
+            | "reason"
+            | "notify"
+    )
+}
+
+fn name_value_pairs(values: &[Value]) -> String {
+    values
+        .iter()
+        .map(|value| {
+            let name = value.get("name").and_then(Value::as_str).unwrap_or("?");
+            let rendered = value
+                .get("value")
+                .map_or_else(|| "none".to_string(), scalar_string);
+            format!("{name}={rendered}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_actions_table(output: &mut String, actions: &[Value]) {
+    writeln!(
+        output,
+        "{:<24} {:<7} {:<8} Path",
+        "Action", "Auth", "Method"
+    )
+    .expect("write to string");
+    for action in actions {
+        let name = action.get("name").and_then(Value::as_str).unwrap_or("-");
+        let auth = action
+            .get("auth")
+            .and_then(Value::as_bool)
+            .map_or("-", |value| if value { "yes" } else { "no" });
+        let method = action.get("method").and_then(Value::as_str).unwrap_or("-");
+        let path = action.get("path").and_then(Value::as_str).unwrap_or("-");
+        writeln!(
+            output,
+            "{:<24} {:<7} {:<8} {}",
+            pad(name, 24),
+            auth,
+            method,
+            path
+        )
+        .expect("write to string");
+    }
+}
+
+fn render_action_detail(output: &mut String, action: &Value) {
+    let name = action.get("name").and_then(Value::as_str).unwrap_or("-");
+    writeln!(output, "Action: {name}").expect("write to string");
+    if let (Some(method), Some(path)) = (
+        action.get("method").and_then(Value::as_str),
+        action.get("path").and_then(Value::as_str),
+    ) {
+        writeln!(output, "Request: {method} {path}").expect("write to string");
+    }
+    if let Some(auth) = action.get("auth").and_then(Value::as_bool) {
+        writeln!(
+            output,
+            "Auth: {}",
+            if auth { "required" } else { "not required" }
+        )
+        .expect("write to string");
+    }
+    if let Some(example) = action.get("example").and_then(Value::as_str) {
+        writeln!(output, "Example: {}", humanize_command(example)).expect("write to string");
+    }
+    if let Some(flags) = action.get("required_flags").and_then(Value::as_array)
+        && !flags.is_empty()
+    {
+        writeln!(output, "Required flags: {}", string_list(flags)).expect("write to string");
+    }
+    if let Some(flags) = action.get("optional_flags").and_then(Value::as_array)
+        && !flags.is_empty()
+    {
+        writeln!(output, "Optional flags: {}", string_list(flags)).expect("write to string");
+    }
+}
+
+fn string_list(values: &[Value]) -> String {
+    values
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
+fn format_duration(seconds: i64) -> String {
+    if seconds < 0 {
+        return "expired".to_string();
+    }
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else {
+        format!("{minutes}m")
+    }
+}
+
+fn render_human_summary(output: &mut String, data: &Value) {
+    let display_data = data.get("data").unwrap_or(data);
+    output.push('\n');
+    if let Some(object) = display_data.as_object() {
+        for (key, value) in object {
+            if key.starts_with('_') {
+                continue;
+            }
+            output.push_str(&human_label(key));
+            output.push_str(": ");
+            if is_scalar(value) {
+                output.push_str(&human_scalar(value));
+                output.push('\n');
+            } else {
+                output.push_str(&human_compact_summary(value));
+                output.push('\n');
+            }
+        }
+    } else {
+        render_human_value(output, display_data, 0);
+    }
+}
+
+fn render_human_request_id(output: &mut String, envelope: &Value) {
+    let request_id = envelope
+        .pointer("/response/request_id")
+        .and_then(Value::as_str);
+    let status = envelope.pointer("/response/status").and_then(Value::as_u64);
+    if request_id.is_none() && status.is_none() {
+        return;
+    }
+
+    output.push('\n');
+    if let Some(request_id) = request_id {
+        output.push_str("Request ID: ");
+        output.push_str(request_id);
+        if let Some(status) = status {
+            write!(output, " (HTTP {status})").expect("write to string");
+        }
+        output.push('\n');
+    } else if let Some(status) = status {
+        writeln!(output, "HTTP status: {status}").expect("write to string");
+    }
+}
+
+fn human_compact_summary(value: &Value) -> String {
+    match value {
+        Value::Array(values) => plural_count(values.len(), "item"),
+        Value::Object(object) => {
+            if object.is_empty() {
+                return "empty object".to_string();
+            }
+            object
+                .iter()
+                .filter(|(key, _)| !key.starts_with('_'))
+                .take(3)
+                .map(|(key, value)| {
+                    if is_scalar(value) {
+                        format!("{}={}", human_label(key), human_scalar(value))
+                    } else {
+                        format!("{}={}", human_label(key), compact_json(value))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+        _ => human_scalar(value),
+    }
+}
+
+fn format_network(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return "-".to_string();
+    };
+    if let Some(name) = value.as_str() {
+        return name.to_string();
+    }
+    let name = value
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("Unknown network");
+    if let Some(chain_id) = value.get("chainId").and_then(Value::as_u64) {
+        return format!("{name} ({chain_id})");
+    }
+    if let Some(chain_id) = value.get("chain_id").and_then(Value::as_u64) {
+        return format!("{name} ({chain_id})");
+    }
+    name.to_string()
+}
+
+fn format_timestamp(value: &str) -> String {
+    if value.len() >= 16 && value.as_bytes().get(10) == Some(&b'T') {
+        return value[..16].replace('T', " ");
+    }
+    value.to_string()
+}
+
+fn format_unix_timestamp(value: u64) -> String {
+    let Ok(seconds) = i64::try_from(value) else {
+        return value.to_string();
+    };
+    chrono::DateTime::from_timestamp(seconds, 0).map_or_else(
+        || value.to_string(),
+        |timestamp| timestamp.format("%Y-%m-%d %H:%M").to_string(),
+    )
+}
+
+fn human_label(value: &str) -> String {
+    let words = split_label_words(value);
+    let mut rendered = Vec::new();
+    for (index, word) in words.iter().enumerate() {
+        let lower = word.to_ascii_lowercase();
+        let text = match lower.as_str() {
+            "id" => "ID".to_string(),
+            "api" => "API".to_string(),
+            "http" => "HTTP".to_string(),
+            "url" => "URL".to_string(),
+            "json" => "JSON".to_string(),
+            "cli" => "CLI".to_string(),
+            "pcl" => "PCL".to_string(),
+            "uuid" => "UUID".to_string(),
+            "tx" => "tx".to_string(),
+            "github" => "GitHub".to_string(),
+            "authmethod" => "auth method".to_string(),
+            other if index == 0 => capitalize(other),
+            other => other.to_string(),
+        };
+        rendered.push(text);
+    }
+    rendered.join(" ")
+}
+
+fn split_label_words(value: &str) -> Vec<String> {
+    let normalized = value.replace(['_', '-'], " ");
+    let mut words = Vec::new();
+    for raw in normalized.split_whitespace() {
+        let mut current = String::new();
+        let chars = raw.chars().collect::<Vec<_>>();
+        for (index, ch) in chars.iter().enumerate() {
+            if index > 0
+                && ch.is_uppercase()
+                && chars
+                    .get(index.saturating_sub(1))
+                    .is_some_and(|previous| previous.is_lowercase() || previous.is_ascii_digit())
+            {
+                words.push(current);
+                current = String::new();
+            }
+            current.push(*ch);
+        }
+        if !current.is_empty() {
+            words.push(current);
+        }
+    }
+    words
+}
+
+fn capitalize(value: &str) -> String {
+    let mut chars = value.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().collect::<String>() + chars.as_str()
+    })
+}
+
+fn plural_count(count: impl std::fmt::Display, item: &str) -> String {
+    let count = count.to_string();
+    if count == "1" {
+        format!("1 {item}")
+    } else {
+        format!("{count} {item}s")
+    }
+}
+
+fn human_scalar(value: &Value) -> String {
+    match value {
+        Value::Bool(value) => yes_no(*value).to_string(),
+        Value::String(value) => {
+            if value.len() >= 16 && value.as_bytes().get(10) == Some(&b'T') {
+                format_timestamp(value)
+            } else {
+                value.clone()
+            }
+        }
+        _ => scalar_string(value),
+    }
+}
+
+fn pad(value: &str, width: usize) -> String {
+    let value = truncate(value, width);
+    format!("{value:<width$}")
+}
+
+fn truncate(value: &str, max_chars: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_string();
+    }
+    if max_chars <= 3 {
+        return value.chars().take(max_chars).collect();
+    }
+    let prefix: String = value.chars().take(max_chars - 3).collect();
+    format!("{prefix}...")
+}
+
+fn is_hex_blob(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("0x") else {
+        return false;
+    };
+    hex.len() > 64 && hex.chars().all(|character| character.is_ascii_hexdigit())
+}
+
+fn render_human_value(output: &mut String, value: &Value, indent: usize) {
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object {
+                write_indent(output, indent);
+                output.push_str(key);
+                output.push_str(": ");
+                if is_scalar(value) {
+                    output.push_str(&scalar_string(value));
+                    output.push('\n');
+                } else {
+                    output.push('\n');
+                    render_human_value(output, value, indent + 2);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                write_indent(output, indent);
+                output.push_str("- ");
+                if is_scalar(value) {
+                    output.push_str(&scalar_string(value));
+                    output.push('\n');
+                } else {
+                    output.push('\n');
+                    render_human_value(output, value, indent + 2);
+                }
+            }
+        }
+        _ => {
+            write_indent(output, indent);
+            output.push_str(&scalar_string(value));
+            output.push('\n');
+        }
+    }
+}
+
+fn write_indent(output: &mut String, indent: usize) {
+    for _ in 0..indent {
+        output.push(' ');
+    }
+}
+
+fn is_scalar(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)
+    )
+}
+
+fn scalar_string(value: &Value) -> String {
+    match value {
+        Value::Null => "none".to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => value.clone(),
+        Value::Array(_) | Value::Object(_) => compact_json(value),
+    }
+}
+
+fn compact_json(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
 }
 
 fn ok_envelope(data: Value) -> Value {
@@ -2978,16 +5504,23 @@ fn dry_run_envelope(data: Value) -> Value {
         .unwrap_or(false);
     let next_actions = if auth_required && !allow_unauthenticated && !stored_token_valid {
         vec![
-            "pcl auth ensure --json",
+            "pcl auth ensure --toon",
             "Authenticate before removing --dry-run",
             "Use --body-template when constructing mutation bodies",
         ]
     } else {
-        vec![
+        let mut actions = vec![
             "Remove --dry-run to execute this request",
-            "Use --json to consume this plan programmatically",
-            "Use --body-template when constructing mutation bodies",
-        ]
+            "Use --toon for agent consumption or --json for strict JSON parsing",
+        ];
+        let method = data
+            .pointer("/request/method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if method_side_effecting(method) {
+            actions.push("Use --body-template when constructing mutation bodies");
+        }
+        actions
     };
     with_envelope_metadata(json!({
         "status": "ok",
@@ -3014,322 +5547,84 @@ fn request_is_destructive(method: HttpMethod, path: &str) -> bool {
         || path.contains("/logout")
 }
 
-pub fn api_manifest() -> Value {
-    json!({
-        "name": "pcl",
-        "description": "Use top-level workflow commands for product workflows; use pcl api list/inspect/call only for debugging, API parity checks, internal/service endpoints, or endpoints not yet promoted to a workflow.",
-        "raw_api": "pcl api list | pcl api inspect | pcl api call | pcl api coverage | pcl api manifest",
-        "raw_api_policy": {
-            "normal_work": "Use workflow_alternatives from pcl api list/inspect when present, or start with pcl workflows and pcl schema.",
-            "allowed_uses": ["debugging", "OpenAPI parity checks", "service/internal endpoint investigation", "browser-session bridge investigation", "new endpoint exploration before promotion"],
-            "not_normal_path": "Agents should not call raw endpoints for incidents, projects, assertions, releases, integrations, access, protocol-manager, transfers, events, search, or auth when a workflow alternative is advertised."
-        },
-        "llms": "pcl --llms | pcl llms",
-        "default_output": "toon",
-        "output_modes": {
-            "default": "toon",
-            "toon": "Default compact machine-readable envelope; explicit form is --format toon.",
-            "json": "Pass --json or --format json for the same {status,data,error,next_actions} envelope as JSON."
-        },
-        "body_input": {
-            "preferred": "Use typed flags when available, then --field key=value, then --body-file for nested payloads.",
-            "template_flag": "--body-template",
-            "field_flag": "--field key=value parses JSON scalars/objects/arrays when VALUE is valid JSON, otherwise a string"
-        },
-        "pagination": {
-            "workflow": "Use workflow-specific --all where available, for example pcl incidents --all --limit 50 --output incidents.json.",
-            "raw_call": "Use pcl api call get /path --paginate <array-field> --limit 50 --max-pages 100 --output results.json for generic GET pagination.",
-            "jsonl": "Add --jsonl with --output on paginated commands to write one item per line for resumable analysis."
-        },
-        "auth": {
-            "default": "Stored bearer token is attached only when the selected operation requires auth; known public raw paths do not attach stale local tokens.",
-            "public_endpoints": "Workflow commands use public view endpoints without requiring login when possible.",
-            "login_command": "pcl auth login",
-        },
-        "safety": {
-            "dry_run": "Optional planning mode: add --dry-run to workflow commands before write flags, for example `pcl projects --dry-run --create ...`. Re-run without --dry-run only when ready to execute.",
-            "destructive_detection": "Request plans flag likely destructive paths, but raw api call does not enforce a confirmation gate."
-        },
-        "product_surfaces": [
-            {"command": "pcl --llms | pcl llms", "description": "Print the CLI-native LLM usage guide; use --json for JSON."},
-            {"command": "pcl doctor", "description": "Diagnose config, auth, request-log, artifact, and API health state."},
-            {"command": "pcl whoami", "description": "Print local identity, token validity, and expiry."},
-            {"command": "pcl workflows [show <name>]", "description": "List agent-friendly workflow recipes with concrete command steps."},
-            {"command": "pcl export incidents", "description": "Export incident list data as resumable JSONL artifacts with checkpoint and error files."},
-            {"command": "pcl artifacts [path|init|list]", "description": "Find and inspect generated artifacts."},
-            {"command": "pcl jobs [path|list|status|resume|cancel]", "description": "Inspect resumable local job records from export workflows."},
-            {"command": "pcl requests|logs [path|list|clear]", "description": "Inspect the local API request log with status and request IDs."},
-            {"command": "pcl api coverage [--records <n>] [--markdown <path>]", "description": "Compare the local request log with the live OpenAPI manifest and report hit/no-hit/no-2xx coverage."},
-            {"command": "pcl schema [list|get <workflow>]", "description": "Inspect workflow/action schemas from the command manifest."},
-            {"command": "pcl completions <shell>", "description": "Generate shell completion scripts for bash, zsh, fish, powershell, and elvish."}
-        ],
-        "commands": [
-            {
-                "command": "pcl incidents [--project-id <id>] [--incident-id <id>] [--stats] [--limit <n>] [--all --output <file>]",
-                "description": "List public incidents, project incidents, fetch all incident pages, inspect incident detail, incident stats, or incident trace.",
-                "output": "incident data from /views/public/incidents, /views/projects/{projectId}/incidents, /views/incidents/{incidentId}, or /projects/{project_id}/incidents/stats",
-                "actions": [
-                    {"name": "list_public", "auth": false, "method": "GET", "path": "/views/public/incidents", "optional_flags": ["--page", "--limit", "--network", "--sort", "--dev-mode", "--all", "--max-pages", "--output"], "example": "pcl incidents --limit 5"},
-                    {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/incidents", "required_flags": ["--project"], "optional_flags": ["--page", "--limit", "--assertion-id", "--adopter-id", "--environment", "--from", "--to", "--all", "--max-pages", "--output"], "example": "pcl incidents --project <project-ref> --all --limit 50 --output incidents.json"},
-                    {"name": "stats", "auth": true, "method": "GET", "path": "/projects/{project_id}/incidents/stats", "required_flags": ["--project"], "example": "pcl incidents --project <project-ref> --stats"},
-                    {"name": "detail", "auth": true, "method": "GET", "path": "/views/incidents/{incidentId}", "required_flags": ["--incident-id"], "example": "pcl incidents --incident-id <incident-id>"},
-                    {"name": "trace", "auth": true, "method": "GET", "path": "/views/incidents/{incidentId}/transactions/{txId}/trace", "required_flags": ["--incident-id", "--tx-id"], "example": "pcl incidents --incident-id <incident-id> --tx-id <invalidating-transaction-id>"},
-                    {"name": "retry_trace", "auth": true, "method": "POST", "path": "/incidents/{incident_id}/transactions/{tx_id}/trace/retry", "required_flags": ["--incident-id", "--tx-id"], "body_template": "empty_object", "example": "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"}
-                ]
-            },
-            {
-                "command": "pcl projects [--project <ref>] [--saved --user-id <id>] [--create|--update|--delete|--save|--unsave|--resolve|--widget]",
-                "description": "List, inspect, create, update, save, unsave, resolve, widget, and delete projects.",
-                "output": "project explorer, project detail, projects home, saved projects, widget, or mutation result",
-                "actions": [
-                    {"name": "explorer", "auth": false, "method": "GET", "path": "/views/projects", "example": "pcl projects --limit 10"},
-                    {"name": "home", "auth": true, "method": "GET", "path": "/views/projects/home", "example": "pcl projects --home"},
-                    {"name": "saved", "auth": true, "method": "GET", "path": "/projects/saved", "required_flags": ["--user-id"], "query": {"user_id": "<user-id>"}, "example": "pcl projects --saved --user-id <user-id>"},
-                    {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project_id}", "required_flags": ["--project"], "example": "pcl projects --project <project-ref>"},
-                    {"name": "create", "auth": true, "method": "POST", "path": "/projects", "body_template": "project_create", "required_body_fields": ["project_name", "chain_id"], "example": "pcl projects --create --project-name demo --chain-id 1"},
-                    {"name": "update", "auth": true, "method": "PUT", "path": "/projects/{project_id}", "required_flags": ["--project"], "body_template": "project_update", "example": "pcl projects --project <project-ref> --update --field github_url=https://github.com/org/repo"},
-                    {"name": "delete", "auth": true, "method": "DELETE", "path": "/projects/{project_id}", "required_flags": ["--project"], "example": "pcl projects --project <project-ref> --delete"},
-                    {"name": "save", "auth": true, "method": "POST", "path": "/projects/saved", "required_flags": ["--project"], "body_template": "project_saved", "example": "pcl projects --project <project-ref> --save"},
-                    {"name": "unsave", "auth": true, "method": "DELETE", "path": "/projects/saved", "required_flags": ["--project"], "body_template": "project_saved", "example": "pcl projects --project <project-ref> --unsave"},
-                    {"name": "resolve", "auth": false, "method": "GET", "path": "/projects/resolve/{project_ref}", "required_flags": ["--project"], "example": "pcl projects --project <project-ref> --resolve"},
-                    {"name": "widget", "auth": true, "method": "GET", "path": "/projects/{project_id}/widget", "required_flags": ["--project"], "example": "pcl projects --project <project-ref> --widget"}
-                ]
-            },
-            {
-                "command": "pcl assertions --project <ref> [--assertion-id <id>|--registered|--remove-info|--remove-calldata]",
-                "description": "List, inspect, and manage project assertion lifecycle state.",
-                "output": "assertion index/detail, registered assertions, or removal info/calldata",
-                "actions": [
-                    {"name": "index", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/assertions", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref>"},
-                    {"name": "detail", "auth": true, "method": "GET", "path": "/views/projects/{projectId}/assertions/{assertionId}", "required_flags": ["--project", "--assertion-id"], "example": "pcl assertions --project <project-ref> --assertion-id <assertion-id>"},
-                    {"name": "adopter_lookup", "auth": false, "method": "GET", "path": "/assertions", "required_flags": ["--adopter-address"], "optional_flags": ["--network", "--environment", "--include-onchain-only"], "example": "pcl assertions --adopter-address 0x... --network 1"},
-                    {"name": "registered", "auth": true, "method": "GET", "path": "/projects/{project_id}/registered-assertions", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref> --registered"},
-                    {"name": "remove_info", "auth": true, "method": "GET", "path": "/projects/{project_id}/remove-assertions-info", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref> --remove-info"},
-                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/projects/{project_id}/remove-assertions-calldata", "required_flags": ["--project"], "example": "pcl assertions --project <project-ref> --remove-calldata"}
-                ]
-            },
-            {
-                "command": "pcl search [--query <term>] [--stats] [--system-status] [--verified-contract --address <addr> --chain-id <id>]",
-                "description": "Search projects/contracts and inspect platform metadata.",
-                "output": "search results, stats, system status, health, whitelist, or verified contract data",
-                "actions": [
-                    {"name": "query", "auth": false, "method": "GET", "path": "/search", "optional_flags": ["--query"], "example": "pcl search --query settler"},
-                    {"name": "stats", "auth": false, "method": "GET", "path": "/stats", "example": "pcl search --stats"},
-                    {"name": "system_status", "auth": false, "method": "GET", "path": "/system-status", "example": "pcl search --system-status"},
-                    {"name": "health", "auth": false, "method": "GET", "path": "/health", "example": "pcl search --health"},
-                    {"name": "whitelist", "auth": true, "method": "GET", "path": "/whitelist", "example": "pcl search --whitelist"},
-                    {"name": "verified_contract", "auth": false, "method": "GET", "path": "/web/verified-contract", "required_flags": ["--address", "--chain-id"], "example": "pcl search --verified-contract --address 0x... --chain-id 1"}
-                ]
-            },
-            {
-                "command": "pcl account [--me|--accept-terms|--logout]",
-                "description": "Inspect authenticated web user state and perform onboarding actions.",
-                "output": "current user account state, terms acceptance result, or logout result",
-                "actions": [
-                    {"name": "me", "auth": true, "method": "GET", "path": "/web/auth/me", "example": "pcl account"},
-                    {"name": "accept_terms", "auth": true, "method": "POST", "path": "/web/auth/accept-terms", "body_template": "empty_object", "example": "pcl account --accept-terms"},
-                    {"name": "logout", "auth": true, "method": "POST", "path": "/web/auth/logout", "body_template": "empty_object", "example": "pcl account --logout"}
-                ]
-            },
-            {
-                "command": "pcl contracts [--project <ref>] [--adopter-id <id>] [--unassigned --manager <address>] [--create --body '{...}']",
-                "description": "List and manage project contracts and assertion adopters.",
-                "output": "contract views, adopter records, assignment results, or remove calldata",
-                "actions": [
-                    {"name": "list_all", "auth": true, "method": "GET", "path": "/assertion_adopters", "example": "pcl contracts"},
-                    {"name": "list_project", "auth": true, "method": "GET", "path": "/views/projects/{project}/contracts", "required_flags": ["--project"], "example": "pcl contracts --project <project-ref>"},
-                    {"name": "detail", "auth": true, "method": "GET", "path": "/views/projects/{project}/contracts/{adopter_id}", "required_flags": ["--project", "--adopter-id"], "example": "pcl contracts --project <project-ref> --adopter-id <adopter-id>"},
-                    {"name": "unassigned", "auth": true, "method": "GET", "path": "/assertion_adopters/no-project", "required_flags": ["--manager"], "query": {"manager": "<manager-address>"}, "example": "pcl contracts --unassigned --manager 0x..."},
-                    {"name": "create", "auth": true, "method": "POST", "path": "/assertion_adopters", "body_template": "contracts", "example": "pcl contracts --create --body-template"},
-                    {"name": "assign_project", "auth": true, "method": "POST", "path": "/assertion_adopters/assign-project", "body_template": "contracts_assign_project", "example": "pcl contracts --assign-project --body-template"},
-                    {"name": "remove", "auth": true, "method": "DELETE", "path": "/projects/{project}/{aa_address}", "required_flags": ["--project", "--aa-address"], "example": "pcl contracts --project <project-ref> --aa-address 0x... --remove"},
-                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/assertion_adopters/{aa_address}/remove-assertions-calldata", "required_flags": ["--aa-address", "--assertion-id"], "optional_flags": ["--network", "--environment"], "query": {"assertion_ids": "<assertion-id>", "network": "<chain-id>", "environment": "production|staging"}, "example": "pcl contracts --aa-address 0x... --remove-calldata --network 1 --assertion-id 0x..."}
-                ]
-            },
-            {
-                "command": "pcl releases --project <ref> [--release-id <id>] [--preview|--create|--backtest-progress|--retry-check --check-id <id>|--deploy|--remove|--deploy-calldata --signer-address <address>|--remove-calldata]",
-                "description": "List, inspect, create, preview, deploy, check progress, retry failed checks, and remove releases.",
-                "output": "release data, diffs, check progress, deployment confirmations, or calldata",
-                "actions": [
-                    {"name": "list", "auth": true, "method": "GET", "path": "/projects/{project}/releases", "required_flags": ["--project"], "example": "pcl releases --project <project-ref>"},
-                    {"name": "detail", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}", "required_flags": ["--project", "--release-id"], "example": "pcl releases --project <project-ref> --release-id <release-id>"},
-                    {"name": "preview", "auth": true, "method": "POST", "path": "/projects/{project}/releases/preview", "required_flags": ["--project"], "body_template": "release", "example": "pcl releases --project <project-ref> --preview --body-file release.json"},
-                    {"name": "create", "auth": true, "method": "POST", "path": "/projects/{project}/releases", "required_flags": ["--project"], "body_template": "release", "example": "pcl releases --project <project-ref> --create --body-file release.json"},
-                    {"name": "backtest_progress", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/backtest-progress", "required_flags": ["--project", "--release-id"], "example": "pcl releases --project <project-ref> --release-id <release-id> --backtest-progress"},
-                    {"name": "retry_check", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/checks/{check_id}/retry", "required_flags": ["--project", "--release-id", "--check-id"], "body_template": "empty_object", "example": "pcl releases --project <project-ref> --release-id <release-id> --check-id <check-id> --retry-check"},
-                    {"name": "deploy_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/deploy-calldata", "required_flags": ["--project", "--release-id", "--signer-address"], "query": {"signerAddress": "<signer-address>"}, "example": "pcl releases --project <project-ref> --release-id <release-id> --deploy-calldata --signer-address 0x..."},
-                    {"name": "deploy", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/deploy", "required_flags": ["--project", "--release-id"], "body_template": "release_deploy", "example": "pcl releases --project <project-ref> --release-id <release-id> --deploy --body-template"},
-                    {"name": "remove_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/releases/{release_id}/remove-calldata", "required_flags": ["--project", "--release-id"], "example": "pcl releases --project <project-ref> --release-id <release-id> --remove-calldata"},
-                    {"name": "remove", "auth": true, "method": "POST", "path": "/projects/{project}/releases/{release_id}/remove", "required_flags": ["--project", "--release-id"], "body_template": "release_remove", "example": "pcl releases --project <project-ref> --release-id <release-id> --remove --body-template"}
-                ]
-            },
-            {
-                "command": "pcl deployments --project <ref> [--confirm --body '{...}']",
-                "description": "Inspect deployment state and confirm deployed assertions.",
-                "output": "deployment view or confirmation result",
-                "actions": [
-                    {"name": "list", "auth": true, "method": "GET", "path": "/views/projects/{project}/deployments", "required_flags": ["--project"], "example": "pcl deployments --project <project-ref>"},
-                    {"name": "confirm", "auth": true, "method": "POST", "path": "/projects/{project}/confirm-deployment", "required_flags": ["--project"], "body_template": "deployment_confirmation", "example": "pcl deployments --project <project-ref> --confirm --body-template"}
-                ]
-            },
-            {
-                "command": "pcl access [--project <ref>] [--members|--invitations|--invite|--pending|--token <token>]",
-                "description": "Manage project members, roles, and invitations.",
-                "output": "member lists, invitation lists, role data, or mutation results",
-                "actions": [
-                    {"name": "members", "auth": true, "method": "GET", "path": "/projects/{project}/members", "required_flags": ["--project"], "example": "pcl access --project <project-ref> --members"},
-                    {"name": "my_role", "auth": true, "method": "GET", "path": "/projects/{project}/my-role", "required_flags": ["--project"], "example": "pcl access --project <project-ref> --my-role"},
-                    {"name": "invitations", "auth": true, "method": "GET", "path": "/projects/{project}/invitations", "required_flags": ["--project"], "example": "pcl access --project <project-ref> --invitations"},
-                    {"name": "invite", "auth": true, "method": "POST", "path": "/projects/{project}/invitations", "required_flags": ["--project"], "body_template": "access_invite", "example": "pcl access --project <project-ref> --invite --body-template"},
-                    {"name": "resend", "auth": true, "method": "POST", "path": "/projects/{project}/invitations/{invitation_id}/resend", "required_flags": ["--project", "--invitation-id"], "body_template": "empty_object", "example": "pcl access --project <project-ref> --invitation-id <id> --resend"},
-                    {"name": "revoke", "auth": true, "method": "DELETE", "path": "/projects/{project}/invitations/{invitation_id}", "required_flags": ["--project", "--invitation-id"], "body_template": "empty_object", "example": "pcl access --project <project-ref> --invitation-id <id> --revoke"},
-                    {"name": "update_role", "auth": true, "method": "PATCH", "path": "/projects/{project}/members/{member_user_id}", "required_flags": ["--project", "--member-user-id"], "body_template": "role_update", "example": "pcl access --project <project-ref> --member-user-id <user-id> --update-role --body-template"},
-                    {"name": "remove", "auth": true, "method": "DELETE", "path": "/projects/{project}/members/{member_user_id}", "required_flags": ["--project", "--member-user-id"], "body_template": "empty_object", "example": "pcl access --project <project-ref> --member-user-id <user-id> --remove"},
-                    {"name": "pending", "auth": true, "method": "GET", "path": "/invitations/pending", "example": "pcl access --pending"},
-                    {"name": "preview", "auth": false, "method": "GET", "path": "/invitations/{token}/preview", "required_flags": ["--token"], "example": "pcl access --token <token> --preview"},
-                    {"name": "accept", "auth": true, "method": "POST", "path": "/invitations/{token}/accept", "required_flags": ["--token"], "body_template": "empty_object", "example": "pcl access --token <token> --accept"}
-                ]
-            },
-            {
-                "command": "pcl integrations --project <ref> --provider <slack|pagerduty> [--configure|--test|--delete]",
-                "description": "Manage Slack and PagerDuty integrations.",
-                "output": "integration status or mutation/test results",
-                "actions": [
-                    {"name": "get", "auth": true, "method": "GET", "path": "/projects/{project}/integrations/{provider}", "required_flags": ["--project", "--provider"], "example": "pcl integrations --project <project-ref> --provider slack"},
-                    {"name": "configure", "auth": true, "method": "POST", "path": "/projects/{project}/integrations/{provider}", "required_flags": ["--project", "--provider"], "body_template": "slack|pagerduty", "example": "pcl integrations --project <project-ref> --provider slack --configure --body-template"},
-                    {"name": "test", "auth": true, "method": "POST", "path": "/projects/{project}/integrations/{provider}/test", "required_flags": ["--project", "--provider"], "body_template": "slack|pagerduty", "example": "pcl integrations --project <project-ref> --provider slack --test"},
-                    {"name": "delete", "auth": true, "method": "DELETE", "path": "/projects/{project}/integrations/{provider}", "required_flags": ["--project", "--provider"], "example": "pcl integrations --project <project-ref> --provider slack --delete"}
-                ]
-            },
-            {
-                "command": "pcl protocol-manager --project <ref> [--nonce --address <address>|--set|--clear|--transfer-calldata|--accept-calldata|--pending-transfer|--confirm-transfer]",
-                "description": "Manage protocol manager transfers and calldata.",
-                "output": "manager state, nonce, calldata, pending transfer, or mutation result",
-                "actions": [
-                    {"name": "pending_transfer", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/pending-transfer", "required_flags": ["--project"], "example": "pcl protocol-manager --project <project-ref> --pending-transfer"},
-                    {"name": "nonce", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/nonce", "required_flags": ["--project", "--address"], "optional_flags": ["--chain-id"], "query": {"address": "<address>", "chain_id": "<chain-id>"}, "example": "pcl protocol-manager --project <project-ref> --nonce --address 0x..."},
-                    {"name": "set", "auth": true, "method": "POST", "path": "/projects/{project}/protocol-manager", "required_flags": ["--project"], "body_template": "protocol_manager_set", "example": "pcl protocol-manager --project <project-ref> --set --body-template"},
-                    {"name": "clear", "auth": true, "method": "DELETE", "path": "/projects/{project}/protocol-manager", "required_flags": ["--project"], "body_template": "empty_object", "example": "pcl protocol-manager --project <project-ref> --clear"},
-                    {"name": "transfer_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/transfer-calldata", "required_flags": ["--project", "--new-manager"], "query": {"new_manager": "<address>"}, "example": "pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x..."},
-                    {"name": "accept_calldata", "auth": true, "method": "GET", "path": "/projects/{project}/protocol-manager/accept-calldata", "required_flags": ["--project"], "example": "pcl protocol-manager --project <project-ref> --accept-calldata"},
-                    {"name": "confirm_transfer", "auth": true, "method": "POST", "path": "/projects/{project}/protocol-manager/confirm-transfer", "required_flags": ["--project"], "body_template": "protocol_manager_confirm", "example": "pcl protocol-manager --project <project-ref> --confirm-transfer --body-template"}
-                ]
-            },
-            {
-                "command": "pcl transfers [--pending|--transfer-id <id>|--reject --body '{...}']",
-                "description": "Inspect and reject protocol manager transfers.",
-                "output": "pending transfers, transfer detail, or reject result",
-                "actions": [
-                    {"name": "pending", "auth": true, "method": "GET", "path": "/views/transfers/pending", "example": "pcl transfers --pending"},
-                    {"name": "detail", "auth": true, "method": "GET", "path": "/views/transfers/{transfer_id}", "required_flags": ["--transfer-id"], "example": "pcl transfers --transfer-id <transfer-id>"},
-                    {"name": "reject", "auth": true, "method": "POST", "path": "/transfers/reject", "body_template": "transfer_reject", "example": "pcl transfers --reject --body-template"}
-                ]
-            },
-            {
-                "command": "pcl events --project <ref> [--audit-log]",
-                "description": "Inspect project events and audit logs.",
-                "output": "event or audit log data",
-                "actions": [
-                    {"name": "events", "auth": true, "method": "GET", "path": "/views/projects/{project}/events", "required_flags": ["--project"], "optional_flags": ["--page", "--limit", "--environment"], "example": "pcl events --project <project-ref>"},
-                    {"name": "audit_log", "auth": true, "method": "GET", "path": "/views/projects/{project}/audit-log", "required_flags": ["--project"], "optional_flags": ["--page", "--limit", "--environment"], "example": "pcl events --project <project-ref> --audit-log"}
-                ]
-            },
-            {
-                "command": "pcl api manifest",
-                "description": "Print this agent-readable command manifest.",
-            },
-            {
-                "command": "pcl api list [--filter <term>] [--method <get|post|put|patch|delete>]",
-                "description": "List OpenAPI operations with executable inspect and call commands.",
-                "output": "operations[] with operation_id, method, path, summary, tags, workflow_alternatives, raw_api_use, inspect_command, call_command",
-            },
-            {
-                "command": "pcl api inspect <operation_id>|<method> <path> [--full]",
-                "description": "Inspect a compact operation manifest. Use --full for raw OpenAPI.",
-                "output": "operation_id, method, path, auth metadata, workflow_alternatives, raw_api_use, path_params, required_query, body_fields, required_body_fields, body_template, response_statuses, example_call",
-            },
-            {
-                "command": "pcl api call <method> <path[?query]> [--query key=value] [--field key=value] [--body '{...}'] [--paginate <field>] [--page-param page] [--limit-param limit] [--jsonl] [--output <file>] [--dry-run]",
-                "description": "Execute any endpoint below /api/v1. Query strings in PATH and repeated --query flags are both accepted; --field merges simple JSON object body fields; GET calls can paginate any array response with --paginate. Add --dry-run to print the request plan without sending it.",
-                "output": "request and response status/body; non-2xx responses return structured error envelopes with request_id when the API provides one. Raw calls log operation_id when the live OpenAPI manifest can resolve the method/path.",
-                "actions": [
-                    {"name": "execute", "method": "*", "path": "<path>", "auth": "default", "optional_flags": ["--dry-run"], "example": "pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated"},
-                    {"name": "paginate", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate"], "optional_flags": ["--all", "--page", "--limit", "--page-param", "--limit-param", "--max-pages", "--jsonl", "--output"], "example": "pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json"},
-                    {"name": "export_jsonl", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate", "--jsonl", "--output"], "example": "pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl"}
-                ]
-            },
-            {
-                "command": "pcl api coverage [--records <n>] [--markdown <path>]",
-                "description": "Audit local request history against the live OpenAPI surface. Old records are matched by method/path; new raw api calls also persist operation_id.",
-                "output": "total operations, by-method coverage, no-hit operations, hit-but-no-2xx operations, side-effecting no-2xx operations, unmatched records",
-            },
-        ],
-        "examples": [
-            "pcl incidents --limit 5",
-            "pcl search --query settler",
-            "pcl releases --project <project-ref>",
-            "pcl access --project <project-ref> --members",
-            "pcl integrations --project <project-ref> --provider slack",
-            "pcl api list --filter incidents",
-        ],
-    })
-}
-
 fn search_request(args: &SearchArgs) -> Result<WorkflowRequest, ApiCommandError> {
     if args.health {
         return Ok(WorkflowRequest::get(
             "/health",
             false,
-            vec!["pcl search --system-status".to_string()],
+            ["pcl search --system-status"],
         ));
     }
     if args.system_status {
         return Ok(WorkflowRequest::get(
             "/system-status",
             false,
-            vec!["pcl search --stats".to_string()],
+            ["pcl search --stats"],
         ));
     }
     if args.stats {
         return Ok(WorkflowRequest::get(
             "/stats",
             false,
-            vec!["pcl projects --limit 10".to_string()],
+            ["pcl projects --limit 10"],
         ));
     }
     if args.whitelist {
         return Ok(WorkflowRequest::get(
             "/whitelist",
             true,
-            vec!["pcl projects --home".to_string()],
+            ["pcl projects --mine"],
         ));
     }
     if args.verified_contract {
         let address = required_arg(args.address.as_deref(), "--address")?;
         let chain_id = args.chain_id.ok_or_else(|| {
-            ApiCommandError::InvalidWorkflow {
+            ApiCommandError::InvalidWorkflowWithActions {
                 message: "--verified-contract requires --chain-id".to_string(),
+                next_actions: vec![
+                    "pcl search --verified-contract --address <address> --chain-id <chain-id>"
+                        .to_string(),
+                    "pcl search --help".to_string(),
+                ],
             }
         })?;
         let mut request = WorkflowRequest::get(
             "/web/verified-contract",
             false,
-            vec!["pcl contracts --project <project-ref>".to_string()],
+            ["pcl contracts --project <project-ref>"],
         );
-        push_query_string_value(&mut request.query, "address", address);
+        push_query(&mut request.query, "address", Some(address));
         push_query(&mut request.query, "chainId", Some(chain_id));
         return Ok(request);
     }
 
+    let query = args
+        .query
+        .as_deref()
+        .or(args.term.as_deref())
+        .filter(|query| !query.trim().is_empty())
+        .ok_or_else(|| {
+            ApiCommandError::InvalidWorkflowWithActions {
+                message: "Search query is required unless you choose a specific search action"
+                    .to_string(),
+                next_actions: vec![
+                    "pcl search <term>".to_string(),
+                    "pcl search --query <term>".to_string(),
+                    "pcl search --stats".to_string(),
+                    "pcl search --help".to_string(),
+                ],
+            }
+        })?;
+
     let mut request = WorkflowRequest::get(
         "/search",
         false,
-        vec![
-            "pcl projects --project <project-ref>".to_string(),
-            "pcl contracts --project <project-ref>".to_string(),
+        [
+            "pcl projects --project <project-ref>",
+            "pcl contracts --project <project-ref>",
         ],
     );
-    push_query_string(&mut request.query, "query", args.query.as_deref());
+    push_query(&mut request.query, "query", Some(query));
     Ok(request)
 }
 
@@ -3340,8 +5635,8 @@ fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, ApiCommandErro
             HttpMethod::Post,
             "/web/auth/accept-terms",
             true,
-            body.or_else(|| Some(json!({}).to_string())),
-            vec!["pcl account".to_string(), "pcl projects --home".to_string()],
+            Some(body_or_empty(body)),
+            ["pcl account", "pcl projects --mine"],
         ));
     }
     if args.logout {
@@ -3349,17 +5644,14 @@ fn account_request(args: &AccountArgs) -> Result<WorkflowRequest, ApiCommandErro
             HttpMethod::Post,
             "/web/auth/logout",
             true,
-            body.or_else(|| Some(json!({}).to_string())),
-            vec!["pcl auth logout".to_string()],
+            Some(body_or_empty(body)),
+            ["pcl auth logout"],
         ));
     }
     Ok(WorkflowRequest::get(
         "/web/auth/me",
         true,
-        vec![
-            "pcl account --accept-terms".to_string(),
-            "pcl projects --home".to_string(),
-        ],
+        ["pcl account --accept-terms", "pcl projects --mine"],
     ))
 }
 
@@ -3371,7 +5663,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
             "/assertion_adopters",
             true,
             body,
-            vec!["pcl contracts --unassigned --manager <manager-address>".to_string()],
+            ["pcl contracts --unassigned --manager <manager-address>"],
         ));
     }
     if args.assign_project {
@@ -3380,7 +5672,7 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
             "/assertion_adopters/assign-project",
             true,
             body,
-            vec!["pcl contracts --project <project-ref>".to_string()],
+            ["pcl contracts --project <project-ref>"],
         ));
     }
     if args.unassigned {
@@ -3388,9 +5680,9 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
         let mut request = WorkflowRequest::get(
             "/assertion_adopters/no-project",
             true,
-            vec!["pcl contracts --assign-project --body '{...}'".to_string()],
+            ["pcl contracts --assign-project --body-template"],
         );
-        push_query_string_value(&mut request.query, "manager", manager);
+        push_query(&mut request.query, "manager", Some(manager));
         return Ok(request);
     }
     if args.remove_calldata {
@@ -3403,16 +5695,16 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
         let mut request = WorkflowRequest::get(
             format!("/assertion_adopters/{address}/remove-assertions-calldata"),
             true,
-            vec!["pcl releases --project <project-ref>".to_string()],
+            ["pcl releases --project <project-ref>"],
         );
-        push_query_string(&mut request.query, "network", args.network.as_deref());
-        push_query_string(
+        push_query(&mut request.query, "network", args.network.as_deref());
+        push_query(
             &mut request.query,
             "environment",
             args.environment.as_deref(),
         );
         for assertion_id in &args.assertion_ids {
-            push_query_string_value(&mut request.query, "assertion_ids", assertion_id.clone());
+            push_query(&mut request.query, "assertion_ids", Some(assertion_id));
         }
         return Ok(request);
     }
@@ -3447,13 +5739,13 @@ fn contracts_request(args: &ContractsArgs) -> Result<WorkflowRequest, ApiCommand
     Ok(WorkflowRequest::get(
         "/assertion_adopters",
         true,
-        vec!["pcl contracts --unassigned --manager <manager-address>".to_string()],
+        ["pcl contracts --unassigned --manager <manager-address>"],
     ))
 }
 
 fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
-    let project = required_arg(args.project.as_deref(), "--project")?;
+    let project = required_project_arg(args.project.as_deref(), "releases", "--project")?;
     if args.preview {
         return Ok(workflow_with_body(
             HttpMethod::Post,
@@ -3497,7 +5789,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
                 HttpMethod::Post,
                 format!("/projects/{project}/releases/{release_id}/checks/{check_id}/retry"),
                 true,
-                body.or_else(|| Some(empty_json_body())),
+                Some(body_or_empty(body)),
                 vec![format!(
                     "pcl releases --project {project} --release-id {release_id} --backtest-progress"
                 )],
@@ -3532,7 +5824,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
                     "pcl releases --project {project} --release-id {release_id} --deploy"
                 )],
             );
-            push_query_string_value(&mut request.query, "signerAddress", signer_address);
+            push_query(&mut request.query, "signerAddress", Some(signer_address));
             return Ok(request);
         }
         return Ok(WorkflowRequest::get(
@@ -3566,7 +5858,7 @@ fn releases_request(args: &ReleasesArgs) -> Result<WorkflowRequest, ApiCommandEr
 
 fn deployments_request(args: &DeploymentsArgs) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
-    let project = required_arg(args.project.as_deref(), "--project")?;
+    let project = required_project_arg(args.project.as_deref(), "deployments", "--project")?;
     if args.confirm {
         return Ok(workflow_with_body(
             HttpMethod::Post,
@@ -3589,7 +5881,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
         return Ok(WorkflowRequest::get(
             "/invitations/pending",
             true,
-            vec!["pcl access --token <token> --accept".to_string()],
+            ["pcl access --token <token> --accept"],
         ));
     }
     if args.accept || args.preview {
@@ -3599,8 +5891,8 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
                 HttpMethod::Post,
                 format!("/invitations/{token}/accept"),
                 true,
-                body.or_else(|| Some(empty_json_body())),
-                vec!["pcl projects --home".to_string()],
+                Some(body_or_empty(body)),
+                ["pcl projects --mine"],
             ));
         }
         return Ok(WorkflowRequest::get(
@@ -3616,7 +5908,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
             vec![format!("pcl access --token {token} --accept")],
         ));
     }
-    let project = required_arg(args.project.as_deref(), "--project")?;
+    let project = required_project_arg(args.project.as_deref(), "access", "--project")?;
     if args.my_role {
         return Ok(WorkflowRequest::get(
             format!("/projects/{project}/my-role"),
@@ -3640,7 +5932,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
                 HttpMethod::Post,
                 format!("/projects/{project}/invitations/{invitation_id}/resend"),
                 true,
-                body.or_else(|| Some(empty_json_body())),
+                Some(body_or_empty(body)),
                 vec![format!("pcl access --project {project} --invitations")],
             ));
         }
@@ -3676,7 +5968,7 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
             format!("/projects/{project}/invitations"),
             true,
             vec![format!(
-                "pcl access --project {project} --invite --body '{{...}}'"
+                "pcl access --project {project} --invite --body-template"
             )],
         ));
     }
@@ -3692,10 +5984,15 @@ fn access_request(args: &AccessArgs) -> Result<WorkflowRequest, ApiCommandError>
 
 fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
-    let project = required_arg(args.project.as_deref(), "--project")?;
+    let project = required_project_arg(args.project.as_deref(), "integrations", "--project")?;
     let Some(provider) = args.provider else {
-        return Err(ApiCommandError::InvalidWorkflow {
+        return Err(ApiCommandError::InvalidWorkflowWithActions {
             message: "--provider is required".to_string(),
+            next_actions: vec![
+                "pcl integrations --project <project-id> --provider slack".to_string(),
+                "pcl integrations --project <project-id> --provider pagerduty".to_string(),
+                "pcl integrations --help".to_string(),
+            ],
         });
     };
     let provider = provider.path();
@@ -3716,7 +6013,7 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
             HttpMethod::Post,
             format!("{base}/test"),
             true,
-            body.or_else(|| Some(empty_json_body())),
+            Some(body_or_empty(body)),
             vec![format!(
                 "pcl integrations --project {project} --provider {provider}"
             )],
@@ -3739,7 +6036,7 @@ fn integrations_request(args: &IntegrationsArgs) -> Result<WorkflowRequest, ApiC
         vec![
             format!("pcl integrations --project {project} --provider {provider} --test"),
             format!(
-                "pcl integrations --project {project} --provider {provider} --configure --body '{{...}}'"
+                "pcl integrations --project {project} --provider {provider} --configure --body-template"
             ),
         ],
     ))
@@ -3749,7 +6046,7 @@ fn protocol_manager_request(
     args: &ProtocolManagerArgs,
 ) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
-    let project = required_arg(args.project.as_deref(), "--project")?;
+    let project = required_project_arg(args.project.as_deref(), "protocol-manager", "--project")?;
     let base = format!("/projects/{project}/protocol-manager");
     if args.nonce {
         let address = required_arg(args.address.as_deref(), "--address")?;
@@ -3757,10 +6054,10 @@ fn protocol_manager_request(
             format!("{base}/nonce"),
             true,
             vec![format!(
-                "pcl protocol-manager --project {project} --set --body '{{...}}'"
+                "pcl protocol-manager --project {project} --set --body-template"
             )],
         );
-        push_query_string_value(&mut request.query, "address", address);
+        push_query(&mut request.query, "address", Some(address));
         push_query(&mut request.query, "chain_id", args.chain_id);
         return Ok(request);
     }
@@ -3792,10 +6089,10 @@ fn protocol_manager_request(
             format!("{base}/transfer-calldata"),
             true,
             vec![format!(
-                "pcl protocol-manager --project {project} --set --body '{{...}}'"
+                "pcl protocol-manager --project {project} --set --body-template"
             )],
         );
-        push_query_string_value(&mut request.query, "new_manager", new_manager);
+        push_query(&mut request.query, "new_manager", Some(new_manager));
         return Ok(request);
     }
     if args.accept_calldata {
@@ -3803,7 +6100,7 @@ fn protocol_manager_request(
             format!("{base}/accept-calldata"),
             true,
             vec![format!(
-                "pcl protocol-manager --project {project} --confirm-transfer --body '{{...}}'"
+                "pcl protocol-manager --project {project} --confirm-transfer --body-template"
             )],
         ));
     }
@@ -3838,45 +6135,46 @@ fn transfers_request(args: &TransfersArgs) -> Result<WorkflowRequest, ApiCommand
             "/transfers/reject",
             true,
             body,
-            vec!["pcl transfers --pending".to_string()],
+            ["pcl transfers --pending"],
         ));
     }
     if let Some(transfer_id) = &args.transfer_id {
         return Ok(WorkflowRequest::get(
             format!("/views/transfers/{transfer_id}"),
             true,
-            vec!["pcl transfers --pending".to_string()],
+            ["pcl transfers --pending"],
         ));
     }
     Ok(WorkflowRequest::get(
         "/views/transfers/pending",
         true,
-        vec!["pcl transfers --transfer-id <transfer-id>".to_string()],
+        ["pcl transfers --transfer-id <transfer-id>"],
     ))
 }
 
-fn events_request(args: &EventsArgs) -> WorkflowRequest {
+fn events_request(args: &EventsArgs) -> Result<WorkflowRequest, ApiCommandError> {
+    let project = required_project_arg(args.project.as_deref(), "events", "--project")?;
     let mut request = if args.audit_log {
         WorkflowRequest::get(
-            format!("/views/projects/{}/audit-log", args.project),
+            format!("/views/projects/{project}/audit-log"),
             true,
-            vec![format!("pcl events --project {}", args.project)],
+            vec![format!("pcl events --project {project}")],
         )
     } else {
         WorkflowRequest::get(
-            format!("/views/projects/{}/events", args.project),
+            format!("/views/projects/{project}/events"),
             true,
-            vec![format!("pcl events --project {} --audit-log", args.project)],
+            vec![format!("pcl events --project {project} --audit-log")],
         )
     };
     push_query(&mut request.query, "page", args.page);
     push_query(&mut request.query, "limit", args.limit);
-    push_query_string(
+    push_query(
         &mut request.query,
         "environment",
         args.environment.as_deref(),
     );
-    request
+    Ok(request)
 }
 
 fn workflow_with_body(
@@ -3884,7 +6182,7 @@ fn workflow_with_body(
     path: impl Into<String>,
     require_auth: bool,
     body: Option<String>,
-    next_actions: Vec<String>,
+    next_actions: impl IntoIterator<Item = impl Into<String>>,
 ) -> WorkflowRequest {
     WorkflowRequest {
         method,
@@ -3892,12 +6190,12 @@ fn workflow_with_body(
         query: Vec::new(),
         body,
         require_auth,
-        next_actions,
+        next_actions: next_actions.into_iter().map(Into::into).collect(),
     }
 }
 
-fn empty_json_body() -> String {
-    json!({}).to_string()
+fn body_or_empty(body: Option<String>) -> String {
+    body.unwrap_or_else(|| "{}".to_string())
 }
 
 fn request_body(
@@ -4026,18 +6324,10 @@ fn project_body_template(args: &ProjectsArgs) -> Value {
     if args.save || args.unsave {
         return body_template("project_saved");
     }
-    if args.delete || args.resolve || args.widget || args.home || args.saved {
+    if args.delete || args.resolve || args.widget || args.mine || args.saved {
         return body_template("empty_object");
     }
     body_template("project_create")
-}
-
-fn assertions_body_template(_args: &AssertionsArgs) -> Value {
-    body_template("empty_object")
-}
-
-fn account_body_template(_args: &AccountArgs) -> Value {
-    body_template("empty_object")
 }
 
 fn contracts_body_template(args: &ContractsArgs) -> Value {
@@ -4304,8 +6594,33 @@ fn required_arg(value: Option<&str>, name: &str) -> Result<String, ApiCommandErr
     })
 }
 
-fn push_query_string_value(query: &mut Vec<(String, String)>, name: &str, value: String) {
-    query.push((name.to_string(), value));
+fn required_arg_with_actions(
+    value: Option<&str>,
+    name: &str,
+    next_actions: Vec<String>,
+) -> Result<String, ApiCommandError> {
+    value.map(ToString::to_string).ok_or_else(|| {
+        ApiCommandError::InvalidWorkflowWithActions {
+            message: format!("{name} is required"),
+            next_actions,
+        }
+    })
+}
+
+fn required_project_arg(
+    value: Option<&str>,
+    command: &str,
+    flag: &str,
+) -> Result<String, ApiCommandError> {
+    required_arg_with_actions(
+        value,
+        flag,
+        vec![
+            "pcl projects --mine".to_string(),
+            format!("pcl {command} {flag} <project-id>"),
+            format!("pcl {command} --help"),
+        ],
+    )
 }
 
 fn project_segment(path: &str) -> Option<(&'static str, &str, &str)> {
@@ -4381,67 +6696,59 @@ fn incidents_request(args: &IncidentsArgs) -> Result<WorkflowRequest, ApiCommand
             "pcl incidents --limit 5".to_string(),
             format!("pcl api inspect get {}", path),
         ];
-        return Ok(WorkflowRequest {
-            method: HttpMethod::Get,
+        return Ok(WorkflowRequest::get_with_query(
             path,
             query,
-            body: None,
-            require_auth: true,
+            true,
             next_actions,
-        });
+        ));
     }
 
     if let Some(project_id) = &args.project_id {
         if args.stats {
             let path = format!("/projects/{project_id}/incidents/stats");
-            return Ok(WorkflowRequest {
-                method: HttpMethod::Get,
+            return Ok(WorkflowRequest::get_with_query(
                 path,
                 query,
-                body: None,
-                require_auth: true,
-                next_actions: vec![format!(
+                true,
+                vec![format!(
                     "pcl incidents --project-id {project_id} --limit 10"
                 )],
-            });
+            ));
         }
-        push_query_string(&mut query, "assertionId", args.assertion_id.as_deref());
-        push_query_string(
+        push_query(&mut query, "assertionId", args.assertion_id.as_deref());
+        push_query(
             &mut query,
             "assertionAdopterId",
             args.assertion_adopter_id.as_deref(),
         );
-        push_query_string(&mut query, "environment", args.environment.as_deref());
-        push_query_string(&mut query, "fromDate", args.from_date.as_deref());
-        push_query_string(&mut query, "toDate", args.to_date.as_deref());
+        push_query(&mut query, "environment", args.environment.as_deref());
+        push_query(&mut query, "fromDate", args.from_date.as_deref());
+        push_query(&mut query, "toDate", args.to_date.as_deref());
         let path = format!("/views/projects/{project_id}/incidents");
-        return Ok(WorkflowRequest {
-            method: HttpMethod::Get,
+        return Ok(WorkflowRequest::get_with_query(
             path,
             query,
-            body: None,
-            require_auth: true,
-            next_actions: vec![
+            true,
+            vec![
                 format!("pcl assertions --project-id {project_id}"),
                 "pcl incidents --limit 5".to_string(),
             ],
-        });
+        ));
     }
 
     push_query(&mut query, "network", args.network);
-    push_query_string(&mut query, "sort", args.sort.as_deref());
-    push_query_string(&mut query, "devMode", args.dev_mode.as_deref());
-    Ok(WorkflowRequest {
-        method: HttpMethod::Get,
-        path: "/views/public/incidents".to_string(),
+    push_query(&mut query, "sort", args.sort.as_deref());
+    push_query(&mut query, "devMode", args.dev_mode.as_deref());
+    Ok(WorkflowRequest::get_with_query(
+        "/views/public/incidents",
         query,
-        body: None,
-        require_auth: false,
-        next_actions: vec![
+        false,
+        vec![
             "pcl incidents --project-id <project-id> --limit 10".to_string(),
             "pcl projects --limit 10".to_string(),
         ],
-    })
+    ))
 }
 
 fn incidents_next_actions(
@@ -4449,7 +6756,22 @@ fn incidents_next_actions(
     args: &IncidentsArgs,
     fallback: Vec<String>,
 ) -> Vec<String> {
-    if args.incident_id.is_some() {
+    if let Some(incident_id) = &args.incident_id {
+        if args.tx_id.is_none()
+            && let Some(tx_id) = data
+                .get("data")
+                .and_then(|data| data.get("invalidating_transactions"))
+                .and_then(Value::as_array)
+                .and_then(|transactions| transactions.first())
+                .and_then(|transaction| {
+                    first_string_field(transaction, &["transaction_hash", "id", "tx_id"])
+                })
+        {
+            return vec![
+                format!("pcl incidents --incident-id {incident_id} --tx-id {tx_id}"),
+                "pcl incidents --limit 5".to_string(),
+            ];
+        }
         return fallback;
     }
     first_string_field(data, &["id", "incidentId", "incident_id"]).map_or(fallback, |incident_id| {
@@ -4461,6 +6783,12 @@ fn incidents_next_actions(
 }
 
 fn projects_next_actions(data: &Value, fallback: Vec<String>) -> Vec<String> {
+    if let Some(project_id) = data.get("project_id").and_then(Value::as_str) {
+        return vec![
+            format!("pcl assertions --project-id {project_id}"),
+            format!("pcl incidents --project-id {project_id} --limit 10"),
+        ];
+    }
     first_string_field(data, &["project_id", "projectId", "id"]).map_or(fallback, |project_id| {
         vec![
             format!("pcl projects --project-id {project_id}"),
@@ -4496,6 +6824,37 @@ fn assertions_next_actions(
     )
 }
 
+fn search_next_actions(data: &Value, fallback: Vec<String>) -> Vec<String> {
+    if let Some(project_id) = data
+        .get("projects")
+        .and_then(Value::as_array)
+        .and_then(|projects| projects.first())
+        .and_then(|project| first_string_field(project, &["project_id", "projectId", "id", "slug"]))
+    {
+        return vec![
+            format!("pcl projects --project-id {project_id}"),
+            format!("pcl contracts --project {project_id}"),
+        ];
+    }
+    if let Some(project_id) = data
+        .get("contracts")
+        .and_then(Value::as_array)
+        .and_then(|contracts| contracts.first())
+        .and_then(|contract| {
+            contract.get("data").map_or_else(
+                || first_string_field(contract, &["related_project_id", "related_project_slug"]),
+                |inner| first_string_field(inner, &["related_project_id", "related_project_slug"]),
+            )
+        })
+    {
+        return vec![
+            format!("pcl projects --project-id {project_id}"),
+            format!("pcl contracts --project {project_id}"),
+        ];
+    }
+    fallback
+}
+
 fn first_string_field(value: &Value, keys: &[&str]) -> Option<String> {
     match value {
         Value::Object(object) => {
@@ -4521,7 +6880,7 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
     let mut query = Vec::new();
     push_query(&mut query, "page", args.page);
     push_query(&mut query, "limit", args.limit);
-    push_query_string(&mut query, "search", args.search.as_deref());
+    push_query(&mut query, "search", args.search.as_deref());
     let body = project_request_body(args)?;
 
     if args.create {
@@ -4530,50 +6889,44 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
             "/projects",
             true,
             body,
-            vec!["pcl projects --home".to_string()],
+            vec!["pcl projects --mine".to_string()],
         ));
     }
 
-    if args.home {
-        return Ok(WorkflowRequest {
-            method: HttpMethod::Get,
-            path: "/views/projects/home".to_string(),
+    if args.mine {
+        return Ok(WorkflowRequest::get_with_query(
+            "/views/projects/home",
             query,
-            body: None,
-            require_auth: true,
-            next_actions: vec![
+            true,
+            vec![
                 "pcl account".to_string(),
                 "pcl projects --saved --user-id <user-id>".to_string(),
             ],
-        });
+        ));
     }
     if args.saved {
         let user_id = required_arg(args.user_id.as_deref(), "--user-id")?;
-        push_query_string_value(&mut query, "user_id", user_id);
-        return Ok(WorkflowRequest {
-            method: HttpMethod::Get,
-            path: "/projects/saved".to_string(),
+        push_query(&mut query, "user_id", Some(user_id));
+        return Ok(WorkflowRequest::get_with_query(
+            "/projects/saved",
             query,
-            body: None,
-            require_auth: true,
-            next_actions: vec!["pcl projects --home".to_string()],
-        });
+            true,
+            vec!["pcl projects --mine".to_string()],
+        ));
     }
     if args.project_id.is_none()
         && (args.update || args.delete || args.save || args.unsave || args.resolve || args.widget)
     {
-        required_arg(args.project_id.as_deref(), "--project")?;
+        required_project_arg(args.project_id.as_deref(), "projects", "--project-id")?;
     }
     if let Some(project_id) = &args.project_id {
         if args.resolve {
-            return Ok(WorkflowRequest {
-                method: HttpMethod::Get,
-                path: format!("/projects/resolve/{project_id}"),
+            return Ok(WorkflowRequest::get_with_query(
+                format!("/projects/resolve/{project_id}"),
                 query,
-                body: None,
-                require_auth: false,
-                next_actions: vec![format!("pcl projects --project-id {project_id}")],
-            });
+                false,
+                vec![format!("pcl projects --project-id {project_id}")],
+            ));
         }
         if args.widget {
             return Ok(WorkflowRequest::get(
@@ -4592,7 +6945,10 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
                 "/projects/saved",
                 true,
                 Some(json!({ "project_id": project_id }).to_string()),
-                vec!["pcl account".to_string(), "pcl projects --home".to_string()],
+                vec![
+                    format!("pcl projects --project-id {project_id}"),
+                    "pcl projects --mine".to_string(),
+                ],
             ));
         }
         if args.update {
@@ -4610,33 +6966,29 @@ fn projects_request(args: &ProjectsArgs) -> Result<WorkflowRequest, ApiCommandEr
                 format!("/projects/{project_id}"),
                 true,
                 body,
-                vec!["pcl projects --home".to_string()],
+                ["pcl projects --mine"],
             ));
         }
-        return Ok(WorkflowRequest {
-            method: HttpMethod::Get,
-            path: format!("/projects/{project_id}"),
+        return Ok(WorkflowRequest::get_with_query(
+            format!("/projects/{project_id}"),
             query,
-            body: None,
-            require_auth: true,
-            next_actions: vec![
+            true,
+            vec![
                 format!("pcl assertions --project-id {project_id}"),
                 format!("pcl incidents --project-id {project_id} --limit 10"),
             ],
-        });
+        ));
     }
 
-    Ok(WorkflowRequest {
-        method: HttpMethod::Get,
-        path: "/views/projects".to_string(),
+    Ok(WorkflowRequest::get_with_query(
+        "/views/projects",
         query,
-        body: None,
-        require_auth: false,
-        next_actions: vec![
-            "pcl projects --project-id <project-id>".to_string(),
-            "pcl incidents --limit 5".to_string(),
+        false,
+        [
+            "pcl projects --project-id <project-id>",
+            "pcl incidents --limit 5",
         ],
-    })
+    ))
 }
 
 fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiCommandError> {
@@ -4652,15 +7004,11 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
         let mut request = WorkflowRequest::get(
             "/assertions",
             false,
-            vec!["pcl contracts --project <project-ref>".to_string()],
+            ["pcl contracts --project <project-ref>"],
         );
-        push_query_string_value(
-            &mut request.query,
-            "adopter_address",
-            adopter_address.clone(),
-        );
-        push_query_string(&mut request.query, "network", args.network.as_deref());
-        push_query_string(
+        push_query(&mut request.query, "adopter_address", Some(adopter_address));
+        push_query(&mut request.query, "network", args.network.as_deref());
+        push_query(
             &mut request.query,
             "environment",
             args.environment.as_deref(),
@@ -4673,12 +7021,13 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
         return Ok(request);
     }
 
-    let project_id = required_arg(args.project_id.as_deref(), "--project")?;
+    let project_id =
+        required_project_arg(args.project_id.as_deref(), "assertions", "--project-id")?;
     let mut query = Vec::new();
     push_query(&mut query, "page", args.page);
     push_query(&mut query, "limit", args.limit);
-    push_query_string(&mut query, "assertionAdopterId", args.adopter_id.as_deref());
-    push_query_string(&mut query, "environment", args.environment.as_deref());
+    push_query(&mut query, "assertionAdopterId", args.adopter_id.as_deref());
+    push_query(&mut query, "environment", args.environment.as_deref());
 
     if args.registered {
         return Ok(WorkflowRequest::get(
@@ -4705,38 +7054,28 @@ fn assertions_request(args: &AssertionsArgs) -> Result<WorkflowRequest, ApiComma
     }
 
     if let Some(assertion_id) = &args.assertion_id {
-        return Ok(WorkflowRequest {
-            method: HttpMethod::Get,
-            path: format!("/views/projects/{project_id}/assertions/{assertion_id}"),
+        return Ok(WorkflowRequest::get_with_query(
+            format!("/views/projects/{project_id}/assertions/{assertion_id}"),
             query,
-            body: None,
-            require_auth: true,
-            next_actions: vec![format!(
+            true,
+            vec![format!(
                 "pcl incidents --project-id {project_id} --assertion-id {assertion_id}",
             )],
-        });
+        ));
     }
 
-    Ok(WorkflowRequest {
-        method: HttpMethod::Get,
-        path: format!("/views/projects/{project_id}/assertions"),
+    Ok(WorkflowRequest::get_with_query(
+        format!("/views/projects/{project_id}/assertions"),
         query,
-        body: None,
-        require_auth: true,
-        next_actions: vec![
+        true,
+        vec![
             format!("pcl incidents --project-id {project_id} --limit 10"),
             format!("pcl assertions --project-id {project_id} --assertion-id <assertion-id>"),
         ],
-    })
+    ))
 }
 
 fn push_query<T: ToString>(query: &mut Vec<(String, String)>, name: &str, value: Option<T>) {
-    if let Some(value) = value {
-        query.push((name.to_string(), value.to_string()));
-    }
-}
-
-fn push_query_string(query: &mut Vec<(String, String)>, name: &str, value: Option<&str>) {
     if let Some(value) = value {
         query.push((name.to_string(), value.to_string()));
     }
@@ -5560,7 +7899,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "auth",
                 "login_challenge",
-                "pcl auth login --no-wait --force --json",
+                "pcl auth login --no-wait --force --toon",
                 "Device-login challenge is exposed as a structured auth command.",
             )
         }
@@ -5568,7 +7907,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "auth",
                 "poll",
-                "pcl auth poll --session-id <session-id> --device-secret <secret> --expires-at <rfc3339> --json",
+                "pcl auth poll --session-id <session-id> --device-secret <secret> --expires-at <rfc3339> --toon",
                 "Polling is handled by the auth command returned in data.poll_command.",
             )
         }
@@ -5576,7 +7915,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "auth",
                 "verify",
-                "pcl auth login --force --json",
+                "pcl auth login --force --toon",
                 "The login command owns verification and stores the resulting credentials.",
             )
         }
@@ -5584,7 +7923,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "auth",
                 "refresh",
-                "pcl auth refresh --json",
+                "pcl auth refresh --toon",
                 "Refresh rotation is exposed as a structured auth command.",
             )
         }
@@ -5592,7 +7931,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "api",
                 "manifest",
-                "pcl api manifest --json",
+                "pcl api manifest --toon",
                 "Use the CLI manifest/list/inspect surfaces for discovery instead of raw OpenAPI retrieval.",
             )
         }
@@ -6083,22 +8422,9 @@ fn public_raw_call_path(method: HttpMethod, path: &str) -> bool {
 }
 
 fn has_required_authorization_parameter(operation: &Value) -> bool {
-    operation
-        .get("parameters")
-        .and_then(Value::as_array)
-        .is_some_and(|parameters| {
-            parameters.iter().any(|parameter| {
-                parameter.get("in").and_then(Value::as_str) == Some("header")
-                    && parameter
-                        .get("required")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false)
-                    && parameter
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .is_some_and(|name| name.eq_ignore_ascii_case("authorization"))
-            })
-        })
+    required_header_parameters(operation)
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case("authorization"))
 }
 
 fn example_path(path: &str, operation: &Value) -> String {
@@ -6146,45 +8472,11 @@ fn operation_input_placeholders(path: &str, operation: &Value) -> Vec<String> {
 }
 
 fn required_header_parameters(operation: &Value) -> Vec<String> {
-    operation
-        .get("parameters")
-        .and_then(Value::as_array)
-        .map(|parameters| {
-            parameters
-                .iter()
-                .filter(|parameter| {
-                    parameter.get("in").and_then(Value::as_str) == Some("header")
-                        && parameter
-                            .get("required")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false)
-                })
-                .filter_map(|parameter| parameter.get("name").and_then(Value::as_str))
-                .map(ToString::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+    named_parameters(operation, "header", true)
 }
 
 fn required_query_parameters(operation: &Value) -> Vec<String> {
-    operation
-        .get("parameters")
-        .and_then(Value::as_array)
-        .map(|parameters| {
-            parameters
-                .iter()
-                .filter(|parameter| {
-                    parameter.get("in").and_then(Value::as_str) == Some("query")
-                        && parameter
-                            .get("required")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false)
-                })
-                .filter_map(|parameter| parameter.get("name").and_then(Value::as_str))
-                .map(ToString::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+    named_parameters(operation, "query", true)
 }
 
 fn next_actions_for_operations(operations: &[OperationSummary]) -> Vec<String> {
@@ -6199,13 +8491,14 @@ fn next_actions_for_operations(operations: &[OperationSummary]) -> Vec<String> {
             {
                 return vec![
                     example.to_string(),
-                    format!("{} --json", operation.inspect_command),
+                    format!("{} --toon", operation.inspect_command),
                 ];
             }
             if operation.requires_input {
                 vec![
-                    format!("{} --json", operation.inspect_command),
-                    "Use data.example_call after filling placeholders".to_string(),
+                    format!("{} --toon", operation.inspect_command),
+                    "Inspect the operation, then fill the placeholders in the example call"
+                        .to_string(),
                 ]
             } else {
                 vec![

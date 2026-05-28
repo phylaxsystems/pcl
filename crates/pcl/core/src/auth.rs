@@ -1,7 +1,7 @@
 use crate::{
     DEFAULT_PLATFORM_URL,
     api::{
-        toon_string,
+        envelope_output_string,
         with_envelope_metadata,
     },
     config::{
@@ -112,7 +112,7 @@ pub enum AuthSubcommands {
     /// Ensure auth is usable, or return a one-envelope login challenge
     #[command(
         long_about = "Checks whether auth is usable. If not, returns a structured device-login challenge without waiting.",
-        after_help = "Examples:\n  pcl auth ensure\n  pcl auth ensure --format toon\n  pcl auth ensure --force --format toon"
+        after_help = "Examples:\n  pcl auth ensure\n  pcl auth ensure --toon\n  pcl auth ensure --force --toon"
     )]
     Ensure {
         #[arg(long, help = "Return a fresh login challenge even when auth is usable")]
@@ -122,7 +122,7 @@ pub enum AuthSubcommands {
     /// Login to PCL
     #[command(
         long_about = "Initiates the login process. Opens a browser window for authentication.",
-        after_help = "Examples:\n  pcl auth login\n  pcl auth login --force\n  pcl auth login --no-wait --format toon"
+        after_help = "Examples:\n  pcl auth login\n  pcl auth login --force\n  pcl auth login --no-wait --toon"
     )]
     Login {
         #[arg(
@@ -140,7 +140,7 @@ pub enum AuthSubcommands {
     /// Poll a pending device-login session once
     #[command(
         long_about = "Checks a device-login session once and stores credentials if verification completed.",
-        after_help = "Example: pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --format toon"
+        after_help = "Example: pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --toon"
     )]
     Poll {
         #[arg(
@@ -157,7 +157,7 @@ pub enum AuthSubcommands {
     /// Refresh auth when possible, or return a login challenge when refresh is unavailable
     #[command(
         long_about = "Refreshes auth non-interactively by rotating the stored CLI refresh token; returns a structured login challenge when no refreshable session exists.",
-        after_help = "Example: pcl auth refresh --format toon"
+        after_help = "Example: pcl auth refresh --toon"
     )]
     Refresh {
         #[arg(
@@ -348,7 +348,7 @@ impl AuthCommand {
                             "refresh_expires_at": auth.refresh_expires_at.map(|expires_at| expires_at.to_rfc3339()),
                             "refresh_seconds_remaining": auth.refresh_expires_at.map(|expires_at| (expires_at - now).num_seconds()),
                         },
-                        "next_actions": ["pcl account", "pcl projects --limit 10"],
+                        "next_actions": ["pcl account", "pcl projects --mine"],
                     }),
                     json_output,
                 )?;
@@ -546,7 +546,7 @@ impl AuthCommand {
                 "wait_command": if json_output {
                     "pcl auth login --force --json"
                 } else {
-                    "pcl auth login --force --format toon"
+                    "pcl auth login --force --toon"
                 },
             },
             "next_actions": [
@@ -597,16 +597,12 @@ impl AuthCommand {
                 "refresh_expires_at": auth.refresh_expires_at.map(|expires_at| expires_at.to_rfc3339()),
                 "refresh_seconds_remaining": refresh_seconds_remaining,
             },
-            "next_actions": ["pcl account", "pcl projects --limit 10"],
+            "next_actions": ["pcl account", "pcl projects --mine"],
         }))
     }
 
     fn poll_command(&self, auth_response: &GetCliAuthCodeResponse, json_output: bool) -> String {
-        let output_flag = if json_output {
-            " --json"
-        } else {
-            " --format toon"
-        };
+        let output_flag = if json_output { " --json" } else { " --toon" };
         let auth_url = self.effective_auth_url();
         format!(
             "pcl auth --auth-url={} poll --session-id={} --device-secret={} --expires-at={}{}",
@@ -956,26 +952,21 @@ impl AuthCommand {
                 "platform_url": self.effective_auth_url().as_str(),
             },
             "next_actions": if token_expired {
-                json!(["pcl auth refresh --json", "pcl auth login --force", "pcl auth logout"])
+                json!(["pcl auth refresh --toon", "pcl auth login --force", "pcl auth logout"])
             } else if expires_soon {
-                json!(["pcl auth refresh --json", "pcl account"])
+                json!(["pcl auth refresh --toon", "pcl account"])
             } else {
-                json!(["pcl account", "pcl projects --limit 10"])
+                json!(["pcl account", "pcl projects --mine"])
             },
         }))
     }
 
     fn print_output(value: &Value, json_output: bool) -> Result<(), AuthError> {
-        let value = with_envelope_metadata(value.clone());
-        if json_output {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&value)
-                    .map_err(|error| AuthError::InvalidAuthData(error.to_string()))?
-            );
-        } else {
-            print!("{}", toon_string(&value));
-        }
+        print!(
+            "{}",
+            envelope_output_string(value, json_output)
+                .map_err(|error| AuthError::InvalidAuthData(error.to_string()))?
+        );
         Ok(())
     }
 
@@ -1473,11 +1464,11 @@ mod tests {
         assert!(
             toon["data"]["poll_command"]
                 .as_str()
-                .is_some_and(|command| command.ends_with("--format toon"))
+                .is_some_and(|command| command.ends_with("--toon"))
         );
         assert_eq!(
             toon["data"]["wait_command"],
-            "pcl auth login --force --format toon"
+            "pcl auth login --force --toon"
         );
 
         let json = cmd.login_challenge_envelope(&auth_response, AuthChallengeReason::Missing, true);

@@ -39,7 +39,7 @@ fn assertions_args(project_id: Option<&str>) -> AssertionsArgs {
 fn projects_args() -> ProjectsArgs {
     ProjectsArgs {
         project_id: None,
-        home: false,
+        mine: false,
         saved: false,
         user_id: None,
         page: None,
@@ -279,8 +279,8 @@ fn openapi_call_commands_include_required_inputs() {
     assert_eq!(
         next_actions_for_operations(&operations),
         vec![
-            "pcl api inspect post_project_widgets --json".to_string(),
-            "Use data.example_call after filling placeholders".to_string()
+            "pcl api inspect post_project_widgets --toon".to_string(),
+            "Inspect the operation, then fill the placeholders in the example call".to_string()
         ]
     );
 
@@ -542,25 +542,8 @@ fn synthesizes_missing_operation_ids() {
 #[test]
 fn builds_public_incidents_workflow_request() {
     let request = incidents_request(&IncidentsArgs {
-        project_id: None,
-        incident_id: None,
-        tx_id: None,
-        assertion_id: None,
-        assertion_adopter_id: None,
-        environment: None,
-        from_date: None,
-        to_date: None,
-        page: None,
         limit: Some(5),
-        network: None,
-        sort: None,
-        dev_mode: None,
-        stats: false,
-        retry_trace: false,
-        all: false,
-        max_pages: None,
-        output: None,
-        jsonl: false,
+        ..incidents_args()
     })
     .unwrap();
 
@@ -573,24 +556,10 @@ fn builds_public_incidents_workflow_request() {
 fn builds_project_incidents_workflow_request() {
     let request = incidents_request(&IncidentsArgs {
         project_id: Some("project-1".to_string()),
-        incident_id: None,
-        tx_id: None,
         assertion_id: Some("assertion-1".to_string()),
-        assertion_adopter_id: None,
         environment: Some("production".to_string()),
-        from_date: None,
-        to_date: None,
-        page: None,
         limit: Some(10),
-        network: None,
-        sort: None,
-        dev_mode: None,
-        stats: false,
-        retry_trace: false,
-        all: false,
-        max_pages: None,
-        output: None,
-        jsonl: false,
+        ..incidents_args()
     })
     .unwrap();
 
@@ -617,24 +586,8 @@ fn builds_project_incidents_workflow_request() {
 fn builds_project_incident_stats_workflow_request() {
     let request = incidents_request(&IncidentsArgs {
         project_id: Some("project-1".to_string()),
-        incident_id: None,
-        tx_id: None,
-        assertion_id: None,
-        assertion_adopter_id: None,
-        environment: None,
-        from_date: None,
-        to_date: None,
-        page: None,
-        limit: None,
-        network: None,
-        sort: None,
-        dev_mode: None,
         stats: true,
-        retry_trace: false,
-        all: false,
-        max_pages: None,
-        output: None,
-        jsonl: false,
+        ..incidents_args()
     })
     .unwrap();
 
@@ -646,53 +599,17 @@ fn builds_project_incident_stats_workflow_request() {
 #[test]
 fn incident_detail_and_trace_require_auth() {
     let detail = incidents_request(&IncidentsArgs {
-        project_id: None,
         incident_id: Some("incident-1".to_string()),
-        tx_id: None,
-        assertion_id: None,
-        assertion_adopter_id: None,
-        environment: None,
-        from_date: None,
-        to_date: None,
-        page: None,
-        limit: None,
-        network: None,
-        sort: None,
-        dev_mode: None,
-        stats: false,
-        retry_trace: false,
-        all: false,
-        max_pages: None,
-        output: None,
-        jsonl: false,
+        ..incidents_args()
     })
     .unwrap();
     assert_eq!(detail.path, "/views/incidents/incident-1");
     assert!(detail.require_auth);
 
     let trace = incidents_request(&IncidentsArgs {
+        incident_id: Some("incident-1".to_string()),
         tx_id: Some("tx-1".to_string()),
-        ..IncidentsArgs {
-            project_id: None,
-            incident_id: Some("incident-1".to_string()),
-            tx_id: None,
-            assertion_id: None,
-            assertion_adopter_id: None,
-            environment: None,
-            from_date: None,
-            to_date: None,
-            page: None,
-            limit: None,
-            network: None,
-            sort: None,
-            dev_mode: None,
-            stats: false,
-            retry_trace: false,
-            all: false,
-            max_pages: None,
-            output: None,
-            jsonl: false,
-        }
+        ..incidents_args()
     })
     .unwrap();
     assert_eq!(
@@ -705,25 +622,10 @@ fn incident_detail_and_trace_require_auth() {
 #[test]
 fn builds_incident_trace_retry_request() {
     let request = incidents_request(&IncidentsArgs {
-        project_id: None,
         incident_id: Some("incident-1".to_string()),
         tx_id: Some("tx-1".to_string()),
-        assertion_id: None,
-        assertion_adopter_id: None,
-        environment: None,
-        from_date: None,
-        to_date: None,
-        page: None,
-        limit: None,
-        network: None,
-        sort: None,
-        dev_mode: None,
-        stats: false,
         retry_trace: true,
-        all: false,
-        max_pages: None,
-        output: None,
-        jsonl: false,
+        ..incidents_args()
     })
     .unwrap();
 
@@ -768,7 +670,7 @@ async fn paginates_incident_list_workflows() {
         dry_run: false,
         refresh_after_401: Cell::new(true),
     };
-    let request = WorkflowRequest::get("/views/public/incidents", false, Vec::new());
+    let request = WorkflowRequest::get("/views/public/incidents", false, Vec::<String>::new());
     let mut config = CliConfig::default();
     let cli_args = CliArgs::default();
 
@@ -804,7 +706,7 @@ async fn incident_workflow_pagination_rejects_zero_limit() {
         dry_run: false,
         refresh_after_401: Cell::new(true),
     };
-    let request = WorkflowRequest::get("/views/public/incidents", false, Vec::new());
+    let request = WorkflowRequest::get("/views/public/incidents", false, Vec::<String>::new());
     let mut config = CliConfig::default();
     let cli_args = CliArgs::default();
 
@@ -989,7 +891,7 @@ async fn authenticated_workflow_retries_once_after_refresh_on_401() {
         }),
     };
     config.write_to_file(&cli_args).unwrap();
-    let request = WorkflowRequest::get("/web/auth/me", true, Vec::new());
+    let request = WorkflowRequest::get("/web/auth/me", true, Vec::<String>::new());
 
     let result = api
         .call_workflow_result(&mut config, &cli_args, &request, test_request_log_path())
@@ -1140,24 +1042,8 @@ async fn incident_stats_401_propagates_original_http_error() {
     config.write_to_file(&cli_args).unwrap();
     let args = IncidentsArgs {
         project_id: Some(project_id.to_string()),
-        incident_id: None,
-        tx_id: None,
-        assertion_id: None,
-        assertion_adopter_id: None,
-        environment: None,
-        from_date: None,
-        to_date: None,
-        page: None,
-        limit: None,
-        network: None,
-        sort: None,
-        dev_mode: None,
         stats: true,
-        retry_trace: false,
-        all: false,
-        max_pages: None,
-        output: None,
-        jsonl: false,
+        ..incidents_args()
     };
 
     let error = api
@@ -1219,7 +1105,7 @@ async fn dry_run_projects_and_assertions_do_not_execute_requests() {
         project_output["data"]["request"]["auth"]["will_attach_stored_token"],
         false
     );
-    assert_eq!(project_output["next_actions"][0], "pcl auth ensure --json");
+    assert_eq!(project_output["next_actions"][0], "pcl auth ensure --toon");
 
     let assertion_output = api
         .run_assertions(
@@ -1329,7 +1215,7 @@ fn builds_adopter_assertion_lookup_request() {
 #[test]
 fn project_assertions_require_project_id() {
     let error = assertions_request(&assertions_args(None)).unwrap_err();
-    assert!(error.to_string().contains("--project is required"));
+    assert!(error.to_string().contains("--project-id is required"));
 }
 
 #[test]
@@ -1381,6 +1267,26 @@ fn saved_projects_require_and_send_user_id() {
     assert_eq!(
         request.query,
         vec![("user_id".to_string(), "user-1".to_string())]
+    );
+}
+
+#[test]
+fn projects_mine_uses_authenticated_home_view() {
+    let request = projects_request(&ProjectsArgs {
+        mine: true,
+        ..projects_args()
+    })
+    .unwrap();
+
+    assert_eq!(request.path, "/views/projects/home");
+    assert_eq!(request.method.openapi_key(), "get");
+    assert!(request.require_auth);
+    assert_eq!(
+        request.next_actions,
+        vec![
+            "pcl account".to_string(),
+            "pcl projects --saved --user-id <user-id>".to_string()
+        ]
     );
 }
 
@@ -1614,7 +1520,11 @@ fn write_actions_require_target_identifiers() {
         ..projects_args()
     })
     .unwrap_err();
-    assert!(project_error.to_string().contains("--project is required"));
+    assert!(
+        project_error
+            .to_string()
+            .contains("--project-id is required")
+    );
 
     let release_error = releases_request(&ReleasesArgs {
         deploy: true,
@@ -1774,7 +1684,7 @@ async fn workflow_http_errors_include_response_body() {
         refresh_after_401: Cell::new(true),
     };
     let mut config = CliConfig::default();
-    let request = WorkflowRequest::get("/health", false, Vec::new());
+    let request = WorkflowRequest::get("/health", false, Vec::<String>::new());
 
     let error = api
         .call_workflow_result(
@@ -2340,7 +2250,7 @@ fn forbidden_errors_preserve_permission_context() {
         !error
             .next_actions()
             .iter()
-            .any(|action| action == "pcl auth refresh --json")
+            .any(|action| action == "pcl auth refresh --toon")
     );
 }
 
@@ -2361,91 +2271,36 @@ fn body_templates_are_action_specific() {
     );
     assert_eq!(
         access_body_template(&AccessArgs {
-            project: Some("project-1".to_string()),
             member_user_id: Some("user-1".to_string()),
-            invitation_id: None,
-            token: None,
-            members: false,
-            invitations: false,
-            pending: false,
-            preview: false,
-            accept: false,
-            invite: false,
-            resend: false,
-            revoke: false,
             update_role: true,
-            remove: false,
-            my_role: false,
-            body: None,
-            field: Vec::new(),
-            body_file: None,
             body_template: true,
+            ..access_args()
         }),
         json!({ "role": "viewer" })
     );
     assert_eq!(
         release_body_template(&ReleasesArgs {
-            project: Some("project-1".to_string()),
             release_id: Some("release-1".to_string()),
-            signer_address: None,
-            check_id: None,
-            create: false,
-            preview: false,
             deploy: true,
-            remove: false,
-            deploy_calldata: false,
-            remove_calldata: false,
-            backtest_progress: false,
-            retry_check: false,
-            body: None,
-            field: Vec::new(),
-            body_file: None,
             body_template: true,
+            ..release_args()
         }),
         json!({ "chainId": 1, "txHash": "0x..." })
     );
     assert_eq!(
         release_body_template(&ReleasesArgs {
-            project: Some("project-1".to_string()),
             release_id: Some("release-1".to_string()),
-            signer_address: None,
-            check_id: None,
-            create: false,
-            preview: false,
-            deploy: false,
-            remove: false,
             deploy_calldata: true,
-            remove_calldata: false,
-            backtest_progress: false,
-            retry_check: false,
-            body: None,
-            field: Vec::new(),
-            body_file: None,
             body_template: true,
+            ..release_args()
         }),
         json!({})
     );
     assert_eq!(
         access_body_template(&AccessArgs {
-            project: Some("project-1".to_string()),
-            member_user_id: None,
-            invitation_id: None,
-            token: None,
             members: true,
-            invitations: false,
-            pending: false,
-            preview: false,
-            accept: false,
-            invite: false,
-            resend: false,
-            revoke: false,
-            update_role: false,
-            remove: false,
-            my_role: false,
-            body: None,
-            field: Vec::new(),
-            body_file: None,
             body_template: true,
+            ..access_args()
         }),
         json!({})
     );
@@ -2490,8 +2345,8 @@ fn body_templates_are_action_specific() {
 }
 
 #[test]
-fn default_api_output_is_full_toon_envelope() {
-    let output = output_string(
+fn default_api_output_is_human_readable() {
+    let output = envelope_output_string(
         &json!({
             "status": "ok",
             "data": {"healthy": true},
@@ -2501,12 +2356,545 @@ fn default_api_output_is_full_toon_envelope() {
     )
     .unwrap();
 
-    assert!(output.contains("status: ok"));
-    assert!(output.contains("schema_version: pcl.envelope.v1"));
-    assert!(output.contains("pcl_version:"));
-    assert!(output.contains("data:"));
-    assert!(output.contains("healthy: true"));
-    assert!(output.contains("next_actions[1]:"));
+    assert!(output.starts_with("OK\n"));
+    assert!(output.contains("Healthy: yes"));
+    assert!(output.contains("Next:"));
+    assert!(!output.contains("Schema: pcl.envelope.v1"));
+    assert!(!output.contains("Details:"));
+}
+
+#[test]
+fn human_api_output_formats_incident_lists_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "data": {
+                    "items": [
+                        {
+                            "id": "7dfe71ee-9d69-41bb-b33c-992c0fbd684f",
+                            "title": "Removed invalid transaction",
+                            "network": {"chainId": 59144, "name": "Linea Mainnet"},
+                            "timestamp": "2026-05-06T14:01:54+00:00",
+                            "referenceId": "c4f250"
+                        }
+                    ],
+                    "pagination": {
+                        "page": 1,
+                        "limit": 20,
+                        "total": 332,
+                        "hasMore": true
+                    }
+                },
+                "_meta": {
+                    "sources": ["offchain"],
+                    "fetchedAt": "2026-05-09T23:30:09.618Z"
+                }
+            },
+            "request": {"method": "GET", "path": "/views/public/incidents"},
+            "response": {"status": 200, "request_id": "req_123"},
+            "next_actions": ["pcl incidents --incident-id 7dfe71ee-9d69-41bb-b33c-992c0fbd684f"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Incidents\n"));
+    assert!(output.contains("Showing 1 of 332 incidents on page 1 (limit 20)"));
+    assert!(output.contains("Updated: 2026-05-09 23:30"));
+    assert!(output.contains("Source: Phylax platform index"));
+    assert!(output.contains("Linea Mainnet (59144)"));
+    assert!(output.contains("Removed invalid transaction"));
+    assert!(output.contains("7dfe71ee-9d69-41bb-b33c-992c0fbd684f"));
+    assert!(output.contains("More results available. Try --page 2 --limit 20."));
+    assert!(output.contains("Request ID: req_123 (HTTP 200)"));
+    assert!(!output.contains("Details:"));
+    assert!(!output.contains("Request:\n"));
+    assert!(!output.contains("Schema:"));
+}
+
+#[test]
+fn human_output_formats_empty_workflow_arrays_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": [],
+            "request": {"method": "GET", "path": "/projects/project-1/releases"},
+            "response": {"status": 200, "request_id": "req_empty"},
+            "next_actions": ["pcl releases --project project-1 --release-id <release-id>"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Releases\n"));
+    assert!(output.contains("Showing 0 releases"));
+    assert!(output.contains("No releases found."));
+    assert!(!output.contains("<release-id>"));
+}
+
+#[test]
+fn human_output_formats_project_details_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "project_id": "project-1",
+                "project_name": "Private Test",
+                "project_description": null,
+                "project_networks": ["59144"],
+                "chain_names": ["Linea Mainnet"],
+                "created_at": "2026-05-06T16:50:17+00:00",
+                "updated_at": "2026-05-06T16:51:17+00:00",
+                "is_private": true,
+                "is_dev": false,
+                "submitted_assertion_ids": [],
+                "saved_count": 0,
+                "protocol_manager_address": null,
+                "slug": "private-test"
+            },
+            "next_actions": [
+                "pcl projects --project-id project-1",
+                "pcl assertions --project-id project-1"
+            ],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Project\n"));
+    assert!(output.contains("ID: project-1"));
+    assert!(output.contains("Visibility: private"));
+    assert!(output.contains("Networks: Linea Mainnet"));
+    assert!(output.contains("Submitted assertions: 0 assertions"));
+    assert!(!output.contains("Project Id:"));
+    assert!(!output.contains("item(s)"));
+}
+
+#[test]
+fn human_output_names_success_only_mutations() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {"success": true},
+            "request": {"method": "DELETE", "path": "/projects/project-1"},
+            "response": {"status": 200, "request_id": "req_delete"},
+            "next_actions": ["pcl projects --mine"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Project deleted"));
+    assert!(!output.contains("Success: yes"));
+
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {"success": true},
+            "request": {"method": "DELETE", "path": "/projects/project-1/invitations/invite-1"},
+            "response": {"status": 200, "request_id": "req_revoke"},
+            "next_actions": ["pcl access --project project-1 --invitations"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Invitation revoked"));
+    assert!(!output.contains("Success: yes"));
+}
+
+#[test]
+fn human_output_formats_project_home_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "data": {
+                    "member_projects": [
+                        {
+                            "project_id": "project-1",
+                            "project_name": "Private Test",
+                            "slug": "private-test",
+                            "chain_names": ["Linea Mainnet"],
+                            "is_private": true
+                        }
+                    ],
+                    "saved_projects": [],
+                    "no_project_adopters": []
+                },
+                "_meta": {
+                    "sources": ["offchain"],
+                    "fetchedAt": "2026-05-10T04:16:00Z"
+                }
+            },
+            "request": {"method": "GET", "path": "/views/projects/home"},
+            "response": {"status": 200, "request_id": "req_projects_home"},
+            "next_actions": ["pcl projects --project-id project-1"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Your projects\n"));
+    assert!(output.contains("Showing 1 project you belong to"));
+    assert!(output.contains("Updated: 2026-05-10 04:16"));
+    assert!(output.contains("Source: Phylax platform index"));
+    assert!(output.contains("Project"));
+    assert!(output.contains("Slug"));
+    assert!(output.contains("Network"));
+    assert!(output.contains("Visibility"));
+    assert!(output.contains("Private Test"));
+    assert!(output.contains("private-test"));
+    assert!(output.contains("Linea Mainnet"));
+    assert!(output.contains("private"));
+    assert!(output.contains("project-1"));
+    assert!(output.contains("Saved projects: 0 projects"));
+    assert!(output.contains("Contracts without a project: 0 contracts"));
+    assert!(!output.contains("Member projects:"));
+    assert!(!output.contains("Details:"));
+}
+
+#[test]
+fn human_output_formats_invitations_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "invitations": [
+                    {
+                        "id": "invite-1",
+                        "invitee_identifier": "cli-ux-test@example.invalid",
+                        "role": "viewer"
+                    }
+                ]
+            },
+            "request": {"method": "GET", "path": "/projects/project-1/invitations"},
+            "response": {"status": 200, "request_id": "req_invitations"},
+            "next_actions": ["pcl access --project project-1 --invite --body-template"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Invitations\n"));
+    assert!(output.contains("Showing 1 invitation"));
+    assert!(output.contains("cli-ux-test@example.invalid"));
+    assert!(output.contains("viewer"));
+    assert!(output.contains("pending"));
+    assert!(output.contains("pcl access --project project-1 --invite --body-template"));
+    assert!(!output.contains("--body '{...}'"));
+}
+
+#[test]
+fn human_output_formats_mixed_search_results_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "projects": [],
+                "contracts": [
+                    {
+                        "data": {
+                            "contract_name": "LineaSettler",
+                            "network": "59144",
+                            "address": "0xc026251dc69f6e3556331b2e14e72eb4a34dd55a",
+                            "related_project_slug": "0x-settler"
+                        },
+                        "foundBy": "contract name"
+                    }
+                ],
+                "assertions": []
+            },
+            "next_actions": [
+                "pcl projects --project-id 0x-settler",
+                "pcl contracts --project 0x-settler"
+            ],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Search results"));
+    assert!(output.contains("Projects: 0"));
+    assert!(output.contains("Contracts: 1"));
+    assert!(output.contains("LineaSettler"));
+    assert!(!output.contains("Assertions\nShowing 0"));
+}
+
+#[test]
+fn human_errors_include_api_reason_and_hide_internal_actions() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "error",
+            "error": {
+                "code": "auth.forbidden",
+                "message": "API request failed with status 403 for GET /system-status",
+                "request_id": "req_forbidden",
+                "http": {
+                    "method": "GET",
+                    "path": "/system-status",
+                    "status": 403,
+                    "body": {"error": "System status checks are temporarily disabled"}
+                }
+            },
+            "next_actions": [
+                "Read error.http.body for the API-provided reason",
+                "Check whether the endpoint is enabled and your user has permission"
+            ],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("API reason: System status checks are temporarily disabled"));
+    assert!(output.contains("Request ID: req_forbidden"));
+    assert!(!output.contains("Code: auth.forbidden"));
+    assert!(!output.contains("Read error.http.body"));
+}
+
+#[test]
+fn human_cli_errors_strip_raw_usage_dump() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "error",
+            "error": {
+                "code": "cli.unknown_argument",
+                "message": "error: unexpected argument '--limit' found\n\nUsage: pcl api list [OPTIONS]\n\nFor more information, try '--help'.",
+                "recoverable": true
+            },
+            "next_actions": ["pcl --help", "pcl api manifest --toon"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("unexpected argument '--limit' found"));
+    assert!(!output.contains("error:"));
+    assert!(!output.contains("Usage:"));
+    assert!(!output.contains("--toon"));
+}
+
+#[test]
+fn human_llms_guide_keeps_toon_commands() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "purpose": "CLI-native control surface.",
+                "consumption_order": [
+                    "pcl doctor --toon",
+                    "pcl auth ensure --toon",
+                    "pcl api manifest --toon"
+                ]
+            },
+            "next_actions": ["pcl doctor --toon", "pcl api manifest --toon"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("pcl doctor --toon"));
+    assert!(output.contains("pcl api manifest --toon"));
+}
+
+#[test]
+fn human_incident_detail_uses_readable_sections() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "data": {
+                    "incident_id": "incident-1",
+                    "public_reference_id": "ref-1",
+                    "assertion_id": "assertion-1",
+                    "assertion_adopter_id": "adopter-1",
+                    "chain_id": 59144,
+                    "window_start": "2026-05-11T17:59:26+00:00",
+                    "environment": "production",
+                    "assertion": {
+                        "assertion_id": "assertion-1",
+                        "title": "AllowanceAssertion",
+                        "description": "short description"
+                    },
+                    "assertion_adopter": {
+                        "id": "adopter-1",
+                        "name": "LineaSettler",
+                        "address": "0xc026251dc69f6e3556331b2e14e72eb4a34dd55a"
+                    },
+                    "invalidating_transactions": [{
+                        "id": "tx-row-1",
+                        "transaction_hash": "0x8b42e518623666080dcda9fdc5bdd73473834372ccfc8d634d0836f4a55308a1",
+                        "incident_timestamp": "2026-05-11T18:17:01+00:00",
+                        "landed_on_chain": false,
+                        "debug_traces": [{"status": "completed"}]
+                    }],
+                    "transaction_count": 1,
+                    "traces_completed": 1,
+                    "traces_pending": 0
+                }
+            },
+            "next_actions": ["pcl incidents --incident-id incident-1 --tx-id 0x8b42"]
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Incident\nID: incident-1"));
+    assert!(output.contains("Assertion\nTitle: AllowanceAssertion"));
+    assert!(output.contains("Assertion adopter\nName: LineaSettler"));
+    assert!(output.contains("Invalidating transactions (first 1 of 1)"));
+    assert!(!output.contains("Assertion: Assertion ID="));
+}
+
+#[test]
+fn human_output_formats_surface_lists_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "workflows": [
+                    {
+                        "name": "incident-investigation",
+                        "description": "Export incidents and inspect traces.",
+                        "steps": [
+                            {"command": "pcl doctor --toon", "output": "environment readiness"}
+                        ]
+                    }
+                ]
+            },
+            "next_actions": ["pcl schema list --toon"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Workflows\n"));
+    assert!(output.contains("incident-investigation"));
+    assert!(output.contains("Export incidents and inspect traces."));
+    assert!(output.contains("pcl schema list"));
+    assert!(!output.contains("--toon"));
+    assert!(!output.contains("Details:"));
+}
+
+#[test]
+fn human_output_formats_schema_action_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "workflow": "incidents",
+                "action": {
+                    "name": "list_public",
+                    "auth": false,
+                    "method": "GET",
+                    "path": "/views/public/incidents",
+                    "optional_flags": ["--page", "--limit"],
+                    "example": "pcl incidents --limit 5 --toon"
+                }
+            },
+            "next_actions": ["pcl workflows --toon"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Schema: incidents"));
+    assert!(output.contains("Action: list_public"));
+    assert!(output.contains("Request: GET /views/public/incidents"));
+    assert!(output.contains("Example: pcl incidents --limit 5"));
+    assert!(!output.contains("--toon"));
+}
+
+#[test]
+fn human_output_formats_dry_run_request_plan_for_people() {
+    let output = envelope_output_string(
+        &dry_run_envelope(json!({
+            "dry_run": true,
+            "valid": true,
+            "request": {
+                "method": "GET",
+                "path": "/views/projects",
+                "query": [{"name": "limit", "value": "2"}],
+                "auth": {
+                    "required": false,
+                    "will_attach_stored_token": false,
+                }
+            },
+            "pagination": null,
+        })),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Dry run"));
+    assert!(output.contains("GET /views/projects"));
+    assert!(output.contains("Query: limit=2"));
+    assert!(output.contains("Auth: not required"));
+    assert!(!output.contains("Use --json"));
+    assert!(!output.contains("Use --body-template when constructing mutation bodies"));
+    assert!(!output.contains("Details:"));
+}
+
+#[test]
+fn human_output_formats_mutation_dry_run_for_people() {
+    let output = envelope_output_string(
+        &dry_run_envelope(json!({
+            "dry_run": true,
+            "valid": true,
+            "request": {
+                "method": "POST",
+                "path": "/projects/project-1/invitations",
+                "auth": {
+                    "required": true,
+                    "will_attach_stored_token": true,
+                    "stored_token_valid": true,
+                },
+                "body": {
+                    "identifier": "user@example.com",
+                    "role": "viewer"
+                }
+            },
+            "pagination": null,
+        })),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Dry run"));
+    assert!(output.contains("POST /projects/project-1/invitations"));
+    assert!(output.contains("Remove --dry-run to execute this request"));
+    assert!(output.contains("Use --body-template to start from an example request body"));
+    assert!(!output.contains("Use --json"));
+    assert!(!output.contains("Use --body-template when constructing mutation bodies"));
+}
+
+#[test]
+fn human_output_formats_api_discovery_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "operations": [
+                    {
+                        "operation_id": "get_views_public_incidents",
+                        "method": "GET",
+                        "path": "/views/public/incidents",
+                        "raw_api_use": {"policy": "prefer_workflow"}
+                    }
+                ]
+            },
+            "next_actions": ["pcl api inspect get_views_public_incidents --toon"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert!(output.contains("Operations\n"));
+    assert!(output.contains("GET"));
+    assert!(output.contains("/views/public/incidents"));
+    assert!(output.contains("Prefer workflow"));
+    assert!(!output.contains("--toon"));
 }
 
 #[test]
@@ -2578,15 +2966,15 @@ fn variant_body_templates_return_variant_specific_next_actions() {
 #[test]
 fn manifest_lists_structured_actions_for_every_workflow() {
     let manifest = api_manifest();
-    assert_eq!(manifest["default_output"], "toon");
+    assert_eq!(manifest["default_output"], "human");
     assert_eq!(
         manifest["output_modes"]["toon"],
-        "Default compact machine-readable envelope; explicit form is --format toon."
+        "Pass --toon for compact machine-readable envelopes."
     );
     assert!(
         manifest["output_modes"]["json"]
             .as_str()
-            .is_some_and(|value| value.contains("--format json"))
+            .is_some_and(|value| value.contains("--json"))
     );
     let commands = manifest["commands"].as_array().unwrap();
     for command_name in [
@@ -2710,6 +3098,7 @@ fn manifest_lists_structured_actions_for_every_workflow() {
 #[test]
 fn parser_rejects_conflicting_workflow_actions() {
     assert!(ApiArgs::try_parse_from(["api", "projects", "--save", "--unsave"]).is_err());
+    assert!(ApiArgs::try_parse_from(["api", "projects", "--mine", "--saved"]).is_err());
     assert!(
         ApiArgs::try_parse_from([
             "api",
@@ -2724,6 +3113,30 @@ fn parser_rejects_conflicting_workflow_actions() {
     assert!(
         ApiArgs::try_parse_from(["api", "transfers", "--transfer-id", "t1", "--reject"]).is_err()
     );
+}
+
+#[test]
+fn parser_accepts_projects_mine_and_home_aliases() {
+    let mine = ApiArgs::try_parse_from(["api", "projects", "--mine"]).unwrap();
+    let ApiCommand::Projects(args) = mine.command else {
+        panic!("expected projects command");
+    };
+    assert!(args.mine);
+
+    let home = ApiArgs::try_parse_from(["api", "projects", "--home"]).unwrap();
+    let ApiCommand::Projects(args) = home.command else {
+        panic!("expected projects command");
+    };
+    assert!(args.mine);
+}
+
+#[test]
+fn parser_accepts_search_query_as_positional_term() {
+    let parsed = ApiArgs::try_parse_from(["api", "search", "settler"]).unwrap();
+    let ApiCommand::Search(args) = parsed.command else {
+        panic!("expected search command");
+    };
+    assert_eq!(args.term.as_deref(), Some("settler"));
 }
 
 #[test]
@@ -2744,6 +3157,12 @@ fn parser_allows_body_template_without_routing_ids() {
         ])
         .is_ok()
     );
+}
+
+#[test]
+fn parser_accepts_uppercase_http_methods_for_raw_api_calls() {
+    assert!(ApiArgs::try_parse_from(["api", "call", "GET", "/views/public/incidents"]).is_ok());
+    assert!(ApiArgs::try_parse_from(["api", "list", "--method", "GET"]).is_ok());
 }
 
 #[test]

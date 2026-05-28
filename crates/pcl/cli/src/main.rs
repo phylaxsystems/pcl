@@ -5,6 +5,7 @@ use crate::cli::{
     Commands,
 };
 use clap::{
+    CommandFactory,
     Parser,
     error::ErrorKind,
 };
@@ -12,27 +13,39 @@ use color_eyre::{
     Result,
     eyre::Report,
 };
-use pcl_common::args::CliArgs;
+use pcl_common::args::{
+    CliArgs,
+    OutputMode,
+    set_current_output_mode,
+};
+#[cfg(feature = "credible")]
+use pcl_core::error::VerifyError;
 use pcl_core::{
     api::{
         ApiCommandError,
-        toon_string,
+        envelope_output_string,
         with_envelope_metadata,
     },
     config::CliConfig,
+    download::DownloadError,
     error::{
+        ApplyError,
         AuthError,
         ConfigError,
     },
     surface::ProductSurfaceError,
 };
+use pcl_phoundry::error::PhoundryError;
 use serde_json::{
     Value,
     json,
 };
 use std::{
     env,
-    ffi::OsStr,
+    ffi::{
+        OsStr,
+        OsString,
+    },
     time::{
         SystemTime,
         UNIX_EPOCH,
@@ -48,32 +61,50 @@ async fn main() -> Result<()> {
         .install()?;
 
     if wants_llms_output(env::args_os()) {
-        pcl_core::surface::print_llms_guide(wants_json_output(env::args_os()))?;
+        let output_mode = wants_output_mode(env::args_os());
+        set_current_output_mode(output_mode);
+        pcl_core::surface::print_llms_guide(output_mode == OutputMode::Json)?;
         return Ok(());
     }
 
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(err) => {
-            if wants_json_output(env::args_os()) {
-                let exit_code = err.exit_code();
-                let envelope = with_envelope_metadata(clap_error_envelope(&err));
-                eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
-                std::process::exit(exit_code);
+            let output_mode = wants_output_mode(env::args_os());
+            set_current_output_mode(output_mode);
+            let raw_args = env::args_os().collect::<Vec<_>>();
+            if output_mode == OutputMode::Human {
+                if should_show_root_help(&err, &raw_args) {
+                    let mut command = Cli::command();
+                    command.print_help()?;
+                    println!();
+                    std::process::exit(0);
+                }
+                err.exit();
             }
             if matches!(
                 err.kind(),
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
-            ) {
+            ) && output_mode != OutputMode::Json
+            {
                 err.exit();
+            }
+            if output_mode == OutputMode::Json {
+                let exit_code = err.exit_code();
+                eprintln!(
+                    "{}",
+                    serde_json::to_string_pretty(&clap_error_envelope(&err, &raw_args))?
+                );
+                std::process::exit(exit_code);
             }
             eprint!(
                 "{}",
-                toon_string(&with_envelope_metadata(clap_error_envelope(&err)))
+                envelope_output_string(&clap_error_envelope(&err, &raw_args), false)?
             );
             std::process::exit(err.exit_code());
         }
     };
+    set_current_output_mode(cli.args.output_mode());
     let mut read_valid_config = true;
     let mut config = match CliConfig::read_from_file(&cli.args) {
         Ok(config) => config,
@@ -86,7 +117,7 @@ async fn main() -> Result<()> {
             if cli.args.json_output() {
                 eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
             } else {
-                eprint!("{}", toon_string(&envelope));
+                eprint!("{}", envelope_output_string(&envelope, false)?);
             }
             std::process::exit(1);
         }
@@ -122,7 +153,7 @@ async fn main() -> Result<()> {
         if cli.args.json_output() {
             eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
         } else {
-            eprint!("{}", toon_string(&envelope));
+            eprint!("{}", envelope_output_string(&envelope, false)?);
         }
         std::process::exit(1);
     }
@@ -178,25 +209,213 @@ fn error_envelope(err: &Report) -> Value {
     if let Some(api_error) = err.downcast_ref::<ApiCommandError>() {
         return api_error.json_envelope();
     }
+    if let Some(apply_error) = err.downcast_ref::<ApplyError>() {
+        return with_envelope_metadata(apply_error_envelope(apply_error));
+    }
     if let Some(auth_error) = err.downcast_ref::<AuthError>() {
         return with_envelope_metadata(auth_error_envelope(auth_error));
     }
     if let Some(config_error) = err.downcast_ref::<ConfigError>() {
         return with_envelope_metadata(config_error_envelope(config_error));
     }
+    if let Some(download_error) = err.downcast_ref::<DownloadError>() {
+        return with_envelope_metadata(download_error_envelope(download_error));
+    }
+    #[cfg(feature = "credible")]
+    if let Some(verify_error) = err.downcast_ref::<VerifyError>() {
+        return with_envelope_metadata(verify_error_envelope(verify_error));
+    }
     if let Some(surface_error) = err.downcast_ref::<ProductSurfaceError>() {
         return surface_error.json_envelope();
     }
+    if let Some(phoundry_error) = err.downcast_ref::<PhoundryError>() {
+        return with_envelope_metadata(phoundry_error_envelope(phoundry_error));
+    }
+    if let Some(phoundry_error) = err.downcast_ref::<Box<PhoundryError>>() {
+        return with_envelope_metadata(phoundry_error_envelope(phoundry_error));
+    }
 
-    with_envelope_metadata(json!({
+    with_envelope_metadata(simple_error_value("unknown", &err.to_string(), false, &[]))
+}
+
+fn simple_error_value(
+    code: &str,
+    message: &str,
+    recoverable: bool,
+    next_actions: &[&str],
+) -> Value {
+    json!({
         "status": "error",
         "error": {
-            "code": "unknown",
-            "message": err.to_string(),
-            "recoverable": false,
+            "code": code,
+            "message": message,
+            "recoverable": recoverable,
         },
-        "next_actions": [],
-    }))
+        "next_actions": next_actions,
+    })
+}
+
+fn apply_error_envelope(err: &ApplyError) -> Value {
+    let (code, message, next_actions): (&str, String, &[&str]) = match err {
+        ApplyError::NoAuthToken => {
+            (
+                "auth.no_token",
+                err.to_string(),
+                &["pcl auth login", "pcl auth status"],
+            )
+        }
+        ApplyError::InvalidConfig(message) if message.contains("credible.toml not found") => {
+            (
+                "config.credible_toml_not_found",
+                "No credible.toml found. Run from an assertion project or pass --config <path>."
+                    .to_string(),
+                &["pcl apply --help", "pcl projects --mine"],
+            )
+        }
+        ApplyError::InvalidConfig(_) | ApplyError::Toml(_) => {
+            (
+                "config.invalid_credible_toml",
+                err.to_string(),
+                &["pcl apply --help"],
+            )
+        }
+        ApplyError::BuildFailed(_) => {
+            (
+                "build.failed",
+                err.to_string(),
+                &["pcl build", "pcl apply --dry-run"],
+            )
+        }
+        ApplyError::NoProjectsFound => {
+            (
+                "projects.none_for_account",
+                err.to_string(),
+                &["pcl projects --mine", "pcl account"],
+            )
+        }
+        ApplyError::ApplyCancelled => ("apply.cancelled", err.to_string(), &["pcl apply --help"]),
+        _ => {
+            (
+                "apply.failed",
+                err.to_string(),
+                &["pcl apply --help", "pcl doctor"],
+            )
+        }
+    };
+    simple_error_value(code, &message, true, next_actions)
+}
+
+fn download_error_envelope(err: &DownloadError) -> Value {
+    let (code, message, next_actions): (&str, String, &[&str]) = match err {
+        DownloadError::NoAuthToken => {
+            (
+                "auth.no_token",
+                err.to_string(),
+                &["pcl auth login", "pcl auth status"],
+            )
+        }
+        DownloadError::MissingIdentifier => {
+            (
+                "download.missing_project_id",
+                "--project-id is required".to_string(),
+                &[
+                    "pcl projects --mine",
+                    "pcl download --project-id <project-id>",
+                ],
+            )
+        }
+        DownloadError::NoAssertionsFound => {
+            (
+                "download.no_assertions",
+                err.to_string(),
+                &["pcl assertions --project-id <project-id>"],
+            )
+        }
+        _ => {
+            (
+                "download.failed",
+                err.to_string(),
+                &["pcl download --help", "pcl doctor"],
+            )
+        }
+    };
+    simple_error_value(code, &message, true, next_actions)
+}
+
+#[cfg(feature = "credible")]
+fn verify_error_envelope(err: &VerifyError) -> Value {
+    let (code, message, next_actions): (&str, String, &[&str]) = match err {
+        VerifyError::Io { message, .. } if message.starts_with("Project root not found") => {
+            (
+                "verify.project_root_not_found",
+                err.to_string(),
+                &["pcl verify --help", "Check --root path"],
+            )
+        }
+        VerifyError::Io { .. } => {
+            (
+                "verify.io_failed",
+                err.to_string(),
+                &["pcl verify --help", "Check file paths and permissions"],
+            )
+        }
+        VerifyError::Config(_) => {
+            (
+                "verify.invalid_config",
+                err.to_string(),
+                &["pcl verify --help", "pcl apply --dry-run"],
+            )
+        }
+        VerifyError::BuildFailed(_) => {
+            (
+                "verify.build_failed",
+                err.to_string(),
+                &["pcl build --help", "pcl verify --help"],
+            )
+        }
+        VerifyError::AbiEncode(_) => {
+            (
+                "verify.invalid_constructor_args",
+                err.to_string(),
+                &["pcl verify --help"],
+            )
+        }
+        VerifyError::Json(_) => {
+            (
+                "json.failed",
+                err.to_string(),
+                &["Retry without --json to inspect human output"],
+            )
+        }
+    };
+    simple_error_value(code, &message, true, next_actions)
+}
+
+fn phoundry_error_envelope(err: &PhoundryError) -> Value {
+    let (code, message, next_actions): (&str, String, &[&str]) = match err {
+        PhoundryError::DirectoryNotFound(path) => {
+            (
+                "build.source_dir_not_found",
+                format!("Source directory not found: {}", path.display()),
+                &["pcl build --help", "pcl apply --help"],
+            )
+        }
+        PhoundryError::ForgeNotInstalled => {
+            (
+                "build.forge_not_installed",
+                err.to_string(),
+                &["Install Foundry forge", "pcl doctor"],
+            )
+        }
+        _ => {
+            (
+                "build.failed",
+                err.to_string(),
+                &["pcl build --help", "pcl doctor"],
+            )
+        }
+    };
+    simple_error_value(code, &message, true, next_actions)
 }
 
 fn auth_error_envelope(err: &AuthError) -> Value {
@@ -237,26 +456,20 @@ fn auth_error_envelope(err: &AuthError) -> Value {
             }))
         }
         AuthError::SessionExpired | AuthError::SessionNotFound | AuthError::InvalidSession(_) => {
-            with_envelope_metadata(json!({
-                "status": "error",
-                "error": {
-                    "code": "auth.session_invalid",
-                    "message": err.to_string(),
-                    "recoverable": true,
-                },
-                "next_actions": ["pcl auth login"],
-            }))
+            with_envelope_metadata(simple_error_value(
+                "auth.session_invalid",
+                &err.to_string(),
+                true,
+                &["pcl auth login"],
+            ))
         }
         AuthError::UserNotFound => {
-            with_envelope_metadata(json!({
-                "status": "error",
-                "error": {
-                    "code": "auth.user_not_found",
-                    "message": err.to_string(),
-                    "recoverable": true,
-                },
-                "next_actions": ["pcl auth login"],
-            }))
+            with_envelope_metadata(simple_error_value(
+                "auth.user_not_found",
+                &err.to_string(),
+                true,
+                &["pcl auth login"],
+            ))
         }
         AuthError::AuthRequestFailed(_)
         | AuthError::StatusRequestFailed(_)
@@ -272,15 +485,12 @@ fn auth_error_envelope(err: &AuthError) -> Value {
         | AuthError::RefreshServerError { .. }
         | AuthError::RefreshRequestFailed(_)
         | AuthError::RefreshLockTimeout => {
-            with_envelope_metadata(json!({
-                "status": "error",
-                "error": {
-                    "code": "auth.request_failed",
-                    "message": err.to_string(),
-                    "recoverable": true,
-                },
-                "next_actions": ["pcl auth login"],
-            }))
+            with_envelope_metadata(simple_error_value(
+                "auth.request_failed",
+                &err.to_string(),
+                true,
+                &["pcl auth login"],
+            ))
         }
     }
 }
@@ -288,15 +498,12 @@ fn auth_error_envelope(err: &AuthError) -> Value {
 fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
     match err {
         AuthError::NoRefreshableSession | AuthError::MissingRefreshToken => {
-            Some(with_envelope_metadata(json!({
-                "status": "error",
-                "error": {
-                    "code": "auth.refresh_unavailable",
-                    "message": err.to_string(),
-                    "recoverable": true,
-                },
-                "next_actions": ["pcl auth login --force"],
-            })))
+            Some(with_envelope_metadata(simple_error_value(
+                "auth.refresh_unavailable",
+                &err.to_string(),
+                true,
+                &["pcl auth login --force"],
+            )))
         }
         AuthError::RefreshRejected {
             status,
@@ -371,15 +578,12 @@ fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
             })))
         }
         AuthError::RefreshRequestFailed(_) | AuthError::RefreshLockTimeout => {
-            Some(with_envelope_metadata(json!({
-                "status": "error",
-                "error": {
-                    "code": "auth.refresh_failed",
-                    "message": err.to_string(),
-                    "recoverable": true,
-                },
-                "next_actions": ["Retry pcl auth refresh --json", "pcl auth login --force"],
-            })))
+            Some(with_envelope_metadata(simple_error_value(
+                "auth.refresh_failed",
+                &err.to_string(),
+                true,
+                &["Retry pcl auth refresh --json", "pcl auth login --force"],
+            )))
         }
         _ => None,
     }
@@ -417,18 +621,12 @@ fn unix_timestamp_now() -> i64 {
 }
 
 fn config_error_envelope(err: &ConfigError) -> Value {
-    with_envelope_metadata(json!({
-        "status": "error",
-        "error": {
-            "code": config_error_code(err),
-            "message": err.to_string(),
-            "recoverable": !matches!(err, ConfigError::ParseError(_) | ConfigError::JsonError(_)),
-        },
-        "next_actions": [
-            "pcl config show",
-            "pcl config delete",
-        ],
-    }))
+    simple_error_value(
+        config_error_code(err),
+        &err.to_string(),
+        !matches!(err, ConfigError::ParseError(_) | ConfigError::JsonError(_)),
+        &["pcl config show", "pcl config delete"],
+    )
 }
 
 fn config_error_code(err: &ConfigError) -> &'static str {
@@ -442,35 +640,48 @@ fn config_error_code(err: &ConfigError) -> &'static str {
     }
 }
 
-fn wants_json_output<I, S>(args: I) -> bool
+fn wants_output_mode<I, S>(args: I) -> OutputMode
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut saw_output_flag = false;
+    let mut saw_json = false;
+    let mut saw_toon = false;
+    let mut saw_format_flag = false;
+
     for arg in args {
         let arg = arg.as_ref();
-        if arg == OsStr::new("--json") || arg == OsStr::new("-j") {
-            return true;
-        }
-        if saw_output_flag {
-            saw_output_flag = false;
-            if arg == OsStr::new("json") {
-                return true;
+        if saw_format_flag {
+            saw_format_flag = false;
+            match arg.to_str() {
+                Some("json") => saw_json = true,
+                Some("toon") => saw_toon = true,
+                _ => {}
             }
             continue;
         }
-        if arg == OsStr::new("--format") {
-            saw_output_flag = true;
-            continue;
-        }
-        if let Some(value) = arg.to_str().and_then(|arg| arg.strip_prefix("--format="))
-            && value == "json"
-        {
-            return true;
+        if arg == OsStr::new("--json") || arg == OsStr::new("-j") {
+            saw_json = true;
+        } else if arg == OsStr::new("--toon") {
+            saw_toon = true;
+        } else if arg == OsStr::new("--format") {
+            saw_format_flag = true;
+        } else if let Some(value) = arg.to_str().and_then(|arg| arg.strip_prefix("--format=")) {
+            match value {
+                "json" => saw_json = true,
+                "toon" => saw_toon = true,
+                _ => {}
+            }
         }
     }
-    false
+
+    if saw_json {
+        OutputMode::Json
+    } else if saw_toon {
+        OutputMode::Toon
+    } else {
+        OutputMode::Human
+    }
 }
 
 fn wants_llms_output<I, S>(args: I) -> bool
@@ -482,19 +693,147 @@ where
         .any(|arg| arg.as_ref() == OsStr::new("--llms"))
 }
 
-fn clap_error_envelope(err: &clap::Error) -> Value {
+fn should_show_root_help(err: &clap::Error, args: &[OsString]) -> bool {
+    matches!(
+        err.kind(),
+        ErrorKind::MissingSubcommand | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+    ) && parsed_command_name(args).is_none()
+}
+
+fn clap_error_envelope(err: &clap::Error, args: &[OsString]) -> Value {
+    let command = parsed_command_name(args);
+    let message = clap_error_message(err, command.as_deref());
+    let next_actions = clap_error_next_actions(err.kind(), command.as_deref());
     with_envelope_metadata(json!({
         "status": "error",
         "error": {
             "code": clap_error_code(err.kind()),
-            "message": err.to_string(),
+            "message": message,
             "recoverable": !matches!(err.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion),
         },
-        "next_actions": [
-            "pcl --help",
-            "pcl api manifest --json"
-        ],
+        "next_actions": next_actions,
     }))
+}
+
+fn clap_error_message(err: &clap::Error, command: Option<&str>) -> String {
+    if matches!(
+        err.kind(),
+        ErrorKind::MissingSubcommand | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+    ) && let Some(command) = command
+    {
+        return format!("Choose a subcommand for `pcl {command}`.");
+    }
+    err.to_string()
+}
+
+fn clap_error_next_actions(kind: ErrorKind, command: Option<&str>) -> Vec<String> {
+    if let Some(command) = command {
+        if kind == ErrorKind::InvalidSubcommand && !is_known_top_level_command(command) {
+            return vec!["pcl --help".to_string(), "pcl workflows".to_string()];
+        }
+        let mut actions = Vec::new();
+        match (kind, command) {
+            (ErrorKind::InvalidSubcommand, "schema") => {
+                actions.push("pcl schema list".to_string());
+                actions.push("pcl schema get projects".to_string());
+            }
+            (ErrorKind::InvalidSubcommand, "workflows") => {
+                actions.push("pcl workflows list".to_string());
+                actions.push("pcl workflows show incident-investigation".to_string());
+            }
+            (ErrorKind::MissingRequiredArgument, "completions") => {
+                actions.push("pcl completions bash".to_string());
+                actions.push("pcl completions zsh".to_string());
+            }
+            (
+                ErrorKind::MissingSubcommand | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand,
+                "api",
+            ) => {
+                actions.push("pcl api manifest".to_string());
+                actions.push("pcl api list".to_string());
+            }
+            (
+                ErrorKind::MissingSubcommand | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand,
+                "auth",
+            ) => {
+                actions.push("pcl auth status".to_string());
+                actions.push("pcl auth login".to_string());
+            }
+            (
+                ErrorKind::MissingSubcommand | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand,
+                "config",
+            ) => {
+                actions.push("pcl config show".to_string());
+                actions.push("pcl doctor".to_string());
+            }
+            (
+                ErrorKind::MissingSubcommand | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand,
+                "export",
+            ) => {
+                actions.push("pcl export incidents --help".to_string());
+                actions.push("pcl jobs list".to_string());
+            }
+            _ => {}
+        }
+        actions.push(format!("pcl {command} --help"));
+        actions.push("pcl --help".to_string());
+        return actions;
+    }
+    vec!["pcl --help".to_string(), "pcl api manifest".to_string()]
+}
+
+fn is_known_top_level_command(command: &str) -> bool {
+    matches!(
+        command,
+        "apply"
+            | "api"
+            | "incidents"
+            | "projects"
+            | "assertions"
+            | "search"
+            | "account"
+            | "contracts"
+            | "releases"
+            | "deployments"
+            | "access"
+            | "integrations"
+            | "protocol-manager"
+            | "transfers"
+            | "events"
+            | "doctor"
+            | "whoami"
+            | "workflows"
+            | "export"
+            | "artifacts"
+            | "requests"
+            | "logs"
+            | "schema"
+            | "llms"
+            | "jobs"
+            | "completions"
+            | "auth"
+            | "config"
+            | "build"
+            | "download"
+            | "help"
+    )
+}
+
+fn parsed_command_name(args: &[OsString]) -> Option<String> {
+    let mut iter = args.iter().skip(1);
+    while let Some(arg) = iter.next() {
+        let value = arg.to_string_lossy();
+        match value.as_ref() {
+            "--json" | "-j" | "--toon" | "--llms" | "--help" | "-h" | "--version" | "-V" => {}
+            "--config-dir" | "--format" => {
+                let _ = iter.next();
+            }
+            _ if value.starts_with("--config-dir=") || value.starts_with("--format=") => {}
+            _ if value.starts_with('-') => {}
+            _ => return Some(value.into_owned()),
+        }
+    }
+    None
 }
 
 fn clap_error_code(kind: ErrorKind) -> &'static str {
@@ -517,15 +856,35 @@ fn clap_error_code(kind: ErrorKind) -> &'static str {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use pcl_core::api::toon_string;
 
     #[test]
-    fn detects_json_flag_before_successful_parse() {
-        assert!(wants_json_output(["pcl", "--json", "api"]));
-        assert!(wants_json_output(["pcl", "api", "projects", "-j"]));
-        assert!(wants_json_output(["pcl", "--format", "json", "api"]));
-        assert!(wants_json_output(["pcl", "--format=json", "api"]));
-        assert!(!wants_json_output(["pcl", "--format", "toon", "api"]));
-        assert!(!wants_json_output(["pcl", "api", "projects"]));
+    fn detects_output_mode_before_successful_parse() {
+        assert_eq!(
+            wants_output_mode(["pcl", "--json", "api"]),
+            OutputMode::Json
+        );
+        assert_eq!(
+            wants_output_mode(["pcl", "api", "projects", "-j"]),
+            OutputMode::Json
+        );
+        assert_eq!(
+            wants_output_mode(["pcl", "--format", "json", "api"]),
+            OutputMode::Json
+        );
+        assert_eq!(
+            wants_output_mode(["pcl", "--format=json", "api"]),
+            OutputMode::Json
+        );
+        assert_eq!(
+            wants_output_mode(["pcl", "--toon", "api"]),
+            OutputMode::Toon
+        );
+        assert_eq!(
+            wants_output_mode(["pcl", "--format", "toon", "api"]),
+            OutputMode::Toon
+        );
+        assert_eq!(wants_output_mode(["pcl", "api"]), OutputMode::Human);
     }
 
     #[test]
@@ -546,7 +905,15 @@ mod tests {
         let err = Cli::command()
             .try_get_matches_from(["pcl", "--json", "api", "projects", "--save", "--unsave"])
             .unwrap_err();
-        let envelope = clap_error_envelope(&err);
+        let args = vec![
+            OsString::from("pcl"),
+            OsString::from("--json"),
+            OsString::from("api"),
+            OsString::from("projects"),
+            OsString::from("--save"),
+            OsString::from("--unsave"),
+        ];
+        let envelope = clap_error_envelope(&err, &args);
 
         assert_eq!(envelope["status"], "error");
         assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
@@ -561,7 +928,14 @@ mod tests {
         let err = Cli::command()
             .try_get_matches_from(["pcl", "api", "projects", "--save", "--unsave"])
             .unwrap_err();
-        let output = toon_string(&clap_error_envelope(&err));
+        let args = vec![
+            OsString::from("pcl"),
+            OsString::from("api"),
+            OsString::from("projects"),
+            OsString::from("--save"),
+            OsString::from("--unsave"),
+        ];
+        let output = toon_string(&clap_error_envelope(&err, &args));
 
         assert!(output.contains("status: error"));
         assert!(output.contains("code: cli.argument_conflict"));

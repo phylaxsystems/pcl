@@ -168,7 +168,22 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use std::{
+        str::FromStr,
+        sync::{
+            Arc,
+            Mutex,
+            MutexGuard,
+            PoisonError,
+        },
+        thread,
+    };
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock_env() -> MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 
     #[test]
     fn test_environment_urls() {
@@ -213,6 +228,7 @@ mod tests {
 
     #[test]
     fn test_environment_from_env() {
+        let _env_lock = lock_env();
         unsafe {
             // Test with valid development values
             std::env::set_var("DAPP_ENV", "development");
@@ -246,6 +262,7 @@ mod tests {
 
     #[test]
     fn test_environment_from_env_or() {
+        let _env_lock = lock_env();
         unsafe {
             // Test with valid value
             std::env::set_var("DAPP_ENV", "dev");
@@ -288,6 +305,7 @@ mod tests {
 
     #[test]
     fn test_config_from_env() {
+        let _env_lock = lock_env();
         unsafe {
             // Test with production env
             std::env::set_var("DAPP_ENV", "production");
@@ -526,13 +544,7 @@ mod tests {
 
     #[test]
     fn test_environment_from_env_thread_safety() {
-        use std::{
-            sync::{
-                Arc,
-                Mutex,
-            },
-            thread,
-        };
+        let _env_lock = lock_env();
 
         let results = Arc::new(Mutex::new(Vec::new()));
         let mut handles = vec![];
