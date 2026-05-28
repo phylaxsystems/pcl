@@ -38,8 +38,11 @@ fn assert_verify_success(output: std::process::Output) {
     );
 
     let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
-    let summary: serde_json::Value = serde_json::from_str(&stdout).expect("json summary");
-    assert_eq!(summary["status"], "success");
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok");
+    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+    let summary = &envelope["data"];
+    assert_eq!(summary["outcome"], "success");
     assert_eq!(summary["total"], 1);
     assert_eq!(summary["passed"], 1);
     assert_eq!(summary["failed"], 0);
@@ -113,8 +116,11 @@ fn apply_dry_run_builds_and_verifies_fixture_payload_without_api() {
 
     assert_command_success(&output, "pcl apply --dry-run");
     let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
-    let summary: serde_json::Value = serde_json::from_str(&stdout).expect("json summary");
-    assert_eq!(summary["status"], "dry_run");
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok");
+    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+    let summary = &envelope["data"];
+    assert_eq!(summary["outcome"], "dry_run");
     assert_eq!(
         summary["project_id"],
         "550e8400-e29b-41d4-a716-446655440000"
@@ -132,6 +138,62 @@ fn apply_dry_run_builds_and_verifies_fixture_payload_without_api() {
         summary["payload"]["contracts"]["mock"]["assertions"][0]["bytecode"]
             .as_str()
             .is_some_and(|bytecode| bytecode.starts_with("0x"))
+    );
+}
+
+#[cfg(feature = "full")]
+#[test]
+fn apply_dry_run_json_preserves_failed_assertion_summary() {
+    let project = fixture_project();
+    fs::write(
+        project.path().join("assertions/src/NoArgsAssertion.a.sol"),
+        r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+abstract contract Assertion {
+    function triggers() external view virtual;
+}
+
+contract NoArgsAssertion is Assertion {
+    function triggers() external view override {}
+
+    function assertionCheckBool() external pure returns (bool) {
+        return true;
+    }
+}
+"#,
+    )
+    .expect("write failing assertion fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--json",
+            "apply",
+            "--root",
+            project.path().to_str().expect("utf-8 temp path"),
+            "--dry-run",
+        ])
+        .output()
+        .expect("run pcl apply dry-run");
+
+    assert!(
+        !output.status.success(),
+        "pcl apply unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("json error envelope");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["code"], "apply.assertions_failed");
+    assert_eq!(envelope["data"]["status"], "failure");
+    assert_eq!(envelope["data"]["failed"], 1);
+    assert_eq!(envelope["data"]["assertions"][0]["name"], "NoArgsAssertion");
+    assert_eq!(envelope["data"]["assertions"][0]["status"], "no_triggers");
+    assert_eq!(
+        envelope["next_actions"][0],
+        "Inspect data.assertions for failing assertions"
     );
 }
 

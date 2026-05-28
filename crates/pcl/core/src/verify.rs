@@ -6,6 +6,11 @@ use crate::{
         assertion_contract_name,
     },
     error::VerifyError,
+    output::{
+        OutputStream,
+        ok_envelope,
+        print_envelope,
+    },
 };
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{
@@ -19,12 +24,16 @@ use assertion_verification::{
     verify_assertion,
 };
 use clap::ValueHint;
-use pcl_common::args::CliArgs;
+use pcl_common::args::{
+    CliArgs,
+    OutputMode,
+};
 use pcl_phoundry::{
     DEFAULT_ASSERTION_CONTRACTS_DIR,
     build_and_flatten::BuildAndFlattenArgs,
 };
 use serde::Serialize;
+use serde_json::json;
 use std::path::{
     Path,
     PathBuf,
@@ -57,9 +66,6 @@ pub struct VerifyArgs {
 
     #[arg(long, num_args = 1.., help = "Constructor arguments for the assertion")]
     pub args: Vec<String>,
-
-    #[arg(long, help = "Emit strict JSON output for programmatic consumers")]
-    pub json: bool,
 }
 
 struct VerifyInput {
@@ -76,7 +82,7 @@ pub struct VerifyJsonAssertion {
 
 impl VerifyArgs {
     pub fn run(&self, cli_args: &CliArgs) -> Result<(), VerifyError> {
-        let json_output = cli_args.json_output() || self.json;
+        let output_mode = cli_args.output_mode();
         let root = std::fs::canonicalize(&self.root).map_err(|e| {
             VerifyError::Io {
                 message: format!("Project root not found: {}", self.root.display()),
@@ -102,9 +108,7 @@ impl VerifyArgs {
 
         let summary = run_verification(&bytecodes);
 
-        if json_output {
-            println!("{}", serde_json::to_string_pretty(&summary)?);
-        } else {
+        if output_mode == OutputMode::Human {
             println!("pcl verify \u{2014} Assertion Verification\n");
             print_verification_summary(&summary);
             if summary.failed == 0 {
@@ -121,10 +125,22 @@ impl VerifyArgs {
                     if summary.total == 1 { "" } else { "s" }
                 );
             }
+        } else if summary.failed == 0 {
+            let envelope = ok_envelope(
+                json!({
+                    "outcome": "success",
+                    "total": summary.total,
+                    "passed": summary.passed,
+                    "failed": summary.failed,
+                    "assertions": &summary.assertions,
+                }),
+                vec!["pcl apply --dry-run".to_string()],
+            );
+            print_envelope(&envelope, output_mode, OutputStream::Stdout)?;
         }
 
         if summary.failed > 0 {
-            std::process::exit(1);
+            return Err(VerifyError::AssertionsFailed(Box::new(summary)));
         }
 
         Ok(())

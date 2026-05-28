@@ -16,10 +16,9 @@ use color_eyre::{
 use pcl_common::args::{
     CliArgs,
     OutputMode,
+    current_output_mode,
     set_current_output_mode,
 };
-#[cfg(feature = "credible")]
-use pcl_core::error::VerifyError;
 use pcl_core::{
     api::{
         ApiCommandError,
@@ -33,7 +32,13 @@ use pcl_core::{
         AuthError,
         ConfigError,
     },
+    output::command_for_mode,
     surface::ProductSurfaceError,
+};
+#[cfg(feature = "credible")]
+use pcl_core::{
+    error::VerifyError,
+    verify::VerificationSummary,
 };
 use pcl_phoundry::error::PhoundryError;
 use serde_json::{
@@ -114,11 +119,7 @@ async fn main() -> Result<()> {
         }
         Err(err) => {
             let envelope = with_envelope_metadata(config_error_envelope(&err));
-            if cli.args.json_output() {
-                eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
-            } else {
-                eprint!("{}", envelope_output_string(&envelope, false)?);
-            }
+            eprint!("{}", envelope_output_string(&envelope, false)?);
             std::process::exit(1);
         }
     };
@@ -150,11 +151,7 @@ async fn main() -> Result<()> {
 
     if let Err(err) = result {
         let envelope = with_envelope_metadata(error_envelope(&err));
-        if cli.args.json_output() {
-            eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
-        } else {
-            eprint!("{}", envelope_output_string(&envelope, false)?);
-        }
+        eprint!("{}", envelope_output_string(&envelope, false)?);
         std::process::exit(1);
     }
 
@@ -169,7 +166,10 @@ async fn run_command(
 ) -> Result<(), Report> {
     match command {
         #[cfg(feature = "credible")]
-        Commands::Test(phorge) => phorge.run().await?,
+        Commands::Test(phorge) => {
+            ensure_human_pass_through(cli_args, "pcl test")?;
+            phorge.run().await?;
+        }
         Commands::Apply(apply) => apply.run(cli_args, config).await?,
         Commands::Api(api) => api.run(config, cli_args, json_output).await?,
         Commands::Incidents(command) => command.run(config, cli_args, json_output).await?,
@@ -197,12 +197,27 @@ async fn run_command(
         Commands::Completions(command) => command.run(json_output)?,
         Commands::Auth(auth_cmd) => auth_cmd.run(config, cli_args, json_output).await?,
         Commands::Config(config_cmd) => config_cmd.run(config, cli_args)?,
-        Commands::Build(build_cmd) => build_cmd.run()?,
+        Commands::Build(build_cmd) => {
+            ensure_human_pass_through(cli_args, "pcl build")?;
+            build_cmd.run()?;
+        }
         #[cfg(feature = "credible")]
         Commands::Verify(verify_cmd) => verify_cmd.run(cli_args)?,
         Commands::Download(download_cmd) => download_cmd.run(cli_args, config).await?,
     }
     Ok(())
+}
+
+fn ensure_human_pass_through(
+    cli_args: &CliArgs,
+    command: &'static str,
+) -> Result<(), ProductSurfaceError> {
+    if cli_args.human_output() {
+        return Ok(());
+    }
+    Err(ProductSurfaceError::InvalidInput(format!(
+        "{command} is a developer pass-through command and does not support --toon/--json yet. Use human output, or use pcl verify/apply for structured assertion workflows."
+    )))
 }
 
 fn error_envelope(err: &Report) -> Value {
@@ -256,6 +271,15 @@ fn simple_error_value(
 }
 
 fn apply_error_envelope(err: &ApplyError) -> Value {
+    #[cfg(feature = "credible")]
+    if let ApplyError::AssertionsFailed(summary) = err {
+        return verification_assertions_failed_envelope(
+            summary,
+            "apply.assertions_failed",
+            "pcl apply --dry-run",
+        );
+    }
+
     let (code, message, next_actions): (&str, String, &[&str]) = match err {
         ApplyError::NoAuthToken => {
             (
@@ -269,7 +293,7 @@ fn apply_error_envelope(err: &ApplyError) -> Value {
                 "config.credible_toml_not_found",
                 "No credible.toml found. Run from an assertion project or pass --config <path>."
                     .to_string(),
-                &["pcl apply --help", "pcl projects --mine"],
+                &["pcl apply --help", "pcl projects mine"],
             )
         }
         ApplyError::InvalidConfig(_) | ApplyError::Toml(_) => {
@@ -290,7 +314,7 @@ fn apply_error_envelope(err: &ApplyError) -> Value {
             (
                 "projects.none_for_account",
                 err.to_string(),
-                &["pcl projects --mine", "pcl account"],
+                &["pcl projects mine", "pcl account"],
             )
         }
         ApplyError::ApplyCancelled => ("apply.cancelled", err.to_string(), &["pcl apply --help"]),
@@ -319,7 +343,7 @@ fn download_error_envelope(err: &DownloadError) -> Value {
                 "download.missing_project_id",
                 "--project-id is required".to_string(),
                 &[
-                    "pcl projects --mine",
+                    "pcl projects mine",
                     "pcl download --project-id <project-id>",
                 ],
             )
@@ -344,6 +368,14 @@ fn download_error_envelope(err: &DownloadError) -> Value {
 
 #[cfg(feature = "credible")]
 fn verify_error_envelope(err: &VerifyError) -> Value {
+    if let VerifyError::AssertionsFailed(summary) = err {
+        return verification_assertions_failed_envelope(
+            summary,
+            "verify.assertions_failed",
+            "pcl verify --help",
+        );
+    }
+
     let (code, message, next_actions): (&str, String, &[&str]) = match err {
         VerifyError::Io { message, .. } if message.starts_with("Project root not found") => {
             (
@@ -394,8 +426,47 @@ fn verify_error_envelope(err: &VerifyError) -> Value {
                 &["Retry without --json to inspect human output"],
             )
         }
+        VerifyError::Output(_) => {
+            (
+                "output.failed",
+                err.to_string(),
+                &["Retry without --toon/--json to inspect human output"],
+            )
+        }
+        VerifyError::AssertionsFailed(_) => unreachable!("handled above"),
     };
     simple_error_value(code, &message, true, next_actions)
+}
+
+#[cfg(feature = "credible")]
+fn verification_assertions_failed_envelope(
+    summary: &VerificationSummary,
+    code: &str,
+    help_command: &str,
+) -> Value {
+    json!({
+        "status": "error",
+        "data": summary,
+        "error": {
+            "code": code,
+            "message": verification_failed_message(summary),
+            "recoverable": true,
+        },
+        "next_actions": [
+            "Inspect data.assertions for failing assertions",
+            help_command,
+        ],
+    })
+}
+
+#[cfg(feature = "credible")]
+fn verification_failed_message(summary: &VerificationSummary) -> String {
+    format!(
+        "{} of {} assertion{} failed verification",
+        summary.failed,
+        summary.total,
+        if summary.total == 1 { "" } else { "s" }
+    )
 }
 
 fn phoundry_error_envelope(err: &PhoundryError) -> Value {
@@ -437,6 +508,9 @@ fn auth_error_envelope(err: &AuthError) -> Value {
             platform_url,
         } => {
             let seconds_remaining = expires_at.timestamp() - unix_timestamp_now();
+            let refresh_command = command_for_current_output("pcl auth refresh");
+            let login_command = command_for_current_output("pcl auth login --force");
+            let logout_command = command_for_current_output("pcl auth logout");
             with_envelope_metadata(json!({
                 "status": "error",
                 "error": {
@@ -456,9 +530,9 @@ fn auth_error_envelope(err: &AuthError) -> Value {
                     },
                 },
                 "next_actions": [
-                    "pcl auth refresh --json",
-                    "pcl auth login --force",
-                    "pcl auth logout",
+                    refresh_command,
+                    login_command,
+                    logout_command,
                 ],
             }))
         }
@@ -550,6 +624,7 @@ fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
             request_id,
             message,
         } => {
+            let refresh_command = command_for_current_output("pcl auth refresh");
             Some(with_envelope_metadata(json!({
                 "status": "error",
                 "error": {
@@ -560,7 +635,7 @@ fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
                     "request_id": request_id,
                     "details": message,
                 },
-                "next_actions": ["Wait for error.retry_after_seconds, then retry pcl auth refresh --json"],
+                "next_actions": [format!("Wait for error.retry_after_seconds, then retry {refresh_command}")],
             })))
         }
         AuthError::RefreshServerError {
@@ -568,6 +643,7 @@ fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
             request_id,
             message,
         } => {
+            let refresh_command = command_for_current_output("pcl auth refresh");
             Some(with_envelope_metadata(json!({
                 "status": "error",
                 "error": {
@@ -581,19 +657,35 @@ fn auth_refresh_error_envelope(err: &AuthError) -> Option<Value> {
                     "request_id": request_id,
                     "details": message,
                 },
-                "next_actions": ["Retry pcl auth refresh --json once before logging in again"],
+                "next_actions": [format!("Retry {refresh_command} once before logging in again")],
             })))
         }
         AuthError::RefreshRequestFailed(_) | AuthError::RefreshLockTimeout => {
-            Some(with_envelope_metadata(simple_error_value(
-                "auth.refresh_failed",
-                &err.to_string(),
-                true,
-                &["Retry pcl auth refresh --json", "pcl auth login --force"],
-            )))
+            Some(auth_refresh_failed_envelope(err))
         }
         _ => None,
     }
+}
+
+fn auth_refresh_failed_envelope(err: &AuthError) -> Value {
+    let refresh_command = command_for_current_output("pcl auth refresh");
+    let login_command = command_for_current_output("pcl auth login --force");
+    with_envelope_metadata(json!({
+        "status": "error",
+        "error": {
+            "code": "auth.refresh_failed",
+            "message": err.to_string(),
+            "recoverable": true,
+        },
+        "next_actions": [
+            format!("Retry {refresh_command}"),
+            login_command,
+        ],
+    }))
+}
+
+fn command_for_current_output(command: &str) -> String {
+    command_for_mode(command, current_output_mode())
 }
 
 fn auth_refresh_endpoint_not_found_envelope(
@@ -982,7 +1074,7 @@ mod tests {
         assert_eq!(envelope["status"], "error");
         assert_eq!(envelope["error"]["code"], "auth.expired_token");
         assert_eq!(envelope["error"]["auth"]["token_valid"], false);
-        assert_eq!(envelope["next_actions"][0], "pcl auth refresh --json");
+        assert_eq!(envelope["next_actions"][0], "pcl auth refresh");
         assert_eq!(envelope["next_actions"][1], "pcl auth login --force");
     }
 }

@@ -1285,7 +1285,7 @@ fn projects_mine_uses_authenticated_home_view() {
         request.next_actions,
         vec![
             "pcl account".to_string(),
-            "pcl projects --saved --user-id <user-id>".to_string()
+            "pcl projects saved --user-id <user-id>".to_string()
         ]
     );
 }
@@ -1421,7 +1421,7 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
             && alternative["action"] == "backtest_progress"
             && alternative["example"]
                 .as_str()
-                .is_some_and(|example| example.contains("--backtest-progress"))
+                .is_some_and(|example| example.contains("backtest-progress"))
     }));
 
     let integration = workflow_alternatives(
@@ -1441,6 +1441,28 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
         alternative["workflow"] == "incidents"
             && alternative["example"] == "pcl incidents --limit 5"
     }));
+
+    let project_detail = workflow_alternatives(HttpMethod::Get, "/projects/{project_id}");
+    assert_eq!(project_detail.len(), 1);
+    assert_eq!(project_detail[0]["workflow"], "projects");
+    assert_eq!(project_detail[0]["action"], "detail");
+    assert_eq!(
+        project_detail[0]["example"],
+        "pcl projects show <project-ref>"
+    );
+
+    let saved_delete = workflow_alternatives(HttpMethod::Delete, "/projects/saved");
+    assert_eq!(saved_delete.len(), 1);
+    assert_eq!(saved_delete[0]["workflow"], "projects");
+    assert_eq!(saved_delete[0]["action"], "unsave");
+    assert_eq!(
+        saved_delete[0]["example"],
+        "pcl projects unsave <project-ref>"
+    );
+
+    let project_literal = workflow_alternatives(HttpMethod::Get, "/projects/project-1");
+    assert_eq!(project_literal.len(), 1);
+    assert_eq!(project_literal[0]["action"], "detail");
 }
 
 #[test]
@@ -2421,7 +2443,7 @@ fn human_output_formats_empty_workflow_arrays_for_people() {
             "data": [],
             "request": {"method": "GET", "path": "/projects/project-1/releases"},
             "response": {"status": 200, "request_id": "req_empty"},
-            "next_actions": ["pcl releases --project project-1 --release-id <release-id>"],
+            "next_actions": ["pcl releases show project-1 <release-id>"],
         }),
         false,
     )
@@ -2454,7 +2476,7 @@ fn human_output_formats_project_details_for_people() {
                 "slug": "private-test"
             },
             "next_actions": [
-                "pcl projects --project-id project-1",
+                "pcl projects show project-1",
                 "pcl assertions --project-id project-1"
             ],
         }),
@@ -2479,7 +2501,7 @@ fn human_output_names_success_only_mutations() {
             "data": {"success": true},
             "request": {"method": "DELETE", "path": "/projects/project-1"},
             "response": {"status": 200, "request_id": "req_delete"},
-            "next_actions": ["pcl projects --mine"],
+            "next_actions": ["pcl projects mine"],
         }),
         false,
     )
@@ -2494,7 +2516,7 @@ fn human_output_names_success_only_mutations() {
             "data": {"success": true},
             "request": {"method": "DELETE", "path": "/projects/project-1/invitations/invite-1"},
             "response": {"status": 200, "request_id": "req_revoke"},
-            "next_actions": ["pcl access --project project-1 --invitations"],
+            "next_actions": ["pcl access invitations project-1"],
         }),
         false,
     )
@@ -2530,7 +2552,7 @@ fn human_output_formats_project_home_for_people() {
             },
             "request": {"method": "GET", "path": "/views/projects/home"},
             "response": {"status": 200, "request_id": "req_projects_home"},
-            "next_actions": ["pcl projects --project-id project-1"],
+            "next_actions": ["pcl projects show project-1"],
         }),
         false,
     )
@@ -2571,7 +2593,7 @@ fn human_output_formats_invitations_for_people() {
             },
             "request": {"method": "GET", "path": "/projects/project-1/invitations"},
             "response": {"status": 200, "request_id": "req_invitations"},
-            "next_actions": ["pcl access --project project-1 --invite --body-template"],
+            "next_actions": ["pcl access invite project-1 --body-template"],
         }),
         false,
     )
@@ -2582,7 +2604,7 @@ fn human_output_formats_invitations_for_people() {
     assert!(output.contains("cli-ux-test@example.invalid"));
     assert!(output.contains("viewer"));
     assert!(output.contains("pending"));
-    assert!(output.contains("pcl access --project project-1 --invite --body-template"));
+    assert!(output.contains("pcl access invite project-1 --body-template"));
     assert!(!output.contains("--body '{...}'"));
 }
 
@@ -2607,7 +2629,7 @@ fn human_output_formats_mixed_search_results_for_people() {
                 "assertions": []
             },
             "next_actions": [
-                "pcl projects --project-id 0x-settler",
+                "pcl projects show 0x-settler",
                 "pcl contracts --project 0x-settler"
             ],
         }),
@@ -2778,6 +2800,35 @@ fn human_output_formats_surface_lists_for_people() {
 }
 
 #[test]
+fn human_output_honors_display_metadata_before_shape_detection() {
+    let output = human_string(&with_envelope_metadata(json!({
+        "status": "ok",
+        "data": {
+            "_display": {
+                "kind": "collection",
+                "title": "Projects",
+                "collection": "projects",
+                "columns": [
+                    {"label": "Name", "path": "project_name"},
+                    {"label": "ID", "path": "project_id"}
+                ],
+                "empty": "No projects found."
+            },
+            "projects": [
+                {"project_name": "Demo", "project_id": "project-1", "ignored": "hidden"}
+            ]
+        },
+        "next_actions": []
+    })));
+
+    assert!(output.contains("Projects\n"), "{output}");
+    assert!(output.contains("Name"), "{output}");
+    assert!(output.contains("Demo"), "{output}");
+    assert!(output.contains("project-1"), "{output}");
+    assert!(!output.contains("ignored"), "{output}");
+}
+
+#[test]
 fn human_output_formats_schema_action_for_people() {
     let output = envelope_output_string(
         &json!({
@@ -2867,6 +2918,52 @@ fn human_output_formats_mutation_dry_run_for_people() {
     assert!(output.contains("Use --body-template to start from an example request body"));
     assert!(!output.contains("Use --json"));
     assert!(!output.contains("Use --body-template when constructing mutation bodies"));
+}
+
+#[test]
+fn dry_run_auth_recovery_only_suggests_body_templates_for_mutations() {
+    let get = dry_run_envelope(json!({
+        "dry_run": true,
+        "valid": true,
+        "request": {
+            "method": "GET",
+            "path": "/views/projects/home",
+            "auth": {
+                "required": true,
+                "allow_unauthenticated": false,
+                "stored_token_valid": false,
+            }
+        }
+    }));
+    assert_eq!(
+        get["next_actions"],
+        json!([
+            "pcl auth ensure --toon",
+            "Authenticate before removing --dry-run"
+        ])
+    );
+
+    let post = dry_run_envelope(json!({
+        "dry_run": true,
+        "valid": true,
+        "request": {
+            "method": "POST",
+            "path": "/projects",
+            "auth": {
+                "required": true,
+                "allow_unauthenticated": false,
+                "stored_token_valid": false,
+            }
+        }
+    }));
+    assert_eq!(
+        post["next_actions"],
+        json!([
+            "pcl auth ensure --toon",
+            "Authenticate before removing --dry-run",
+            "Use --body-template when constructing mutation bodies"
+        ])
+    );
 }
 
 #[test]
@@ -2977,21 +3074,11 @@ fn manifest_lists_structured_actions_for_every_workflow() {
             .is_some_and(|value| value.contains("--json"))
     );
     let commands = manifest["commands"].as_array().unwrap();
-    for command_name in [
-        "incidents",
-        "projects",
-        "assertions",
-        "search",
-        "account",
-        "contracts",
-        "releases",
-        "deployments",
-        "access",
-        "integrations",
-        "protocol-manager",
-        "transfers",
-        "events",
-    ] {
+    for command_name in spec::WORKFLOW_SPECS
+        .iter()
+        .filter(|spec| matches!(spec.layer, spec::WorkflowLayer::Workflow))
+        .map(|spec| spec.name)
+    {
         let command = commands
             .iter()
             .find(|command| {
@@ -3045,6 +3132,44 @@ fn manifest_lists_structured_actions_for_every_workflow() {
         }
     }
 
+    for spec in spec::WORKFLOW_SPECS
+        .iter()
+        .filter(|spec| matches!(spec.layer, spec::WorkflowLayer::Workflow))
+        .filter(|spec| !spec.preferred_subcommands.is_empty())
+    {
+        let manifest_spec = manifest["workflow_specs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == spec.name)
+            .unwrap_or_else(|| panic!("missing workflow spec {}", spec.name));
+        assert_eq!(
+            manifest_spec["preferred_subcommands"],
+            json!(spec.preferred_subcommands),
+            "manifest should expose preferred subcommands for {}",
+            spec.name
+        );
+        let command = commands
+            .iter()
+            .find(|command| {
+                command["command"]
+                    .as_str()
+                    .is_some_and(|value| value.contains(spec.name))
+            })
+            .unwrap();
+        let actions = command["actions"].as_array().unwrap();
+        assert!(
+            actions.iter().all(|action| {
+                action["example"].as_str().is_some_and(|example| {
+                    example.starts_with(&format!("pcl {}", spec.name))
+                        && !example.contains(&format!("{} --", spec.name))
+                })
+            }),
+            "preferred examples for {} should use subcommands",
+            spec.name
+        );
+    }
+
     let incident_actions = commands
         .iter()
         .find(|command| {
@@ -3092,6 +3217,25 @@ fn manifest_lists_structured_actions_for_every_workflow() {
                 && action["required_flags"] == json!(["--paginate"])
         }),
         "manifest must include generic raw-call pagination"
+    );
+    let completion_surface = manifest["product_surfaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|surface| surface["command"] == "pcl completions <shell>")
+        .expect("completion surface");
+    assert!(
+        completion_surface["description"]
+            .as_str()
+            .is_some_and(|description| description.contains("raw shell completion scripts"))
+    );
+    assert!(
+        manifest["product_surfaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|surface| surface["command"] != "pcl completions <shell> --toon"),
+        "manifest should not advertise envelope mode as the default completions install path"
     );
 }
 
@@ -3257,7 +3401,7 @@ fn project_list_next_actions_use_returned_project_id() {
     assert_eq!(
         next_actions,
         vec![
-            "pcl projects --project-id project-1",
+            "pcl projects show project-1",
             "pcl assertions --project-id project-1",
             "pcl incidents --project-id project-1 --limit 10",
         ]

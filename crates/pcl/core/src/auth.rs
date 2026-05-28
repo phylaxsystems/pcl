@@ -348,7 +348,7 @@ impl AuthCommand {
                             "refresh_expires_at": auth.refresh_expires_at.map(|expires_at| expires_at.to_rfc3339()),
                             "refresh_seconds_remaining": auth.refresh_expires_at.map(|expires_at| (expires_at - now).num_seconds()),
                         },
-                        "next_actions": ["pcl account", "pcl projects --mine"],
+                        "next_actions": ["pcl account", "pcl projects mine"],
                     }),
                     json_output,
                 )?;
@@ -597,7 +597,7 @@ impl AuthCommand {
                 "refresh_expires_at": auth.refresh_expires_at.map(|expires_at| expires_at.to_rfc3339()),
                 "refresh_seconds_remaining": refresh_seconds_remaining,
             },
-            "next_actions": ["pcl account", "pcl projects --mine"],
+            "next_actions": ["pcl account", "pcl projects mine"],
         }))
     }
 
@@ -956,7 +956,7 @@ impl AuthCommand {
             } else if expires_soon {
                 json!(["pcl auth refresh --toon", "pcl account"])
             } else {
-                json!(["pcl account", "pcl projects --mine"])
+                json!(["pcl account", "pcl projects mine"])
             },
         }))
     }

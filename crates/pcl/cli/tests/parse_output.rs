@@ -62,11 +62,149 @@ fn bare_human_invocation_prints_clap_help() {
         "The Credible CLI for the Credible Layer",
         "Usage: pcl [OPTIONS] <COMMAND>",
         "Commands:",
+        "  incidents",
+        "  projects",
+        "  api",
+        "Options:",
     ] {
         assert!(output.stdout.contains(expected));
     }
+    assert!(!output.stdout.contains("Core workflows:"));
+    assert!(!output.stdout.contains("Developer commands:"));
     assert!(!output.stdout.contains("\nCode:"));
     assert!(!output.stdout.contains("schema_version:"));
+}
+
+#[test]
+fn pass_through_developer_commands_reject_machine_modes_structurally() {
+    for args in [
+        ["--toon", "build"].as_slice(),
+        ["--json", "build"].as_slice(),
+        #[cfg(feature = "credible")]
+        ["--toon", "test"].as_slice(),
+        #[cfg(feature = "credible")]
+        ["--json", "test"].as_slice(),
+    ] {
+        let output = run_pcl(args);
+
+        output.assert_failure();
+        assert!(output.stdout.is_empty(), "{}", output.stdout);
+        assert!(
+            output.stderr.contains("developer pass-through command"),
+            "{}",
+            output.stderr
+        );
+        assert!(
+            output.stderr.contains("schema_version")
+                || output.stderr.contains("\"schema_version\""),
+            "{}",
+            output.stderr
+        );
+    }
+}
+
+#[test]
+fn subcommand_help_advertises_global_json_mode() {
+    fn assert_help(command: &str) {
+        let output = run_pcl(&[command, "--help"]);
+        output.assert_success();
+        assert!(output.stderr.is_empty(), "{command}: {}", output.stderr);
+        assert!(
+            output.stdout.contains("--json"),
+            "{command} help should show global --json:\n{}",
+            output.stdout
+        );
+        assert!(
+            output.stdout.contains("--toon"),
+            "{command} help should show global --toon:\n{}",
+            output.stdout
+        );
+        assert!(
+            !output.stdout.contains("Deprecated; use global --json"),
+            "{command} help should not show stale compatibility help:\n{}",
+            output.stdout
+        );
+
+        let trailing_json = run_pcl(&[command, "--json", "--help"]);
+        trailing_json.assert_success();
+        assert!(
+            trailing_json.stdout.contains("--json") || trailing_json.stderr.contains("--json"),
+            "{command} should still accept global --json after the subcommand:\nstdout:\n{}\nstderr:\n{}",
+            trailing_json.stdout,
+            trailing_json.stderr
+        );
+    }
+
+    for command in ["apply", "download"] {
+        assert_help(command);
+    }
+
+    #[cfg(feature = "credible")]
+    assert_help("verify");
+}
+
+#[test]
+fn new_workflow_subcommands_parse_and_emit_structured_dry_runs() {
+    for args in [
+        [
+            "--json",
+            "projects",
+            "create",
+            "--project-name",
+            "demo",
+            "--chain-id",
+            "1",
+            "--dry-run",
+        ]
+        .as_slice(),
+        [
+            "--json",
+            "projects",
+            "update",
+            "project-1",
+            "--field",
+            "github_url=https://github.com/org/repo",
+            "--dry-run",
+        ]
+        .as_slice(),
+        [
+            "--json",
+            "releases",
+            "preview",
+            "project-1",
+            "--body-template",
+            "--dry-run",
+        ]
+        .as_slice(),
+        [
+            "--json",
+            "access",
+            "invite",
+            "project-1",
+            "--body-template",
+            "--dry-run",
+        ]
+        .as_slice(),
+    ] {
+        let output = run_pcl(args);
+
+        output.assert_success();
+        assert!(output.stderr.is_empty(), "{}", output.stderr);
+        let envelope: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("json envelope");
+        assert_eq!(envelope["status"], "ok", "{envelope}");
+        assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+        assert!(
+            envelope["next_actions"].as_array().is_some_and(|actions| {
+                actions.iter().all(|action| {
+                    action
+                        .as_str()
+                        .is_none_or(|action| !action.contains("--toon"))
+                })
+            }),
+            "{envelope}"
+        );
+    }
 }
 
 #[test]
@@ -168,4 +306,68 @@ fn documented_agent_leaf_commands_accept_toon_after_subcommands() {
             output.stdout
         );
     }
+}
+
+#[test]
+fn llms_machine_next_actions_leave_completion_redirect_raw() {
+    let completion_install =
+        "pcl completions bash > ~/.local/share/bash-completion/completions/pcl";
+
+    let toon = run_pcl(&["--toon", "--llms"]);
+    toon.assert_success();
+    assert!(toon.stdout.contains(completion_install), "{}", toon.stdout);
+    assert!(
+        !toon
+            .stdout
+            .contains(&format!("{completion_install} --toon")),
+        "{}",
+        toon.stdout
+    );
+
+    let json = run_pcl(&["--json", "--llms"]);
+    json.assert_success();
+    let envelope: serde_json::Value = serde_json::from_str(&json.stdout).expect("json envelope");
+    let actions = envelope["next_actions"]
+        .as_array()
+        .expect("next_actions array");
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.as_str() == Some(completion_install)),
+        "{envelope}"
+    );
+    let json_flagged_install = format!("{completion_install} --json");
+    assert!(
+        actions
+            .iter()
+            .all(|action| action.as_str() != Some(json_flagged_install.as_str())),
+        "{envelope}"
+    );
+}
+
+#[test]
+fn completions_machine_next_action_is_raw_redirect() {
+    let output = run_pcl(&["--toon", "completions", "bash"]);
+    output.assert_success();
+    assert!(output.stdout.contains("script:"), "{}", output.stdout);
+    assert!(
+        output
+            .stdout
+            .contains("pcl completions bash > <completion-file>"),
+        "{}",
+        output.stdout
+    );
+    assert!(
+        !output.stdout.contains("pcl completions bash --toon"),
+        "{}",
+        output.stdout
+    );
+
+    let json = run_pcl(&["--json", "completions", "bash"]);
+    json.assert_success();
+    let envelope: serde_json::Value = serde_json::from_str(&json.stdout).expect("json envelope");
+    assert_eq!(
+        envelope["next_actions"],
+        serde_json::json!(["pcl completions bash > <completion-file>"])
+    );
 }

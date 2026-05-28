@@ -11,12 +11,16 @@ pcl --toon --llms
 pcl doctor --toon
 pcl auth ensure --toon
 pcl whoami --toon
+pcl workflows --toon
+pcl schema list --toon
 pcl api manifest --toon
 ```
 
 When changing this repository, run `make ci` before handing work back. It sets `PCL_AUTH_NO_BROWSER=1` for tests so auth flows do not open a browser, and it runs `make agent-smoke` to verify the documented agent discovery path.
 
 Use TOON as the normal machine interface. Default CLI output is optimized for humans, so agent examples must pass `--toon`. Use `--json` only when a downstream tool needs strict JSON.
+
+`pcl build` and `pcl test` are developer pass-through commands. Use human mode for their native Phorge/Foundry output. In machine mode they return a structured unsupported-pass-through error; use `pcl verify --toon` and `pcl apply --dry-run --toon` for structured assertion workflows.
 
 ## Output Contract
 

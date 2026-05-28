@@ -71,7 +71,8 @@ fn version_message() -> &'static str {
     name = "pcl",
     version = version_message(),
     long_version = version_message(),
-    about = "The Credible CLI for the Credible Layer"
+    about = "The Credible CLI for the Credible Layer",
+    long_about = "The Credible CLI for the Credible Layer.\n\nUse workflow commands for normal project, assertion, incident, release, and access work. Use --toon for agents and --json for strict parsers. Use `pcl --toon --llms` for agent guidance. Use `pcl api` only when a workflow command does not exist or when debugging the raw API."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -83,13 +84,6 @@ pub struct Cli {
 #[derive(clap::Subcommand)]
 #[allow(clippy::large_enum_variant)]
 pub enum Commands {
-    #[cfg(feature = "credible")]
-    #[command(name = "test")]
-    Test(PhorgeTest),
-    #[command(name = "apply")]
-    Apply(ApplyArgs),
-    #[command(name = "api")]
-    Api(ApiArgs),
     #[command(name = "incidents")]
     Incidents(IncidentsCommand),
     #[command(name = "projects")]
@@ -116,6 +110,7 @@ pub enum Commands {
     Transfers(TransfersCommand),
     #[command(name = "events")]
     Events(EventsCommand),
+    Auth(AuthCommand),
     #[command(name = "doctor")]
     Doctor(DoctorArgs),
     #[command(name = "whoami")]
@@ -134,18 +129,24 @@ pub enum Commands {
     Llms(LlmsArgs),
     #[command(name = "jobs")]
     Jobs(JobsArgs),
+    #[command(name = "api")]
+    Api(ApiArgs),
     #[command(name = "completions")]
     Completions(CompletionsArgs),
-    Auth(AuthCommand),
     #[command(about = "Manage configuration")]
     Config(ConfigArgs),
-    #[command(name = "build")]
-    Build(BuildArgs),
+    #[command(name = "apply")]
+    Apply(ApplyArgs),
     #[cfg(feature = "credible")]
     #[command(name = "verify")]
     Verify(VerifyArgs),
     #[command(name = "download")]
     Download(DownloadArgs),
+    #[command(name = "build")]
+    Build(BuildArgs),
+    #[cfg(feature = "credible")]
+    #[command(name = "test")]
+    Test(PhorgeTest),
 }
 
 impl Commands {
@@ -203,10 +204,10 @@ impl CompletionsArgs {
                 "data": {
                     "shell": self.shell.to_string(),
                     "script": script,
-                    "install_note": "Run without --json and redirect stdout into your shell completion directory.",
+                    "install_note": "Run without --toon/--json and redirect stdout into your shell completion directory.",
                 },
                 "next_actions": [
-                    format!("pcl completions {}", self.shell),
+                    format!("pcl completions {} > <completion-file>", self.shell),
                 ],
             }));
             print!(
@@ -291,8 +292,8 @@ mod tests {
                     args.config,
                     std::path::PathBuf::from("assertions/credible.toml")
                 );
-                assert!(!args.json);
                 assert!(!args.yes);
+                assert!(cli.args.human_output());
             }
             _ => panic!("expected apply command"),
         }

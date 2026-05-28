@@ -165,6 +165,58 @@ fn auth_ensure_default_output_is_human() {
 }
 
 #[test]
+fn auth_status_human_expired_token_recommends_refresh() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_expired_refreshable_auth_config(temp_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "auth",
+            "status",
+        ])
+        .output()
+        .expect("run pcl auth status");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+    assert!(stderr.starts_with("Error\n"), "{stderr}");
+    assert!(stderr.contains("Run `pcl auth refresh`"), "{stderr}");
+    assert!(
+        !stderr.contains("Run `pcl auth login --force` again"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("1. pcl auth refresh"), "{stderr}");
+    assert!(!stderr.contains("pcl auth refresh --json"), "{stderr}");
+    assert!(!stderr.contains("pcl auth refresh --toon"), "{stderr}");
+}
+
+#[test]
+fn auth_status_toon_expired_token_recommends_toon_refresh() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_expired_refreshable_auth_config(temp_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--toon",
+            "auth",
+            "status",
+        ])
+        .output()
+        .expect("run pcl auth status --toon");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+    assert!(stderr.starts_with("status: error\n"), "{stderr}");
+    assert!(stderr.contains("code: auth.expired_token"), "{stderr}");
+    assert!(stderr.contains("pcl auth refresh --toon"), "{stderr}");
+    assert!(!stderr.contains("pcl auth refresh --json"), "{stderr}");
+}
+
+#[test]
 fn auth_ensure_json_without_auth_outputs_login_challenge() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     let mut server = mockito::Server::new();

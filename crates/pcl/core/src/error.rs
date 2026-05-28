@@ -1,3 +1,5 @@
+#[cfg(feature = "credible")]
+use crate::verify::VerificationSummary;
 use crate::{
     abi::ConstructorAbiError,
     credible_config::CredibleConfigError,
@@ -49,8 +51,9 @@ pub enum ApplyError {
         body: String,
     },
 
-    #[error("{0}")]
-    VerificationFailed(String),
+    #[cfg(feature = "credible")]
+    #[error("Assertions failed verification")]
+    AssertionsFailed(Box<VerificationSummary>),
 
     #[error("Apply cancelled")]
     ApplyCancelled,
@@ -63,6 +66,9 @@ pub enum ApplyError {
 
     #[error("Failed to encode JSON output: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("Failed to write structured output: {0}")]
+    Output(#[from] crate::output::OutputError),
 }
 
 impl From<CredibleConfigError> for ApplyError {
@@ -96,6 +102,12 @@ pub enum VerifyError {
 
     #[error("Failed to encode JSON output: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("Assertions failed verification")]
+    AssertionsFailed(Box<VerificationSummary>),
+
+    #[error("Failed to write structured output: {0}")]
+    Output(#[from] crate::output::OutputError),
 }
 
 /// Errors that can occur during configuration operations
@@ -148,7 +160,7 @@ pub enum AuthError {
 
     /// Error when the locally stored access token has expired
     #[error(
-        "Stored auth token for {user} expired at {expires_at}. Run `pcl auth login --force` again."
+        "Stored auth token for {user} expired at {expires_at}. Run `pcl auth refresh`; if refresh fails, run `pcl auth login --force`."
     )]
     StoredTokenExpired {
         user: String,

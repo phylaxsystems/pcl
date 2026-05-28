@@ -4,6 +4,13 @@ All notable user-facing changes should be recorded here.
 
 ## Unreleased
 
+## 1.4.4 - 2026-05-12
+
+- Fixed expired-auth recovery guidance so human output recommends `pcl auth refresh` before forcing a new login, while TOON/JSON next actions keep their explicit output modes.
+- Moved shared envelope rendering into a top-level output module and made `apply`, `download`, and `verify` honor `--toon`/`--json` envelopes consistently.
+- Added preferred subcommand forms for the highest-traffic workflow groups: `pcl projects ...`, `pcl access ...`, and `pcl releases ...`, while keeping legacy flag forms working.
+- Kept root help clap-native while ordering common workflow commands first, and documented `pcl build`/`pcl test` as human pass-through developer commands in machine modes.
+
 ## 1.4.3 - 2026-05-10
 
 - Made default CLI output human-first across command surfaces, including auth, config, workflow, schema, API discovery, dry-run, export, job, artifact, request log, collection, incident, and raw API response views.
