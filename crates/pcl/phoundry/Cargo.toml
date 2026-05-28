@@ -12,12 +12,12 @@ credible = ["forge/credible"]
 
 [dependencies]
 # Foundry deps — pinned rev, default-features = false to avoid pulling assertion-executor
-forge = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "9289aae52324675d4e6b2f053e2970075c6e3c96", default-features = false }
-foundry-config = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "9289aae52324675d4e6b2f053e2970075c6e3c96", default-features = false }
-foundry-cli = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "9289aae52324675d4e6b2f053e2970075c6e3c96", default-features = false }
-foundry-common = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "9289aae52324675d4e6b2f053e2970075c6e3c96", default-features = false }
+forge = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "86d40f651c8d3f48e0a40734e0a74cc68489cf7e", default-features = false }
+foundry-config = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "86d40f651c8d3f48e0a40734e0a74cc68489cf7e", default-features = false }
+foundry-cli = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "86d40f651c8d3f48e0a40734e0a74cc68489cf7e", default-features = false }
+foundry-common = { git = "https://github.com/phylaxsystems/phoundry.git", rev = "86d40f651c8d3f48e0a40734e0a74cc68489cf7e", default-features = false }
 
-foundry-compilers = { version = "0.19.10", default-features = false }
+foundry-compilers = { version = "0.21.0", default-features = false }
 
 clap = { workspace = true }
 thiserror = { workspace = true }
