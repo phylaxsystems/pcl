@@ -85,6 +85,17 @@ jobs:
       SCCACHE_DISABLE: "1"
     steps:
       - uses: actions/checkout@v6
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+      - name: Configure Git for private deps
+        env:
+          GH_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: git config --global url."https://x-access-token:${GH_APP_TOKEN}@github.com/".insteadOf "https://github.com/"
       - name: Install Rust toolchain
         run: rustup toolchain install "$RUST_NIGHTLY_VERSION" --profile minimal --no-self-update
       - name: Check release build surface
@@ -102,6 +113,17 @@ jobs:
       SCCACHE_DISABLE: "1"
     steps:
       - uses: actions/checkout@v6
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+      - name: Configure Git for private deps
+        env:
+          GH_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: git config --global url."https://x-access-token:${GH_APP_TOKEN}@github.com/".insteadOf "https://github.com/"
       - name: Install Rust toolchain
         run: rustup toolchain install "$RUST_NIGHTLY_VERSION" --profile minimal --no-self-update
       - name: Run agent smoke contract
