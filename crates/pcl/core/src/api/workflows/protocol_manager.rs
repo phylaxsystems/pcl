@@ -3,6 +3,7 @@ use super::{
         ApiCommandError,
         HttpMethod,
         ProtocolManagerArgs,
+        WorkflowOperation,
         WorkflowRequest,
     },
     first_string_field,
@@ -10,7 +11,8 @@ use super::{
     request_body,
     required_arg,
     required_project_arg,
-    workflow_with_body,
+    workflow_operation_get,
+    workflow_operation_with_body,
 };
 use serde_json::Value;
 
@@ -19,76 +21,100 @@ pub(in crate::api) fn protocol_manager_request(
 ) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     let project = required_project_arg(args.project.as_deref(), "protocol-manager", "--project")?;
-    let base = format!("/projects/{project}/protocol-manager");
     if args.nonce {
         let address = required_arg(args.address.as_deref(), "--address")?;
-        let mut request = WorkflowRequest::get(
-            format!("{base}/nonce"),
+        let mut request = workflow_operation_get(
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "get_projects_project_id_protocol_manager_nonce",
+            )
+            .path_param("project_id", &project),
             true,
             vec![format!(
                 "pcl protocol-manager --project {project} --set --body-template"
             )],
-        );
+        )?;
         push_query(&mut request.query, "address", Some(address));
         push_query(&mut request.query, "chain_id", args.chain_id);
         return Ok(request);
     }
     if args.set {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            base,
+        return workflow_operation_with_body(
+            WorkflowOperation::new(
+                HttpMethod::Post,
+                "post_projects_project_id_protocol_manager",
+            )
+            .path_param("project_id", &project),
             true,
             body,
             vec![format!(
                 "pcl protocol-manager --project {project} --pending-transfer"
             )],
-        ));
+        );
     }
     if args.clear {
-        return Ok(workflow_with_body(
-            HttpMethod::Delete,
-            base,
+        return workflow_operation_with_body(
+            WorkflowOperation::new(
+                HttpMethod::Delete,
+                "delete_projects_project_id_protocol_manager",
+            )
+            .path_param("project_id", &project),
             true,
             body,
             vec![format!(
                 "pcl protocol-manager --project {project} --nonce --address <manager-address>"
             )],
-        ));
+        );
     }
     if args.transfer_calldata {
         let new_manager = required_arg(args.new_manager.as_deref(), "--new-manager")?;
-        let mut request = WorkflowRequest::get(
-            format!("{base}/transfer-calldata"),
+        let mut request = workflow_operation_get(
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "get_projects_project_id_protocol_manager_transfer_calldata",
+            )
+            .path_param("project_id", &project),
             true,
             vec![format!(
                 "pcl protocol-manager --project {project} --set --body-template"
             )],
-        );
+        )?;
         push_query(&mut request.query, "new_manager", Some(new_manager));
         return Ok(request);
     }
     if args.accept_calldata {
-        return Ok(WorkflowRequest::get(
-            format!("{base}/accept-calldata"),
+        return workflow_operation_get(
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "get_projects_project_id_protocol_manager_accept_calldata",
+            )
+            .path_param("project_id", &project),
             true,
             vec![format!(
                 "pcl protocol-manager --project {project} --confirm-transfer --body-template"
             )],
-        ));
+        );
     }
     if args.confirm_transfer {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            format!("{base}/confirm-transfer"),
+        return workflow_operation_with_body(
+            WorkflowOperation::new(
+                HttpMethod::Post,
+                "post_projects_project_id_protocol_manager_confirm_transfer",
+            )
+            .path_param("project_id", &project),
             true,
             body,
             vec![format!(
                 "pcl protocol-manager --project {project} --pending-transfer"
             )],
-        ));
+        );
     }
-    Ok(WorkflowRequest::get(
-        format!("{base}/pending-transfer"),
+    workflow_operation_get(
+        WorkflowOperation::new(
+            HttpMethod::Get,
+            "get_projects_project_id_protocol_manager_pending_transfer",
+        )
+        .path_param("project_id", &project),
         true,
         vec![
             format!("pcl protocol-manager --project {project} --nonce --address <manager-address>"),
@@ -96,7 +122,7 @@ pub(in crate::api) fn protocol_manager_request(
                 "pcl protocol-manager --project {project} --transfer-calldata --new-manager <manager-address>"
             ),
         ],
-    ))
+    )
 }
 
 pub(in crate::api) fn protocol_manager_next_actions(

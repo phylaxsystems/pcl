@@ -1,12 +1,16 @@
 use super::{
     super::{
         ApiCommandError,
+        HttpMethod,
         SearchArgs,
+        WorkflowOperation,
         WorkflowRequest,
     },
     first_string_field,
     push_query,
     required_arg,
+    workflow_operation_get,
+    workflow_operation_get_with_query,
 };
 use serde_json::Value;
 
@@ -14,32 +18,32 @@ pub(in crate::api) fn search_request(
     args: &SearchArgs,
 ) -> Result<WorkflowRequest, ApiCommandError> {
     if args.health {
-        return Ok(WorkflowRequest::get(
-            "/health",
+        return workflow_operation_get(
+            WorkflowOperation::new(HttpMethod::Get, "get_health"),
             false,
             ["pcl search --system-status"],
-        ));
+        );
     }
     if args.system_status {
-        return Ok(WorkflowRequest::get(
-            "/system-status",
+        return workflow_operation_get(
+            WorkflowOperation::new(HttpMethod::Get, "get_system_status"),
             false,
             ["pcl search --stats"],
-        ));
+        );
     }
     if args.stats {
-        return Ok(WorkflowRequest::get(
-            "/stats",
+        return workflow_operation_get(
+            WorkflowOperation::new(HttpMethod::Get, "get_stats"),
             false,
             ["pcl projects list --limit 10"],
-        ));
+        );
     }
     if args.whitelist {
-        return Ok(WorkflowRequest::get(
-            "/whitelist",
+        return workflow_operation_get(
+            WorkflowOperation::new(HttpMethod::Get, "get_whitelist"),
             true,
             ["pcl projects mine"],
-        ));
+        );
     }
     if args.verified_contract {
         let address = required_arg(args.address.as_deref(), "--address")?;
@@ -53,14 +57,15 @@ pub(in crate::api) fn search_request(
                 ],
             }
         })?;
-        let mut request = WorkflowRequest::get(
-            "/web/verified-contract",
+        let mut query = Vec::new();
+        push_query(&mut query, "address", Some(address));
+        push_query(&mut query, "chainId", Some(chain_id));
+        return workflow_operation_get_with_query(
+            WorkflowOperation::new(HttpMethod::Get, "get_web_verified_contract"),
+            query,
             false,
             ["pcl contracts --project <project-ref>"],
         );
-        push_query(&mut request.query, "address", Some(address));
-        push_query(&mut request.query, "chainId", Some(chain_id));
-        return Ok(request);
     }
 
     let query = args
@@ -81,16 +86,17 @@ pub(in crate::api) fn search_request(
             }
         })?;
 
-    let mut request = WorkflowRequest::get(
-        "/search",
+    let mut query_params = Vec::new();
+    push_query(&mut query_params, "query", Some(query));
+    workflow_operation_get_with_query(
+        WorkflowOperation::new(HttpMethod::Get, "get_search"),
+        query_params,
         false,
         [
             "pcl projects show <project-ref>",
             "pcl contracts --project <project-ref>",
         ],
-    );
-    push_query(&mut request.query, "query", Some(query));
-    Ok(request)
+    )
 }
 
 pub(in crate::api) fn search_next_actions(data: &Value, fallback: Vec<String>) -> Vec<String> {

@@ -2,13 +2,16 @@ use super::{
     super::{
         ApiCommandError,
         HttpMethod,
+        IntegrationProvider,
         IntegrationsArgs,
+        WorkflowOperation,
         WorkflowRequest,
     },
     body_or_empty,
     request_body,
     required_project_arg,
-    workflow_with_body,
+    workflow_operation_get,
+    workflow_operation_with_body,
 };
 
 pub(in crate::api) fn integrations_request(
@@ -26,51 +29,114 @@ pub(in crate::api) fn integrations_request(
             ],
         });
     };
-    let provider = provider.path();
-    let base = format!("/projects/{project}/integrations/{provider}");
+    let provider_path = provider.path();
     if args.configure {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            base,
+        return workflow_operation_with_body(
+            integration_operation(provider, IntegrationAction::Configure)
+                .path_param("project_id", &project),
             true,
             body,
             vec![format!(
-                "pcl integrations --project {project} --provider {provider}"
+                "pcl integrations --project {project} --provider {provider_path}"
             )],
-        ));
+        );
     }
     if args.test {
-        return Ok(workflow_with_body(
-            HttpMethod::Post,
-            format!("{base}/test"),
+        return workflow_operation_with_body(
+            integration_operation(provider, IntegrationAction::Test)
+                .path_param("project_id", &project),
             true,
             Some(body_or_empty(body)),
             vec![format!(
-                "pcl integrations --project {project} --provider {provider}"
+                "pcl integrations --project {project} --provider {provider_path}"
             )],
-        ));
+        );
     }
     if args.delete {
-        return Ok(workflow_with_body(
-            HttpMethod::Delete,
-            base,
+        return workflow_operation_with_body(
+            integration_operation(provider, IntegrationAction::Delete)
+                .path_param("project_id", &project),
             true,
             body,
             vec![format!(
-                "pcl integrations --project {project} --provider {provider}"
+                "pcl integrations --project {project} --provider {provider_path}"
             )],
-        ));
+        );
     }
-    Ok(WorkflowRequest::get(
-        base,
+    workflow_operation_get(
+        integration_operation(provider, IntegrationAction::Get).path_param("project_id", &project),
         true,
         vec![
-            format!("pcl integrations --project {project} --provider {provider} --test"),
+            format!("pcl integrations --project {project} --provider {provider_path} --test"),
             format!(
-                "pcl integrations --project {project} --provider {provider} --configure --body-template"
+                "pcl integrations --project {project} --provider {provider_path} --configure --body-template"
             ),
         ],
-    ))
+    )
+}
+
+#[derive(Clone, Copy)]
+enum IntegrationAction {
+    Get,
+    Configure,
+    Test,
+    Delete,
+}
+
+fn integration_operation(
+    provider: IntegrationProvider,
+    action: IntegrationAction,
+) -> WorkflowOperation {
+    match (provider, action) {
+        (IntegrationProvider::Slack, IntegrationAction::Get) => {
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "get_projects_project_id_integrations_slack",
+            )
+        }
+        (IntegrationProvider::Slack, IntegrationAction::Configure) => {
+            WorkflowOperation::new(
+                HttpMethod::Post,
+                "post_projects_project_id_integrations_slack",
+            )
+        }
+        (IntegrationProvider::Slack, IntegrationAction::Test) => {
+            WorkflowOperation::new(
+                HttpMethod::Post,
+                "post_projects_project_id_integrations_slack_test",
+            )
+        }
+        (IntegrationProvider::Slack, IntegrationAction::Delete) => {
+            WorkflowOperation::new(
+                HttpMethod::Delete,
+                "delete_projects_project_id_integrations_slack",
+            )
+        }
+        (IntegrationProvider::Pagerduty, IntegrationAction::Get) => {
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "get_projects_project_id_integrations_pagerduty",
+            )
+        }
+        (IntegrationProvider::Pagerduty, IntegrationAction::Configure) => {
+            WorkflowOperation::new(
+                HttpMethod::Post,
+                "post_projects_project_id_integrations_pagerduty",
+            )
+        }
+        (IntegrationProvider::Pagerduty, IntegrationAction::Test) => {
+            WorkflowOperation::new(
+                HttpMethod::Post,
+                "post_projects_project_id_integrations_pagerduty_test",
+            )
+        }
+        (IntegrationProvider::Pagerduty, IntegrationAction::Delete) => {
+            WorkflowOperation::new(
+                HttpMethod::Delete,
+                "delete_projects_project_id_integrations_pagerduty",
+            )
+        }
+    }
 }
 
 workflow_definition!(

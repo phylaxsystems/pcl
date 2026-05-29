@@ -9,7 +9,7 @@ use crate::{
     DEFAULT_PLATFORM_URL,
     client::{
         ClientBuildError,
-        authorization_header,
+        authenticated_client,
         ensure_fresh_auth,
     },
     config::CliConfig,
@@ -19,6 +19,11 @@ use crate::{
         ok_envelope,
         print_envelope,
     },
+};
+use dapp_api_client::generated::client::{
+    Client as GeneratedClient,
+    Error as GeneratedError,
+    types::GetViewsProjectsProjectIdAssertionsAssertionIdAssertionId,
 };
 use pcl_common::args::{
     CliArgs,
@@ -132,7 +137,7 @@ impl DownloadArgs {
         ensure_fresh_auth(config, &self.api_url, cli_args)
             .await
             .map_err(client_error_to_download)?;
-        let client = Self::build_client(config)?;
+        let client = self.build_client(config)?;
 
         let (project_id, project_name) = self.resolve_project(&client).await?;
 
@@ -203,7 +208,7 @@ impl DownloadArgs {
 
     async fn download_assertions(
         &self,
-        client: &reqwest::Client,
+        client: &GeneratedClient,
         project_id: &Uuid,
         assertions: &[AssertionSummary],
         output_dir: &Path,
@@ -319,31 +324,20 @@ impl DownloadArgs {
         Ok(())
     }
 
-    fn build_client(config: &CliConfig) -> Result<reqwest::Client, DownloadError> {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::HeaderName::from_static("api-version"),
-            reqwest::header::HeaderValue::from_static("1"),
-        );
-        headers.insert(
-            reqwest::header::AUTHORIZATION,
-            authorization_header(config).map_err(client_error_to_download)?,
-        );
-
-        reqwest::Client::builder()
-            .default_headers(headers)
-            .build()
-            .map_err(|error| {
-                DownloadError::InvalidConfig(format!("Failed to build HTTP client: {error}"))
-            })
+    fn build_client(&self, config: &CliConfig) -> Result<GeneratedClient, DownloadError> {
+        authenticated_client(config, &self.api_url).map_err(client_error_to_download)
     }
 
     async fn resolve_project(
         &self,
-        client: &reqwest::Client,
+        client: &GeneratedClient,
     ) -> Result<(Uuid, String), DownloadError> {
         let pid = self.project_id.ok_or(DownloadError::MissingIdentifier)?;
-        let project = self.get_json(client, &format!("/projects/{pid}")).await?;
+        let project = match client.get_projects_project_id(&pid, None).await {
+            Ok(response) => response.into_inner(),
+            Err(error) => return Err(generated_api_error(format!("/projects/{pid}"), error).await),
+        };
+        let project = serde_json::to_value(project)?;
         let project_id = project
             .get("project_id")
             .or_else(|| project.get("projectId"))
@@ -364,12 +358,23 @@ impl DownloadArgs {
 
     async fn fetch_assertions_list(
         &self,
-        client: &reqwest::Client,
+        client: &GeneratedClient,
         project_id: &Uuid,
     ) -> Result<Vec<AssertionSummary>, DownloadError> {
-        let response = self
-            .get_json(client, &format!("/views/projects/{project_id}/assertions"))
-            .await?;
+        let response = match client
+            .get_views_projects_project_id_assertions(project_id, None)
+            .await
+        {
+            Ok(response) => response.into_inner(),
+            Err(error) => {
+                return Err(generated_api_error(
+                    format!("/views/projects/{project_id}/assertions"),
+                    error,
+                )
+                .await);
+            }
+        };
+        let response = serde_json::to_value(response)?;
         let assertions = response
             .pointer("/data/assertions")
             .or_else(|| response.get("assertions"))
@@ -409,65 +414,49 @@ impl DownloadArgs {
 
     async fn fetch_assertion_detail(
         &self,
-        client: &reqwest::Client,
+        client: &GeneratedClient,
         project_id: &Uuid,
         assertion_id: &str,
     ) -> Result<Value, DownloadError> {
-        let response = self
-            .get_json(
-                client,
-                &format!("/views/projects/{project_id}/assertions/{assertion_id}"),
+        let generated_assertion_id = assertion_id
+            .parse::<GetViewsProjectsProjectIdAssertionsAssertionIdAssertionId>()
+            .map_err(|error| {
+                DownloadError::InvalidConfig(format!("Invalid assertion ID: {error}"))
+            })?;
+        let response = match client
+            .get_views_projects_project_id_assertions_assertion_id(
+                project_id,
+                &generated_assertion_id,
             )
-            .await?;
+            .await
+        {
+            Ok(response) => response.into_inner(),
+            Err(error) => {
+                return Err(generated_api_error(
+                    format!("/views/projects/{project_id}/assertions/{assertion_id}"),
+                    error,
+                )
+                .await);
+            }
+        };
+        let response = serde_json::to_value(response)?;
         Ok(response.get("data").cloned().unwrap_or(response))
     }
+}
 
-    async fn get_json(
-        &self,
-        client: &reqwest::Client,
-        endpoint: &str,
-    ) -> Result<Value, DownloadError> {
-        let url = self.endpoint_url(endpoint);
-        let response = client.get(url).send().await.map_err(|error| {
-            DownloadError::Api {
-                endpoint: endpoint.to_string(),
-                status: error.status().map(|status| status.as_u16()),
-                request_id: None,
-                body: json!(error.to_string()),
-            }
-        })?;
-        let status = response.status();
-        let request_id = crate::api::request_id_from_headers(response.headers());
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_string();
-        let bytes = response.bytes().await.map_err(|error| {
-            DownloadError::Api {
-                endpoint: endpoint.to_string(),
-                status: Some(status.as_u16()),
-                request_id: request_id.clone(),
-                body: json!(error.to_string()),
-            }
-        })?;
-        let body = crate::api::response_body_value(&content_type, &bytes);
-        if !status.is_success() {
-            return Err(DownloadError::Api {
-                endpoint: endpoint.to_string(),
-                status: Some(status.as_u16()),
-                request_id,
-                body,
-            });
-        }
-        Ok(body)
-    }
-
-    fn endpoint_url(&self, endpoint: &str) -> url::Url {
-        let mut url = self.api_url.clone();
-        url.set_path(&format!("/api/v1/{}", endpoint.trim_start_matches('/')));
-        url
+async fn generated_api_error<E>(
+    endpoint: impl Into<String>,
+    error: GeneratedError<E>,
+) -> DownloadError
+where
+    E: Serialize + std::fmt::Debug,
+{
+    let details = crate::api::generated_error_details(error).await;
+    DownloadError::Api {
+        endpoint: endpoint.into(),
+        status: details.status,
+        request_id: details.request_id,
+        body: details.body,
     }
 }
 

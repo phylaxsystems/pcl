@@ -24,6 +24,10 @@ use crate::{
     request_log,
 };
 use chrono::Utc;
+use dapp_api_client::generated::client::{
+    Client as GeneratedClient,
+    Error as GeneratedError,
+};
 use pcl_common::args::{
     CliArgs,
     OutputMode,
@@ -825,12 +829,16 @@ async fn export_incidents(
             "--limit must be greater than zero".to_string(),
         ));
     }
+    if args.page == 0 {
+        return Err(ProductSurfaceError::InvalidInput(
+            "--page must be greater than zero".to_string(),
+        ));
+    }
     if args.max_pages == 0 {
         return Err(ProductSurfaceError::InvalidInput(
             "--max-pages must be greater than zero".to_string(),
         ));
     }
-
     let out = args
         .out
         .clone()
@@ -885,6 +893,11 @@ async fn export_incidents(
     } else {
         args.page
     };
+    if start_page == 0 {
+        return Err(ProductSurfaceError::InvalidInput(
+            "Checkpoint page must be greater than zero".to_string(),
+        ));
+    }
     let mut out_file = BufWriter::new(
         fs::OpenOptions::new()
             .create(true)
@@ -1625,19 +1638,23 @@ fn auth_value(auth: Option<&UserAuth>) -> Value {
     })
 }
 
+fn generated_client(api_url: &url::Url) -> GeneratedClient {
+    let mut base = api_url.clone();
+    base.set_path("/api/v1");
+    GeneratedClient::new(base.as_str())
+}
+
+fn generated_error_request_id<E>(error: &GeneratedError<E>) -> Option<String> {
+    match error {
+        GeneratedError::ErrorResponse(response) => request_id_from_headers(response.headers()),
+        GeneratedError::UnexpectedResponse(response) => request_id_from_headers(response.headers()),
+        _ => None,
+    }
+}
+
 async fn health_check(api_url: &url::Url) -> Value {
-    let url = match build_api_url(api_url, "/health") {
-        Ok(url) => url,
-        Err(error) => {
-            return json!({
-                "name": "api_health",
-                "status": "error",
-                "error": error.to_string(),
-            });
-        }
-    };
-    let response = reqwest::Client::new().get(url).send().await;
-    match response {
+    let client = generated_client(api_url);
+    match client.get_health().await {
         Ok(response) => {
             let status = response.status();
             json!({
@@ -1648,9 +1665,12 @@ async fn health_check(api_url: &url::Url) -> Value {
             })
         }
         Err(error) => {
+            let status = error.status().map(|status| status.as_u16());
             json!({
                 "name": "api_health",
                 "status": "error",
+                "http_status": status,
+                "request_id": generated_error_request_id(&error),
                 "error": error.to_string(),
             })
         }
@@ -1658,20 +1678,21 @@ async fn health_check(api_url: &url::Url) -> Value {
 }
 
 async fn auth_capability_check(api_url: &url::Url) -> Value {
-    let url = match build_api_url(api_url, "/openapi") {
-        Ok(url) => url,
-        Err(error) => {
-            return json!({
-                "name": "auth_capabilities",
-                "status": "error",
-                "error": error.to_string(),
-            });
-        }
-    };
-    let response = reqwest::Client::new().get(url).send().await;
-    let response = match response {
+    let client = generated_client(api_url);
+    let response = match client.get_openapi().await {
         Ok(response) => response,
         Err(error) => {
+            let http_status = error.status();
+            let request_id = generated_error_request_id(&error);
+            if let Some(http_status) = http_status {
+                return json!({
+                    "name": "auth_capabilities",
+                    "status": "warning",
+                    "http_status": http_status.as_u16(),
+                    "request_id": request_id,
+                    "error": "OpenAPI manifest could not be fetched, so CLI auth support could not be verified.",
+                });
+            }
             return json!({
                 "name": "auth_capabilities",
                 "status": "error",
@@ -1679,28 +1700,8 @@ async fn auth_capability_check(api_url: &url::Url) -> Value {
             });
         }
     };
-    let http_status = response.status();
     let request_id = request_id_from_headers(response.headers());
-    if !http_status.is_success() {
-        return json!({
-            "name": "auth_capabilities",
-            "status": "warning",
-            "http_status": http_status.as_u16(),
-            "request_id": request_id,
-            "error": "OpenAPI manifest could not be fetched, so CLI auth support could not be verified.",
-        });
-    }
-    let spec = match response.json::<Value>().await {
-        Ok(spec) => spec,
-        Err(error) => {
-            return json!({
-                "name": "auth_capabilities",
-                "status": "warning",
-                "request_id": request_id,
-                "error": error.to_string(),
-            });
-        }
-    };
+    let spec = response.into_inner();
     let refresh_supported = openapi_has_operation(&spec, "/auth/refresh", "post");
     let login_supported = openapi_has_operation(&spec, "/cli/auth/code", "get")
         && openapi_has_operation(&spec, "/cli/auth/status", "get")
@@ -1876,6 +1877,9 @@ async fn fetch_export_page(
     query: &[(String, String)],
     max_retries: u64,
 ) -> Result<ExportPageResponse, ExportPageError> {
+    // Export retries need raw status and body metadata from non-2xx pages. The
+    // generated incident list methods currently erase those when the API returns
+    // the shared error schema.
     let max_attempts = max_retries.saturating_add(1);
     for attempt in 1..=max_attempts {
         let result = client.get(url.clone()).query(query).send().await;

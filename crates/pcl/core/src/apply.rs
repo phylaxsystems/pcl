@@ -12,7 +12,6 @@ use crate::{
     client::{
         ClientBuildError,
         authenticated_client,
-        authorization_header,
         ensure_fresh_auth,
     },
     config::CliConfig,
@@ -33,11 +32,13 @@ use alloy_primitives::Bytes;
 use clap::ValueHint;
 use dapp_api_client::generated::client::{
     Client as GeneratedClient,
+    Error as GeneratedError,
     types::{
         GetProjectsResponseItem,
         PostProjectsProjectIdReleasesBody,
         PostProjectsProjectIdReleasesBodyContractsValue,
         PostProjectsProjectIdReleasesBodyContractsValueAssertionsItem,
+        PostProjectsProjectIdReleasesPreviewBody,
         PostProjectsProjectIdReleasesResponse,
     },
 };
@@ -117,6 +118,7 @@ pub struct ApplyArgs {
 }
 
 impl ApplyArgs {
+    #[allow(clippy::too_many_lines)]
     pub async fn run(&self, cli_args: &CliArgs, config: &mut CliConfig) -> Result<(), ApplyError> {
         let output_mode = cli_args.output_mode();
         let root = canonicalize_root(&self.root)?;
@@ -150,8 +152,8 @@ impl ApplyArgs {
         }
 
         Self::ensure_fresh_auth(config, cli_args, &self.api_url).await?;
-        let (http_client, base_url) = Self::build_http_client(config, &self.api_url)?;
-        let preview = Self::call_preview(&http_client, &base_url, &project_id, &payload).await?;
+        let client = self.build_client(config)?;
+        let preview = Self::call_preview(&client, &project_id, &payload).await?;
 
         if !preview.has_changes() {
             if output_mode == OutputMode::Human {
@@ -188,19 +190,19 @@ impl ApplyArgs {
             }
         }
 
-        let client = self.build_client(config)?;
-
-        let release = client
+        let release = match client
             .post_projects_project_id_releases(&project_id, None, &payload)
             .await
-            .map(dapp_api_client::generated::client::ResponseValue::into_inner)
-            .map_err(|e| {
-                ApplyError::Api {
-                    endpoint: format!("/projects/{project_id}/releases"),
-                    status: e.status().map(|s| s.as_u16()),
-                    body: e.to_string(),
-                }
-            })?;
+        {
+            Ok(response) => response.into_inner(),
+            Err(error) => {
+                return Err(generated_apply_api_error(
+                    format!("/projects/{project_id}/releases"),
+                    error,
+                )
+                .await);
+            }
+        };
 
         if output_mode != OutputMode::Human {
             let envelope = ok_envelope(
@@ -263,26 +265,6 @@ impl ApplyArgs {
             .map_err(client_error_to_apply)
     }
 
-    fn build_http_client(
-        config: &CliConfig,
-        api_url: &Url,
-    ) -> Result<(reqwest::Client, String), ApplyError> {
-        let mut base = api_url.clone();
-        base.set_path("/api/v1");
-        let base_url = base.to_string();
-
-        let mut headers = reqwest::header::HeaderMap::new();
-        let header_value = authorization_header(config).map_err(client_error_to_apply)?;
-        headers.insert(reqwest::header::AUTHORIZATION, header_value);
-
-        let http_client = reqwest::Client::builder()
-            .default_headers(headers)
-            .build()
-            .map_err(|e| ApplyError::InvalidConfig(format!("Failed to build HTTP client: {e}")))?;
-
-        Ok((http_client, base_url))
-    }
-
     #[cfg(feature = "credible")]
     fn print_dry_run_output(
         &self,
@@ -335,38 +317,26 @@ impl ApplyArgs {
     }
 
     async fn call_preview(
-        http_client: &reqwest::Client,
-        base_url: &str,
+        client: &GeneratedClient,
         project_id: &Uuid,
         payload: &PostProjectsProjectIdReleasesBody,
     ) -> Result<PreviewResponse, ApplyError> {
-        let url = format!("{base_url}/projects/{project_id}/releases/preview");
-        let response = http_client
-            .post(&url)
-            .json(payload)
-            .send()
+        let endpoint = format!("/projects/{project_id}/releases/preview");
+        let body: PostProjectsProjectIdReleasesPreviewBody =
+            serde_json::from_value(serde_json::to_value(payload)?)?;
+        let response = match client
+            .post_projects_project_id_releases_preview(project_id, None, &body)
             .await
-            .map_err(|e| {
-                ApplyError::Api {
-                    endpoint: format!("/projects/{project_id}/releases/preview"),
-                    status: e.status().map(|s| s.as_u16()),
-                    body: e.to_string(),
-                }
-            })?;
+        {
+            Ok(response) => response.into_inner(),
+            Err(error) => {
+                return Err(generated_apply_api_error(endpoint.clone(), error).await);
+            }
+        };
 
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
-            return Err(ApplyError::Api {
-                endpoint: format!("/projects/{project_id}/releases/preview"),
-                status: Some(status),
-                body,
-            });
-        }
-
-        response.json::<PreviewResponse>().await.map_err(|e| {
+        serde_json::from_value(serde_json::to_value(response)?).map_err(|e| {
             ApplyError::Api {
-                endpoint: format!("/projects/{project_id}/releases/preview"),
+                endpoint,
                 status: None,
                 body: format!("Failed to parse preview response: {e}"),
             }
@@ -672,6 +642,23 @@ fn client_error_to_apply(error: ClientBuildError) -> ApplyError {
         ClientBuildError::AuthRefresh(error) => ApplyError::AuthRefresh(error),
         ClientBuildError::InvalidConfig(message) => ApplyError::InvalidConfig(message),
     }
+}
+
+async fn generated_apply_api_error<E>(endpoint: String, error: GeneratedError<E>) -> ApplyError
+where
+    E: serde::Serialize + std::fmt::Debug,
+{
+    let details = crate::api::generated_error_details(error).await;
+    ApplyError::Api {
+        endpoint,
+        status: details.status,
+        body: generated_error_body_string(&details.body),
+    }
+}
+
+fn generated_error_body_string(body: &Value) -> String {
+    body.as_str()
+        .map_or_else(|| body.to_string(), ToString::to_string)
 }
 
 #[cfg(test)]
