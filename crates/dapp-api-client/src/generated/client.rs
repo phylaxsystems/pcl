@@ -393,6 +393,5415 @@ pub mod types {
             value.clone()
         }
     }
+    ///`GetAdminReviewablesCursor`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesCursor(::std::string::String);
+    impl ::std::ops::Deref for GetAdminReviewablesCursor {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetAdminReviewablesCursor> for ::std::string::String {
+        fn from(value: GetAdminReviewablesCursor) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&GetAdminReviewablesCursor> for GetAdminReviewablesCursor {
+        fn from(value: &GetAdminReviewablesCursor) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for GetAdminReviewablesCursor {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetAdminReviewablesCursor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for GetAdminReviewablesCursor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for GetAdminReviewablesCursor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for GetAdminReviewablesCursor {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "items",
+    ///    "nextCursor"
+    ///  ],
+    ///  "properties": {
+    ///    "items": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "category",
+    ///          "metadata",
+    ///          "projectId",
+    ///          "projectName",
+    ///          "queuedAt",
+    ///          "reviewableRef",
+    ///          "targetLabel"
+    ///        ],
+    ///        "properties": {
+    ///          "category": {
+    ///            "description": "Discriminator for the 4 reviewable categories. Op-risk values are NOT reviewable in v1.",
+    ///            "type": "string",
+    ///            "enum": [
+    ///              "assertion_summary",
+    ///              "project_summary",
+    ///              "audit_report",
+    ///              "audit_report_coverage"
+    ///            ]
+    ///          },
+    ///          "metadata": {
+    ///            "type": "object",
+    ///            "additionalProperties": {}
+    ///          },
+    ///          "projectId": {
+    ///            "type": "string",
+    ///            "format": "uuid"
+    ///          },
+    ///          "projectName": {
+    ///            "type": "string"
+    ///          },
+    ///          "queuedAt": {
+    ///            "type": "string",
+    ///            "format": "date-time"
+    ///          },
+    ///          "releaseId": {
+    ///            "type": "string",
+    ///            "format": "uuid"
+    ///          },
+    ///          "releaseNumber": {
+    ///            "type": "integer",
+    ///            "exclusiveMinimum": 0.0
+    ///          },
+    ///          "reviewableRef": {
+    ///            "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///            "type": "string",
+    ///            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///          },
+    ///          "targetLabel": {
+    ///            "type": "string"
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    "nextCursor": {
+    ///      "description": "Opaque keyset-pagination token. base64(JSON.stringify({ queuedAt, reviewableRef })).",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ],
+    ///      "minLength": 1
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesResponse {
+        pub items: ::std::vec::Vec<GetAdminReviewablesResponseItemsItem>,
+        ///Opaque keyset-pagination token. base64(JSON.stringify({ queuedAt, reviewableRef })).
+        #[serde(rename = "nextCursor")]
+        pub next_cursor: ::std::option::Option<GetAdminReviewablesResponseNextCursor>,
+    }
+    impl ::std::convert::From<&GetAdminReviewablesResponse>
+    for GetAdminReviewablesResponse {
+        fn from(value: &GetAdminReviewablesResponse) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetAdminReviewablesResponseCode`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "forbidden",
+    ///    "not_found",
+    ///    "bad_cursor",
+    ///    "invalid_action",
+    ///    "regeneration_dispatch_failed",
+    ///    "internal_error"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetAdminReviewablesResponseCode {
+        #[serde(rename = "forbidden")]
+        Forbidden,
+        #[serde(rename = "not_found")]
+        NotFound,
+        #[serde(rename = "bad_cursor")]
+        BadCursor,
+        #[serde(rename = "invalid_action")]
+        InvalidAction,
+        #[serde(rename = "regeneration_dispatch_failed")]
+        RegenerationDispatchFailed,
+        #[serde(rename = "internal_error")]
+        InternalError,
+    }
+    impl ::std::convert::From<&Self> for GetAdminReviewablesResponseCode {
+        fn from(value: &GetAdminReviewablesResponseCode) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display for GetAdminReviewablesResponseCode {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Forbidden => f.write_str("forbidden"),
+                Self::NotFound => f.write_str("not_found"),
+                Self::BadCursor => f.write_str("bad_cursor"),
+                Self::InvalidAction => f.write_str("invalid_action"),
+                Self::RegenerationDispatchFailed => {
+                    f.write_str("regeneration_dispatch_failed")
+                }
+                Self::InternalError => f.write_str("internal_error"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for GetAdminReviewablesResponseCode {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "forbidden" => Ok(Self::Forbidden),
+                "not_found" => Ok(Self::NotFound),
+                "bad_cursor" => Ok(Self::BadCursor),
+                "invalid_action" => Ok(Self::InvalidAction),
+                "regeneration_dispatch_failed" => Ok(Self::RegenerationDispatchFailed),
+                "internal_error" => Ok(Self::InternalError),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetAdminReviewablesResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`GetAdminReviewablesResponseItemsItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "category",
+    ///    "metadata",
+    ///    "projectId",
+    ///    "projectName",
+    ///    "queuedAt",
+    ///    "reviewableRef",
+    ///    "targetLabel"
+    ///  ],
+    ///  "properties": {
+    ///    "category": {
+    ///      "description": "Discriminator for the 4 reviewable categories. Op-risk values are NOT reviewable in v1.",
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "assertion_summary",
+    ///        "project_summary",
+    ///        "audit_report",
+    ///        "audit_report_coverage"
+    ///      ]
+    ///    },
+    ///    "metadata": {
+    ///      "type": "object",
+    ///      "additionalProperties": {}
+    ///    },
+    ///    "projectId": {
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    },
+    ///    "projectName": {
+    ///      "type": "string"
+    ///    },
+    ///    "queuedAt": {
+    ///      "type": "string",
+    ///      "format": "date-time"
+    ///    },
+    ///    "releaseId": {
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    },
+    ///    "releaseNumber": {
+    ///      "type": "integer",
+    ///      "exclusiveMinimum": 0.0
+    ///    },
+    ///    "reviewableRef": {
+    ///      "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///    },
+    ///    "targetLabel": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesResponseItemsItem {
+        ///Discriminator for the 4 reviewable categories. Op-risk values are NOT reviewable in v1.
+        pub category: GetAdminReviewablesResponseItemsItemCategory,
+        pub metadata: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        #[serde(rename = "projectId")]
+        pub project_id: ::uuid::Uuid,
+        #[serde(rename = "projectName")]
+        pub project_name: ::std::string::String,
+        #[serde(rename = "queuedAt")]
+        pub queued_at: ::chrono::DateTime<::chrono::offset::Utc>,
+        #[serde(
+            rename = "releaseId",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub release_id: ::std::option::Option<::uuid::Uuid>,
+        #[serde(
+            rename = "releaseNumber",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub release_number: ::std::option::Option<::std::num::NonZeroU64>,
+        ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+        #[serde(rename = "reviewableRef")]
+        pub reviewable_ref: GetAdminReviewablesResponseItemsItemReviewableRef,
+        #[serde(rename = "targetLabel")]
+        pub target_label: ::std::string::String,
+    }
+    impl ::std::convert::From<&GetAdminReviewablesResponseItemsItem>
+    for GetAdminReviewablesResponseItemsItem {
+        fn from(value: &GetAdminReviewablesResponseItemsItem) -> Self {
+            value.clone()
+        }
+    }
+    ///Discriminator for the 4 reviewable categories. Op-risk values are NOT reviewable in v1.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Discriminator for the 4 reviewable categories. Op-risk values are NOT reviewable in v1.",
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "assertion_summary",
+    ///    "project_summary",
+    ///    "audit_report",
+    ///    "audit_report_coverage"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetAdminReviewablesResponseItemsItemCategory {
+        #[serde(rename = "assertion_summary")]
+        AssertionSummary,
+        #[serde(rename = "project_summary")]
+        ProjectSummary,
+        #[serde(rename = "audit_report")]
+        AuditReport,
+        #[serde(rename = "audit_report_coverage")]
+        AuditReportCoverage,
+    }
+    impl ::std::convert::From<&Self> for GetAdminReviewablesResponseItemsItemCategory {
+        fn from(value: &GetAdminReviewablesResponseItemsItemCategory) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display for GetAdminReviewablesResponseItemsItemCategory {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::AssertionSummary => f.write_str("assertion_summary"),
+                Self::ProjectSummary => f.write_str("project_summary"),
+                Self::AuditReport => f.write_str("audit_report"),
+                Self::AuditReportCoverage => f.write_str("audit_report_coverage"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for GetAdminReviewablesResponseItemsItemCategory {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "assertion_summary" => Ok(Self::AssertionSummary),
+                "project_summary" => Ok(Self::ProjectSummary),
+                "audit_report" => Ok(Self::AuditReport),
+                "audit_report_coverage" => Ok(Self::AuditReportCoverage),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetAdminReviewablesResponseItemsItemCategory {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesResponseItemsItemCategory {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesResponseItemsItemCategory {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesResponseItemsItemReviewableRef(::std::string::String);
+    impl ::std::ops::Deref for GetAdminReviewablesResponseItemsItemReviewableRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetAdminReviewablesResponseItemsItemReviewableRef>
+    for ::std::string::String {
+        fn from(value: GetAdminReviewablesResponseItemsItemReviewableRef) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&GetAdminReviewablesResponseItemsItemReviewableRef>
+    for GetAdminReviewablesResponseItemsItemReviewableRef {
+        fn from(value: &GetAdminReviewablesResponseItemsItemReviewableRef) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for GetAdminReviewablesResponseItemsItemReviewableRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesResponseItemsItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesResponseItemsItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesResponseItemsItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesResponseItemsItemReviewableRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///Opaque keyset-pagination token. base64(JSON.stringify({ queuedAt, reviewableRef })).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Opaque keyset-pagination token. base64(JSON.stringify({ queuedAt, reviewableRef })).",
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesResponseNextCursor(::std::string::String);
+    impl ::std::ops::Deref for GetAdminReviewablesResponseNextCursor {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetAdminReviewablesResponseNextCursor>
+    for ::std::string::String {
+        fn from(value: GetAdminReviewablesResponseNextCursor) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&GetAdminReviewablesResponseNextCursor>
+    for GetAdminReviewablesResponseNextCursor {
+        fn from(value: &GetAdminReviewablesResponseNextCursor) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for GetAdminReviewablesResponseNextCursor {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetAdminReviewablesResponseNextCursor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesResponseNextCursor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesResponseNextCursor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for GetAdminReviewablesResponseNextCursor {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "detail",
+    ///    "replacementChain",
+    ///    "reviewHistory",
+    ///    "reviewStatus",
+    ///    "reviewableRef"
+    ///  ],
+    ///  "properties": {
+    ///    "detail": {
+    ///      "oneOf": [
+    ///        {
+    ///          "type": "object",
+    ///          "required": [
+    ///            "assertionId",
+    ///            "assertionSource",
+    ///            "attachedContracts",
+    ///            "category",
+    ///            "generationMetadata",
+    ///            "release",
+    ///            "summary"
+    ///          ],
+    ///          "properties": {
+    ///            "assertionId": {
+    ///              "description": "Deterministic keccak256(bytecode, args) — 0x-prefixed 32 bytes",
+    ///              "type": "string",
+    ///              "pattern": "^0x[a-fA-F0-9]{64}$"
+    ///            },
+    ///            "assertionSource": {
+    ///              "description": "Re-fetched at render time from the DA artifact store; not snapshotted on the row.",
+    ///              "type": "object",
+    ///              "required": [
+    ///                "constructorAbiSignature",
+    ///                "constructorArgs",
+    ///                "soliditySource"
+    ///              ],
+    ///              "properties": {
+    ///                "constructorAbiSignature": {
+    ///                  "type": "string"
+    ///                },
+    ///                "constructorArgs": {
+    ///                  "description": "0x-prefixed hex string of even length",
+    ///                  "type": "string",
+    ///                  "pattern": "^0x([a-fA-F0-9]{2})*$"
+    ///                },
+    ///                "soliditySource": {
+    ///                  "type": "string"
+    ///                }
+    ///              }
+    ///            },
+    ///            "attachedContracts": {
+    ///              "type": "array",
+    ///              "items": {
+    ///                "type": "object",
+    ///                "required": [
+    ///                  "address",
+    ///                  "label",
+    ///                  "name",
+    ///                  "provider",
+    ///                  "reliability"
+    ///                ],
+    ///                "properties": {
+    ///                  "address": {
+    ///                    "description": "20-byte Ethereum address, normalized to lowercase",
+    ///                    "type": "string"
+    ///                  },
+    ///                  "label": {
+    ///                    "type": "string"
+    ///                  },
+    ///                  "name": {
+    ///                    "type": "string"
+    ///                  },
+    ///                  "provider": {
+    ///                    "description": "Provider that supplied the contract source",
+    ///                    "type": "string",
+    ///                    "enum": [
+    ///                      "sourcify",
+    ///                      "etherscan",
+    ///                      "dedaub"
+    ///                    ]
+    ///                  },
+    ///                  "reliability": {
+    ///                    "description": "Per-contract source reliability",
+    ///                    "type": "string",
+    ///                    "enum": [
+    ///                      "full",
+    ///                      "partial",
+    ///                      "decompiled"
+    ///                    ]
+    ///                  }
+    ///                }
+    ///              }
+    ///            },
+    ///            "category": {
+    ///              "type": "string",
+    ///              "enum": [
+    ///                "assertion_summary"
+    ///              ]
+    ///            },
+    ///            "generationMetadata": {
+    ///              "type": "object",
+    ///              "additionalProperties": {}
+    ///            },
+    ///            "release": {
+    ///              "type": "object",
+    ///              "required": [
+    ///                "chainId",
+    ///                "projectId",
+    ///                "projectName",
+    ///                "releaseId",
+    ///                "releaseNumber"
+    ///              ],
+    ///              "properties": {
+    ///                "chainId": {
+    ///                  "description": "Positive integer EVM chain ID",
+    ///                  "type": "number"
+    ///                },
+    ///                "projectId": {
+    ///                  "type": "string",
+    ///                  "format": "uuid"
+    ///                },
+    ///                "projectName": {
+    ///                  "type": "string"
+    ///                },
+    ///                "releaseId": {
+    ///                  "type": "string",
+    ///                  "format": "uuid"
+    ///                },
+    ///                "releaseNumber": {
+    ///                  "type": "integer",
+    ///                  "exclusiveMinimum": 0.0
+    ///                }
+    ///              }
+    ///            },
+    ///            "summary": {
+    ///              "type": "object",
+    ///              "required": [
+    ///                "allocator_explanation",
+    ///                "protected_action",
+    ///                "unsafe_condition"
+    ///              ],
+    ///              "properties": {
+    ///                "allocator_explanation": {
+    ///                  "type": "string"
+    ///                },
+    ///                "protected_action": {
+    ///                  "type": "string"
+    ///                },
+    ///                "unsafe_condition": {
+    ///                  "type": "string"
+    ///                }
+    ///              }
+    ///            }
+    ///          }
+    ///        },
+    ///        {
+    ///          "type": "object",
+    ///          "required": [
+    ///            "category",
+    ///            "generationMetadata",
+    ///            "inputAssertionSummaries",
+    ///            "release",
+    ///            "summary"
+    ///          ],
+    ///          "properties": {
+    ///            "category": {
+    ///              "type": "string",
+    ///              "enum": [
+    ///                "project_summary"
+    ///              ]
+    ///            },
+    ///            "generationMetadata": {
+    ///              "type": "object",
+    ///              "additionalProperties": {}
+    ///            },
+    ///            "inputAssertionSummaries": {
+    ///              "type": "array",
+    ///              "items": {
+    ///                "type": "object",
+    ///                "required": [
+    ///                  "allocator_explanation",
+    ///                  "assertionId",
+    ///                  "attachedContracts",
+    ///                  "contractName",
+    ///                  "protected_action",
+    ///                  "unsafe_condition"
+    ///                ],
+    ///                "properties": {
+    ///                  "allocator_explanation": {
+    ///                    "type": "string"
+    ///                  },
+    ///                  "assertionId": {
+    ///                    "description": "Deterministic keccak256(bytecode, args) — 0x-prefixed 32 bytes",
+    ///                    "type": "string",
+    ///                    "pattern": "^0x[a-fA-F0-9]{64}$"
+    ///                  },
+    ///                  "attachedContracts": {
+    ///                    "type": "array",
+    ///                    "items": {
+    ///                      "type": "object",
+    ///                      "required": [
+    ///                        "address",
+    ///                        "name"
+    ///                      ],
+    ///                      "properties": {
+    ///                        "address": {
+    ///                          "description": "20-byte Ethereum address, normalized to lowercase",
+    ///                          "type": "string"
+    ///                        },
+    ///                        "name": {
+    ///                          "type": "string"
+    ///                        }
+    ///                      }
+    ///                    }
+    ///                  },
+    ///                  "contractName": {
+    ///                    "type": "string"
+    ///                  },
+    ///                  "protected_action": {
+    ///                    "type": "string"
+    ///                  },
+    ///                  "unsafe_condition": {
+    ///                    "type": "string"
+    ///                  }
+    ///                }
+    ///              }
+    ///            },
+    ///            "release": {
+    ///              "type": "object",
+    ///              "required": [
+    ///                "chainNames",
+    ///                "projectDescription",
+    ///                "projectId",
+    ///                "projectName",
+    ///                "releaseId",
+    ///                "releaseNumber"
+    ///              ],
+    ///              "properties": {
+    ///                "chainNames": {
+    ///                  "type": "array",
+    ///                  "items": {
+    ///                    "type": "string"
+    ///                  }
+    ///                },
+    ///                "projectDescription": {
+    ///                  "type": [
+    ///                    "string",
+    ///                    "null"
+    ///                  ]
+    ///                },
+    ///                "projectId": {
+    ///                  "type": "string",
+    ///                  "format": "uuid"
+    ///                },
+    ///                "projectName": {
+    ///                  "type": "string"
+    ///                },
+    ///                "releaseId": {
+    ///                  "type": "string",
+    ///                  "format": "uuid"
+    ///                },
+    ///                "releaseNumber": {
+    ///                  "type": "integer",
+    ///                  "exclusiveMinimum": 0.0
+    ///                }
+    ///              }
+    ///            },
+    ///            "summary": {
+    ///              "type": "object",
+    ///              "required": [
+    ///                "plain_english_summary",
+    ///                "protected_actions"
+    ///              ],
+    ///              "properties": {
+    ///                "plain_english_summary": {
+    ///                  "type": "string"
+    ///                },
+    ///                "protected_actions": {
+    ///                  "type": "array",
+    ///                  "items": {
+    ///                    "type": "string"
+    ///                  },
+    ///                  "maxItems": 10,
+    ///                  "minItems": 3
+    ///                }
+    ///              }
+    ///            }
+    ///          }
+    ///        },
+    ///        {
+    ///          "type": "object",
+    ///          "required": [
+    ///            "auditReportRef",
+    ///            "category",
+    ///            "claimedCoverage",
+    ///            "pdfDownloadUrl",
+    ///            "pdfDownloadUrlExpiresAt",
+    ///            "project",
+    ///            "reportMetadata"
+    ///          ],
+    ///          "properties": {
+    ///            "auditReportRef": {
+    ///              "description": "Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.",
+    ///              "type": "string",
+    ///              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///            },
+    ///            "category": {
+    ///              "type": "string",
+    ///              "enum": [
+    ///                "audit_report"
+    ///              ]
+    ///            },
+    ///            "claimedCoverage": {
+    ///              "type": "array",
+    ///              "items": {
+    ///                "type": "object",
+    ///                "required": [
+    ///                  "chainId",
+    ///                  "contractAddress",
+    ///                  "coverageStatus"
+    ///                ],
+    ///                "properties": {
+    ///                  "chainId": {
+    ///                    "description": "Positive integer EVM chain ID",
+    ///                    "type": "number"
+    ///                  },
+    ///                  "contractAddress": {
+    ///                    "description": "20-byte Ethereum address, normalized to lowercase",
+    ///                    "type": "string"
+    ///                  },
+    ///                  "coverageStatus": {
+    ///                    "type": "string",
+    ///                    "enum": [
+    ///                      "covered",
+    ///                      "partial",
+    ///                      "out_of_scope"
+    ///                    ]
+    ///                  }
+    ///                }
+    ///              }
+    ///            },
+    ///            "pdfDownloadUrl": {
+    ///              "description": "Short-TTL signed URL minted at request time",
+    ///              "type": "string",
+    ///              "format": "uri"
+    ///            },
+    ///            "pdfDownloadUrlExpiresAt": {
+    ///              "type": "string",
+    ///              "format": "date-time"
+    ///            },
+    ///            "project": {
+    ///              "type": "object",
+    ///              "required": [
+    ///                "projectId",
+    ///                "projectName"
+    ///              ],
+    ///              "properties": {
+    ///                "projectId": {
+    ///                  "type": "string",
+    ///                  "format": "uuid"
+    ///                },
+    ///                "projectName": {
+    ///                  "type": "string"
+    ///                }
+    ///              }
+    ///            },
+    ///            "reportMetadata": {
+    ///              "type": "object",
+    ///              "required": [
+    ///                "auditPeriodLabel",
+    ///                "auditor"
+    ///              ],
+    ///              "properties": {
+    ///                "auditPeriodLabel": {
+    ///                  "type": "string",
+    ///                  "minLength": 1
+    ///                },
+    ///                "auditor": {
+    ///                  "type": "string",
+    ///                  "minLength": 1
+    ///                },
+    ///                "contact": {
+    ///                  "type": "string",
+    ///                  "minLength": 1
+    ///                },
+    ///                "githubRepo": {
+    ///                  "type": "string",
+    ///                  "format": "uri"
+    ///                },
+    ///                "links": {
+    ///                  "type": "array",
+    ///                  "items": {
+    ///                    "type": "object",
+    ///                    "required": [
+    ///                      "label",
+    ///                      "url"
+    ///                    ],
+    ///                    "properties": {
+    ///                      "label": {
+    ///                        "type": "string",
+    ///                        "minLength": 1
+    ///                      },
+    ///                      "url": {
+    ///                        "type": "string",
+    ///                        "format": "uri"
+    ///                      }
+    ///                    }
+    ///                  }
+    ///                },
+    ///                "publicReportUrl": {
+    ///                  "type": "string",
+    ///                  "format": "uri"
+    ///                },
+    ///                "scopeDescription": {
+    ///                  "type": "string",
+    ///                  "minLength": 1
+    ///                }
+    ///              }
+    ///            }
+    ///          }
+    ///        },
+    ///        {
+    ///          "type": "object",
+    ///          "required": [
+    ///            "auditedCommitSha",
+    ///            "category",
+    ///            "chainId",
+    ///            "commitEvidence",
+    ///            "contractAddress",
+    ///            "coverageStatus",
+    ///            "deployedCommitSha",
+    ///            "evidenceSnapshot",
+    ///            "parentAuditReportRef",
+    ///            "parentAuditor",
+    ///            "postAuditCommits"
+    ///          ],
+    ///          "properties": {
+    ///            "auditedCommitSha": {
+    ///              "description": "40-char lowercase hex git SHA-1",
+    ///              "type": [
+    ///                "string",
+    ///                "null"
+    ///              ],
+    ///              "pattern": "^[0-9a-f]{40}$"
+    ///            },
+    ///            "category": {
+    ///              "type": "string",
+    ///              "enum": [
+    ///                "audit_report_coverage"
+    ///              ]
+    ///            },
+    ///            "chainId": {
+    ///              "description": "Positive integer EVM chain ID",
+    ///              "type": "number"
+    ///            },
+    ///            "commitEvidence": {
+    ///              "type": "object",
+    ///              "properties": {
+    ///                "auditedCommitUrl": {
+    ///                  "type": "string",
+    ///                  "format": "uri"
+    ///                },
+    ///                "compareUrl": {
+    ///                  "type": "string",
+    ///                  "format": "uri"
+    ///                },
+    ///                "deployedCommitUrl": {
+    ///                  "type": "string",
+    ///                  "format": "uri"
+    ///                },
+    ///                "repositoryUrl": {
+    ///                  "type": "string",
+    ///                  "format": "uri"
+    ///                },
+    ///                "sourceVerificationUrl": {
+    ///                  "type": "string",
+    ///                  "format": "uri"
+    ///                },
+    ///                "submitterNotes": {
+    ///                  "type": "string"
+    ///                }
+    ///              }
+    ///            },
+    ///            "contractAddress": {
+    ///              "description": "20-byte Ethereum address, normalized to lowercase",
+    ///              "type": "string"
+    ///            },
+    ///            "coverageNotes": {
+    ///              "type": "string"
+    ///            },
+    ///            "coverageStatus": {
+    ///              "type": "string",
+    ///              "enum": [
+    ///                "covered",
+    ///                "partial",
+    ///                "out_of_scope"
+    ///              ]
+    ///            },
+    ///            "deployedCommitSha": {
+    ///              "description": "40-char lowercase hex git SHA-1",
+    ///              "type": [
+    ///                "string",
+    ///                "null"
+    ///              ],
+    ///              "pattern": "^[0-9a-f]{40}$"
+    ///            },
+    ///            "evidenceSnapshot": {
+    ///              "description": "Active release + deployed-contract context captured at submission time",
+    ///              "type": "object",
+    ///              "additionalProperties": {}
+    ///            },
+    ///            "parentAuditReportRef": {
+    ///              "description": "Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.",
+    ///              "type": "string",
+    ///              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///            },
+    ///            "parentAuditor": {
+    ///              "type": "string",
+    ///              "minLength": 1
+    ///            },
+    ///            "postAuditCommits": {
+    ///              "type": "array",
+    ///              "items": {
+    ///                "type": "object",
+    ///                "required": [
+    ///                  "label",
+    ///                  "sha"
+    ///                ],
+    ///                "properties": {
+    ///                  "label": {
+    ///                    "type": "string",
+    ///                    "minLength": 1
+    ///                  },
+    ///                  "notes": {
+    ///                    "type": "string"
+    ///                  },
+    ///                  "sha": {
+    ///                    "description": "40-char lowercase hex git SHA-1",
+    ///                    "type": "string",
+    ///                    "pattern": "^[0-9a-f]{40}$"
+    ///                  },
+    ///                  "url": {
+    ///                    "type": "string",
+    ///                    "format": "uri"
+    ///                  }
+    ///                }
+    ///              }
+    ///            },
+    ///            "sourceHash": {
+    ///              "description": "Lowercase hex sha256 digest",
+    ///              "type": "string"
+    ///            }
+    ///          }
+    ///        }
+    ///      ]
+    ///    },
+    ///    "replacementChain": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "reviewStatus",
+    ///          "reviewableRef",
+    ///          "reviewedAt"
+    ///        ],
+    ///        "properties": {
+    ///          "reviewStatus": {
+    ///            "type": "string",
+    ///            "enum": [
+    ///              "pending",
+    ///              "approved",
+    ///              "needs_changes",
+    ///              "rejected"
+    ///            ]
+    ///          },
+    ///          "reviewableRef": {
+    ///            "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///            "type": "string",
+    ///            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///          },
+    ///          "reviewedAt": {
+    ///            "type": "string",
+    ///            "format": "date-time"
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    "reviewHistory": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "action",
+    ///          "resultingStatus",
+    ///          "reviewedAt",
+    ///          "reviewedBy"
+    ///        ],
+    ///        "properties": {
+    ///          "action": {
+    ///            "type": "string",
+    ///            "enum": [
+    ///              "approve",
+    ///              "request_changes",
+    ///              "reject"
+    ///            ]
+    ///          },
+    ///          "note": {
+    ///            "type": "string"
+    ///          },
+    ///          "resultingStatus": {
+    ///            "type": "string",
+    ///            "enum": [
+    ///              "pending",
+    ///              "approved",
+    ///              "needs_changes",
+    ///              "rejected"
+    ///            ]
+    ///          },
+    ///          "reviewedAt": {
+    ///            "type": "string",
+    ///            "format": "date-time"
+    ///          },
+    ///          "reviewedBy": {
+    ///            "description": "User ID (UUID) of the reviewer who took the action.",
+    ///            "type": "string",
+    ///            "format": "uuid"
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    "reviewStatus": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "pending",
+    ///        "approved",
+    ///        "needs_changes",
+    ///        "rejected"
+    ///      ]
+    ///    },
+    ///    "reviewableRef": {
+    ///      "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponse {
+        pub detail: GetAdminReviewablesReviewableRefResponseDetail,
+        #[serde(rename = "replacementChain")]
+        pub replacement_chain: ::std::vec::Vec<
+            GetAdminReviewablesReviewableRefResponseReplacementChainItem,
+        >,
+        #[serde(rename = "reviewHistory")]
+        pub review_history: ::std::vec::Vec<
+            GetAdminReviewablesReviewableRefResponseReviewHistoryItem,
+        >,
+        #[serde(rename = "reviewStatus")]
+        pub review_status: GetAdminReviewablesReviewableRefResponseReviewStatus,
+        ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+        #[serde(rename = "reviewableRef")]
+        pub reviewable_ref: GetAdminReviewablesReviewableRefResponseReviewableRef,
+    }
+    impl ::std::convert::From<&GetAdminReviewablesReviewableRefResponse>
+    for GetAdminReviewablesReviewableRefResponse {
+        fn from(value: &GetAdminReviewablesReviewableRefResponse) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseCode`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "forbidden",
+    ///    "not_found",
+    ///    "bad_cursor",
+    ///    "invalid_action",
+    ///    "regeneration_dispatch_failed",
+    ///    "internal_error"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetAdminReviewablesReviewableRefResponseCode {
+        #[serde(rename = "forbidden")]
+        Forbidden,
+        #[serde(rename = "not_found")]
+        NotFound,
+        #[serde(rename = "bad_cursor")]
+        BadCursor,
+        #[serde(rename = "invalid_action")]
+        InvalidAction,
+        #[serde(rename = "regeneration_dispatch_failed")]
+        RegenerationDispatchFailed,
+        #[serde(rename = "internal_error")]
+        InternalError,
+    }
+    impl ::std::convert::From<&Self> for GetAdminReviewablesReviewableRefResponseCode {
+        fn from(value: &GetAdminReviewablesReviewableRefResponseCode) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display for GetAdminReviewablesReviewableRefResponseCode {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Forbidden => f.write_str("forbidden"),
+                Self::NotFound => f.write_str("not_found"),
+                Self::BadCursor => f.write_str("bad_cursor"),
+                Self::InvalidAction => f.write_str("invalid_action"),
+                Self::RegenerationDispatchFailed => {
+                    f.write_str("regeneration_dispatch_failed")
+                }
+                Self::InternalError => f.write_str("internal_error"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for GetAdminReviewablesReviewableRefResponseCode {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "forbidden" => Ok(Self::Forbidden),
+                "not_found" => Ok(Self::NotFound),
+                "bad_cursor" => Ok(Self::BadCursor),
+                "invalid_action" => Ok(Self::InvalidAction),
+                "regeneration_dispatch_failed" => Ok(Self::RegenerationDispatchFailed),
+                "internal_error" => Ok(Self::InternalError),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetAdminReviewablesReviewableRefResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetail`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "oneOf": [
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "assertionId",
+    ///        "assertionSource",
+    ///        "attachedContracts",
+    ///        "category",
+    ///        "generationMetadata",
+    ///        "release",
+    ///        "summary"
+    ///      ],
+    ///      "properties": {
+    ///        "assertionId": {
+    ///          "description": "Deterministic keccak256(bytecode, args) — 0x-prefixed 32 bytes",
+    ///          "type": "string",
+    ///          "pattern": "^0x[a-fA-F0-9]{64}$"
+    ///        },
+    ///        "assertionSource": {
+    ///          "description": "Re-fetched at render time from the DA artifact store; not snapshotted on the row.",
+    ///          "type": "object",
+    ///          "required": [
+    ///            "constructorAbiSignature",
+    ///            "constructorArgs",
+    ///            "soliditySource"
+    ///          ],
+    ///          "properties": {
+    ///            "constructorAbiSignature": {
+    ///              "type": "string"
+    ///            },
+    ///            "constructorArgs": {
+    ///              "description": "0x-prefixed hex string of even length",
+    ///              "type": "string",
+    ///              "pattern": "^0x([a-fA-F0-9]{2})*$"
+    ///            },
+    ///            "soliditySource": {
+    ///              "type": "string"
+    ///            }
+    ///          }
+    ///        },
+    ///        "attachedContracts": {
+    ///          "type": "array",
+    ///          "items": {
+    ///            "type": "object",
+    ///            "required": [
+    ///              "address",
+    ///              "label",
+    ///              "name",
+    ///              "provider",
+    ///              "reliability"
+    ///            ],
+    ///            "properties": {
+    ///              "address": {
+    ///                "description": "20-byte Ethereum address, normalized to lowercase",
+    ///                "type": "string"
+    ///              },
+    ///              "label": {
+    ///                "type": "string"
+    ///              },
+    ///              "name": {
+    ///                "type": "string"
+    ///              },
+    ///              "provider": {
+    ///                "description": "Provider that supplied the contract source",
+    ///                "type": "string",
+    ///                "enum": [
+    ///                  "sourcify",
+    ///                  "etherscan",
+    ///                  "dedaub"
+    ///                ]
+    ///              },
+    ///              "reliability": {
+    ///                "description": "Per-contract source reliability",
+    ///                "type": "string",
+    ///                "enum": [
+    ///                  "full",
+    ///                  "partial",
+    ///                  "decompiled"
+    ///                ]
+    ///              }
+    ///            }
+    ///          }
+    ///        },
+    ///        "category": {
+    ///          "type": "string",
+    ///          "enum": [
+    ///            "assertion_summary"
+    ///          ]
+    ///        },
+    ///        "generationMetadata": {
+    ///          "type": "object",
+    ///          "additionalProperties": {}
+    ///        },
+    ///        "release": {
+    ///          "type": "object",
+    ///          "required": [
+    ///            "chainId",
+    ///            "projectId",
+    ///            "projectName",
+    ///            "releaseId",
+    ///            "releaseNumber"
+    ///          ],
+    ///          "properties": {
+    ///            "chainId": {
+    ///              "description": "Positive integer EVM chain ID",
+    ///              "type": "number"
+    ///            },
+    ///            "projectId": {
+    ///              "type": "string",
+    ///              "format": "uuid"
+    ///            },
+    ///            "projectName": {
+    ///              "type": "string"
+    ///            },
+    ///            "releaseId": {
+    ///              "type": "string",
+    ///              "format": "uuid"
+    ///            },
+    ///            "releaseNumber": {
+    ///              "type": "integer",
+    ///              "exclusiveMinimum": 0.0
+    ///            }
+    ///          }
+    ///        },
+    ///        "summary": {
+    ///          "type": "object",
+    ///          "required": [
+    ///            "allocator_explanation",
+    ///            "protected_action",
+    ///            "unsafe_condition"
+    ///          ],
+    ///          "properties": {
+    ///            "allocator_explanation": {
+    ///              "type": "string"
+    ///            },
+    ///            "protected_action": {
+    ///              "type": "string"
+    ///            },
+    ///            "unsafe_condition": {
+    ///              "type": "string"
+    ///            }
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "category",
+    ///        "generationMetadata",
+    ///        "inputAssertionSummaries",
+    ///        "release",
+    ///        "summary"
+    ///      ],
+    ///      "properties": {
+    ///        "category": {
+    ///          "type": "string",
+    ///          "enum": [
+    ///            "project_summary"
+    ///          ]
+    ///        },
+    ///        "generationMetadata": {
+    ///          "type": "object",
+    ///          "additionalProperties": {}
+    ///        },
+    ///        "inputAssertionSummaries": {
+    ///          "type": "array",
+    ///          "items": {
+    ///            "type": "object",
+    ///            "required": [
+    ///              "allocator_explanation",
+    ///              "assertionId",
+    ///              "attachedContracts",
+    ///              "contractName",
+    ///              "protected_action",
+    ///              "unsafe_condition"
+    ///            ],
+    ///            "properties": {
+    ///              "allocator_explanation": {
+    ///                "type": "string"
+    ///              },
+    ///              "assertionId": {
+    ///                "description": "Deterministic keccak256(bytecode, args) — 0x-prefixed 32 bytes",
+    ///                "type": "string",
+    ///                "pattern": "^0x[a-fA-F0-9]{64}$"
+    ///              },
+    ///              "attachedContracts": {
+    ///                "type": "array",
+    ///                "items": {
+    ///                  "type": "object",
+    ///                  "required": [
+    ///                    "address",
+    ///                    "name"
+    ///                  ],
+    ///                  "properties": {
+    ///                    "address": {
+    ///                      "description": "20-byte Ethereum address, normalized to lowercase",
+    ///                      "type": "string"
+    ///                    },
+    ///                    "name": {
+    ///                      "type": "string"
+    ///                    }
+    ///                  }
+    ///                }
+    ///              },
+    ///              "contractName": {
+    ///                "type": "string"
+    ///              },
+    ///              "protected_action": {
+    ///                "type": "string"
+    ///              },
+    ///              "unsafe_condition": {
+    ///                "type": "string"
+    ///              }
+    ///            }
+    ///          }
+    ///        },
+    ///        "release": {
+    ///          "type": "object",
+    ///          "required": [
+    ///            "chainNames",
+    ///            "projectDescription",
+    ///            "projectId",
+    ///            "projectName",
+    ///            "releaseId",
+    ///            "releaseNumber"
+    ///          ],
+    ///          "properties": {
+    ///            "chainNames": {
+    ///              "type": "array",
+    ///              "items": {
+    ///                "type": "string"
+    ///              }
+    ///            },
+    ///            "projectDescription": {
+    ///              "type": [
+    ///                "string",
+    ///                "null"
+    ///              ]
+    ///            },
+    ///            "projectId": {
+    ///              "type": "string",
+    ///              "format": "uuid"
+    ///            },
+    ///            "projectName": {
+    ///              "type": "string"
+    ///            },
+    ///            "releaseId": {
+    ///              "type": "string",
+    ///              "format": "uuid"
+    ///            },
+    ///            "releaseNumber": {
+    ///              "type": "integer",
+    ///              "exclusiveMinimum": 0.0
+    ///            }
+    ///          }
+    ///        },
+    ///        "summary": {
+    ///          "type": "object",
+    ///          "required": [
+    ///            "plain_english_summary",
+    ///            "protected_actions"
+    ///          ],
+    ///          "properties": {
+    ///            "plain_english_summary": {
+    ///              "type": "string"
+    ///            },
+    ///            "protected_actions": {
+    ///              "type": "array",
+    ///              "items": {
+    ///                "type": "string"
+    ///              },
+    ///              "maxItems": 10,
+    ///              "minItems": 3
+    ///            }
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "auditReportRef",
+    ///        "category",
+    ///        "claimedCoverage",
+    ///        "pdfDownloadUrl",
+    ///        "pdfDownloadUrlExpiresAt",
+    ///        "project",
+    ///        "reportMetadata"
+    ///      ],
+    ///      "properties": {
+    ///        "auditReportRef": {
+    ///          "description": "Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.",
+    ///          "type": "string",
+    ///          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///        },
+    ///        "category": {
+    ///          "type": "string",
+    ///          "enum": [
+    ///            "audit_report"
+    ///          ]
+    ///        },
+    ///        "claimedCoverage": {
+    ///          "type": "array",
+    ///          "items": {
+    ///            "type": "object",
+    ///            "required": [
+    ///              "chainId",
+    ///              "contractAddress",
+    ///              "coverageStatus"
+    ///            ],
+    ///            "properties": {
+    ///              "chainId": {
+    ///                "description": "Positive integer EVM chain ID",
+    ///                "type": "number"
+    ///              },
+    ///              "contractAddress": {
+    ///                "description": "20-byte Ethereum address, normalized to lowercase",
+    ///                "type": "string"
+    ///              },
+    ///              "coverageStatus": {
+    ///                "type": "string",
+    ///                "enum": [
+    ///                  "covered",
+    ///                  "partial",
+    ///                  "out_of_scope"
+    ///                ]
+    ///              }
+    ///            }
+    ///          }
+    ///        },
+    ///        "pdfDownloadUrl": {
+    ///          "description": "Short-TTL signed URL minted at request time",
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "pdfDownloadUrlExpiresAt": {
+    ///          "type": "string",
+    ///          "format": "date-time"
+    ///        },
+    ///        "project": {
+    ///          "type": "object",
+    ///          "required": [
+    ///            "projectId",
+    ///            "projectName"
+    ///          ],
+    ///          "properties": {
+    ///            "projectId": {
+    ///              "type": "string",
+    ///              "format": "uuid"
+    ///            },
+    ///            "projectName": {
+    ///              "type": "string"
+    ///            }
+    ///          }
+    ///        },
+    ///        "reportMetadata": {
+    ///          "type": "object",
+    ///          "required": [
+    ///            "auditPeriodLabel",
+    ///            "auditor"
+    ///          ],
+    ///          "properties": {
+    ///            "auditPeriodLabel": {
+    ///              "type": "string",
+    ///              "minLength": 1
+    ///            },
+    ///            "auditor": {
+    ///              "type": "string",
+    ///              "minLength": 1
+    ///            },
+    ///            "contact": {
+    ///              "type": "string",
+    ///              "minLength": 1
+    ///            },
+    ///            "githubRepo": {
+    ///              "type": "string",
+    ///              "format": "uri"
+    ///            },
+    ///            "links": {
+    ///              "type": "array",
+    ///              "items": {
+    ///                "type": "object",
+    ///                "required": [
+    ///                  "label",
+    ///                  "url"
+    ///                ],
+    ///                "properties": {
+    ///                  "label": {
+    ///                    "type": "string",
+    ///                    "minLength": 1
+    ///                  },
+    ///                  "url": {
+    ///                    "type": "string",
+    ///                    "format": "uri"
+    ///                  }
+    ///                }
+    ///              }
+    ///            },
+    ///            "publicReportUrl": {
+    ///              "type": "string",
+    ///              "format": "uri"
+    ///            },
+    ///            "scopeDescription": {
+    ///              "type": "string",
+    ///              "minLength": 1
+    ///            }
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "auditedCommitSha",
+    ///        "category",
+    ///        "chainId",
+    ///        "commitEvidence",
+    ///        "contractAddress",
+    ///        "coverageStatus",
+    ///        "deployedCommitSha",
+    ///        "evidenceSnapshot",
+    ///        "parentAuditReportRef",
+    ///        "parentAuditor",
+    ///        "postAuditCommits"
+    ///      ],
+    ///      "properties": {
+    ///        "auditedCommitSha": {
+    ///          "description": "40-char lowercase hex git SHA-1",
+    ///          "type": [
+    ///            "string",
+    ///            "null"
+    ///          ],
+    ///          "pattern": "^[0-9a-f]{40}$"
+    ///        },
+    ///        "category": {
+    ///          "type": "string",
+    ///          "enum": [
+    ///            "audit_report_coverage"
+    ///          ]
+    ///        },
+    ///        "chainId": {
+    ///          "description": "Positive integer EVM chain ID",
+    ///          "type": "number"
+    ///        },
+    ///        "commitEvidence": {
+    ///          "type": "object",
+    ///          "properties": {
+    ///            "auditedCommitUrl": {
+    ///              "type": "string",
+    ///              "format": "uri"
+    ///            },
+    ///            "compareUrl": {
+    ///              "type": "string",
+    ///              "format": "uri"
+    ///            },
+    ///            "deployedCommitUrl": {
+    ///              "type": "string",
+    ///              "format": "uri"
+    ///            },
+    ///            "repositoryUrl": {
+    ///              "type": "string",
+    ///              "format": "uri"
+    ///            },
+    ///            "sourceVerificationUrl": {
+    ///              "type": "string",
+    ///              "format": "uri"
+    ///            },
+    ///            "submitterNotes": {
+    ///              "type": "string"
+    ///            }
+    ///          }
+    ///        },
+    ///        "contractAddress": {
+    ///          "description": "20-byte Ethereum address, normalized to lowercase",
+    ///          "type": "string"
+    ///        },
+    ///        "coverageNotes": {
+    ///          "type": "string"
+    ///        },
+    ///        "coverageStatus": {
+    ///          "type": "string",
+    ///          "enum": [
+    ///            "covered",
+    ///            "partial",
+    ///            "out_of_scope"
+    ///          ]
+    ///        },
+    ///        "deployedCommitSha": {
+    ///          "description": "40-char lowercase hex git SHA-1",
+    ///          "type": [
+    ///            "string",
+    ///            "null"
+    ///          ],
+    ///          "pattern": "^[0-9a-f]{40}$"
+    ///        },
+    ///        "evidenceSnapshot": {
+    ///          "description": "Active release + deployed-contract context captured at submission time",
+    ///          "type": "object",
+    ///          "additionalProperties": {}
+    ///        },
+    ///        "parentAuditReportRef": {
+    ///          "description": "Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.",
+    ///          "type": "string",
+    ///          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///        },
+    ///        "parentAuditor": {
+    ///          "type": "string",
+    ///          "minLength": 1
+    ///        },
+    ///        "postAuditCommits": {
+    ///          "type": "array",
+    ///          "items": {
+    ///            "type": "object",
+    ///            "required": [
+    ///              "label",
+    ///              "sha"
+    ///            ],
+    ///            "properties": {
+    ///              "label": {
+    ///                "type": "string",
+    ///                "minLength": 1
+    ///              },
+    ///              "notes": {
+    ///                "type": "string"
+    ///              },
+    ///              "sha": {
+    ///                "description": "40-char lowercase hex git SHA-1",
+    ///                "type": "string",
+    ///                "pattern": "^[0-9a-f]{40}$"
+    ///              },
+    ///              "url": {
+    ///                "type": "string",
+    ///                "format": "uri"
+    ///              }
+    ///            }
+    ///          }
+    ///        },
+    ///        "sourceHash": {
+    ///          "description": "Lowercase hex sha256 digest",
+    ///          "type": "string"
+    ///        }
+    ///      }
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    #[serde(tag = "category")]
+    pub enum GetAdminReviewablesReviewableRefResponseDetail {
+        #[serde(rename = "assertion_summary")]
+        AssertionSummary {
+            ///Deterministic keccak256(bytecode, args) — 0x-prefixed 32 bytes
+            #[serde(rename = "assertionId")]
+            assertion_id: GetAdminReviewablesReviewableRefResponseDetailAssertionId,
+            #[serde(rename = "assertionSource")]
+            assertion_source: GetAdminReviewablesReviewableRefResponseDetailAssertionSource,
+            #[serde(rename = "attachedContracts")]
+            attached_contracts: ::std::vec::Vec<
+                GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItem,
+            >,
+            #[serde(rename = "generationMetadata")]
+            generation_metadata: ::serde_json::Map<
+                ::std::string::String,
+                ::serde_json::Value,
+            >,
+            release: GetAdminReviewablesReviewableRefResponseDetailRelease,
+            summary: GetAdminReviewablesReviewableRefResponseDetailSummary,
+        },
+        #[serde(rename = "project_summary")]
+        ProjectSummary {
+            #[serde(rename = "generationMetadata")]
+            generation_metadata: ::serde_json::Map<
+                ::std::string::String,
+                ::serde_json::Value,
+            >,
+            #[serde(rename = "inputAssertionSummaries")]
+            input_assertion_summaries: ::std::vec::Vec<
+                GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItem,
+            >,
+            release: GetAdminReviewablesReviewableRefResponseDetailRelease,
+            summary: GetAdminReviewablesReviewableRefResponseDetailSummary,
+        },
+        #[serde(rename = "audit_report")]
+        AuditReport {
+            ///Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.
+            #[serde(rename = "auditReportRef")]
+            audit_report_ref: GetAdminReviewablesReviewableRefResponseDetailAuditReportRef,
+            #[serde(rename = "claimedCoverage")]
+            claimed_coverage: ::std::vec::Vec<
+                GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItem,
+            >,
+            ///Short-TTL signed URL minted at request time
+            #[serde(rename = "pdfDownloadUrl")]
+            pdf_download_url: ::std::string::String,
+            #[serde(rename = "pdfDownloadUrlExpiresAt")]
+            pdf_download_url_expires_at: ::chrono::DateTime<::chrono::offset::Utc>,
+            project: GetAdminReviewablesReviewableRefResponseDetailProject,
+            #[serde(rename = "reportMetadata")]
+            report_metadata: GetAdminReviewablesReviewableRefResponseDetailReportMetadata,
+        },
+        #[serde(rename = "audit_report_coverage")]
+        AuditReportCoverage {
+            ///40-char lowercase hex git SHA-1
+            #[serde(rename = "auditedCommitSha")]
+            audited_commit_sha: ::std::option::Option<
+                GetAdminReviewablesReviewableRefResponseDetailAuditedCommitSha,
+            >,
+            #[serde(rename = "chainId")]
+            chain_id: f64,
+            #[serde(rename = "commitEvidence")]
+            commit_evidence: GetAdminReviewablesReviewableRefResponseDetailCommitEvidence,
+            ///20-byte Ethereum address, normalized to lowercase
+            #[serde(rename = "contractAddress")]
+            contract_address: ::std::string::String,
+            #[serde(
+                rename = "coverageNotes",
+                default,
+                skip_serializing_if = "::std::option::Option::is_none"
+            )]
+            coverage_notes: ::std::option::Option<::std::string::String>,
+            #[serde(rename = "coverageStatus")]
+            coverage_status: GetAdminReviewablesReviewableRefResponseDetailCoverageStatus,
+            ///40-char lowercase hex git SHA-1
+            #[serde(rename = "deployedCommitSha")]
+            deployed_commit_sha: ::std::option::Option<
+                GetAdminReviewablesReviewableRefResponseDetailDeployedCommitSha,
+            >,
+            ///Active release + deployed-contract context captured at submission time
+            #[serde(rename = "evidenceSnapshot")]
+            evidence_snapshot: ::serde_json::Map<
+                ::std::string::String,
+                ::serde_json::Value,
+            >,
+            ///Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.
+            #[serde(rename = "parentAuditReportRef")]
+            parent_audit_report_ref: GetAdminReviewablesReviewableRefResponseDetailParentAuditReportRef,
+            #[serde(rename = "parentAuditor")]
+            parent_auditor: GetAdminReviewablesReviewableRefResponseDetailParentAuditor,
+            #[serde(rename = "postAuditCommits")]
+            post_audit_commits: ::std::vec::Vec<
+                GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItem,
+            >,
+            ///Lowercase hex sha256 digest
+            #[serde(
+                rename = "sourceHash",
+                default,
+                skip_serializing_if = "::std::option::Option::is_none"
+            )]
+            source_hash: ::std::option::Option<::std::string::String>,
+        },
+    }
+    impl ::std::convert::From<&Self> for GetAdminReviewablesReviewableRefResponseDetail {
+        fn from(value: &GetAdminReviewablesReviewableRefResponseDetail) -> Self {
+            value.clone()
+        }
+    }
+    ///Deterministic keccak256(bytecode, args) — 0x-prefixed 32 bytes
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Deterministic keccak256(bytecode, args) — 0x-prefixed 32 bytes",
+    ///  "type": "string",
+    ///  "pattern": "^0x[a-fA-F0-9]{64}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailAssertionId(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailAssertionId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetAdminReviewablesReviewableRefResponseDetailAssertionId>
+    for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailAssertionId,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&GetAdminReviewablesReviewableRefResponseDetailAssertionId>
+    for GetAdminReviewablesReviewableRefResponseDetailAssertionId {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailAssertionId,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailAssertionId {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^0x[a-fA-F0-9]{64}$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^0x[a-fA-F0-9]{64}$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailAssertionId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailAssertionId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailAssertionId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailAssertionId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///Re-fetched at render time from the DA artifact store; not snapshotted on the row.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Re-fetched at render time from the DA artifact store; not snapshotted on the row.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "constructorAbiSignature",
+    ///    "constructorArgs",
+    ///    "soliditySource"
+    ///  ],
+    ///  "properties": {
+    ///    "constructorAbiSignature": {
+    ///      "type": "string"
+    ///    },
+    ///    "constructorArgs": {
+    ///      "description": "0x-prefixed hex string of even length",
+    ///      "type": "string",
+    ///      "pattern": "^0x([a-fA-F0-9]{2})*$"
+    ///    },
+    ///    "soliditySource": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailAssertionSource {
+        #[serde(rename = "constructorAbiSignature")]
+        pub constructor_abi_signature: ::std::string::String,
+        ///0x-prefixed hex string of even length
+        #[serde(rename = "constructorArgs")]
+        pub constructor_args: GetAdminReviewablesReviewableRefResponseDetailAssertionSourceConstructorArgs,
+        #[serde(rename = "soliditySource")]
+        pub solidity_source: ::std::string::String,
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailAssertionSource,
+    > for GetAdminReviewablesReviewableRefResponseDetailAssertionSource {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailAssertionSource,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///0x-prefixed hex string of even length
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "0x-prefixed hex string of even length",
+    ///  "type": "string",
+    ///  "pattern": "^0x([a-fA-F0-9]{2})*$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailAssertionSourceConstructorArgs(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailAssertionSourceConstructorArgs {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailAssertionSourceConstructorArgs,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailAssertionSourceConstructorArgs,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailAssertionSourceConstructorArgs,
+    > for GetAdminReviewablesReviewableRefResponseDetailAssertionSourceConstructorArgs {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailAssertionSourceConstructorArgs,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailAssertionSourceConstructorArgs {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^0x([a-fA-F0-9]{2})*$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^0x([a-fA-F0-9]{2})*$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailAssertionSourceConstructorArgs {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailAssertionSourceConstructorArgs {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailAssertionSourceConstructorArgs {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailAssertionSourceConstructorArgs {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "address",
+    ///    "label",
+    ///    "name",
+    ///    "provider",
+    ///    "reliability"
+    ///  ],
+    ///  "properties": {
+    ///    "address": {
+    ///      "description": "20-byte Ethereum address, normalized to lowercase",
+    ///      "type": "string"
+    ///    },
+    ///    "label": {
+    ///      "type": "string"
+    ///    },
+    ///    "name": {
+    ///      "type": "string"
+    ///    },
+    ///    "provider": {
+    ///      "description": "Provider that supplied the contract source",
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "sourcify",
+    ///        "etherscan",
+    ///        "dedaub"
+    ///      ]
+    ///    },
+    ///    "reliability": {
+    ///      "description": "Per-contract source reliability",
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "full",
+    ///        "partial",
+    ///        "decompiled"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItem {
+        ///20-byte Ethereum address, normalized to lowercase
+        pub address: ::std::string::String,
+        pub label: ::std::string::String,
+        pub name: ::std::string::String,
+        ///Provider that supplied the contract source
+        pub provider: GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemProvider,
+        ///Per-contract source reliability
+        pub reliability: GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemReliability,
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItem,
+    > for GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItem {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///Provider that supplied the contract source
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Provider that supplied the contract source",
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "sourcify",
+    ///    "etherscan",
+    ///    "dedaub"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemProvider {
+        #[serde(rename = "sourcify")]
+        Sourcify,
+        #[serde(rename = "etherscan")]
+        Etherscan,
+        #[serde(rename = "dedaub")]
+        Dedaub,
+    }
+    impl ::std::convert::From<&Self>
+    for GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemProvider {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemProvider,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemProvider {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Sourcify => f.write_str("sourcify"),
+                Self::Etherscan => f.write_str("etherscan"),
+                Self::Dedaub => f.write_str("dedaub"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemProvider {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "sourcify" => Ok(Self::Sourcify),
+                "etherscan" => Ok(Self::Etherscan),
+                "dedaub" => Ok(Self::Dedaub),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemProvider {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemProvider {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemProvider {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///Per-contract source reliability
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Per-contract source reliability",
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "full",
+    ///    "partial",
+    ///    "decompiled"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemReliability {
+        #[serde(rename = "full")]
+        Full,
+        #[serde(rename = "partial")]
+        Partial,
+        #[serde(rename = "decompiled")]
+        Decompiled,
+    }
+    impl ::std::convert::From<&Self>
+    for GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemReliability {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemReliability,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemReliability {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Full => f.write_str("full"),
+                Self::Partial => f.write_str("partial"),
+                Self::Decompiled => f.write_str("decompiled"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemReliability {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "full" => Ok(Self::Full),
+                "partial" => Ok(Self::Partial),
+                "decompiled" => Ok(Self::Decompiled),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemReliability {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemReliability {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailAttachedContractsItemReliability {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailAuditReportRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailAuditReportRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailAuditReportRef,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailAuditReportRef,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailAuditReportRef,
+    > for GetAdminReviewablesReviewableRefResponseDetailAuditReportRef {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailAuditReportRef,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailAuditReportRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailAuditReportRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///40-char lowercase hex git SHA-1
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "40-char lowercase hex git SHA-1",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{40}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailAuditedCommitSha(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailAuditedCommitSha {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailAuditedCommitSha,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailAuditedCommitSha,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailAuditedCommitSha,
+    > for GetAdminReviewablesReviewableRefResponseDetailAuditedCommitSha {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailAuditedCommitSha,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailAuditedCommitSha {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^[0-9a-f]{40}$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^[0-9a-f]{40}$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailAuditedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailAuditedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailAuditedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailAuditedCommitSha {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "chainId",
+    ///    "contractAddress",
+    ///    "coverageStatus"
+    ///  ],
+    ///  "properties": {
+    ///    "chainId": {
+    ///      "description": "Positive integer EVM chain ID",
+    ///      "type": "number"
+    ///    },
+    ///    "contractAddress": {
+    ///      "description": "20-byte Ethereum address, normalized to lowercase",
+    ///      "type": "string"
+    ///    },
+    ///    "coverageStatus": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "covered",
+    ///        "partial",
+    ///        "out_of_scope"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItem {
+        #[serde(rename = "chainId")]
+        pub chain_id: f64,
+        ///20-byte Ethereum address, normalized to lowercase
+        #[serde(rename = "contractAddress")]
+        pub contract_address: ::std::string::String,
+        #[serde(rename = "coverageStatus")]
+        pub coverage_status: GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItemCoverageStatus,
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItem,
+    > for GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItem {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItemCoverageStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "covered",
+    ///    "partial",
+    ///    "out_of_scope"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItemCoverageStatus {
+        #[serde(rename = "covered")]
+        Covered,
+        #[serde(rename = "partial")]
+        Partial,
+        #[serde(rename = "out_of_scope")]
+        OutOfScope,
+    }
+    impl ::std::convert::From<&Self>
+    for GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItemCoverageStatus {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItemCoverageStatus,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItemCoverageStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Covered => f.write_str("covered"),
+                Self::Partial => f.write_str("partial"),
+                Self::OutOfScope => f.write_str("out_of_scope"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItemCoverageStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "covered" => Ok(Self::Covered),
+                "partial" => Ok(Self::Partial),
+                "out_of_scope" => Ok(Self::OutOfScope),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItemCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItemCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailClaimedCoverageItemCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailCommitEvidence`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "auditedCommitUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "compareUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "deployedCommitUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "repositoryUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "sourceVerificationUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "submitterNotes": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailCommitEvidence {
+        #[serde(
+            rename = "auditedCommitUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub audited_commit_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "compareUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub compare_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "deployedCommitUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub deployed_commit_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "repositoryUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub repository_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "sourceVerificationUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub source_verification_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "submitterNotes",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub submitter_notes: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailCommitEvidence,
+    > for GetAdminReviewablesReviewableRefResponseDetailCommitEvidence {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailCommitEvidence,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::default::Default
+    for GetAdminReviewablesReviewableRefResponseDetailCommitEvidence {
+        fn default() -> Self {
+            Self {
+                audited_commit_url: Default::default(),
+                compare_url: Default::default(),
+                deployed_commit_url: Default::default(),
+                repository_url: Default::default(),
+                source_verification_url: Default::default(),
+                submitter_notes: Default::default(),
+            }
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailCoverageStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "covered",
+    ///    "partial",
+    ///    "out_of_scope"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetAdminReviewablesReviewableRefResponseDetailCoverageStatus {
+        #[serde(rename = "covered")]
+        Covered,
+        #[serde(rename = "partial")]
+        Partial,
+        #[serde(rename = "out_of_scope")]
+        OutOfScope,
+    }
+    impl ::std::convert::From<&Self>
+    for GetAdminReviewablesReviewableRefResponseDetailCoverageStatus {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailCoverageStatus,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for GetAdminReviewablesReviewableRefResponseDetailCoverageStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Covered => f.write_str("covered"),
+                Self::Partial => f.write_str("partial"),
+                Self::OutOfScope => f.write_str("out_of_scope"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailCoverageStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "covered" => Ok(Self::Covered),
+                "partial" => Ok(Self::Partial),
+                "out_of_scope" => Ok(Self::OutOfScope),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///40-char lowercase hex git SHA-1
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "40-char lowercase hex git SHA-1",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{40}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailDeployedCommitSha(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailDeployedCommitSha {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailDeployedCommitSha,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailDeployedCommitSha,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailDeployedCommitSha,
+    > for GetAdminReviewablesReviewableRefResponseDetailDeployedCommitSha {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailDeployedCommitSha,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailDeployedCommitSha {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^[0-9a-f]{40}$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^[0-9a-f]{40}$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailDeployedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailDeployedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailDeployedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailDeployedCommitSha {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "allocator_explanation",
+    ///    "assertionId",
+    ///    "attachedContracts",
+    ///    "contractName",
+    ///    "protected_action",
+    ///    "unsafe_condition"
+    ///  ],
+    ///  "properties": {
+    ///    "allocator_explanation": {
+    ///      "type": "string"
+    ///    },
+    ///    "assertionId": {
+    ///      "description": "Deterministic keccak256(bytecode, args) — 0x-prefixed 32 bytes",
+    ///      "type": "string",
+    ///      "pattern": "^0x[a-fA-F0-9]{64}$"
+    ///    },
+    ///    "attachedContracts": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "address",
+    ///          "name"
+    ///        ],
+    ///        "properties": {
+    ///          "address": {
+    ///            "description": "20-byte Ethereum address, normalized to lowercase",
+    ///            "type": "string"
+    ///          },
+    ///          "name": {
+    ///            "type": "string"
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    "contractName": {
+    ///      "type": "string"
+    ///    },
+    ///    "protected_action": {
+    ///      "type": "string"
+    ///    },
+    ///    "unsafe_condition": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItem {
+        pub allocator_explanation: ::std::string::String,
+        ///Deterministic keccak256(bytecode, args) — 0x-prefixed 32 bytes
+        #[serde(rename = "assertionId")]
+        pub assertion_id: GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAssertionId,
+        #[serde(rename = "attachedContracts")]
+        pub attached_contracts: ::std::vec::Vec<
+            GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAttachedContractsItem,
+        >,
+        #[serde(rename = "contractName")]
+        pub contract_name: ::std::string::String,
+        pub protected_action: ::std::string::String,
+        pub unsafe_condition: ::std::string::String,
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItem,
+    > for GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItem {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///Deterministic keccak256(bytecode, args) — 0x-prefixed 32 bytes
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Deterministic keccak256(bytecode, args) — 0x-prefixed 32 bytes",
+    ///  "type": "string",
+    ///  "pattern": "^0x[a-fA-F0-9]{64}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAssertionId(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAssertionId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAssertionId,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAssertionId,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAssertionId,
+    >
+    for GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAssertionId {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAssertionId,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAssertionId {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^0x[a-fA-F0-9]{64}$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^0x[a-fA-F0-9]{64}$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAssertionId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAssertionId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAssertionId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAssertionId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAttachedContractsItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "address",
+    ///    "name"
+    ///  ],
+    ///  "properties": {
+    ///    "address": {
+    ///      "description": "20-byte Ethereum address, normalized to lowercase",
+    ///      "type": "string"
+    ///    },
+    ///    "name": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAttachedContractsItem {
+        ///20-byte Ethereum address, normalized to lowercase
+        pub address: ::std::string::String,
+        pub name: ::std::string::String,
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAttachedContractsItem,
+    >
+    for GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAttachedContractsItem {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailInputAssertionSummariesItemAttachedContractsItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailParentAuditReportRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailParentAuditReportRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailParentAuditReportRef,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailParentAuditReportRef,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailParentAuditReportRef,
+    > for GetAdminReviewablesReviewableRefResponseDetailParentAuditReportRef {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailParentAuditReportRef,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailParentAuditReportRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailParentAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailParentAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailParentAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailParentAuditReportRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailParentAuditor`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailParentAuditor(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailParentAuditor {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailParentAuditor,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailParentAuditor,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailParentAuditor,
+    > for GetAdminReviewablesReviewableRefResponseDetailParentAuditor {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailParentAuditor,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailParentAuditor {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailParentAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailParentAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailParentAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailParentAuditor {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "label",
+    ///    "sha"
+    ///  ],
+    ///  "properties": {
+    ///    "label": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "notes": {
+    ///      "type": "string"
+    ///    },
+    ///    "sha": {
+    ///      "description": "40-char lowercase hex git SHA-1",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{40}$"
+    ///    },
+    ///    "url": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItem {
+        pub label: GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub notes: ::std::option::Option<::std::string::String>,
+        ///40-char lowercase hex git SHA-1
+        pub sha: GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemSha,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub url: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItem,
+    > for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItem {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel,
+    > for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemLabel {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///40-char lowercase hex git SHA-1
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "40-char lowercase hex git SHA-1",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{40}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemSha(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemSha {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemSha,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemSha,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemSha,
+    > for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemSha {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemSha,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemSha {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^[0-9a-f]{40}$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^[0-9a-f]{40}$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailPostAuditCommitsItemSha {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailProject`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "projectId",
+    ///    "projectName"
+    ///  ],
+    ///  "properties": {
+    ///    "projectId": {
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    },
+    ///    "projectName": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailProject {
+        #[serde(rename = "projectId")]
+        pub project_id: ::uuid::Uuid,
+        #[serde(rename = "projectName")]
+        pub project_name: ::std::string::String,
+    }
+    impl ::std::convert::From<&GetAdminReviewablesReviewableRefResponseDetailProject>
+    for GetAdminReviewablesReviewableRefResponseDetailProject {
+        fn from(value: &GetAdminReviewablesReviewableRefResponseDetailProject) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailRelease`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "chainId",
+    ///    "projectId",
+    ///    "projectName",
+    ///    "releaseId",
+    ///    "releaseNumber"
+    ///  ],
+    ///  "properties": {
+    ///    "chainId": {
+    ///      "description": "Positive integer EVM chain ID",
+    ///      "type": "number"
+    ///    },
+    ///    "projectId": {
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    },
+    ///    "projectName": {
+    ///      "type": "string"
+    ///    },
+    ///    "releaseId": {
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    },
+    ///    "releaseNumber": {
+    ///      "type": "integer",
+    ///      "exclusiveMinimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailRelease {
+        #[serde(rename = "chainId")]
+        pub chain_id: f64,
+        #[serde(rename = "projectId")]
+        pub project_id: ::uuid::Uuid,
+        #[serde(rename = "projectName")]
+        pub project_name: ::std::string::String,
+        #[serde(rename = "releaseId")]
+        pub release_id: ::uuid::Uuid,
+        #[serde(rename = "releaseNumber")]
+        pub release_number: ::std::num::NonZeroU64,
+    }
+    impl ::std::convert::From<&GetAdminReviewablesReviewableRefResponseDetailRelease>
+    for GetAdminReviewablesReviewableRefResponseDetailRelease {
+        fn from(value: &GetAdminReviewablesReviewableRefResponseDetailRelease) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailReportMetadata`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "auditPeriodLabel",
+    ///    "auditor"
+    ///  ],
+    ///  "properties": {
+    ///    "auditPeriodLabel": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "auditor": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "contact": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "githubRepo": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "links": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "label",
+    ///          "url"
+    ///        ],
+    ///        "properties": {
+    ///          "label": {
+    ///            "type": "string",
+    ///            "minLength": 1
+    ///          },
+    ///          "url": {
+    ///            "type": "string",
+    ///            "format": "uri"
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    "publicReportUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "scopeDescription": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailReportMetadata {
+        #[serde(rename = "auditPeriodLabel")]
+        pub audit_period_label: GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel,
+        pub auditor: GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub contact: ::std::option::Option<
+            GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact,
+        >,
+        #[serde(
+            rename = "githubRepo",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub github_repo: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub links: ::std::vec::Vec<
+            GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItem,
+        >,
+        #[serde(
+            rename = "publicReportUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub public_report_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "scopeDescription",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub scope_description: ::std::option::Option<
+            GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription,
+        >,
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailReportMetadata,
+    > for GetAdminReviewablesReviewableRefResponseDetailReportMetadata {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailReportMetadata,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel,
+    > for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditPeriodLabel {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor,
+    > for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataAuditor {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact,
+    > for GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataContact {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "label",
+    ///    "url"
+    ///  ],
+    ///  "properties": {
+    ///    "label": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "url": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItem {
+        pub label: GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel,
+        pub url: ::std::string::String,
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItem,
+    > for GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItem {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel,
+    > for GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataLinksItemLabel {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription,
+    > for GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseDetailReportMetadataScopeDescription {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseDetailSummary`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "allocator_explanation",
+    ///    "protected_action",
+    ///    "unsafe_condition"
+    ///  ],
+    ///  "properties": {
+    ///    "allocator_explanation": {
+    ///      "type": "string"
+    ///    },
+    ///    "protected_action": {
+    ///      "type": "string"
+    ///    },
+    ///    "unsafe_condition": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseDetailSummary {
+        pub allocator_explanation: ::std::string::String,
+        pub protected_action: ::std::string::String,
+        pub unsafe_condition: ::std::string::String,
+    }
+    impl ::std::convert::From<&GetAdminReviewablesReviewableRefResponseDetailSummary>
+    for GetAdminReviewablesReviewableRefResponseDetailSummary {
+        fn from(value: &GetAdminReviewablesReviewableRefResponseDetailSummary) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseReplacementChainItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "reviewStatus",
+    ///    "reviewableRef",
+    ///    "reviewedAt"
+    ///  ],
+    ///  "properties": {
+    ///    "reviewStatus": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "pending",
+    ///        "approved",
+    ///        "needs_changes",
+    ///        "rejected"
+    ///      ]
+    ///    },
+    ///    "reviewableRef": {
+    ///      "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///    },
+    ///    "reviewedAt": {
+    ///      "type": "string",
+    ///      "format": "date-time"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseReplacementChainItem {
+        #[serde(rename = "reviewStatus")]
+        pub review_status: GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewStatus,
+        ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+        #[serde(rename = "reviewableRef")]
+        pub reviewable_ref: GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewableRef,
+        #[serde(rename = "reviewedAt")]
+        pub reviewed_at: ::chrono::DateTime<::chrono::offset::Utc>,
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseReplacementChainItem,
+    > for GetAdminReviewablesReviewableRefResponseReplacementChainItem {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseReplacementChainItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "pending",
+    ///    "approved",
+    ///    "needs_changes",
+    ///    "rejected"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewStatus {
+        #[serde(rename = "pending")]
+        Pending,
+        #[serde(rename = "approved")]
+        Approved,
+        #[serde(rename = "needs_changes")]
+        NeedsChanges,
+        #[serde(rename = "rejected")]
+        Rejected,
+    }
+    impl ::std::convert::From<&Self>
+    for GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewStatus {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewStatus,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Pending => f.write_str("pending"),
+                Self::Approved => f.write_str("approved"),
+                Self::NeedsChanges => f.write_str("needs_changes"),
+                Self::Rejected => f.write_str("rejected"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "pending" => Ok(Self::Pending),
+                "approved" => Ok(Self::Approved),
+                "needs_changes" => Ok(Self::NeedsChanges),
+                "rejected" => Ok(Self::Rejected),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewableRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewableRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewableRef,
+    > for ::std::string::String {
+        fn from(
+            value: GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewableRef,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewableRef,
+    > for GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewableRef {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewableRef,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewableRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseReplacementChainItemReviewableRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseReviewHistoryItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "action",
+    ///    "resultingStatus",
+    ///    "reviewedAt",
+    ///    "reviewedBy"
+    ///  ],
+    ///  "properties": {
+    ///    "action": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "approve",
+    ///        "request_changes",
+    ///        "reject"
+    ///      ]
+    ///    },
+    ///    "note": {
+    ///      "type": "string"
+    ///    },
+    ///    "resultingStatus": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "pending",
+    ///        "approved",
+    ///        "needs_changes",
+    ///        "rejected"
+    ///      ]
+    ///    },
+    ///    "reviewedAt": {
+    ///      "type": "string",
+    ///      "format": "date-time"
+    ///    },
+    ///    "reviewedBy": {
+    ///      "description": "User ID (UUID) of the reviewer who took the action.",
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetAdminReviewablesReviewableRefResponseReviewHistoryItem {
+        pub action: GetAdminReviewablesReviewableRefResponseReviewHistoryItemAction,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub note: ::std::option::Option<::std::string::String>,
+        #[serde(rename = "resultingStatus")]
+        pub resulting_status: GetAdminReviewablesReviewableRefResponseReviewHistoryItemResultingStatus,
+        #[serde(rename = "reviewedAt")]
+        pub reviewed_at: ::chrono::DateTime<::chrono::offset::Utc>,
+        ///User ID (UUID) of the reviewer who took the action.
+        #[serde(rename = "reviewedBy")]
+        pub reviewed_by: ::uuid::Uuid,
+    }
+    impl ::std::convert::From<&GetAdminReviewablesReviewableRefResponseReviewHistoryItem>
+    for GetAdminReviewablesReviewableRefResponseReviewHistoryItem {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseReviewHistoryItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseReviewHistoryItemAction`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "approve",
+    ///    "request_changes",
+    ///    "reject"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetAdminReviewablesReviewableRefResponseReviewHistoryItemAction {
+        #[serde(rename = "approve")]
+        Approve,
+        #[serde(rename = "request_changes")]
+        RequestChanges,
+        #[serde(rename = "reject")]
+        Reject,
+    }
+    impl ::std::convert::From<&Self>
+    for GetAdminReviewablesReviewableRefResponseReviewHistoryItemAction {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseReviewHistoryItemAction,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for GetAdminReviewablesReviewableRefResponseReviewHistoryItemAction {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Approve => f.write_str("approve"),
+                Self::RequestChanges => f.write_str("request_changes"),
+                Self::Reject => f.write_str("reject"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseReviewHistoryItemAction {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "approve" => Ok(Self::Approve),
+                "request_changes" => Ok(Self::RequestChanges),
+                "reject" => Ok(Self::Reject),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseReviewHistoryItemAction {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseReviewHistoryItemAction {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseReviewHistoryItemAction {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseReviewHistoryItemResultingStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "pending",
+    ///    "approved",
+    ///    "needs_changes",
+    ///    "rejected"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetAdminReviewablesReviewableRefResponseReviewHistoryItemResultingStatus {
+        #[serde(rename = "pending")]
+        Pending,
+        #[serde(rename = "approved")]
+        Approved,
+        #[serde(rename = "needs_changes")]
+        NeedsChanges,
+        #[serde(rename = "rejected")]
+        Rejected,
+    }
+    impl ::std::convert::From<&Self>
+    for GetAdminReviewablesReviewableRefResponseReviewHistoryItemResultingStatus {
+        fn from(
+            value: &GetAdminReviewablesReviewableRefResponseReviewHistoryItemResultingStatus,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for GetAdminReviewablesReviewableRefResponseReviewHistoryItemResultingStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Pending => f.write_str("pending"),
+                Self::Approved => f.write_str("approved"),
+                Self::NeedsChanges => f.write_str("needs_changes"),
+                Self::Rejected => f.write_str("rejected"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for GetAdminReviewablesReviewableRefResponseReviewHistoryItemResultingStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "pending" => Ok(Self::Pending),
+                "approved" => Ok(Self::Approved),
+                "needs_changes" => Ok(Self::NeedsChanges),
+                "rejected" => Ok(Self::Rejected),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseReviewHistoryItemResultingStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseReviewHistoryItemResultingStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseReviewHistoryItemResultingStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefResponseReviewStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "pending",
+    ///    "approved",
+    ///    "needs_changes",
+    ///    "rejected"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetAdminReviewablesReviewableRefResponseReviewStatus {
+        #[serde(rename = "pending")]
+        Pending,
+        #[serde(rename = "approved")]
+        Approved,
+        #[serde(rename = "needs_changes")]
+        NeedsChanges,
+        #[serde(rename = "rejected")]
+        Rejected,
+    }
+    impl ::std::convert::From<&Self>
+    for GetAdminReviewablesReviewableRefResponseReviewStatus {
+        fn from(value: &GetAdminReviewablesReviewableRefResponseReviewStatus) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display for GetAdminReviewablesReviewableRefResponseReviewStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Pending => f.write_str("pending"),
+                Self::Approved => f.write_str("approved"),
+                Self::NeedsChanges => f.write_str("needs_changes"),
+                Self::Rejected => f.write_str("rejected"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for GetAdminReviewablesReviewableRefResponseReviewStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "pending" => Ok(Self::Pending),
+                "approved" => Ok(Self::Approved),
+                "needs_changes" => Ok(Self::NeedsChanges),
+                "rejected" => Ok(Self::Rejected),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefResponseReviewableRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref for GetAdminReviewablesReviewableRefResponseReviewableRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetAdminReviewablesReviewableRefResponseReviewableRef>
+    for ::std::string::String {
+        fn from(value: GetAdminReviewablesReviewableRefResponseReviewableRef) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&GetAdminReviewablesReviewableRefResponseReviewableRef>
+    for GetAdminReviewablesReviewableRefResponseReviewableRef {
+        fn from(value: &GetAdminReviewablesReviewableRefResponseReviewableRef) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for GetAdminReviewablesReviewableRefResponseReviewableRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefResponseReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefResponseReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefResponseReviewableRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetAdminReviewablesReviewableRefReviewableRef`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetAdminReviewablesReviewableRefReviewableRef(::std::string::String);
+    impl ::std::ops::Deref for GetAdminReviewablesReviewableRefReviewableRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetAdminReviewablesReviewableRefReviewableRef>
+    for ::std::string::String {
+        fn from(value: GetAdminReviewablesReviewableRefReviewableRef) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&GetAdminReviewablesReviewableRefReviewableRef>
+    for GetAdminReviewablesReviewableRefReviewableRef {
+        fn from(value: &GetAdminReviewablesReviewableRefReviewableRef) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for GetAdminReviewablesReviewableRefReviewableRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetAdminReviewablesReviewableRefReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetAdminReviewablesReviewableRefReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetAdminReviewablesReviewableRefReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetAdminReviewablesReviewableRefReviewableRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
     ///`GetAssertionAdoptersAaAddressRemoveAssertionsCalldataAaAddress`
     ///
     /// <details><summary>JSON schema</summary>
@@ -982,128 +6391,6 @@ pub mod types {
             value.clone()
         }
     }
-    ///`GetAssertionAdoptersAddress`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct GetAssertionAdoptersAddress(::std::string::String);
-    impl ::std::ops::Deref for GetAssertionAdoptersAddress {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<GetAssertionAdoptersAddress> for ::std::string::String {
-        fn from(value: GetAssertionAdoptersAddress) -> Self {
-            value.0
-        }
-    }
-    impl ::std::convert::From<&GetAssertionAdoptersAddress>
-    for GetAssertionAdoptersAddress {
-        fn from(value: &GetAssertionAdoptersAddress) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::str::FromStr for GetAssertionAdoptersAddress {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
-            { ::regress::Regex::new("^0x[a-fA-F0-9]{40}$").unwrap() });
-            if PATTERN.find(value).is_none() {
-                return Err("doesn't match pattern \"^0x[a-fA-F0-9]{40}$\"".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str> for GetAssertionAdoptersAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetAssertionAdoptersAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String> for GetAssertionAdoptersAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de> for GetAssertionAdoptersAddress {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`GetAssertionAdoptersNetwork`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "oneOf": [
-    ///    {
-    ///      "type": "string"
-    ///    },
-    ///    {
-    ///      "type": "number"
-    ///    }
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    #[serde(untagged)]
-    pub enum GetAssertionAdoptersNetwork {
-        Variant0(::std::string::String),
-        Variant1(f64),
-    }
-    impl ::std::convert::From<&Self> for GetAssertionAdoptersNetwork {
-        fn from(value: &GetAssertionAdoptersNetwork) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display for GetAssertionAdoptersNetwork {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match self {
-                Self::Variant0(x) => x.fmt(f),
-                Self::Variant1(x) => x.fmt(f),
-            }
-        }
-    }
-    impl ::std::convert::From<f64> for GetAssertionAdoptersNetwork {
-        fn from(value: f64) -> Self {
-            Self::Variant1(value)
-        }
-    }
     ///`GetAssertionAdoptersNoProjectManager`
     ///
     /// <details><summary>JSON schema</summary>
@@ -1513,424 +6800,6 @@ pub mod types {
         }
     }
     impl ::std::convert::From<f64> for GetAssertionAdoptersNoProjectResponseItemNetwork {
-        fn from(value: f64) -> Self {
-            Self::Variant1(value)
-        }
-    }
-    ///`GetAssertionAdoptersResponse`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "error"
-    ///  ],
-    ///  "properties": {
-    ///    "code": {
-    ///      "type": "string"
-    ///    },
-    ///    "details": {
-    ///      "type": "string"
-    ///    },
-    ///    "error": {
-    ///      "type": "string"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetAssertionAdoptersResponse {
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub code: ::std::option::Option<::std::string::String>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub details: ::std::option::Option<::std::string::String>,
-        pub error: ::std::string::String,
-    }
-    impl ::std::convert::From<&GetAssertionAdoptersResponse>
-    for GetAssertionAdoptersResponse {
-        fn from(value: &GetAssertionAdoptersResponse) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetAssertionAdoptersResponseItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "address",
-    ///    "assertion_adopter_manager",
-    ///    "id",
-    ///    "network"
-    ///  ],
-    ///  "properties": {
-    ///    "address": {
-    ///      "type": "string",
-    ///      "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///    },
-    ///    "assertion_adopter_manager": {
-    ///      "type": "string",
-    ///      "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///    },
-    ///    "contract_name": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "created_at": {
-    ///      "type": "string",
-    ///      "format": "date-time"
-    ///    },
-    ///    "id": {
-    ///      "type": "string",
-    ///      "pattern": "^\\d+_0x[a-fA-F0-9]{40}$"
-    ///    },
-    ///    "network": {
-    ///      "type": "string",
-    ///      "oneOf": [
-    ///        {
-    ///          "type": "string"
-    ///        },
-    ///        {
-    ///          "type": "number"
-    ///        }
-    ///      ]
-    ///    },
-    ///    "registered_assertions": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "string"
-    ///      }
-    ///    },
-    ///    "updated_at": {
-    ///      "type": "string",
-    ///      "format": "date-time"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetAssertionAdoptersResponseItem {
-        pub address: GetAssertionAdoptersResponseItemAddress,
-        pub assertion_adopter_manager: GetAssertionAdoptersResponseItemAssertionAdopterManager,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub contract_name: ::std::option::Option<::std::string::String>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub created_at: ::std::option::Option<::chrono::DateTime<::chrono::offset::Utc>>,
-        pub id: GetAssertionAdoptersResponseItemId,
-        pub network: GetAssertionAdoptersResponseItemNetwork,
-        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
-        pub registered_assertions: ::std::vec::Vec<::std::string::String>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub updated_at: ::std::option::Option<::chrono::DateTime<::chrono::offset::Utc>>,
-    }
-    impl ::std::convert::From<&GetAssertionAdoptersResponseItem>
-    for GetAssertionAdoptersResponseItem {
-        fn from(value: &GetAssertionAdoptersResponseItem) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetAssertionAdoptersResponseItemAddress`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct GetAssertionAdoptersResponseItemAddress(::std::string::String);
-    impl ::std::ops::Deref for GetAssertionAdoptersResponseItemAddress {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<GetAssertionAdoptersResponseItemAddress>
-    for ::std::string::String {
-        fn from(value: GetAssertionAdoptersResponseItemAddress) -> Self {
-            value.0
-        }
-    }
-    impl ::std::convert::From<&GetAssertionAdoptersResponseItemAddress>
-    for GetAssertionAdoptersResponseItemAddress {
-        fn from(value: &GetAssertionAdoptersResponseItemAddress) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::str::FromStr for GetAssertionAdoptersResponseItemAddress {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
-            { ::regress::Regex::new("^0x[a-fA-F0-9]{40}$").unwrap() });
-            if PATTERN.find(value).is_none() {
-                return Err("doesn't match pattern \"^0x[a-fA-F0-9]{40}$\"".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str> for GetAssertionAdoptersResponseItemAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetAssertionAdoptersResponseItemAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetAssertionAdoptersResponseItemAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de> for GetAssertionAdoptersResponseItemAddress {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`GetAssertionAdoptersResponseItemAssertionAdopterManager`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct GetAssertionAdoptersResponseItemAssertionAdopterManager(
-        ::std::string::String,
-    );
-    impl ::std::ops::Deref for GetAssertionAdoptersResponseItemAssertionAdopterManager {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<GetAssertionAdoptersResponseItemAssertionAdopterManager>
-    for ::std::string::String {
-        fn from(value: GetAssertionAdoptersResponseItemAssertionAdopterManager) -> Self {
-            value.0
-        }
-    }
-    impl ::std::convert::From<&GetAssertionAdoptersResponseItemAssertionAdopterManager>
-    for GetAssertionAdoptersResponseItemAssertionAdopterManager {
-        fn from(
-            value: &GetAssertionAdoptersResponseItemAssertionAdopterManager,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::str::FromStr
-    for GetAssertionAdoptersResponseItemAssertionAdopterManager {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
-            { ::regress::Regex::new("^0x[a-fA-F0-9]{40}$").unwrap() });
-            if PATTERN.find(value).is_none() {
-                return Err("doesn't match pattern \"^0x[a-fA-F0-9]{40}$\"".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetAssertionAdoptersResponseItemAssertionAdopterManager {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetAssertionAdoptersResponseItemAssertionAdopterManager {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetAssertionAdoptersResponseItemAssertionAdopterManager {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de>
-    for GetAssertionAdoptersResponseItemAssertionAdopterManager {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`GetAssertionAdoptersResponseItemId`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "pattern": "^\\d+_0x[a-fA-F0-9]{40}$"
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct GetAssertionAdoptersResponseItemId(::std::string::String);
-    impl ::std::ops::Deref for GetAssertionAdoptersResponseItemId {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<GetAssertionAdoptersResponseItemId>
-    for ::std::string::String {
-        fn from(value: GetAssertionAdoptersResponseItemId) -> Self {
-            value.0
-        }
-    }
-    impl ::std::convert::From<&GetAssertionAdoptersResponseItemId>
-    for GetAssertionAdoptersResponseItemId {
-        fn from(value: &GetAssertionAdoptersResponseItemId) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::str::FromStr for GetAssertionAdoptersResponseItemId {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
-            { ::regress::Regex::new("^\\d+_0x[a-fA-F0-9]{40}$").unwrap() });
-            if PATTERN.find(value).is_none() {
-                return Err("doesn't match pattern \"^\\d+_0x[a-fA-F0-9]{40}$\"".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str> for GetAssertionAdoptersResponseItemId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetAssertionAdoptersResponseItemId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetAssertionAdoptersResponseItemId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de> for GetAssertionAdoptersResponseItemId {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`GetAssertionAdoptersResponseItemNetwork`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "oneOf": [
-    ///    {
-    ///      "type": "string"
-    ///    },
-    ///    {
-    ///      "type": "number"
-    ///    }
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    #[serde(untagged)]
-    pub enum GetAssertionAdoptersResponseItemNetwork {
-        Variant0(::std::string::String),
-        Variant1(f64),
-    }
-    impl ::std::convert::From<&Self> for GetAssertionAdoptersResponseItemNetwork {
-        fn from(value: &GetAssertionAdoptersResponseItemNetwork) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display for GetAssertionAdoptersResponseItemNetwork {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match self {
-                Self::Variant0(x) => x.fmt(f),
-                Self::Variant1(x) => x.fmt(f),
-            }
-        }
-    }
-    impl ::std::convert::From<f64> for GetAssertionAdoptersResponseItemNetwork {
         fn from(value: f64) -> Self {
             Self::Variant1(value)
         }
@@ -4507,7 +9376,9 @@ pub mod types {
     ///                    "completed",
     ///                    "failed",
     ///                    "timeout",
-    ///                    "skipped"
+    ///                    "skipped",
+    ///                    "errored",
+    ///                    "cancelled"
     ///                  ]
     ///                },
     ///                "trace_content": {
@@ -4869,7 +9740,9 @@ pub mod types {
     ///              "completed",
     ///              "failed",
     ///              "timeout",
-    ///              "skipped"
+    ///              "skipped",
+    ///              "errored",
+    ///              "cancelled"
     ///            ]
     ///          },
     ///          "trace_content": {
@@ -5018,7 +9891,9 @@ pub mod types {
     ///        "completed",
     ///        "failed",
     ///        "timeout",
-    ///        "skipped"
+    ///        "skipped",
+    ///        "errored",
+    ///        "cancelled"
     ///      ]
     ///    },
     ///    "trace_content": {
@@ -5179,7 +10054,9 @@ pub mod types {
     ///    "completed",
     ///    "failed",
     ///    "timeout",
-    ///    "skipped"
+    ///    "skipped",
+    ///    "errored",
+    ///    "cancelled"
     ///  ]
     ///}
     /// ```
@@ -5209,6 +10086,10 @@ pub mod types {
         Timeout,
         #[serde(rename = "skipped")]
         Skipped,
+        #[serde(rename = "errored")]
+        Errored,
+        #[serde(rename = "cancelled")]
+        Cancelled,
     }
     impl ::std::convert::From<&Self>
     for GetIncidentsIncidentIdResponseInvalidatingTransactionsItemDebugTracesItemStatus {
@@ -5228,6 +10109,8 @@ pub mod types {
                 Self::Failed => f.write_str("failed"),
                 Self::Timeout => f.write_str("timeout"),
                 Self::Skipped => f.write_str("skipped"),
+                Self::Errored => f.write_str("errored"),
+                Self::Cancelled => f.write_str("cancelled"),
             }
         }
     }
@@ -5244,6 +10127,8 @@ pub mod types {
                 "failed" => Ok(Self::Failed),
                 "timeout" => Ok(Self::Timeout),
                 "skipped" => Ok(Self::Skipped),
+                "errored" => Ok(Self::Errored),
+                "cancelled" => Ok(Self::Cancelled),
                 _ => Err("invalid value".into()),
             }
         }
@@ -5464,7 +10349,7 @@ pub mod types {
                 })
         }
     }
-    ///`GetIncidentsIncidentIdTransactionsTxIdTraceResponse`
+    ///`GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -5517,7 +10402,9 @@ pub mod types {
     ///        "completed",
     ///        "failed",
     ///        "timeout",
-    ///        "skipped"
+    ///        "skipped",
+    ///        "errored",
+    ///        "cancelled"
     ///      ]
     ///    },
     ///    "trace_content": {
@@ -5552,27 +10439,30 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetIncidentsIncidentIdTransactionsTxIdTraceResponse {
+    pub struct GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse {
         pub created_at: ::chrono::DateTime<::chrono::offset::Utc>,
-        pub environment: GetIncidentsIncidentIdTransactionsTxIdTraceResponseEnvironment,
+        pub environment: GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseEnvironment,
         pub error: ::std::option::Option<::std::string::String>,
         pub id: ::uuid::Uuid,
         pub invalidating_transaction_id: ::uuid::Uuid,
-        pub status: GetIncidentsIncidentIdTransactionsTxIdTraceResponseStatus,
+        pub status: GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseStatus,
         pub trace_content: ::std::option::Option<::std::string::String>,
-        pub trace_format: GetIncidentsIncidentIdTransactionsTxIdTraceResponseTraceFormat,
+        pub trace_format: GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseTraceFormat,
         pub tracer_completed_at: ::std::option::Option<
             ::chrono::DateTime<::chrono::offset::Utc>,
         >,
         pub tracer_duration_ms: ::std::option::Option<i64>,
     }
-    impl ::std::convert::From<&GetIncidentsIncidentIdTransactionsTxIdTraceResponse>
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponse {
-        fn from(value: &GetIncidentsIncidentIdTransactionsTxIdTraceResponse) -> Self {
+    impl ::std::convert::From<
+        &GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse,
+    > for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse {
+        fn from(
+            value: &GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse,
+        ) -> Self {
             value.clone()
         }
     }
-    ///`GetIncidentsIncidentIdTransactionsTxIdTraceResponseEnvironment`
+    ///`GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseEnvironment`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -5598,22 +10488,22 @@ pub mod types {
         PartialEq,
         PartialOrd
     )]
-    pub enum GetIncidentsIncidentIdTransactionsTxIdTraceResponseEnvironment {
+    pub enum GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseEnvironment {
         #[serde(rename = "staging")]
         Staging,
         #[serde(rename = "production")]
         Production,
     }
     impl ::std::convert::From<&Self>
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseEnvironment {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseEnvironment {
         fn from(
-            value: &GetIncidentsIncidentIdTransactionsTxIdTraceResponseEnvironment,
+            value: &GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseEnvironment,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::fmt::Display
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseEnvironment {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseEnvironment {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::Staging => f.write_str("staging"),
@@ -5622,7 +10512,7 @@ pub mod types {
         }
     }
     impl ::std::str::FromStr
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseEnvironment {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseEnvironment {
         type Err = self::error::ConversionError;
         fn from_str(
             value: &str,
@@ -5635,7 +10525,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&str>
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseEnvironment {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseEnvironment {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &str,
@@ -5644,7 +10534,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&::std::string::String>
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseEnvironment {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseEnvironment {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -5653,7 +10543,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<::std::string::String>
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseEnvironment {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseEnvironment {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
@@ -5661,7 +10551,7 @@ pub mod types {
             value.parse()
         }
     }
-    ///`GetIncidentsIncidentIdTransactionsTxIdTraceResponseStatus`
+    ///`GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseStatus`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -5674,7 +10564,9 @@ pub mod types {
     ///    "completed",
     ///    "failed",
     ///    "timeout",
-    ///    "skipped"
+    ///    "skipped",
+    ///    "errored",
+    ///    "cancelled"
     ///  ]
     ///}
     /// ```
@@ -5691,7 +10583,7 @@ pub mod types {
         PartialEq,
         PartialOrd
     )]
-    pub enum GetIncidentsIncidentIdTransactionsTxIdTraceResponseStatus {
+    pub enum GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseStatus {
         #[serde(rename = "pending")]
         Pending,
         #[serde(rename = "in_progress")]
@@ -5704,17 +10596,21 @@ pub mod types {
         Timeout,
         #[serde(rename = "skipped")]
         Skipped,
+        #[serde(rename = "errored")]
+        Errored,
+        #[serde(rename = "cancelled")]
+        Cancelled,
     }
     impl ::std::convert::From<&Self>
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseStatus {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseStatus {
         fn from(
-            value: &GetIncidentsIncidentIdTransactionsTxIdTraceResponseStatus,
+            value: &GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseStatus,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::fmt::Display
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseStatus {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseStatus {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::Pending => f.write_str("pending"),
@@ -5723,11 +10619,13 @@ pub mod types {
                 Self::Failed => f.write_str("failed"),
                 Self::Timeout => f.write_str("timeout"),
                 Self::Skipped => f.write_str("skipped"),
+                Self::Errored => f.write_str("errored"),
+                Self::Cancelled => f.write_str("cancelled"),
             }
         }
     }
     impl ::std::str::FromStr
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseStatus {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseStatus {
         type Err = self::error::ConversionError;
         fn from_str(
             value: &str,
@@ -5739,12 +10637,14 @@ pub mod types {
                 "failed" => Ok(Self::Failed),
                 "timeout" => Ok(Self::Timeout),
                 "skipped" => Ok(Self::Skipped),
+                "errored" => Ok(Self::Errored),
+                "cancelled" => Ok(Self::Cancelled),
                 _ => Err("invalid value".into()),
             }
         }
     }
     impl ::std::convert::TryFrom<&str>
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseStatus {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseStatus {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &str,
@@ -5753,7 +10653,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&::std::string::String>
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseStatus {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseStatus {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -5762,7 +10662,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<::std::string::String>
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseStatus {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseStatus {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
@@ -5770,7 +10670,7 @@ pub mod types {
             value.parse()
         }
     }
-    ///`GetIncidentsIncidentIdTransactionsTxIdTraceResponseTraceFormat`
+    ///`GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseTraceFormat`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -5797,7 +10697,7 @@ pub mod types {
         PartialEq,
         PartialOrd
     )]
-    pub enum GetIncidentsIncidentIdTransactionsTxIdTraceResponseTraceFormat {
+    pub enum GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseTraceFormat {
         #[serde(rename = "ansi")]
         Ansi,
         #[serde(rename = "plain")]
@@ -5806,15 +10706,15 @@ pub mod types {
         Json,
     }
     impl ::std::convert::From<&Self>
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseTraceFormat {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseTraceFormat {
         fn from(
-            value: &GetIncidentsIncidentIdTransactionsTxIdTraceResponseTraceFormat,
+            value: &GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseTraceFormat,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::fmt::Display
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseTraceFormat {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseTraceFormat {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::Ansi => f.write_str("ansi"),
@@ -5824,7 +10724,7 @@ pub mod types {
         }
     }
     impl ::std::str::FromStr
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseTraceFormat {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseTraceFormat {
         type Err = self::error::ConversionError;
         fn from_str(
             value: &str,
@@ -5838,7 +10738,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&str>
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseTraceFormat {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseTraceFormat {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &str,
@@ -5847,7 +10747,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&::std::string::String>
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseTraceFormat {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseTraceFormat {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -5856,7 +10756,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<::std::string::String>
-    for GetIncidentsIncidentIdTransactionsTxIdTraceResponseTraceFormat {
+    for GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseTraceFormat {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
@@ -6446,6 +11346,1683 @@ pub mod types {
     impl ::std::convert::From<&GetOpenapiResponse> for GetOpenapiResponse {
         fn from(value: &GetOpenapiResponse) -> Self {
             value.clone()
+        }
+    }
+    ///`GetProjectsProjectIdAuditsCursor`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetProjectsProjectIdAuditsCursor(::std::string::String);
+    impl ::std::ops::Deref for GetProjectsProjectIdAuditsCursor {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetProjectsProjectIdAuditsCursor>
+    for ::std::string::String {
+        fn from(value: GetProjectsProjectIdAuditsCursor) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&GetProjectsProjectIdAuditsCursor>
+    for GetProjectsProjectIdAuditsCursor {
+        fn from(value: &GetProjectsProjectIdAuditsCursor) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for GetProjectsProjectIdAuditsCursor {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetProjectsProjectIdAuditsCursor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdAuditsCursor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdAuditsCursor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for GetProjectsProjectIdAuditsCursor {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetProjectsProjectIdAuditsResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "items",
+    ///    "nextCursor"
+    ///  ],
+    ///  "properties": {
+    ///    "items": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "auditPeriodLabel",
+    ///          "auditReportId",
+    ///          "auditReportRef",
+    ///          "auditor",
+    ///          "coverage",
+    ///          "reviewStatus",
+    ///          "reviewableRef",
+    ///          "submittedAt",
+    ///          "submittedBy"
+    ///        ],
+    ///        "properties": {
+    ///          "auditPeriodLabel": {
+    ///            "type": "string",
+    ///            "minLength": 1
+    ///          },
+    ///          "auditReportId": {
+    ///            "type": "string",
+    ///            "format": "uuid"
+    ///          },
+    ///          "auditReportRef": {
+    ///            "description": "Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.",
+    ///            "type": "string",
+    ///            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///          },
+    ///          "auditor": {
+    ///            "type": "string",
+    ///            "minLength": 1
+    ///          },
+    ///          "coverage": {
+    ///            "type": "array",
+    ///            "items": {
+    ///              "type": "object",
+    ///              "required": [
+    ///                "auditReportCoverageId",
+    ///                "chainId",
+    ///                "contractAddress",
+    ///                "coverageStatus",
+    ///                "reviewStatus",
+    ///                "reviewableRef"
+    ///              ],
+    ///              "properties": {
+    ///                "auditReportCoverageId": {
+    ///                  "type": "string",
+    ///                  "format": "uuid"
+    ///                },
+    ///                "chainId": {
+    ///                  "description": "Positive integer EVM chain ID",
+    ///                  "type": "number"
+    ///                },
+    ///                "contractAddress": {
+    ///                  "description": "20-byte Ethereum address, normalized to lowercase",
+    ///                  "type": "string"
+    ///                },
+    ///                "coverageStatus": {
+    ///                  "type": "string",
+    ///                  "enum": [
+    ///                    "covered",
+    ///                    "partial",
+    ///                    "out_of_scope"
+    ///                  ]
+    ///                },
+    ///                "reviewStatus": {
+    ///                  "type": "string",
+    ///                  "enum": [
+    ///                    "pending",
+    ///                    "approved",
+    ///                    "needs_changes",
+    ///                    "rejected"
+    ///                  ]
+    ///                },
+    ///                "reviewableRef": {
+    ///                  "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///                  "type": "string",
+    ///                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///                }
+    ///              }
+    ///            }
+    ///          },
+    ///          "lastReviewerNote": {
+    ///            "description": "Populated only when reviewStatus = \"needs_changes\".",
+    ///            "type": "string"
+    ///          },
+    ///          "pdfDownloadUrl": {
+    ///            "description": "Short-TTL signed URL, project-admin only",
+    ///            "type": "string",
+    ///            "format": "uri"
+    ///          },
+    ///          "publicReportUrl": {
+    ///            "type": "string",
+    ///            "format": "uri"
+    ///          },
+    ///          "reviewStatus": {
+    ///            "type": "string",
+    ///            "enum": [
+    ///              "pending",
+    ///              "approved",
+    ///              "needs_changes",
+    ///              "rejected"
+    ///            ]
+    ///          },
+    ///          "reviewableRef": {
+    ///            "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///            "type": "string",
+    ///            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///          },
+    ///          "submittedAt": {
+    ///            "type": "string",
+    ///            "format": "date-time"
+    ///          },
+    ///          "submittedBy": {
+    ///            "type": [
+    ///              "object",
+    ///              "null"
+    ///            ],
+    ///            "required": [
+    ///              "displayName",
+    ///              "userId"
+    ///            ],
+    ///            "properties": {
+    ///              "displayName": {
+    ///                "type": "string"
+    ///              },
+    ///              "userId": {
+    ///                "type": "string",
+    ///                "format": "uuid"
+    ///              }
+    ///            }
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    "nextCursor": {
+    ///      "description": "Opaque keyset-pagination token. base64(JSON.stringify({ submittedAt, auditReportId })).",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ],
+    ///      "minLength": 1
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetProjectsProjectIdAuditsResponse {
+        pub items: ::std::vec::Vec<GetProjectsProjectIdAuditsResponseItemsItem>,
+        ///Opaque keyset-pagination token. base64(JSON.stringify({ submittedAt, auditReportId })).
+        #[serde(rename = "nextCursor")]
+        pub next_cursor: ::std::option::Option<
+            GetProjectsProjectIdAuditsResponseNextCursor,
+        >,
+    }
+    impl ::std::convert::From<&GetProjectsProjectIdAuditsResponse>
+    for GetProjectsProjectIdAuditsResponse {
+        fn from(value: &GetProjectsProjectIdAuditsResponse) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetProjectsProjectIdAuditsResponseCode`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "forbidden",
+    ///    "not_found",
+    ///    "pdf_storage_path_invalid",
+    ///    "pdf_object_missing",
+    ///    "pdf_too_large",
+    ///    "unknown_contract",
+    ///    "bad_sha_format",
+    ///    "bad_address_format",
+    ///    "no_coverage_rows",
+    ///    "idempotency_replay_mismatch",
+    ///    "audit_report_ref_not_found",
+    ///    "audit_report_ref_not_owned_by_project",
+    ///    "internal_error"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetProjectsProjectIdAuditsResponseCode {
+        #[serde(rename = "forbidden")]
+        Forbidden,
+        #[serde(rename = "not_found")]
+        NotFound,
+        #[serde(rename = "pdf_storage_path_invalid")]
+        PdfStoragePathInvalid,
+        #[serde(rename = "pdf_object_missing")]
+        PdfObjectMissing,
+        #[serde(rename = "pdf_too_large")]
+        PdfTooLarge,
+        #[serde(rename = "unknown_contract")]
+        UnknownContract,
+        #[serde(rename = "bad_sha_format")]
+        BadShaFormat,
+        #[serde(rename = "bad_address_format")]
+        BadAddressFormat,
+        #[serde(rename = "no_coverage_rows")]
+        NoCoverageRows,
+        #[serde(rename = "idempotency_replay_mismatch")]
+        IdempotencyReplayMismatch,
+        #[serde(rename = "audit_report_ref_not_found")]
+        AuditReportRefNotFound,
+        #[serde(rename = "audit_report_ref_not_owned_by_project")]
+        AuditReportRefNotOwnedByProject,
+        #[serde(rename = "internal_error")]
+        InternalError,
+    }
+    impl ::std::convert::From<&Self> for GetProjectsProjectIdAuditsResponseCode {
+        fn from(value: &GetProjectsProjectIdAuditsResponseCode) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display for GetProjectsProjectIdAuditsResponseCode {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Forbidden => f.write_str("forbidden"),
+                Self::NotFound => f.write_str("not_found"),
+                Self::PdfStoragePathInvalid => f.write_str("pdf_storage_path_invalid"),
+                Self::PdfObjectMissing => f.write_str("pdf_object_missing"),
+                Self::PdfTooLarge => f.write_str("pdf_too_large"),
+                Self::UnknownContract => f.write_str("unknown_contract"),
+                Self::BadShaFormat => f.write_str("bad_sha_format"),
+                Self::BadAddressFormat => f.write_str("bad_address_format"),
+                Self::NoCoverageRows => f.write_str("no_coverage_rows"),
+                Self::IdempotencyReplayMismatch => {
+                    f.write_str("idempotency_replay_mismatch")
+                }
+                Self::AuditReportRefNotFound => f.write_str("audit_report_ref_not_found"),
+                Self::AuditReportRefNotOwnedByProject => {
+                    f.write_str("audit_report_ref_not_owned_by_project")
+                }
+                Self::InternalError => f.write_str("internal_error"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for GetProjectsProjectIdAuditsResponseCode {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "forbidden" => Ok(Self::Forbidden),
+                "not_found" => Ok(Self::NotFound),
+                "pdf_storage_path_invalid" => Ok(Self::PdfStoragePathInvalid),
+                "pdf_object_missing" => Ok(Self::PdfObjectMissing),
+                "pdf_too_large" => Ok(Self::PdfTooLarge),
+                "unknown_contract" => Ok(Self::UnknownContract),
+                "bad_sha_format" => Ok(Self::BadShaFormat),
+                "bad_address_format" => Ok(Self::BadAddressFormat),
+                "no_coverage_rows" => Ok(Self::NoCoverageRows),
+                "idempotency_replay_mismatch" => Ok(Self::IdempotencyReplayMismatch),
+                "audit_report_ref_not_found" => Ok(Self::AuditReportRefNotFound),
+                "audit_report_ref_not_owned_by_project" => {
+                    Ok(Self::AuditReportRefNotOwnedByProject)
+                }
+                "internal_error" => Ok(Self::InternalError),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetProjectsProjectIdAuditsResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdAuditsResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdAuditsResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`GetProjectsProjectIdAuditsResponseItemsItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "auditPeriodLabel",
+    ///    "auditReportId",
+    ///    "auditReportRef",
+    ///    "auditor",
+    ///    "coverage",
+    ///    "reviewStatus",
+    ///    "reviewableRef",
+    ///    "submittedAt",
+    ///    "submittedBy"
+    ///  ],
+    ///  "properties": {
+    ///    "auditPeriodLabel": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "auditReportId": {
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    },
+    ///    "auditReportRef": {
+    ///      "description": "Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///    },
+    ///    "auditor": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "coverage": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "auditReportCoverageId",
+    ///          "chainId",
+    ///          "contractAddress",
+    ///          "coverageStatus",
+    ///          "reviewStatus",
+    ///          "reviewableRef"
+    ///        ],
+    ///        "properties": {
+    ///          "auditReportCoverageId": {
+    ///            "type": "string",
+    ///            "format": "uuid"
+    ///          },
+    ///          "chainId": {
+    ///            "description": "Positive integer EVM chain ID",
+    ///            "type": "number"
+    ///          },
+    ///          "contractAddress": {
+    ///            "description": "20-byte Ethereum address, normalized to lowercase",
+    ///            "type": "string"
+    ///          },
+    ///          "coverageStatus": {
+    ///            "type": "string",
+    ///            "enum": [
+    ///              "covered",
+    ///              "partial",
+    ///              "out_of_scope"
+    ///            ]
+    ///          },
+    ///          "reviewStatus": {
+    ///            "type": "string",
+    ///            "enum": [
+    ///              "pending",
+    ///              "approved",
+    ///              "needs_changes",
+    ///              "rejected"
+    ///            ]
+    ///          },
+    ///          "reviewableRef": {
+    ///            "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///            "type": "string",
+    ///            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    "lastReviewerNote": {
+    ///      "description": "Populated only when reviewStatus = \"needs_changes\".",
+    ///      "type": "string"
+    ///    },
+    ///    "pdfDownloadUrl": {
+    ///      "description": "Short-TTL signed URL, project-admin only",
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "publicReportUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "reviewStatus": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "pending",
+    ///        "approved",
+    ///        "needs_changes",
+    ///        "rejected"
+    ///      ]
+    ///    },
+    ///    "reviewableRef": {
+    ///      "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///    },
+    ///    "submittedAt": {
+    ///      "type": "string",
+    ///      "format": "date-time"
+    ///    },
+    ///    "submittedBy": {
+    ///      "type": [
+    ///        "object",
+    ///        "null"
+    ///      ],
+    ///      "required": [
+    ///        "displayName",
+    ///        "userId"
+    ///      ],
+    ///      "properties": {
+    ///        "displayName": {
+    ///          "type": "string"
+    ///        },
+    ///        "userId": {
+    ///          "type": "string",
+    ///          "format": "uuid"
+    ///        }
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetProjectsProjectIdAuditsResponseItemsItem {
+        #[serde(rename = "auditPeriodLabel")]
+        pub audit_period_label: GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel,
+        #[serde(rename = "auditReportId")]
+        pub audit_report_id: ::uuid::Uuid,
+        ///Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.
+        #[serde(rename = "auditReportRef")]
+        pub audit_report_ref: GetProjectsProjectIdAuditsResponseItemsItemAuditReportRef,
+        pub auditor: GetProjectsProjectIdAuditsResponseItemsItemAuditor,
+        pub coverage: ::std::vec::Vec<
+            GetProjectsProjectIdAuditsResponseItemsItemCoverageItem,
+        >,
+        ///Populated only when reviewStatus = "needs_changes".
+        #[serde(
+            rename = "lastReviewerNote",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub last_reviewer_note: ::std::option::Option<::std::string::String>,
+        ///Short-TTL signed URL, project-admin only
+        #[serde(
+            rename = "pdfDownloadUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub pdf_download_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "publicReportUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub public_report_url: ::std::option::Option<::std::string::String>,
+        #[serde(rename = "reviewStatus")]
+        pub review_status: GetProjectsProjectIdAuditsResponseItemsItemReviewStatus,
+        ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+        #[serde(rename = "reviewableRef")]
+        pub reviewable_ref: GetProjectsProjectIdAuditsResponseItemsItemReviewableRef,
+        #[serde(rename = "submittedAt")]
+        pub submitted_at: ::chrono::DateTime<::chrono::offset::Utc>,
+        #[serde(rename = "submittedBy")]
+        pub submitted_by: ::std::option::Option<
+            GetProjectsProjectIdAuditsResponseItemsItemSubmittedBy,
+        >,
+    }
+    impl ::std::convert::From<&GetProjectsProjectIdAuditsResponseItemsItem>
+    for GetProjectsProjectIdAuditsResponseItemsItem {
+        fn from(value: &GetProjectsProjectIdAuditsResponseItemsItem) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel,
+    > for ::std::string::String {
+        fn from(
+            value: GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel,
+    > for GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel {
+        fn from(
+            value: &GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditPeriodLabel {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetProjectsProjectIdAuditsResponseItemsItemAuditReportRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditReportRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetProjectsProjectIdAuditsResponseItemsItemAuditReportRef>
+    for ::std::string::String {
+        fn from(
+            value: GetProjectsProjectIdAuditsResponseItemsItemAuditReportRef,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&GetProjectsProjectIdAuditsResponseItemsItemAuditReportRef>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditReportRef {
+        fn from(
+            value: &GetProjectsProjectIdAuditsResponseItemsItemAuditReportRef,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditReportRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditReportRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetProjectsProjectIdAuditsResponseItemsItemAuditor`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetProjectsProjectIdAuditsResponseItemsItemAuditor(::std::string::String);
+    impl ::std::ops::Deref for GetProjectsProjectIdAuditsResponseItemsItemAuditor {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetProjectsProjectIdAuditsResponseItemsItemAuditor>
+    for ::std::string::String {
+        fn from(value: GetProjectsProjectIdAuditsResponseItemsItemAuditor) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&GetProjectsProjectIdAuditsResponseItemsItemAuditor>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditor {
+        fn from(value: &GetProjectsProjectIdAuditsResponseItemsItemAuditor) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for GetProjectsProjectIdAuditsResponseItemsItemAuditor {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetProjectsProjectIdAuditsResponseItemsItemAuditor {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetProjectsProjectIdAuditsResponseItemsItemCoverageItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "auditReportCoverageId",
+    ///    "chainId",
+    ///    "contractAddress",
+    ///    "coverageStatus",
+    ///    "reviewStatus",
+    ///    "reviewableRef"
+    ///  ],
+    ///  "properties": {
+    ///    "auditReportCoverageId": {
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    },
+    ///    "chainId": {
+    ///      "description": "Positive integer EVM chain ID",
+    ///      "type": "number"
+    ///    },
+    ///    "contractAddress": {
+    ///      "description": "20-byte Ethereum address, normalized to lowercase",
+    ///      "type": "string"
+    ///    },
+    ///    "coverageStatus": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "covered",
+    ///        "partial",
+    ///        "out_of_scope"
+    ///      ]
+    ///    },
+    ///    "reviewStatus": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "pending",
+    ///        "approved",
+    ///        "needs_changes",
+    ///        "rejected"
+    ///      ]
+    ///    },
+    ///    "reviewableRef": {
+    ///      "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetProjectsProjectIdAuditsResponseItemsItemCoverageItem {
+        #[serde(rename = "auditReportCoverageId")]
+        pub audit_report_coverage_id: ::uuid::Uuid,
+        #[serde(rename = "chainId")]
+        pub chain_id: f64,
+        ///20-byte Ethereum address, normalized to lowercase
+        #[serde(rename = "contractAddress")]
+        pub contract_address: ::std::string::String,
+        #[serde(rename = "coverageStatus")]
+        pub coverage_status: GetProjectsProjectIdAuditsResponseItemsItemCoverageItemCoverageStatus,
+        #[serde(rename = "reviewStatus")]
+        pub review_status: GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewStatus,
+        ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+        #[serde(rename = "reviewableRef")]
+        pub reviewable_ref: GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewableRef,
+    }
+    impl ::std::convert::From<&GetProjectsProjectIdAuditsResponseItemsItemCoverageItem>
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItem {
+        fn from(
+            value: &GetProjectsProjectIdAuditsResponseItemsItemCoverageItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`GetProjectsProjectIdAuditsResponseItemsItemCoverageItemCoverageStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "covered",
+    ///    "partial",
+    ///    "out_of_scope"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetProjectsProjectIdAuditsResponseItemsItemCoverageItemCoverageStatus {
+        #[serde(rename = "covered")]
+        Covered,
+        #[serde(rename = "partial")]
+        Partial,
+        #[serde(rename = "out_of_scope")]
+        OutOfScope,
+    }
+    impl ::std::convert::From<&Self>
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemCoverageStatus {
+        fn from(
+            value: &GetProjectsProjectIdAuditsResponseItemsItemCoverageItemCoverageStatus,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemCoverageStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Covered => f.write_str("covered"),
+                Self::Partial => f.write_str("partial"),
+                Self::OutOfScope => f.write_str("out_of_scope"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemCoverageStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "covered" => Ok(Self::Covered),
+                "partial" => Ok(Self::Partial),
+                "out_of_scope" => Ok(Self::OutOfScope),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "pending",
+    ///    "approved",
+    ///    "needs_changes",
+    ///    "rejected"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewStatus {
+        #[serde(rename = "pending")]
+        Pending,
+        #[serde(rename = "approved")]
+        Approved,
+        #[serde(rename = "needs_changes")]
+        NeedsChanges,
+        #[serde(rename = "rejected")]
+        Rejected,
+    }
+    impl ::std::convert::From<&Self>
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewStatus {
+        fn from(
+            value: &GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewStatus,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Pending => f.write_str("pending"),
+                Self::Approved => f.write_str("approved"),
+                Self::NeedsChanges => f.write_str("needs_changes"),
+                Self::Rejected => f.write_str("rejected"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "pending" => Ok(Self::Pending),
+                "approved" => Ok(Self::Approved),
+                "needs_changes" => Ok(Self::NeedsChanges),
+                "rejected" => Ok(Self::Rejected),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewableRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewableRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewableRef,
+    > for ::std::string::String {
+        fn from(
+            value: GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewableRef,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewableRef,
+    > for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewableRef {
+        fn from(
+            value: &GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewableRef,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewableRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetProjectsProjectIdAuditsResponseItemsItemCoverageItemReviewableRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetProjectsProjectIdAuditsResponseItemsItemReviewStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "pending",
+    ///    "approved",
+    ///    "needs_changes",
+    ///    "rejected"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetProjectsProjectIdAuditsResponseItemsItemReviewStatus {
+        #[serde(rename = "pending")]
+        Pending,
+        #[serde(rename = "approved")]
+        Approved,
+        #[serde(rename = "needs_changes")]
+        NeedsChanges,
+        #[serde(rename = "rejected")]
+        Rejected,
+    }
+    impl ::std::convert::From<&Self>
+    for GetProjectsProjectIdAuditsResponseItemsItemReviewStatus {
+        fn from(
+            value: &GetProjectsProjectIdAuditsResponseItemsItemReviewStatus,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for GetProjectsProjectIdAuditsResponseItemsItemReviewStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Pending => f.write_str("pending"),
+                Self::Approved => f.write_str("approved"),
+                Self::NeedsChanges => f.write_str("needs_changes"),
+                Self::Rejected => f.write_str("rejected"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for GetProjectsProjectIdAuditsResponseItemsItemReviewStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "pending" => Ok(Self::Pending),
+                "approved" => Ok(Self::Approved),
+                "needs_changes" => Ok(Self::NeedsChanges),
+                "rejected" => Ok(Self::Rejected),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetProjectsProjectIdAuditsResponseItemsItemReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetProjectsProjectIdAuditsResponseItemsItemReviewableRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref for GetProjectsProjectIdAuditsResponseItemsItemReviewableRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetProjectsProjectIdAuditsResponseItemsItemReviewableRef>
+    for ::std::string::String {
+        fn from(
+            value: GetProjectsProjectIdAuditsResponseItemsItemReviewableRef,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&GetProjectsProjectIdAuditsResponseItemsItemReviewableRef>
+    for GetProjectsProjectIdAuditsResponseItemsItemReviewableRef {
+        fn from(
+            value: &GetProjectsProjectIdAuditsResponseItemsItemReviewableRef,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetProjectsProjectIdAuditsResponseItemsItemReviewableRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetProjectsProjectIdAuditsResponseItemsItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdAuditsResponseItemsItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetProjectsProjectIdAuditsResponseItemsItemReviewableRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetProjectsProjectIdAuditsResponseItemsItemSubmittedBy`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "displayName",
+    ///    "userId"
+    ///  ],
+    ///  "properties": {
+    ///    "displayName": {
+    ///      "type": "string"
+    ///    },
+    ///    "userId": {
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GetProjectsProjectIdAuditsResponseItemsItemSubmittedBy {
+        #[serde(rename = "displayName")]
+        pub display_name: ::std::string::String,
+        #[serde(rename = "userId")]
+        pub user_id: ::uuid::Uuid,
+    }
+    impl ::std::convert::From<&GetProjectsProjectIdAuditsResponseItemsItemSubmittedBy>
+    for GetProjectsProjectIdAuditsResponseItemsItemSubmittedBy {
+        fn from(value: &GetProjectsProjectIdAuditsResponseItemsItemSubmittedBy) -> Self {
+            value.clone()
+        }
+    }
+    ///Opaque keyset-pagination token. base64(JSON.stringify({ submittedAt, auditReportId })).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Opaque keyset-pagination token. base64(JSON.stringify({ submittedAt, auditReportId })).",
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetProjectsProjectIdAuditsResponseNextCursor(::std::string::String);
+    impl ::std::ops::Deref for GetProjectsProjectIdAuditsResponseNextCursor {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetProjectsProjectIdAuditsResponseNextCursor>
+    for ::std::string::String {
+        fn from(value: GetProjectsProjectIdAuditsResponseNextCursor) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&GetProjectsProjectIdAuditsResponseNextCursor>
+    for GetProjectsProjectIdAuditsResponseNextCursor {
+        fn from(value: &GetProjectsProjectIdAuditsResponseNextCursor) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for GetProjectsProjectIdAuditsResponseNextCursor {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetProjectsProjectIdAuditsResponseNextCursor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdAuditsResponseNextCursor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdAuditsResponseNextCursor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetProjectsProjectIdAuditsResponseNextCursor {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetProjectsProjectIdAuditsStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "default": "all",
+    ///  "oneOf": [
+    ///    {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "pending",
+    ///        "approved",
+    ///        "needs_changes",
+    ///        "rejected"
+    ///      ]
+    ///    },
+    ///    {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "all"
+    ///      ]
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum GetProjectsProjectIdAuditsStatus {
+        #[serde(rename = "pending")]
+        Pending,
+        #[serde(rename = "approved")]
+        Approved,
+        #[serde(rename = "needs_changes")]
+        NeedsChanges,
+        #[serde(rename = "rejected")]
+        Rejected,
+        #[serde(rename = "all")]
+        All,
+    }
+    impl ::std::convert::From<&Self> for GetProjectsProjectIdAuditsStatus {
+        fn from(value: &GetProjectsProjectIdAuditsStatus) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display for GetProjectsProjectIdAuditsStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Pending => f.write_str("pending"),
+                Self::Approved => f.write_str("approved"),
+                Self::NeedsChanges => f.write_str("needs_changes"),
+                Self::Rejected => f.write_str("rejected"),
+                Self::All => f.write_str("all"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for GetProjectsProjectIdAuditsStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "pending" => Ok(Self::Pending),
+                "approved" => Ok(Self::Approved),
+                "needs_changes" => Ok(Self::NeedsChanges),
+                "rejected" => Ok(Self::Rejected),
+                "all" => Ok(Self::All),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetProjectsProjectIdAuditsStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdAuditsStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdAuditsStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::default::Default for GetProjectsProjectIdAuditsStatus {
+        fn default() -> Self {
+            GetProjectsProjectIdAuditsStatus::All
         }
     }
     ///`GetProjectsProjectIdIncidentsEnvironment`
@@ -8446,856 +15023,6 @@ pub mod types {
                 .map_err(|e| { <D::Error as ::serde::de::Error>::custom(e.to_string()) })
         }
     }
-    ///`GetProjectsProjectIdRegisteredAssertionsEnvironment`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "default": "all",
-    ///  "type": "string",
-    ///  "enum": [
-    ///    "staging",
-    ///    "production",
-    ///    "all"
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(
-        ::serde::Deserialize,
-        ::serde::Serialize,
-        Clone,
-        Copy,
-        Debug,
-        Eq,
-        Hash,
-        Ord,
-        PartialEq,
-        PartialOrd
-    )]
-    pub enum GetProjectsProjectIdRegisteredAssertionsEnvironment {
-        #[serde(rename = "staging")]
-        Staging,
-        #[serde(rename = "production")]
-        Production,
-        #[serde(rename = "all")]
-        All,
-    }
-    impl ::std::convert::From<&Self>
-    for GetProjectsProjectIdRegisteredAssertionsEnvironment {
-        fn from(value: &GetProjectsProjectIdRegisteredAssertionsEnvironment) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display for GetProjectsProjectIdRegisteredAssertionsEnvironment {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match *self {
-                Self::Staging => f.write_str("staging"),
-                Self::Production => f.write_str("production"),
-                Self::All => f.write_str("all"),
-            }
-        }
-    }
-    impl ::std::str::FromStr for GetProjectsProjectIdRegisteredAssertionsEnvironment {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            match value {
-                "staging" => Ok(Self::Staging),
-                "production" => Ok(Self::Production),
-                "all" => Ok(Self::All),
-                _ => Err("invalid value".into()),
-            }
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetProjectsProjectIdRegisteredAssertionsEnvironment {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetProjectsProjectIdRegisteredAssertionsEnvironment {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetProjectsProjectIdRegisteredAssertionsEnvironment {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::default::Default
-    for GetProjectsProjectIdRegisteredAssertionsEnvironment {
-        fn default() -> Self {
-            GetProjectsProjectIdRegisteredAssertionsEnvironment::All
-        }
-    }
-    ///`GetProjectsProjectIdRegisteredAssertionsResponse`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "registered_assertions"
-    ///  ],
-    ///  "properties": {
-    ///    "registered_assertions": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "object",
-    ///        "required": [
-    ///          "assertion_functions",
-    ///          "assertion_id",
-    ///          "bytecode",
-    ///          "constructor_abi_signature",
-    ///          "constructor_args",
-    ///          "contract_name",
-    ///          "linked_adopters",
-    ///          "registered_address",
-    ///          "registered_at",
-    ///          "signature",
-    ///          "source_code",
-    ///          "status",
-    ///          "submitted_at"
-    ///        ],
-    ///        "properties": {
-    ///          "assertion_functions": {
-    ///            "type": "array",
-    ///            "items": {
-    ///              "type": "string"
-    ///            }
-    ///          },
-    ///          "assertion_id": {
-    ///            "type": "string",
-    ///            "pattern": "^0x[a-fA-F0-9]{64}$"
-    ///          },
-    ///          "bytecode": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "constructor_abi_signature": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "constructor_args": {
-    ///            "type": "array",
-    ///            "items": {}
-    ///          },
-    ///          "contract_name": {
-    ///            "type": "string"
-    ///          },
-    ///          "environment": {
-    ///            "type": "string",
-    ///            "enum": [
-    ///              "staging",
-    ///              "production"
-    ///            ]
-    ///          },
-    ///          "linked_adopters": {
-    ///            "type": "array",
-    ///            "items": {
-    ///              "type": "string",
-    ///              "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///            }
-    ///          },
-    ///          "registered_address": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ],
-    ///            "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///          },
-    ///          "registered_at": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ],
-    ///            "format": "date-time"
-    ///          },
-    ///          "signature": {
-    ///            "type": "string"
-    ///          },
-    ///          "source_code": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "status": {
-    ///            "type": "string",
-    ///            "enum": [
-    ///              "pending",
-    ///              "submitted",
-    ///              "registered",
-    ///              "removed",
-    ///              "failed"
-    ///            ]
-    ///          },
-    ///          "submitted_at": {
-    ///            "type": "string",
-    ///            "format": "date-time"
-    ///          }
-    ///        }
-    ///      }
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetProjectsProjectIdRegisteredAssertionsResponse {
-        pub registered_assertions: ::std::vec::Vec<
-            GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItem,
-        >,
-    }
-    impl ::std::convert::From<&GetProjectsProjectIdRegisteredAssertionsResponse>
-    for GetProjectsProjectIdRegisteredAssertionsResponse {
-        fn from(value: &GetProjectsProjectIdRegisteredAssertionsResponse) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "assertion_functions",
-    ///    "assertion_id",
-    ///    "bytecode",
-    ///    "constructor_abi_signature",
-    ///    "constructor_args",
-    ///    "contract_name",
-    ///    "linked_adopters",
-    ///    "registered_address",
-    ///    "registered_at",
-    ///    "signature",
-    ///    "source_code",
-    ///    "status",
-    ///    "submitted_at"
-    ///  ],
-    ///  "properties": {
-    ///    "assertion_functions": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "string"
-    ///      }
-    ///    },
-    ///    "assertion_id": {
-    ///      "type": "string",
-    ///      "pattern": "^0x[a-fA-F0-9]{64}$"
-    ///    },
-    ///    "bytecode": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "constructor_abi_signature": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "constructor_args": {
-    ///      "type": "array",
-    ///      "items": {}
-    ///    },
-    ///    "contract_name": {
-    ///      "type": "string"
-    ///    },
-    ///    "environment": {
-    ///      "type": "string",
-    ///      "enum": [
-    ///        "staging",
-    ///        "production"
-    ///      ]
-    ///    },
-    ///    "linked_adopters": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "string",
-    ///        "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///      }
-    ///    },
-    ///    "registered_address": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ],
-    ///      "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///    },
-    ///    "registered_at": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ],
-    ///      "format": "date-time"
-    ///    },
-    ///    "signature": {
-    ///      "type": "string"
-    ///    },
-    ///    "source_code": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "status": {
-    ///      "type": "string",
-    ///      "enum": [
-    ///        "pending",
-    ///        "submitted",
-    ///        "registered",
-    ///        "removed",
-    ///        "failed"
-    ///      ]
-    ///    },
-    ///    "submitted_at": {
-    ///      "type": "string",
-    ///      "format": "date-time"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItem {
-        pub assertion_functions: ::std::vec::Vec<::std::string::String>,
-        pub assertion_id: GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId,
-        pub bytecode: ::std::option::Option<::std::string::String>,
-        pub constructor_abi_signature: ::std::option::Option<::std::string::String>,
-        pub constructor_args: ::std::vec::Vec<::serde_json::Value>,
-        pub contract_name: ::std::string::String,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub environment: ::std::option::Option<
-            GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemEnvironment,
-        >,
-        pub linked_adopters: ::std::vec::Vec<
-            GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem,
-        >,
-        pub registered_address: ::std::option::Option<
-            GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress,
-        >,
-        pub registered_at: ::std::option::Option<
-            ::chrono::DateTime<::chrono::offset::Utc>,
-        >,
-        pub signature: ::std::string::String,
-        pub source_code: ::std::option::Option<::std::string::String>,
-        pub status: GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemStatus,
-        pub submitted_at: ::chrono::DateTime<::chrono::offset::Utc>,
-    }
-    impl ::std::convert::From<
-        &GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItem,
-    > for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItem {
-        fn from(
-            value: &GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItem,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "pattern": "^0x[a-fA-F0-9]{64}$"
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId(
-        ::std::string::String,
-    );
-    impl ::std::ops::Deref
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<
-        GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId,
-    > for ::std::string::String {
-        fn from(
-            value: GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId,
-        ) -> Self {
-            value.0
-        }
-    }
-    impl ::std::convert::From<
-        &GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId,
-    >
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId {
-        fn from(
-            value: &GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::str::FromStr
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
-            { ::regress::Regex::new("^0x[a-fA-F0-9]{64}$").unwrap() });
-            if PATTERN.find(value).is_none() {
-                return Err("doesn't match pattern \"^0x[a-fA-F0-9]{64}$\"".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemAssertionId {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemEnvironment`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "enum": [
-    ///    "staging",
-    ///    "production"
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(
-        ::serde::Deserialize,
-        ::serde::Serialize,
-        Clone,
-        Copy,
-        Debug,
-        Eq,
-        Hash,
-        Ord,
-        PartialEq,
-        PartialOrd
-    )]
-    pub enum GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemEnvironment {
-        #[serde(rename = "staging")]
-        Staging,
-        #[serde(rename = "production")]
-        Production,
-    }
-    impl ::std::convert::From<&Self>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemEnvironment {
-        fn from(
-            value: &GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemEnvironment,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemEnvironment {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match *self {
-                Self::Staging => f.write_str("staging"),
-                Self::Production => f.write_str("production"),
-            }
-        }
-    }
-    impl ::std::str::FromStr
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemEnvironment {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            match value {
-                "staging" => Ok(Self::Staging),
-                "production" => Ok(Self::Production),
-                _ => Err("invalid value".into()),
-            }
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemEnvironment {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemEnvironment {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemEnvironment {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    ///`GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem(
-        ::std::string::String,
-    );
-    impl ::std::ops::Deref
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<
-        GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem,
-    > for ::std::string::String {
-        fn from(
-            value: GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem,
-        ) -> Self {
-            value.0
-        }
-    }
-    impl ::std::convert::From<
-        &GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem,
-    >
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem {
-        fn from(
-            value: &GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::str::FromStr
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
-            { ::regress::Regex::new("^0x[a-fA-F0-9]{40}$").unwrap() });
-            if PATTERN.find(value).is_none() {
-                return Err("doesn't match pattern \"^0x[a-fA-F0-9]{40}$\"".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemLinkedAdoptersItem {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress(
-        ::std::string::String,
-    );
-    impl ::std::ops::Deref
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<
-        GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress,
-    > for ::std::string::String {
-        fn from(
-            value: GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress,
-        ) -> Self {
-            value.0
-        }
-    }
-    impl ::std::convert::From<
-        &GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress,
-    >
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress {
-        fn from(
-            value: &GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::str::FromStr
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
-            { ::regress::Regex::new("^0x[a-fA-F0-9]{40}$").unwrap() });
-            if PATTERN.find(value).is_none() {
-                return Err("doesn't match pattern \"^0x[a-fA-F0-9]{40}$\"".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemRegisteredAddress {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemStatus`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "enum": [
-    ///    "pending",
-    ///    "submitted",
-    ///    "registered",
-    ///    "removed",
-    ///    "failed"
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(
-        ::serde::Deserialize,
-        ::serde::Serialize,
-        Clone,
-        Copy,
-        Debug,
-        Eq,
-        Hash,
-        Ord,
-        PartialEq,
-        PartialOrd
-    )]
-    pub enum GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemStatus {
-        #[serde(rename = "pending")]
-        Pending,
-        #[serde(rename = "submitted")]
-        Submitted,
-        #[serde(rename = "registered")]
-        Registered,
-        #[serde(rename = "removed")]
-        Removed,
-        #[serde(rename = "failed")]
-        Failed,
-    }
-    impl ::std::convert::From<&Self>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemStatus {
-        fn from(
-            value: &GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemStatus,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemStatus {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match *self {
-                Self::Pending => f.write_str("pending"),
-                Self::Submitted => f.write_str("submitted"),
-                Self::Registered => f.write_str("registered"),
-                Self::Removed => f.write_str("removed"),
-                Self::Failed => f.write_str("failed"),
-            }
-        }
-    }
-    impl ::std::str::FromStr
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemStatus {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            match value {
-                "pending" => Ok(Self::Pending),
-                "submitted" => Ok(Self::Submitted),
-                "registered" => Ok(Self::Registered),
-                "removed" => Ok(Self::Removed),
-                "failed" => Ok(Self::Failed),
-                _ => Err("invalid value".into()),
-            }
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetProjectsProjectIdRegisteredAssertionsResponseRegisteredAssertionsItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
     ///`GetProjectsProjectIdReleasesEnvironment`
     ///
     /// <details><summary>JSON schema</summary>
@@ -11011,8 +16738,21 @@ pub mod types {
     ///                    "compilerVersion": {
     ///                      "type": "string"
     ///                    },
+    ///                    "constructorAbiSignature": {
+    ///                      "type": [
+    ///                        "string",
+    ///                        "null"
+    ///                      ]
+    ///                    },
     ///                    "contractName": {
     ///                      "type": "string"
+    ///                    },
+    ///                    "encodedConstructorArgs": {
+    ///                      "type": [
+    ///                        "string",
+    ///                        "null"
+    ///                      ],
+    ///                      "pattern": "^0x([a-fA-F0-9]{2})*$"
     ///                    },
     ///                    "file": {
     ///                      "type": [
@@ -11972,8 +17712,21 @@ pub mod types {
     ///                "compilerVersion": {
     ///                  "type": "string"
     ///                },
+    ///                "constructorAbiSignature": {
+    ///                  "type": [
+    ///                    "string",
+    ///                    "null"
+    ///                  ]
+    ///                },
     ///                "contractName": {
     ///                  "type": "string"
+    ///                },
+    ///                "encodedConstructorArgs": {
+    ///                  "type": [
+    ///                    "string",
+    ///                    "null"
+    ///                  ],
+    ///                  "pattern": "^0x([a-fA-F0-9]{2})*$"
     ///                },
     ///                "file": {
     ///                  "type": [
@@ -12091,8 +17844,21 @@ pub mod types {
     ///          "compilerVersion": {
     ///            "type": "string"
     ///          },
+    ///          "constructorAbiSignature": {
+    ///            "type": [
+    ///              "string",
+    ///              "null"
+    ///            ]
+    ///          },
     ///          "contractName": {
     ///            "type": "string"
+    ///          },
+    ///          "encodedConstructorArgs": {
+    ///            "type": [
+    ///              "string",
+    ///              "null"
+    ///            ],
+    ///            "pattern": "^0x([a-fA-F0-9]{2})*$"
     ///          },
     ///          "file": {
     ///            "type": [
@@ -12274,8 +18040,21 @@ pub mod types {
     ///    "compilerVersion": {
     ///      "type": "string"
     ///    },
+    ///    "constructorAbiSignature": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
     ///    "contractName": {
     ///      "type": "string"
+    ///    },
+    ///    "encodedConstructorArgs": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ],
+    ///      "pattern": "^0x([a-fA-F0-9]{2})*$"
     ///    },
     ///    "file": {
     ///      "type": [
@@ -12307,8 +18086,22 @@ pub mod types {
         pub bytecode: ::std::option::Option<::std::string::String>,
         #[serde(rename = "compilerVersion")]
         pub compiler_version: ::std::string::String,
+        #[serde(
+            rename = "constructorAbiSignature",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub constructor_abi_signature: ::std::option::Option<::std::string::String>,
         #[serde(rename = "contractName")]
         pub contract_name: ::std::string::String,
+        #[serde(
+            rename = "encodedConstructorArgs",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub encoded_constructor_args: ::std::option::Option<
+            GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs,
+        >,
         pub file: ::std::option::Option<::std::string::String>,
         #[serde(rename = "proverSignature")]
         pub prover_signature: ::std::option::Option<::std::string::String>,
@@ -12323,6 +18116,102 @@ pub mod types {
             value: &GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItem,
         ) -> Self {
             value.clone()
+        }
+    }
+    ///`GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "pattern": "^0x([a-fA-F0-9]{2})*$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs,
+    > for ::std::string::String {
+        fn from(
+            value: GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs,
+    >
+    for GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs {
+        fn from(
+            value: &GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^0x([a-fA-F0-9]{2})*$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^0x([a-fA-F0-9]{2})*$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotContractsValueAssertionsItemEncodedConstructorArgs {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
         }
     }
     ///`GetProjectsProjectIdReleasesReleaseIdResponseConfigSnapshotEnvironment`
@@ -16971,174 +22860,6 @@ pub mod types {
                 })
         }
     }
-    ///`GetProjectsProjectIdSubmittedAssertionsEnvironment`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "default": "all",
-    ///  "type": "string",
-    ///  "enum": [
-    ///    "staging",
-    ///    "production",
-    ///    "all"
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(
-        ::serde::Deserialize,
-        ::serde::Serialize,
-        Clone,
-        Copy,
-        Debug,
-        Eq,
-        Hash,
-        Ord,
-        PartialEq,
-        PartialOrd
-    )]
-    pub enum GetProjectsProjectIdSubmittedAssertionsEnvironment {
-        #[serde(rename = "staging")]
-        Staging,
-        #[serde(rename = "production")]
-        Production,
-        #[serde(rename = "all")]
-        All,
-    }
-    impl ::std::convert::From<&Self>
-    for GetProjectsProjectIdSubmittedAssertionsEnvironment {
-        fn from(value: &GetProjectsProjectIdSubmittedAssertionsEnvironment) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display for GetProjectsProjectIdSubmittedAssertionsEnvironment {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match *self {
-                Self::Staging => f.write_str("staging"),
-                Self::Production => f.write_str("production"),
-                Self::All => f.write_str("all"),
-            }
-        }
-    }
-    impl ::std::str::FromStr for GetProjectsProjectIdSubmittedAssertionsEnvironment {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            match value {
-                "staging" => Ok(Self::Staging),
-                "production" => Ok(Self::Production),
-                "all" => Ok(Self::All),
-                _ => Err("invalid value".into()),
-            }
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetProjectsProjectIdSubmittedAssertionsEnvironment {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetProjectsProjectIdSubmittedAssertionsEnvironment {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetProjectsProjectIdSubmittedAssertionsEnvironment {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::default::Default for GetProjectsProjectIdSubmittedAssertionsEnvironment {
-        fn default() -> Self {
-            GetProjectsProjectIdSubmittedAssertionsEnvironment::All
-        }
-    }
-    ///`GetProjectsProjectIdSubmittedAssertionsResponse`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "submitted_assertions"
-    ///  ],
-    ///  "properties": {
-    ///    "submitted_assertions": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "object",
-    ///        "required": [
-    ///          "assertion_id"
-    ///        ],
-    ///        "properties": {
-    ///          "assertion_id": {
-    ///            "type": "string"
-    ///          }
-    ///        }
-    ///      }
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetProjectsProjectIdSubmittedAssertionsResponse {
-        pub submitted_assertions: ::std::vec::Vec<
-            GetProjectsProjectIdSubmittedAssertionsResponseSubmittedAssertionsItem,
-        >,
-    }
-    impl ::std::convert::From<&GetProjectsProjectIdSubmittedAssertionsResponse>
-    for GetProjectsProjectIdSubmittedAssertionsResponse {
-        fn from(value: &GetProjectsProjectIdSubmittedAssertionsResponse) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetProjectsProjectIdSubmittedAssertionsResponseSubmittedAssertionsItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "assertion_id"
-    ///  ],
-    ///  "properties": {
-    ///    "assertion_id": {
-    ///      "type": "string"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetProjectsProjectIdSubmittedAssertionsResponseSubmittedAssertionsItem {
-        pub assertion_id: ::std::string::String,
-    }
-    impl ::std::convert::From<
-        &GetProjectsProjectIdSubmittedAssertionsResponseSubmittedAssertionsItem,
-    > for GetProjectsProjectIdSubmittedAssertionsResponseSubmittedAssertionsItem {
-        fn from(
-            value: &GetProjectsProjectIdSubmittedAssertionsResponseSubmittedAssertionsItem,
-        ) -> Self {
-            value.clone()
-        }
-    }
     ///`GetProjectsProjectIdWidgetResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -19496,754 +25217,6 @@ pub mod types {
                 })
         }
     }
-    ///`GetSystemStatusResponse`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "assertionDa",
-    ///    "assertionDas",
-    ///    "assertionEnforcer"
-    ///  ],
-    ///  "properties": {
-    ///    "assertionDa": {
-    ///      "type": "object",
-    ///      "required": [
-    ///        "operational"
-    ///      ],
-    ///      "properties": {
-    ///        "message": {
-    ///          "type": "string"
-    ///        },
-    ///        "operational": {
-    ///          "type": "boolean"
-    ///        }
-    ///      }
-    ///    },
-    ///    "assertionDas": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "object",
-    ///        "required": [
-    ///          "id",
-    ///          "name",
-    ///          "operational"
-    ///        ],
-    ///        "properties": {
-    ///          "chainId": {
-    ///            "type": "number"
-    ///          },
-    ///          "id": {
-    ///            "type": "string"
-    ///          },
-    ///          "message": {
-    ///            "type": "string"
-    ///          },
-    ///          "name": {
-    ///            "type": "string"
-    ///          },
-    ///          "operational": {
-    ///            "type": "boolean"
-    ///          },
-    ///          "url": {
-    ///            "type": "string"
-    ///          }
-    ///        }
-    ///      }
-    ///    },
-    ///    "assertionEnforcer": {
-    ///      "type": "object",
-    ///      "required": [
-    ///        "operational"
-    ///      ],
-    ///      "properties": {
-    ///        "message": {
-    ///          "type": "string"
-    ///        },
-    ///        "operational": {
-    ///          "type": "boolean"
-    ///        }
-    ///      }
-    ///    },
-    ///    "assertionEnforcers": {
-    ///      "default": [],
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "object",
-    ///        "required": [
-    ///          "id",
-    ///          "name",
-    ///          "operational"
-    ///        ],
-    ///        "properties": {
-    ///          "chainId": {
-    ///            "type": "number"
-    ///          },
-    ///          "id": {
-    ///            "type": "string"
-    ///          },
-    ///          "message": {
-    ///            "type": "string"
-    ///          },
-    ///          "name": {
-    ///            "type": "string"
-    ///          },
-    ///          "operational": {
-    ///            "type": "boolean"
-    ///          },
-    ///          "url": {
-    ///            "type": "string"
-    ///          }
-    ///        }
-    ///      }
-    ///    },
-    ///    "enforcers": {
-    ///      "type": "object",
-    ///      "required": [
-    ///        "networkStatus"
-    ///      ],
-    ///      "properties": {
-    ///        "networkStatus": {
-    ///          "type": "array",
-    ///          "items": {
-    ///            "type": "object",
-    ///            "required": [
-    ///              "chain_id",
-    ///              "last_updated",
-    ///              "operational",
-    ///              "stale",
-    ///              "status"
-    ///            ],
-    ///            "properties": {
-    ///              "chain_id": {
-    ///                "type": "integer"
-    ///              },
-    ///              "last_updated": {
-    ///                "type": "string"
-    ///              },
-    ///              "message": {
-    ///                "type": [
-    ///                  "string",
-    ///                  "null"
-    ///                ]
-    ///              },
-    ///              "metadata": {
-    ///                "type": [
-    ///                  "object",
-    ///                  "null"
-    ///                ],
-    ///                "properties": {
-    ///                  "degradation_reason": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "message": {
-    ///                    "type": "string"
-    ///                  }
-    ///                },
-    ///                "additionalProperties": true
-    ///              },
-    ///              "operational": {
-    ///                "type": "boolean"
-    ///              },
-    ///              "stale": {
-    ///                "type": "boolean"
-    ///              },
-    ///              "status": {
-    ///                "type": "string",
-    ///                "enum": [
-    ///                  "operational",
-    ///                  "degraded",
-    ///                  "outage"
-    ///                ]
-    ///              }
-    ///            }
-    ///          }
-    ///        },
-    ///        "rpc": {
-    ///          "type": "array",
-    ///          "items": {
-    ///            "type": "object",
-    ///            "required": [
-    ///              "id",
-    ///              "operational"
-    ///            ],
-    ///            "properties": {
-    ///              "id": {
-    ///                "type": "string"
-    ///              },
-    ///              "operational": {
-    ///                "type": "boolean"
-    ///              }
-    ///            }
-    ///          }
-    ///        }
-    ///      }
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetSystemStatusResponse {
-        #[serde(rename = "assertionDa")]
-        pub assertion_da: GetSystemStatusResponseAssertionDa,
-        #[serde(rename = "assertionDas")]
-        pub assertion_das: ::std::vec::Vec<GetSystemStatusResponseAssertionDasItem>,
-        #[serde(rename = "assertionEnforcer")]
-        pub assertion_enforcer: GetSystemStatusResponseAssertionEnforcer,
-        #[serde(
-            rename = "assertionEnforcers",
-            default,
-            skip_serializing_if = "::std::vec::Vec::is_empty"
-        )]
-        pub assertion_enforcers: ::std::vec::Vec<
-            GetSystemStatusResponseAssertionEnforcersItem,
-        >,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub enforcers: ::std::option::Option<GetSystemStatusResponseEnforcers>,
-    }
-    impl ::std::convert::From<&GetSystemStatusResponse> for GetSystemStatusResponse {
-        fn from(value: &GetSystemStatusResponse) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetSystemStatusResponseAssertionDa`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "operational"
-    ///  ],
-    ///  "properties": {
-    ///    "message": {
-    ///      "type": "string"
-    ///    },
-    ///    "operational": {
-    ///      "type": "boolean"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetSystemStatusResponseAssertionDa {
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub message: ::std::option::Option<::std::string::String>,
-        pub operational: bool,
-    }
-    impl ::std::convert::From<&GetSystemStatusResponseAssertionDa>
-    for GetSystemStatusResponseAssertionDa {
-        fn from(value: &GetSystemStatusResponseAssertionDa) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetSystemStatusResponseAssertionDasItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "id",
-    ///    "name",
-    ///    "operational"
-    ///  ],
-    ///  "properties": {
-    ///    "chainId": {
-    ///      "type": "number"
-    ///    },
-    ///    "id": {
-    ///      "type": "string"
-    ///    },
-    ///    "message": {
-    ///      "type": "string"
-    ///    },
-    ///    "name": {
-    ///      "type": "string"
-    ///    },
-    ///    "operational": {
-    ///      "type": "boolean"
-    ///    },
-    ///    "url": {
-    ///      "type": "string"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetSystemStatusResponseAssertionDasItem {
-        #[serde(
-            rename = "chainId",
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub chain_id: ::std::option::Option<f64>,
-        pub id: ::std::string::String,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub message: ::std::option::Option<::std::string::String>,
-        pub name: ::std::string::String,
-        pub operational: bool,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub url: ::std::option::Option<::std::string::String>,
-    }
-    impl ::std::convert::From<&GetSystemStatusResponseAssertionDasItem>
-    for GetSystemStatusResponseAssertionDasItem {
-        fn from(value: &GetSystemStatusResponseAssertionDasItem) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetSystemStatusResponseAssertionEnforcer`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "operational"
-    ///  ],
-    ///  "properties": {
-    ///    "message": {
-    ///      "type": "string"
-    ///    },
-    ///    "operational": {
-    ///      "type": "boolean"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetSystemStatusResponseAssertionEnforcer {
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub message: ::std::option::Option<::std::string::String>,
-        pub operational: bool,
-    }
-    impl ::std::convert::From<&GetSystemStatusResponseAssertionEnforcer>
-    for GetSystemStatusResponseAssertionEnforcer {
-        fn from(value: &GetSystemStatusResponseAssertionEnforcer) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetSystemStatusResponseAssertionEnforcersItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "id",
-    ///    "name",
-    ///    "operational"
-    ///  ],
-    ///  "properties": {
-    ///    "chainId": {
-    ///      "type": "number"
-    ///    },
-    ///    "id": {
-    ///      "type": "string"
-    ///    },
-    ///    "message": {
-    ///      "type": "string"
-    ///    },
-    ///    "name": {
-    ///      "type": "string"
-    ///    },
-    ///    "operational": {
-    ///      "type": "boolean"
-    ///    },
-    ///    "url": {
-    ///      "type": "string"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetSystemStatusResponseAssertionEnforcersItem {
-        #[serde(
-            rename = "chainId",
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub chain_id: ::std::option::Option<f64>,
-        pub id: ::std::string::String,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub message: ::std::option::Option<::std::string::String>,
-        pub name: ::std::string::String,
-        pub operational: bool,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub url: ::std::option::Option<::std::string::String>,
-    }
-    impl ::std::convert::From<&GetSystemStatusResponseAssertionEnforcersItem>
-    for GetSystemStatusResponseAssertionEnforcersItem {
-        fn from(value: &GetSystemStatusResponseAssertionEnforcersItem) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetSystemStatusResponseEnforcers`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "networkStatus"
-    ///  ],
-    ///  "properties": {
-    ///    "networkStatus": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "object",
-    ///        "required": [
-    ///          "chain_id",
-    ///          "last_updated",
-    ///          "operational",
-    ///          "stale",
-    ///          "status"
-    ///        ],
-    ///        "properties": {
-    ///          "chain_id": {
-    ///            "type": "integer"
-    ///          },
-    ///          "last_updated": {
-    ///            "type": "string"
-    ///          },
-    ///          "message": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "metadata": {
-    ///            "type": [
-    ///              "object",
-    ///              "null"
-    ///            ],
-    ///            "properties": {
-    ///              "degradation_reason": {
-    ///                "type": "string"
-    ///              },
-    ///              "message": {
-    ///                "type": "string"
-    ///              }
-    ///            },
-    ///            "additionalProperties": true
-    ///          },
-    ///          "operational": {
-    ///            "type": "boolean"
-    ///          },
-    ///          "stale": {
-    ///            "type": "boolean"
-    ///          },
-    ///          "status": {
-    ///            "type": "string",
-    ///            "enum": [
-    ///              "operational",
-    ///              "degraded",
-    ///              "outage"
-    ///            ]
-    ///          }
-    ///        }
-    ///      }
-    ///    },
-    ///    "rpc": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "object",
-    ///        "required": [
-    ///          "id",
-    ///          "operational"
-    ///        ],
-    ///        "properties": {
-    ///          "id": {
-    ///            "type": "string"
-    ///          },
-    ///          "operational": {
-    ///            "type": "boolean"
-    ///          }
-    ///        }
-    ///      }
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetSystemStatusResponseEnforcers {
-        #[serde(rename = "networkStatus")]
-        pub network_status: ::std::vec::Vec<
-            GetSystemStatusResponseEnforcersNetworkStatusItem,
-        >,
-        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
-        pub rpc: ::std::vec::Vec<GetSystemStatusResponseEnforcersRpcItem>,
-    }
-    impl ::std::convert::From<&GetSystemStatusResponseEnforcers>
-    for GetSystemStatusResponseEnforcers {
-        fn from(value: &GetSystemStatusResponseEnforcers) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetSystemStatusResponseEnforcersNetworkStatusItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "chain_id",
-    ///    "last_updated",
-    ///    "operational",
-    ///    "stale",
-    ///    "status"
-    ///  ],
-    ///  "properties": {
-    ///    "chain_id": {
-    ///      "type": "integer"
-    ///    },
-    ///    "last_updated": {
-    ///      "type": "string"
-    ///    },
-    ///    "message": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "metadata": {
-    ///      "type": [
-    ///        "object",
-    ///        "null"
-    ///      ],
-    ///      "properties": {
-    ///        "degradation_reason": {
-    ///          "type": "string"
-    ///        },
-    ///        "message": {
-    ///          "type": "string"
-    ///        }
-    ///      },
-    ///      "additionalProperties": true
-    ///    },
-    ///    "operational": {
-    ///      "type": "boolean"
-    ///    },
-    ///    "stale": {
-    ///      "type": "boolean"
-    ///    },
-    ///    "status": {
-    ///      "type": "string",
-    ///      "enum": [
-    ///        "operational",
-    ///        "degraded",
-    ///        "outage"
-    ///      ]
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetSystemStatusResponseEnforcersNetworkStatusItem {
-        pub chain_id: i64,
-        pub last_updated: ::std::string::String,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub message: ::std::option::Option<::std::string::String>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub metadata: ::std::option::Option<
-            GetSystemStatusResponseEnforcersNetworkStatusItemMetadata,
-        >,
-        pub operational: bool,
-        pub stale: bool,
-        pub status: GetSystemStatusResponseEnforcersNetworkStatusItemStatus,
-    }
-    impl ::std::convert::From<&GetSystemStatusResponseEnforcersNetworkStatusItem>
-    for GetSystemStatusResponseEnforcersNetworkStatusItem {
-        fn from(value: &GetSystemStatusResponseEnforcersNetworkStatusItem) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetSystemStatusResponseEnforcersNetworkStatusItemMetadata`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "properties": {
-    ///    "degradation_reason": {
-    ///      "type": "string"
-    ///    },
-    ///    "message": {
-    ///      "type": "string"
-    ///    }
-    ///  },
-    ///  "additionalProperties": true
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetSystemStatusResponseEnforcersNetworkStatusItemMetadata {
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub degradation_reason: ::std::option::Option<::std::string::String>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub message: ::std::option::Option<::std::string::String>,
-    }
-    impl ::std::convert::From<&GetSystemStatusResponseEnforcersNetworkStatusItemMetadata>
-    for GetSystemStatusResponseEnforcersNetworkStatusItemMetadata {
-        fn from(
-            value: &GetSystemStatusResponseEnforcersNetworkStatusItemMetadata,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::default::Default
-    for GetSystemStatusResponseEnforcersNetworkStatusItemMetadata {
-        fn default() -> Self {
-            Self {
-                degradation_reason: Default::default(),
-                message: Default::default(),
-            }
-        }
-    }
-    ///`GetSystemStatusResponseEnforcersNetworkStatusItemStatus`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "enum": [
-    ///    "operational",
-    ///    "degraded",
-    ///    "outage"
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(
-        ::serde::Deserialize,
-        ::serde::Serialize,
-        Clone,
-        Copy,
-        Debug,
-        Eq,
-        Hash,
-        Ord,
-        PartialEq,
-        PartialOrd
-    )]
-    pub enum GetSystemStatusResponseEnforcersNetworkStatusItemStatus {
-        #[serde(rename = "operational")]
-        Operational,
-        #[serde(rename = "degraded")]
-        Degraded,
-        #[serde(rename = "outage")]
-        Outage,
-    }
-    impl ::std::convert::From<&Self>
-    for GetSystemStatusResponseEnforcersNetworkStatusItemStatus {
-        fn from(
-            value: &GetSystemStatusResponseEnforcersNetworkStatusItemStatus,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display
-    for GetSystemStatusResponseEnforcersNetworkStatusItemStatus {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match *self {
-                Self::Operational => f.write_str("operational"),
-                Self::Degraded => f.write_str("degraded"),
-                Self::Outage => f.write_str("outage"),
-            }
-        }
-    }
-    impl ::std::str::FromStr
-    for GetSystemStatusResponseEnforcersNetworkStatusItemStatus {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            match value {
-                "operational" => Ok(Self::Operational),
-                "degraded" => Ok(Self::Degraded),
-                "outage" => Ok(Self::Outage),
-                _ => Err("invalid value".into()),
-            }
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetSystemStatusResponseEnforcersNetworkStatusItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetSystemStatusResponseEnforcersNetworkStatusItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetSystemStatusResponseEnforcersNetworkStatusItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    ///`GetSystemStatusResponseEnforcersRpcItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "id",
-    ///    "operational"
-    ///  ],
-    ///  "properties": {
-    ///    "id": {
-    ///      "type": "string"
-    ///    },
-    ///    "operational": {
-    ///      "type": "boolean"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetSystemStatusResponseEnforcersRpcItem {
-        pub id: ::std::string::String,
-        pub operational: bool,
-    }
-    impl ::std::convert::From<&GetSystemStatusResponseEnforcersRpcItem>
-    for GetSystemStatusResponseEnforcersRpcItem {
-        fn from(value: &GetSystemStatusResponseEnforcersRpcItem) -> Self {
-            value.clone()
-        }
-    }
     ///`GetViewsIncidentsIncidentIdResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -20446,7 +25419,9 @@ pub mod types {
     ///                        "completed",
     ///                        "failed",
     ///                        "timeout",
-    ///                        "skipped"
+    ///                        "skipped",
+    ///                        "errored",
+    ///                        "cancelled"
     ///                      ]
     ///                    },
     ///                    "trace_format": {
@@ -20703,7 +25678,9 @@ pub mod types {
     ///                    "completed",
     ///                    "failed",
     ///                    "timeout",
-    ///                    "skipped"
+    ///                    "skipped",
+    ///                    "errored",
+    ///                    "cancelled"
     ///                  ]
     ///                },
     ///                "trace_format": {
@@ -21050,7 +26027,9 @@ pub mod types {
     ///              "completed",
     ///              "failed",
     ///              "timeout",
-    ///              "skipped"
+    ///              "skipped",
+    ///              "errored",
+    ///              "cancelled"
     ///            ]
     ///          },
     ///          "trace_format": {
@@ -21173,7 +26152,9 @@ pub mod types {
     ///        "completed",
     ///        "failed",
     ///        "timeout",
-    ///        "skipped"
+    ///        "skipped",
+    ///        "errored",
+    ///        "cancelled"
     ///      ]
     ///    },
     ///    "trace_format": {
@@ -21315,7 +26296,9 @@ pub mod types {
     ///    "completed",
     ///    "failed",
     ///    "timeout",
-    ///    "skipped"
+    ///    "skipped",
+    ///    "errored",
+    ///    "cancelled"
     ///  ]
     ///}
     /// ```
@@ -21345,6 +26328,10 @@ pub mod types {
         Timeout,
         #[serde(rename = "skipped")]
         Skipped,
+        #[serde(rename = "errored")]
+        Errored,
+        #[serde(rename = "cancelled")]
+        Cancelled,
     }
     impl ::std::convert::From<&Self>
     for GetViewsIncidentsIncidentIdResponseDataInvalidatingTransactionsItemDebugTracesItemStatus {
@@ -21364,6 +26351,8 @@ pub mod types {
                 Self::Failed => f.write_str("failed"),
                 Self::Timeout => f.write_str("timeout"),
                 Self::Skipped => f.write_str("skipped"),
+                Self::Errored => f.write_str("errored"),
+                Self::Cancelled => f.write_str("cancelled"),
             }
         }
     }
@@ -21380,6 +26369,8 @@ pub mod types {
                 "failed" => Ok(Self::Failed),
                 "timeout" => Ok(Self::Timeout),
                 "skipped" => Ok(Self::Skipped),
+                "errored" => Ok(Self::Errored),
+                "cancelled" => Ok(Self::Cancelled),
                 _ => Err("invalid value".into()),
             }
         }
@@ -21763,7 +26754,7 @@ pub mod types {
             value.parse()
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponse`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -21872,7 +26863,9 @@ pub mod types {
     ///                "completed",
     ///                "failed",
     ///                "timeout",
-    ///                "skipped"
+    ///                "skipped",
+    ///                "errored",
+    ///                "cancelled"
     ///              ]
     ///            },
     ///            "trace_content": {
@@ -22276,20 +27269,21 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponse {
-        pub data: GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseData,
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse {
+        pub data: GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseData,
         #[serde(rename = "_meta")]
-        pub meta: GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMeta,
+        pub meta: GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMeta,
     }
-    impl ::std::convert::From<&GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponse>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponse {
+    impl ::std::convert::From<
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse,
+    > for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponse,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse,
         ) -> Self {
             value.clone()
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseData`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseData`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -22360,7 +27354,9 @@ pub mod types {
     ///            "completed",
     ///            "failed",
     ///            "timeout",
-    ///            "skipped"
+    ///            "skipped",
+    ///            "errored",
+    ///            "cancelled"
     ///          ]
     ///        },
     ///        "trace_content": {
@@ -22762,22 +27758,23 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseData {
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseData {
         pub debug_trace: ::std::option::Option<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTrace,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTrace,
         >,
-        pub invalidating_transaction: GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransaction,
+        pub invalidating_transaction: GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransaction,
     }
     impl ::std::convert::From<
-        &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseData,
-    > for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseData {
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseData,
+    >
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseData {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseData,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseData,
         ) -> Self {
             value.clone()
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTrace`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTrace`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -22838,7 +27835,9 @@ pub mod types {
     ///        "completed",
     ///        "failed",
     ///        "timeout",
-    ///        "skipped"
+    ///        "skipped",
+    ///        "errored",
+    ///        "cancelled"
     ///      ]
     ///    },
     ///    "trace_content": {
@@ -22881,31 +27880,32 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTrace {
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTrace {
         pub assertion_trace_content: ::std::option::Option<::std::string::String>,
         pub created_at: ::std::string::String,
-        pub environment: GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceEnvironment,
+        pub environment: GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceEnvironment,
         pub error: ::std::option::Option<::std::string::String>,
         pub id: ::uuid::Uuid,
         pub invalidating_transaction_id: ::uuid::Uuid,
-        pub status: GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceStatus,
+        pub status: GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceStatus,
         pub trace_content: ::std::option::Option<::std::string::String>,
-        pub trace_format: GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceTraceFormat,
+        pub trace_format: GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceTraceFormat,
         pub tracer_completed_at: ::std::option::Option<::std::string::String>,
         pub tracer_duration_ms: ::std::option::Option<i64>,
         pub transaction_trace_content: ::std::option::Option<::std::string::String>,
         pub updated_at: ::std::string::String,
     }
     impl ::std::convert::From<
-        &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTrace,
-    > for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTrace {
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTrace,
+    >
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTrace {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTrace,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTrace,
         ) -> Self {
             value.clone()
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceEnvironment`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceEnvironment`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -22931,22 +27931,22 @@ pub mod types {
         PartialEq,
         PartialOrd
     )]
-    pub enum GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceEnvironment {
+    pub enum GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceEnvironment {
         #[serde(rename = "staging")]
         Staging,
         #[serde(rename = "production")]
         Production,
     }
     impl ::std::convert::From<&Self>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceEnvironment {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceEnvironment {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceEnvironment,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceEnvironment,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::fmt::Display
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceEnvironment {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceEnvironment {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::Staging => f.write_str("staging"),
@@ -22955,7 +27955,7 @@ pub mod types {
         }
     }
     impl ::std::str::FromStr
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceEnvironment {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceEnvironment {
         type Err = self::error::ConversionError;
         fn from_str(
             value: &str,
@@ -22968,7 +27968,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&str>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceEnvironment {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceEnvironment {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &str,
@@ -22977,7 +27977,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&::std::string::String>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceEnvironment {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceEnvironment {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -22986,7 +27986,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<::std::string::String>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceEnvironment {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceEnvironment {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
@@ -22994,7 +27994,7 @@ pub mod types {
             value.parse()
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceStatus`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceStatus`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -23007,7 +28007,9 @@ pub mod types {
     ///    "completed",
     ///    "failed",
     ///    "timeout",
-    ///    "skipped"
+    ///    "skipped",
+    ///    "errored",
+    ///    "cancelled"
     ///  ]
     ///}
     /// ```
@@ -23024,7 +28026,7 @@ pub mod types {
         PartialEq,
         PartialOrd
     )]
-    pub enum GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceStatus {
+    pub enum GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceStatus {
         #[serde(rename = "pending")]
         Pending,
         #[serde(rename = "in_progress")]
@@ -23037,17 +28039,21 @@ pub mod types {
         Timeout,
         #[serde(rename = "skipped")]
         Skipped,
+        #[serde(rename = "errored")]
+        Errored,
+        #[serde(rename = "cancelled")]
+        Cancelled,
     }
     impl ::std::convert::From<&Self>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceStatus {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceStatus {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceStatus,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceStatus,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::fmt::Display
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceStatus {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceStatus {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::Pending => f.write_str("pending"),
@@ -23056,11 +28062,13 @@ pub mod types {
                 Self::Failed => f.write_str("failed"),
                 Self::Timeout => f.write_str("timeout"),
                 Self::Skipped => f.write_str("skipped"),
+                Self::Errored => f.write_str("errored"),
+                Self::Cancelled => f.write_str("cancelled"),
             }
         }
     }
     impl ::std::str::FromStr
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceStatus {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceStatus {
         type Err = self::error::ConversionError;
         fn from_str(
             value: &str,
@@ -23072,12 +28080,14 @@ pub mod types {
                 "failed" => Ok(Self::Failed),
                 "timeout" => Ok(Self::Timeout),
                 "skipped" => Ok(Self::Skipped),
+                "errored" => Ok(Self::Errored),
+                "cancelled" => Ok(Self::Cancelled),
                 _ => Err("invalid value".into()),
             }
         }
     }
     impl ::std::convert::TryFrom<&str>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceStatus {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceStatus {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &str,
@@ -23086,7 +28096,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&::std::string::String>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceStatus {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceStatus {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -23095,7 +28105,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<::std::string::String>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceStatus {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceStatus {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
@@ -23103,7 +28113,7 @@ pub mod types {
             value.parse()
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceTraceFormat`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceTraceFormat`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -23130,7 +28140,7 @@ pub mod types {
         PartialEq,
         PartialOrd
     )]
-    pub enum GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceTraceFormat {
+    pub enum GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceTraceFormat {
         #[serde(rename = "ansi")]
         Ansi,
         #[serde(rename = "plain")]
@@ -23139,15 +28149,15 @@ pub mod types {
         Json,
     }
     impl ::std::convert::From<&Self>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceTraceFormat {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceTraceFormat {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceTraceFormat,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceTraceFormat,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::fmt::Display
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceTraceFormat {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceTraceFormat {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::Ansi => f.write_str("ansi"),
@@ -23157,7 +28167,7 @@ pub mod types {
         }
     }
     impl ::std::str::FromStr
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceTraceFormat {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceTraceFormat {
         type Err = self::error::ConversionError;
         fn from_str(
             value: &str,
@@ -23171,7 +28181,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&str>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceTraceFormat {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceTraceFormat {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &str,
@@ -23180,7 +28190,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&::std::string::String>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceTraceFormat {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceTraceFormat {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -23189,7 +28199,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<::std::string::String>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataDebugTraceTraceFormat {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataDebugTraceTraceFormat {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
@@ -23197,7 +28207,7 @@ pub mod types {
             value.parse()
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransaction`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransaction`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -23562,9 +28572,9 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransaction {
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransaction {
         pub block_env: ::std::option::Option<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnv,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnv,
         >,
         pub block_number: ::std::option::Option<::std::string::String>,
         pub calldata: ::std::option::Option<::std::string::String>,
@@ -23575,27 +28585,27 @@ pub mod types {
         pub incident_timestamp: ::std::string::String,
         pub landed_on_chain: ::std::option::Option<bool>,
         pub previous_transactions: ::std::vec::Vec<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem,
         >,
         pub revert_reason: ::std::option::Option<::std::string::String>,
         pub to_address: ::std::string::String,
         pub transaction_data: ::std::option::Option<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionData,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionData,
         >,
-        pub transaction_hash: GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash,
+        pub transaction_hash: GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash,
         pub value: ::std::string::String,
     }
     impl ::std::convert::From<
-        &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransaction,
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransaction,
     >
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransaction {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransaction {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransaction,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransaction,
         ) -> Self {
             value.clone()
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnv`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnv`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -23646,14 +28656,14 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnv {
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnv {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub basefee: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub beneficiary: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub blob_excess_gas_and_price: ::std::option::Option<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice,
         >,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub difficulty: ::std::option::Option<::std::string::String>,
@@ -23667,17 +28677,17 @@ pub mod types {
         pub timestamp: ::std::option::Option<::std::string::String>,
     }
     impl ::std::convert::From<
-        &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnv,
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnv,
     >
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnv {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnv {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnv,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnv,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::default::Default
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnv {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnv {
         fn default() -> Self {
             Self {
                 basefee: Default::default(),
@@ -23691,7 +28701,7 @@ pub mod types {
             }
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -23710,24 +28720,24 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice {
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub blob_gasprice: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub excess_blob_gas: ::std::option::Option<::std::string::String>,
     }
     impl ::std::convert::From<
-        &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice,
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice,
     >
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::default::Default
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionBlockEnvBlobExcessGasAndPrice {
         fn default() -> Self {
             Self {
                 blob_gasprice: Default::default(),
@@ -23735,7 +28745,7 @@ pub mod types {
             }
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -23859,14 +28869,14 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem {
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem {
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub access_list: ::std::vec::Vec<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem,
         >,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub authorization_list: ::std::vec::Vec<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem,
         >,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub blob_versioned_hashes: ::std::vec::Vec<::std::string::String>,
@@ -23874,7 +28884,7 @@ pub mod types {
         pub block_number: ::std::option::Option<f64>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub chain_id: ::std::option::Option<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId,
         >,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub data: ::std::option::Option<::std::string::String>,
@@ -23908,17 +28918,17 @@ pub mod types {
         pub value: ::std::option::Option<::std::string::String>,
     }
     impl ::std::convert::From<
-        &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem,
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem,
     >
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::default::Default
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItem {
         fn default() -> Self {
             Self {
                 access_list: Default::default(),
@@ -23942,7 +28952,7 @@ pub mod types {
             }
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -23964,24 +28974,24 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem {
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub address: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub storage_keys: ::std::vec::Vec<::std::string::String>,
     }
     impl ::std::convert::From<
-        &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem,
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem,
     >
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::default::Default
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAccessListItem {
         fn default() -> Self {
             Self {
                 address: Default::default(),
@@ -23989,7 +28999,7 @@ pub mod types {
             }
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -24027,12 +29037,12 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem {
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub address: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub chain_id: ::std::option::Option<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId,
         >,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub nonce: ::std::option::Option<::std::string::String>,
@@ -24044,17 +29054,17 @@ pub mod types {
         pub v: ::std::option::Option<::std::string::String>,
     }
     impl ::std::convert::From<
-        &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem,
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem,
     >
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::default::Default
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItem {
         fn default() -> Self {
             Self {
                 address: Default::default(),
@@ -24066,7 +29076,7 @@ pub mod types {
             }
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -24085,20 +29095,20 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     #[serde(untagged)]
-    pub enum GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId {
+    pub enum GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId {
         Variant0(::std::string::String),
         Variant1(f64),
     }
     impl ::std::convert::From<&Self>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::fmt::Display
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match self {
                 Self::Variant0(x) => x.fmt(f),
@@ -24107,12 +29117,12 @@ pub mod types {
         }
     }
     impl ::std::convert::From<f64>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemAuthorizationListItemChainId {
         fn from(value: f64) -> Self {
             Self::Variant1(value)
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -24131,20 +29141,20 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     #[serde(untagged)]
-    pub enum GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId {
+    pub enum GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId {
         Variant0(::std::string::String),
         Variant1(f64),
     }
     impl ::std::convert::From<&Self>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::fmt::Display
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match self {
                 Self::Variant0(x) => x.fmt(f),
@@ -24153,12 +29163,12 @@ pub mod types {
         }
     }
     impl ::std::convert::From<f64>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionPreviousTransactionsItemChainId {
         fn from(value: f64) -> Self {
             Self::Variant1(value)
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionData`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionData`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -24282,14 +29292,14 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionData {
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionData {
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub access_list: ::std::vec::Vec<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem,
         >,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub authorization_list: ::std::vec::Vec<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem,
         >,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub blob_versioned_hashes: ::std::vec::Vec<::std::string::String>,
@@ -24297,7 +29307,7 @@ pub mod types {
         pub block_number: ::std::option::Option<f64>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub chain_id: ::std::option::Option<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataChainId,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataChainId,
         >,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub data: ::std::option::Option<::std::string::String>,
@@ -24331,17 +29341,17 @@ pub mod types {
         pub value: ::std::option::Option<::std::string::String>,
     }
     impl ::std::convert::From<
-        &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionData,
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionData,
     >
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionData {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionData {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionData,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionData,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::default::Default
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionData {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionData {
         fn default() -> Self {
             Self {
                 access_list: Default::default(),
@@ -24365,7 +29375,7 @@ pub mod types {
             }
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -24387,24 +29397,24 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem {
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub address: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub storage_keys: ::std::vec::Vec<::std::string::String>,
     }
     impl ::std::convert::From<
-        &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem,
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem,
     >
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::default::Default
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAccessListItem {
         fn default() -> Self {
             Self {
                 address: Default::default(),
@@ -24412,7 +29422,7 @@ pub mod types {
             }
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -24450,12 +29460,12 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem {
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub address: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub chain_id: ::std::option::Option<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId,
         >,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub nonce: ::std::option::Option<::std::string::String>,
@@ -24467,17 +29477,17 @@ pub mod types {
         pub v: ::std::option::Option<::std::string::String>,
     }
     impl ::std::convert::From<
-        &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem,
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem,
     >
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::default::Default
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItem {
         fn default() -> Self {
             Self {
                 address: Default::default(),
@@ -24489,7 +29499,7 @@ pub mod types {
             }
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -24508,20 +29518,20 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     #[serde(untagged)]
-    pub enum GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId {
+    pub enum GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId {
         Variant0(::std::string::String),
         Variant1(f64),
     }
     impl ::std::convert::From<&Self>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::fmt::Display
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match self {
                 Self::Variant0(x) => x.fmt(f),
@@ -24530,12 +29540,12 @@ pub mod types {
         }
     }
     impl ::std::convert::From<f64>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataAuthorizationListItemChainId {
         fn from(value: f64) -> Self {
             Self::Variant1(value)
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataChainId`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataChainId`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -24554,20 +29564,20 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     #[serde(untagged)]
-    pub enum GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataChainId {
+    pub enum GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataChainId {
         Variant0(::std::string::String),
         Variant1(f64),
     }
     impl ::std::convert::From<&Self>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataChainId {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataChainId {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataChainId,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataChainId,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::fmt::Display
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataChainId {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataChainId {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match self {
                 Self::Variant0(x) => x.fmt(f),
@@ -24576,12 +29586,12 @@ pub mod types {
         }
     }
     impl ::std::convert::From<f64>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionDataChainId {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionDataChainId {
         fn from(value: f64) -> Self {
             Self::Variant1(value)
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -24594,37 +29604,37 @@ pub mod types {
     /// </details>
     #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
     #[serde(transparent)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash(
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash(
         ::std::string::String,
     );
     impl ::std::ops::Deref
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash {
         type Target = ::std::string::String;
         fn deref(&self) -> &::std::string::String {
             &self.0
         }
     }
     impl ::std::convert::From<
-        GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash,
+        GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash,
     > for ::std::string::String {
         fn from(
-            value: GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash,
+            value: GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash,
         ) -> Self {
             value.0
         }
     }
     impl ::std::convert::From<
-        &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash,
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash,
     >
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::str::FromStr
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash {
         type Err = self::error::ConversionError;
         fn from_str(
             value: &str,
@@ -24638,7 +29648,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&str>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &str,
@@ -24647,7 +29657,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&::std::string::String>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -24656,7 +29666,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<::std::string::String>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
@@ -24665,7 +29675,7 @@ pub mod types {
         }
     }
     impl<'de> ::serde::Deserialize<'de>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseDataInvalidatingTransactionTransactionHash {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseDataInvalidatingTransactionTransactionHash {
         fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
         where
             D: ::serde::Deserializer<'de>,
@@ -24677,7 +29687,7 @@ pub mod types {
                 })
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMeta`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMeta`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -24716,7 +29726,7 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMeta {
+    pub struct GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMeta {
         #[serde(
             rename = "artifactDataStale",
             default,
@@ -24732,19 +29742,20 @@ pub mod types {
         #[serde(rename = "fetchedAt")]
         pub fetched_at: ::std::string::String,
         pub sources: ::std::vec::Vec<
-            GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMetaSourcesItem,
+            GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMetaSourcesItem,
         >,
     }
     impl ::std::convert::From<
-        &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMeta,
-    > for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMeta {
+        &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMeta,
+    >
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMeta {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMeta,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMeta,
         ) -> Self {
             value.clone()
         }
     }
-    ///`GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMetaSourcesItem`
+    ///`GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMetaSourcesItem`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -24773,7 +29784,7 @@ pub mod types {
         PartialEq,
         PartialOrd
     )]
-    pub enum GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMetaSourcesItem {
+    pub enum GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMetaSourcesItem {
         #[serde(rename = "offchain")]
         Offchain,
         #[serde(rename = "onchain")]
@@ -24786,15 +29797,15 @@ pub mod types {
         Cache,
     }
     impl ::std::convert::From<&Self>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMetaSourcesItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMetaSourcesItem {
         fn from(
-            value: &GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMetaSourcesItem,
+            value: &GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMetaSourcesItem,
         ) -> Self {
             value.clone()
         }
     }
     impl ::std::fmt::Display
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMetaSourcesItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMetaSourcesItem {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::Offchain => f.write_str("offchain"),
@@ -24806,7 +29817,7 @@ pub mod types {
         }
     }
     impl ::std::str::FromStr
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMetaSourcesItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMetaSourcesItem {
         type Err = self::error::ConversionError;
         fn from_str(
             value: &str,
@@ -24822,7 +29833,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&str>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMetaSourcesItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMetaSourcesItem {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &str,
@@ -24831,7 +29842,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<&::std::string::String>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMetaSourcesItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMetaSourcesItem {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -24840,7 +29851,7 @@ pub mod types {
         }
     }
     impl ::std::convert::TryFrom<::std::string::String>
-    for GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponseMetaSourcesItem {
+    for GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponseMetaSourcesItem {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
@@ -36775,2992 +41786,6 @@ pub mod types {
             GetViewsPublicIncidentsSort::Desc
         }
     }
-    ///`GetViewsTransfersPendingResponse`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "_meta",
-    ///    "data"
-    ///  ],
-    ///  "properties": {
-    ///    "_meta": {
-    ///      "type": "object",
-    ///      "required": [
-    ///        "fetchedAt",
-    ///        "sources"
-    ///      ],
-    ///      "properties": {
-    ///        "artifactDataStale": {
-    ///          "type": "boolean"
-    ///        },
-    ///        "chainDataStale": {
-    ///          "type": "boolean"
-    ///        },
-    ///        "fetchedAt": {
-    ///          "type": "string"
-    ///        },
-    ///        "sources": {
-    ///          "type": "array",
-    ///          "items": {
-    ///            "type": "string",
-    ///            "enum": [
-    ///              "offchain",
-    ///              "onchain",
-    ///              "artifact",
-    ///              "explorer",
-    ///              "cache"
-    ///            ]
-    ///          }
-    ///        }
-    ///      }
-    ///    },
-    ///    "data": {
-    ///      "type": "object",
-    ///      "required": [
-    ///        "incoming",
-    ///        "outgoing"
-    ///      ],
-    ///      "properties": {
-    ///        "incoming": {
-    ///          "type": "object",
-    ///          "required": [
-    ///            "contract_transfers",
-    ///            "project_transfers"
-    ///          ],
-    ///          "properties": {
-    ///            "contract_transfers": {
-    ///              "type": "array",
-    ///              "items": {
-    ///                "type": "object",
-    ///                "required": [
-    ///                  "accepted_tx_hash",
-    ///                  "assertion_adopter_address",
-    ///                  "assertion_adopter_id",
-    ///                  "block",
-    ///                  "chain_id",
-    ///                  "contract_name",
-    ///                  "id",
-    ///                  "initial_manager",
-    ///                  "initiated_tx_hash",
-    ///                  "new_manager",
-    ///                  "project_id",
-    ///                  "status"
-    ///                ],
-    ///                "properties": {
-    ///                  "accepted_tx_hash": {
-    ///                    "type": [
-    ///                      "string",
-    ///                      "null"
-    ///                    ]
-    ///                  },
-    ///                  "assertion_adopter_address": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "assertion_adopter_id": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "block": {
-    ///                    "type": "number"
-    ///                  },
-    ///                  "chain_id": {
-    ///                    "type": "number"
-    ///                  },
-    ///                  "contract_name": {
-    ///                    "type": [
-    ///                      "string",
-    ///                      "null"
-    ///                    ]
-    ///                  },
-    ///                  "id": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "initial_manager": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "initiated_tx_hash": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "new_manager": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "project_id": {
-    ///                    "type": [
-    ///                      "string",
-    ///                      "null"
-    ///                    ]
-    ///                  },
-    ///                  "status": {
-    ///                    "type": "string",
-    ///                    "enum": [
-    ///                      "PENDING",
-    ///                      "COMPLETED"
-    ///                    ]
-    ///                  }
-    ///                }
-    ///              }
-    ///            },
-    ///            "project_transfers": {
-    ///              "type": "array",
-    ///              "items": {
-    ///                "type": "object",
-    ///                "required": [
-    ///                  "contract_transfers",
-    ///                  "initial_manager",
-    ///                  "is_full_project_transfer",
-    ///                  "new_manager",
-    ///                  "project_id",
-    ///                  "project_name"
-    ///                ],
-    ///                "properties": {
-    ///                  "contract_transfers": {
-    ///                    "type": "array",
-    ///                    "items": {
-    ///                      "type": "object",
-    ///                      "required": [
-    ///                        "accepted_tx_hash",
-    ///                        "assertion_adopter_address",
-    ///                        "assertion_adopter_id",
-    ///                        "block",
-    ///                        "chain_id",
-    ///                        "contract_name",
-    ///                        "id",
-    ///                        "initial_manager",
-    ///                        "initiated_tx_hash",
-    ///                        "new_manager",
-    ///                        "project_id",
-    ///                        "status"
-    ///                      ],
-    ///                      "properties": {
-    ///                        "accepted_tx_hash": {
-    ///                          "type": [
-    ///                            "string",
-    ///                            "null"
-    ///                          ]
-    ///                        },
-    ///                        "assertion_adopter_address": {
-    ///                          "type": "string"
-    ///                        },
-    ///                        "assertion_adopter_id": {
-    ///                          "type": "string"
-    ///                        },
-    ///                        "block": {
-    ///                          "type": "number"
-    ///                        },
-    ///                        "chain_id": {
-    ///                          "type": "number"
-    ///                        },
-    ///                        "contract_name": {
-    ///                          "type": [
-    ///                            "string",
-    ///                            "null"
-    ///                          ]
-    ///                        },
-    ///                        "id": {
-    ///                          "type": "string"
-    ///                        },
-    ///                        "initial_manager": {
-    ///                          "type": "string"
-    ///                        },
-    ///                        "initiated_tx_hash": {
-    ///                          "type": "string"
-    ///                        },
-    ///                        "new_manager": {
-    ///                          "type": "string"
-    ///                        },
-    ///                        "project_id": {
-    ///                          "type": [
-    ///                            "string",
-    ///                            "null"
-    ///                          ]
-    ///                        },
-    ///                        "status": {
-    ///                          "type": "string",
-    ///                          "enum": [
-    ///                            "PENDING",
-    ///                            "COMPLETED"
-    ///                          ]
-    ///                        }
-    ///                      }
-    ///                    }
-    ///                  },
-    ///                  "initial_manager": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "is_full_project_transfer": {
-    ///                    "type": "boolean"
-    ///                  },
-    ///                  "new_manager": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "project_id": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "project_name": {
-    ///                    "type": [
-    ///                      "string",
-    ///                      "null"
-    ///                    ]
-    ///                  }
-    ///                }
-    ///              }
-    ///            }
-    ///          }
-    ///        },
-    ///        "outgoing": {
-    ///          "type": "object",
-    ///          "required": [
-    ///            "contract_transfers",
-    ///            "project_transfers"
-    ///          ],
-    ///          "properties": {
-    ///            "contract_transfers": {
-    ///              "type": "array",
-    ///              "items": {
-    ///                "type": "object",
-    ///                "required": [
-    ///                  "accepted_tx_hash",
-    ///                  "assertion_adopter_address",
-    ///                  "assertion_adopter_id",
-    ///                  "block",
-    ///                  "chain_id",
-    ///                  "contract_name",
-    ///                  "id",
-    ///                  "initial_manager",
-    ///                  "initiated_tx_hash",
-    ///                  "new_manager",
-    ///                  "project_id",
-    ///                  "status"
-    ///                ],
-    ///                "properties": {
-    ///                  "accepted_tx_hash": {
-    ///                    "type": [
-    ///                      "string",
-    ///                      "null"
-    ///                    ]
-    ///                  },
-    ///                  "assertion_adopter_address": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "assertion_adopter_id": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "block": {
-    ///                    "type": "number"
-    ///                  },
-    ///                  "chain_id": {
-    ///                    "type": "number"
-    ///                  },
-    ///                  "contract_name": {
-    ///                    "type": [
-    ///                      "string",
-    ///                      "null"
-    ///                    ]
-    ///                  },
-    ///                  "id": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "initial_manager": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "initiated_tx_hash": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "new_manager": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "project_id": {
-    ///                    "type": [
-    ///                      "string",
-    ///                      "null"
-    ///                    ]
-    ///                  },
-    ///                  "status": {
-    ///                    "type": "string",
-    ///                    "enum": [
-    ///                      "PENDING",
-    ///                      "COMPLETED"
-    ///                    ]
-    ///                  }
-    ///                }
-    ///              }
-    ///            },
-    ///            "project_transfers": {
-    ///              "type": "array",
-    ///              "items": {
-    ///                "type": "object",
-    ///                "required": [
-    ///                  "contract_transfers",
-    ///                  "initial_manager",
-    ///                  "is_full_project_transfer",
-    ///                  "new_manager",
-    ///                  "project_id",
-    ///                  "project_name"
-    ///                ],
-    ///                "properties": {
-    ///                  "contract_transfers": {
-    ///                    "type": "array",
-    ///                    "items": {
-    ///                      "type": "object",
-    ///                      "required": [
-    ///                        "accepted_tx_hash",
-    ///                        "assertion_adopter_address",
-    ///                        "assertion_adopter_id",
-    ///                        "block",
-    ///                        "chain_id",
-    ///                        "contract_name",
-    ///                        "id",
-    ///                        "initial_manager",
-    ///                        "initiated_tx_hash",
-    ///                        "new_manager",
-    ///                        "project_id",
-    ///                        "status"
-    ///                      ],
-    ///                      "properties": {
-    ///                        "accepted_tx_hash": {
-    ///                          "type": [
-    ///                            "string",
-    ///                            "null"
-    ///                          ]
-    ///                        },
-    ///                        "assertion_adopter_address": {
-    ///                          "type": "string"
-    ///                        },
-    ///                        "assertion_adopter_id": {
-    ///                          "type": "string"
-    ///                        },
-    ///                        "block": {
-    ///                          "type": "number"
-    ///                        },
-    ///                        "chain_id": {
-    ///                          "type": "number"
-    ///                        },
-    ///                        "contract_name": {
-    ///                          "type": [
-    ///                            "string",
-    ///                            "null"
-    ///                          ]
-    ///                        },
-    ///                        "id": {
-    ///                          "type": "string"
-    ///                        },
-    ///                        "initial_manager": {
-    ///                          "type": "string"
-    ///                        },
-    ///                        "initiated_tx_hash": {
-    ///                          "type": "string"
-    ///                        },
-    ///                        "new_manager": {
-    ///                          "type": "string"
-    ///                        },
-    ///                        "project_id": {
-    ///                          "type": [
-    ///                            "string",
-    ///                            "null"
-    ///                          ]
-    ///                        },
-    ///                        "status": {
-    ///                          "type": "string",
-    ///                          "enum": [
-    ///                            "PENDING",
-    ///                            "COMPLETED"
-    ///                          ]
-    ///                        }
-    ///                      }
-    ///                    }
-    ///                  },
-    ///                  "initial_manager": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "is_full_project_transfer": {
-    ///                    "type": "boolean"
-    ///                  },
-    ///                  "new_manager": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "project_id": {
-    ///                    "type": "string"
-    ///                  },
-    ///                  "project_name": {
-    ///                    "type": [
-    ///                      "string",
-    ///                      "null"
-    ///                    ]
-    ///                  }
-    ///                }
-    ///              }
-    ///            }
-    ///          }
-    ///        }
-    ///      }
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersPendingResponse {
-        pub data: GetViewsTransfersPendingResponseData,
-        #[serde(rename = "_meta")]
-        pub meta: GetViewsTransfersPendingResponseMeta,
-    }
-    impl ::std::convert::From<&GetViewsTransfersPendingResponse>
-    for GetViewsTransfersPendingResponse {
-        fn from(value: &GetViewsTransfersPendingResponse) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseData`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "incoming",
-    ///    "outgoing"
-    ///  ],
-    ///  "properties": {
-    ///    "incoming": {
-    ///      "type": "object",
-    ///      "required": [
-    ///        "contract_transfers",
-    ///        "project_transfers"
-    ///      ],
-    ///      "properties": {
-    ///        "contract_transfers": {
-    ///          "type": "array",
-    ///          "items": {
-    ///            "type": "object",
-    ///            "required": [
-    ///              "accepted_tx_hash",
-    ///              "assertion_adopter_address",
-    ///              "assertion_adopter_id",
-    ///              "block",
-    ///              "chain_id",
-    ///              "contract_name",
-    ///              "id",
-    ///              "initial_manager",
-    ///              "initiated_tx_hash",
-    ///              "new_manager",
-    ///              "project_id",
-    ///              "status"
-    ///            ],
-    ///            "properties": {
-    ///              "accepted_tx_hash": {
-    ///                "type": [
-    ///                  "string",
-    ///                  "null"
-    ///                ]
-    ///              },
-    ///              "assertion_adopter_address": {
-    ///                "type": "string"
-    ///              },
-    ///              "assertion_adopter_id": {
-    ///                "type": "string"
-    ///              },
-    ///              "block": {
-    ///                "type": "number"
-    ///              },
-    ///              "chain_id": {
-    ///                "type": "number"
-    ///              },
-    ///              "contract_name": {
-    ///                "type": [
-    ///                  "string",
-    ///                  "null"
-    ///                ]
-    ///              },
-    ///              "id": {
-    ///                "type": "string"
-    ///              },
-    ///              "initial_manager": {
-    ///                "type": "string"
-    ///              },
-    ///              "initiated_tx_hash": {
-    ///                "type": "string"
-    ///              },
-    ///              "new_manager": {
-    ///                "type": "string"
-    ///              },
-    ///              "project_id": {
-    ///                "type": [
-    ///                  "string",
-    ///                  "null"
-    ///                ]
-    ///              },
-    ///              "status": {
-    ///                "type": "string",
-    ///                "enum": [
-    ///                  "PENDING",
-    ///                  "COMPLETED"
-    ///                ]
-    ///              }
-    ///            }
-    ///          }
-    ///        },
-    ///        "project_transfers": {
-    ///          "type": "array",
-    ///          "items": {
-    ///            "type": "object",
-    ///            "required": [
-    ///              "contract_transfers",
-    ///              "initial_manager",
-    ///              "is_full_project_transfer",
-    ///              "new_manager",
-    ///              "project_id",
-    ///              "project_name"
-    ///            ],
-    ///            "properties": {
-    ///              "contract_transfers": {
-    ///                "type": "array",
-    ///                "items": {
-    ///                  "type": "object",
-    ///                  "required": [
-    ///                    "accepted_tx_hash",
-    ///                    "assertion_adopter_address",
-    ///                    "assertion_adopter_id",
-    ///                    "block",
-    ///                    "chain_id",
-    ///                    "contract_name",
-    ///                    "id",
-    ///                    "initial_manager",
-    ///                    "initiated_tx_hash",
-    ///                    "new_manager",
-    ///                    "project_id",
-    ///                    "status"
-    ///                  ],
-    ///                  "properties": {
-    ///                    "accepted_tx_hash": {
-    ///                      "type": [
-    ///                        "string",
-    ///                        "null"
-    ///                      ]
-    ///                    },
-    ///                    "assertion_adopter_address": {
-    ///                      "type": "string"
-    ///                    },
-    ///                    "assertion_adopter_id": {
-    ///                      "type": "string"
-    ///                    },
-    ///                    "block": {
-    ///                      "type": "number"
-    ///                    },
-    ///                    "chain_id": {
-    ///                      "type": "number"
-    ///                    },
-    ///                    "contract_name": {
-    ///                      "type": [
-    ///                        "string",
-    ///                        "null"
-    ///                      ]
-    ///                    },
-    ///                    "id": {
-    ///                      "type": "string"
-    ///                    },
-    ///                    "initial_manager": {
-    ///                      "type": "string"
-    ///                    },
-    ///                    "initiated_tx_hash": {
-    ///                      "type": "string"
-    ///                    },
-    ///                    "new_manager": {
-    ///                      "type": "string"
-    ///                    },
-    ///                    "project_id": {
-    ///                      "type": [
-    ///                        "string",
-    ///                        "null"
-    ///                      ]
-    ///                    },
-    ///                    "status": {
-    ///                      "type": "string",
-    ///                      "enum": [
-    ///                        "PENDING",
-    ///                        "COMPLETED"
-    ///                      ]
-    ///                    }
-    ///                  }
-    ///                }
-    ///              },
-    ///              "initial_manager": {
-    ///                "type": "string"
-    ///              },
-    ///              "is_full_project_transfer": {
-    ///                "type": "boolean"
-    ///              },
-    ///              "new_manager": {
-    ///                "type": "string"
-    ///              },
-    ///              "project_id": {
-    ///                "type": "string"
-    ///              },
-    ///              "project_name": {
-    ///                "type": [
-    ///                  "string",
-    ///                  "null"
-    ///                ]
-    ///              }
-    ///            }
-    ///          }
-    ///        }
-    ///      }
-    ///    },
-    ///    "outgoing": {
-    ///      "type": "object",
-    ///      "required": [
-    ///        "contract_transfers",
-    ///        "project_transfers"
-    ///      ],
-    ///      "properties": {
-    ///        "contract_transfers": {
-    ///          "type": "array",
-    ///          "items": {
-    ///            "type": "object",
-    ///            "required": [
-    ///              "accepted_tx_hash",
-    ///              "assertion_adopter_address",
-    ///              "assertion_adopter_id",
-    ///              "block",
-    ///              "chain_id",
-    ///              "contract_name",
-    ///              "id",
-    ///              "initial_manager",
-    ///              "initiated_tx_hash",
-    ///              "new_manager",
-    ///              "project_id",
-    ///              "status"
-    ///            ],
-    ///            "properties": {
-    ///              "accepted_tx_hash": {
-    ///                "type": [
-    ///                  "string",
-    ///                  "null"
-    ///                ]
-    ///              },
-    ///              "assertion_adopter_address": {
-    ///                "type": "string"
-    ///              },
-    ///              "assertion_adopter_id": {
-    ///                "type": "string"
-    ///              },
-    ///              "block": {
-    ///                "type": "number"
-    ///              },
-    ///              "chain_id": {
-    ///                "type": "number"
-    ///              },
-    ///              "contract_name": {
-    ///                "type": [
-    ///                  "string",
-    ///                  "null"
-    ///                ]
-    ///              },
-    ///              "id": {
-    ///                "type": "string"
-    ///              },
-    ///              "initial_manager": {
-    ///                "type": "string"
-    ///              },
-    ///              "initiated_tx_hash": {
-    ///                "type": "string"
-    ///              },
-    ///              "new_manager": {
-    ///                "type": "string"
-    ///              },
-    ///              "project_id": {
-    ///                "type": [
-    ///                  "string",
-    ///                  "null"
-    ///                ]
-    ///              },
-    ///              "status": {
-    ///                "type": "string",
-    ///                "enum": [
-    ///                  "PENDING",
-    ///                  "COMPLETED"
-    ///                ]
-    ///              }
-    ///            }
-    ///          }
-    ///        },
-    ///        "project_transfers": {
-    ///          "type": "array",
-    ///          "items": {
-    ///            "type": "object",
-    ///            "required": [
-    ///              "contract_transfers",
-    ///              "initial_manager",
-    ///              "is_full_project_transfer",
-    ///              "new_manager",
-    ///              "project_id",
-    ///              "project_name"
-    ///            ],
-    ///            "properties": {
-    ///              "contract_transfers": {
-    ///                "type": "array",
-    ///                "items": {
-    ///                  "type": "object",
-    ///                  "required": [
-    ///                    "accepted_tx_hash",
-    ///                    "assertion_adopter_address",
-    ///                    "assertion_adopter_id",
-    ///                    "block",
-    ///                    "chain_id",
-    ///                    "contract_name",
-    ///                    "id",
-    ///                    "initial_manager",
-    ///                    "initiated_tx_hash",
-    ///                    "new_manager",
-    ///                    "project_id",
-    ///                    "status"
-    ///                  ],
-    ///                  "properties": {
-    ///                    "accepted_tx_hash": {
-    ///                      "type": [
-    ///                        "string",
-    ///                        "null"
-    ///                      ]
-    ///                    },
-    ///                    "assertion_adopter_address": {
-    ///                      "type": "string"
-    ///                    },
-    ///                    "assertion_adopter_id": {
-    ///                      "type": "string"
-    ///                    },
-    ///                    "block": {
-    ///                      "type": "number"
-    ///                    },
-    ///                    "chain_id": {
-    ///                      "type": "number"
-    ///                    },
-    ///                    "contract_name": {
-    ///                      "type": [
-    ///                        "string",
-    ///                        "null"
-    ///                      ]
-    ///                    },
-    ///                    "id": {
-    ///                      "type": "string"
-    ///                    },
-    ///                    "initial_manager": {
-    ///                      "type": "string"
-    ///                    },
-    ///                    "initiated_tx_hash": {
-    ///                      "type": "string"
-    ///                    },
-    ///                    "new_manager": {
-    ///                      "type": "string"
-    ///                    },
-    ///                    "project_id": {
-    ///                      "type": [
-    ///                        "string",
-    ///                        "null"
-    ///                      ]
-    ///                    },
-    ///                    "status": {
-    ///                      "type": "string",
-    ///                      "enum": [
-    ///                        "PENDING",
-    ///                        "COMPLETED"
-    ///                      ]
-    ///                    }
-    ///                  }
-    ///                }
-    ///              },
-    ///              "initial_manager": {
-    ///                "type": "string"
-    ///              },
-    ///              "is_full_project_transfer": {
-    ///                "type": "boolean"
-    ///              },
-    ///              "new_manager": {
-    ///                "type": "string"
-    ///              },
-    ///              "project_id": {
-    ///                "type": "string"
-    ///              },
-    ///              "project_name": {
-    ///                "type": [
-    ///                  "string",
-    ///                  "null"
-    ///                ]
-    ///              }
-    ///            }
-    ///          }
-    ///        }
-    ///      }
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersPendingResponseData {
-        pub incoming: GetViewsTransfersPendingResponseDataIncoming,
-        pub outgoing: GetViewsTransfersPendingResponseDataOutgoing,
-    }
-    impl ::std::convert::From<&GetViewsTransfersPendingResponseData>
-    for GetViewsTransfersPendingResponseData {
-        fn from(value: &GetViewsTransfersPendingResponseData) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseDataIncoming`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "contract_transfers",
-    ///    "project_transfers"
-    ///  ],
-    ///  "properties": {
-    ///    "contract_transfers": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "object",
-    ///        "required": [
-    ///          "accepted_tx_hash",
-    ///          "assertion_adopter_address",
-    ///          "assertion_adopter_id",
-    ///          "block",
-    ///          "chain_id",
-    ///          "contract_name",
-    ///          "id",
-    ///          "initial_manager",
-    ///          "initiated_tx_hash",
-    ///          "new_manager",
-    ///          "project_id",
-    ///          "status"
-    ///        ],
-    ///        "properties": {
-    ///          "accepted_tx_hash": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "assertion_adopter_address": {
-    ///            "type": "string"
-    ///          },
-    ///          "assertion_adopter_id": {
-    ///            "type": "string"
-    ///          },
-    ///          "block": {
-    ///            "type": "number"
-    ///          },
-    ///          "chain_id": {
-    ///            "type": "number"
-    ///          },
-    ///          "contract_name": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "id": {
-    ///            "type": "string"
-    ///          },
-    ///          "initial_manager": {
-    ///            "type": "string"
-    ///          },
-    ///          "initiated_tx_hash": {
-    ///            "type": "string"
-    ///          },
-    ///          "new_manager": {
-    ///            "type": "string"
-    ///          },
-    ///          "project_id": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "status": {
-    ///            "type": "string",
-    ///            "enum": [
-    ///              "PENDING",
-    ///              "COMPLETED"
-    ///            ]
-    ///          }
-    ///        }
-    ///      }
-    ///    },
-    ///    "project_transfers": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "object",
-    ///        "required": [
-    ///          "contract_transfers",
-    ///          "initial_manager",
-    ///          "is_full_project_transfer",
-    ///          "new_manager",
-    ///          "project_id",
-    ///          "project_name"
-    ///        ],
-    ///        "properties": {
-    ///          "contract_transfers": {
-    ///            "type": "array",
-    ///            "items": {
-    ///              "type": "object",
-    ///              "required": [
-    ///                "accepted_tx_hash",
-    ///                "assertion_adopter_address",
-    ///                "assertion_adopter_id",
-    ///                "block",
-    ///                "chain_id",
-    ///                "contract_name",
-    ///                "id",
-    ///                "initial_manager",
-    ///                "initiated_tx_hash",
-    ///                "new_manager",
-    ///                "project_id",
-    ///                "status"
-    ///              ],
-    ///              "properties": {
-    ///                "accepted_tx_hash": {
-    ///                  "type": [
-    ///                    "string",
-    ///                    "null"
-    ///                  ]
-    ///                },
-    ///                "assertion_adopter_address": {
-    ///                  "type": "string"
-    ///                },
-    ///                "assertion_adopter_id": {
-    ///                  "type": "string"
-    ///                },
-    ///                "block": {
-    ///                  "type": "number"
-    ///                },
-    ///                "chain_id": {
-    ///                  "type": "number"
-    ///                },
-    ///                "contract_name": {
-    ///                  "type": [
-    ///                    "string",
-    ///                    "null"
-    ///                  ]
-    ///                },
-    ///                "id": {
-    ///                  "type": "string"
-    ///                },
-    ///                "initial_manager": {
-    ///                  "type": "string"
-    ///                },
-    ///                "initiated_tx_hash": {
-    ///                  "type": "string"
-    ///                },
-    ///                "new_manager": {
-    ///                  "type": "string"
-    ///                },
-    ///                "project_id": {
-    ///                  "type": [
-    ///                    "string",
-    ///                    "null"
-    ///                  ]
-    ///                },
-    ///                "status": {
-    ///                  "type": "string",
-    ///                  "enum": [
-    ///                    "PENDING",
-    ///                    "COMPLETED"
-    ///                  ]
-    ///                }
-    ///              }
-    ///            }
-    ///          },
-    ///          "initial_manager": {
-    ///            "type": "string"
-    ///          },
-    ///          "is_full_project_transfer": {
-    ///            "type": "boolean"
-    ///          },
-    ///          "new_manager": {
-    ///            "type": "string"
-    ///          },
-    ///          "project_id": {
-    ///            "type": "string"
-    ///          },
-    ///          "project_name": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          }
-    ///        }
-    ///      }
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersPendingResponseDataIncoming {
-        pub contract_transfers: ::std::vec::Vec<
-            GetViewsTransfersPendingResponseDataIncomingContractTransfersItem,
-        >,
-        pub project_transfers: ::std::vec::Vec<
-            GetViewsTransfersPendingResponseDataIncomingProjectTransfersItem,
-        >,
-    }
-    impl ::std::convert::From<&GetViewsTransfersPendingResponseDataIncoming>
-    for GetViewsTransfersPendingResponseDataIncoming {
-        fn from(value: &GetViewsTransfersPendingResponseDataIncoming) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseDataIncomingContractTransfersItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "accepted_tx_hash",
-    ///    "assertion_adopter_address",
-    ///    "assertion_adopter_id",
-    ///    "block",
-    ///    "chain_id",
-    ///    "contract_name",
-    ///    "id",
-    ///    "initial_manager",
-    ///    "initiated_tx_hash",
-    ///    "new_manager",
-    ///    "project_id",
-    ///    "status"
-    ///  ],
-    ///  "properties": {
-    ///    "accepted_tx_hash": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "assertion_adopter_address": {
-    ///      "type": "string"
-    ///    },
-    ///    "assertion_adopter_id": {
-    ///      "type": "string"
-    ///    },
-    ///    "block": {
-    ///      "type": "number"
-    ///    },
-    ///    "chain_id": {
-    ///      "type": "number"
-    ///    },
-    ///    "contract_name": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "id": {
-    ///      "type": "string"
-    ///    },
-    ///    "initial_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "initiated_tx_hash": {
-    ///      "type": "string"
-    ///    },
-    ///    "new_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "project_id": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "status": {
-    ///      "type": "string",
-    ///      "enum": [
-    ///        "PENDING",
-    ///        "COMPLETED"
-    ///      ]
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersPendingResponseDataIncomingContractTransfersItem {
-        pub accepted_tx_hash: ::std::option::Option<::std::string::String>,
-        pub assertion_adopter_address: ::std::string::String,
-        pub assertion_adopter_id: ::std::string::String,
-        pub block: f64,
-        pub chain_id: f64,
-        pub contract_name: ::std::option::Option<::std::string::String>,
-        pub id: ::std::string::String,
-        pub initial_manager: ::std::string::String,
-        pub initiated_tx_hash: ::std::string::String,
-        pub new_manager: ::std::string::String,
-        pub project_id: ::std::option::Option<::std::string::String>,
-        pub status: GetViewsTransfersPendingResponseDataIncomingContractTransfersItemStatus,
-    }
-    impl ::std::convert::From<
-        &GetViewsTransfersPendingResponseDataIncomingContractTransfersItem,
-    > for GetViewsTransfersPendingResponseDataIncomingContractTransfersItem {
-        fn from(
-            value: &GetViewsTransfersPendingResponseDataIncomingContractTransfersItem,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseDataIncomingContractTransfersItemStatus`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "enum": [
-    ///    "PENDING",
-    ///    "COMPLETED"
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(
-        ::serde::Deserialize,
-        ::serde::Serialize,
-        Clone,
-        Copy,
-        Debug,
-        Eq,
-        Hash,
-        Ord,
-        PartialEq,
-        PartialOrd
-    )]
-    pub enum GetViewsTransfersPendingResponseDataIncomingContractTransfersItemStatus {
-        #[serde(rename = "PENDING")]
-        Pending,
-        #[serde(rename = "COMPLETED")]
-        Completed,
-    }
-    impl ::std::convert::From<&Self>
-    for GetViewsTransfersPendingResponseDataIncomingContractTransfersItemStatus {
-        fn from(
-            value: &GetViewsTransfersPendingResponseDataIncomingContractTransfersItemStatus,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display
-    for GetViewsTransfersPendingResponseDataIncomingContractTransfersItemStatus {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match *self {
-                Self::Pending => f.write_str("PENDING"),
-                Self::Completed => f.write_str("COMPLETED"),
-            }
-        }
-    }
-    impl ::std::str::FromStr
-    for GetViewsTransfersPendingResponseDataIncomingContractTransfersItemStatus {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            match value {
-                "PENDING" => Ok(Self::Pending),
-                "COMPLETED" => Ok(Self::Completed),
-                _ => Err("invalid value".into()),
-            }
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetViewsTransfersPendingResponseDataIncomingContractTransfersItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetViewsTransfersPendingResponseDataIncomingContractTransfersItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetViewsTransfersPendingResponseDataIncomingContractTransfersItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseDataIncomingProjectTransfersItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "contract_transfers",
-    ///    "initial_manager",
-    ///    "is_full_project_transfer",
-    ///    "new_manager",
-    ///    "project_id",
-    ///    "project_name"
-    ///  ],
-    ///  "properties": {
-    ///    "contract_transfers": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "object",
-    ///        "required": [
-    ///          "accepted_tx_hash",
-    ///          "assertion_adopter_address",
-    ///          "assertion_adopter_id",
-    ///          "block",
-    ///          "chain_id",
-    ///          "contract_name",
-    ///          "id",
-    ///          "initial_manager",
-    ///          "initiated_tx_hash",
-    ///          "new_manager",
-    ///          "project_id",
-    ///          "status"
-    ///        ],
-    ///        "properties": {
-    ///          "accepted_tx_hash": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "assertion_adopter_address": {
-    ///            "type": "string"
-    ///          },
-    ///          "assertion_adopter_id": {
-    ///            "type": "string"
-    ///          },
-    ///          "block": {
-    ///            "type": "number"
-    ///          },
-    ///          "chain_id": {
-    ///            "type": "number"
-    ///          },
-    ///          "contract_name": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "id": {
-    ///            "type": "string"
-    ///          },
-    ///          "initial_manager": {
-    ///            "type": "string"
-    ///          },
-    ///          "initiated_tx_hash": {
-    ///            "type": "string"
-    ///          },
-    ///          "new_manager": {
-    ///            "type": "string"
-    ///          },
-    ///          "project_id": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "status": {
-    ///            "type": "string",
-    ///            "enum": [
-    ///              "PENDING",
-    ///              "COMPLETED"
-    ///            ]
-    ///          }
-    ///        }
-    ///      }
-    ///    },
-    ///    "initial_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "is_full_project_transfer": {
-    ///      "type": "boolean"
-    ///    },
-    ///    "new_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "project_id": {
-    ///      "type": "string"
-    ///    },
-    ///    "project_name": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersPendingResponseDataIncomingProjectTransfersItem {
-        pub contract_transfers: ::std::vec::Vec<
-            GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItem,
-        >,
-        pub initial_manager: ::std::string::String,
-        pub is_full_project_transfer: bool,
-        pub new_manager: ::std::string::String,
-        pub project_id: ::std::string::String,
-        pub project_name: ::std::option::Option<::std::string::String>,
-    }
-    impl ::std::convert::From<
-        &GetViewsTransfersPendingResponseDataIncomingProjectTransfersItem,
-    > for GetViewsTransfersPendingResponseDataIncomingProjectTransfersItem {
-        fn from(
-            value: &GetViewsTransfersPendingResponseDataIncomingProjectTransfersItem,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "accepted_tx_hash",
-    ///    "assertion_adopter_address",
-    ///    "assertion_adopter_id",
-    ///    "block",
-    ///    "chain_id",
-    ///    "contract_name",
-    ///    "id",
-    ///    "initial_manager",
-    ///    "initiated_tx_hash",
-    ///    "new_manager",
-    ///    "project_id",
-    ///    "status"
-    ///  ],
-    ///  "properties": {
-    ///    "accepted_tx_hash": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "assertion_adopter_address": {
-    ///      "type": "string"
-    ///    },
-    ///    "assertion_adopter_id": {
-    ///      "type": "string"
-    ///    },
-    ///    "block": {
-    ///      "type": "number"
-    ///    },
-    ///    "chain_id": {
-    ///      "type": "number"
-    ///    },
-    ///    "contract_name": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "id": {
-    ///      "type": "string"
-    ///    },
-    ///    "initial_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "initiated_tx_hash": {
-    ///      "type": "string"
-    ///    },
-    ///    "new_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "project_id": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "status": {
-    ///      "type": "string",
-    ///      "enum": [
-    ///        "PENDING",
-    ///        "COMPLETED"
-    ///      ]
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItem {
-        pub accepted_tx_hash: ::std::option::Option<::std::string::String>,
-        pub assertion_adopter_address: ::std::string::String,
-        pub assertion_adopter_id: ::std::string::String,
-        pub block: f64,
-        pub chain_id: f64,
-        pub contract_name: ::std::option::Option<::std::string::String>,
-        pub id: ::std::string::String,
-        pub initial_manager: ::std::string::String,
-        pub initiated_tx_hash: ::std::string::String,
-        pub new_manager: ::std::string::String,
-        pub project_id: ::std::option::Option<::std::string::String>,
-        pub status: GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItemStatus,
-    }
-    impl ::std::convert::From<
-        &GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItem,
-    >
-    for GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItem {
-        fn from(
-            value: &GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItem,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItemStatus`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "enum": [
-    ///    "PENDING",
-    ///    "COMPLETED"
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(
-        ::serde::Deserialize,
-        ::serde::Serialize,
-        Clone,
-        Copy,
-        Debug,
-        Eq,
-        Hash,
-        Ord,
-        PartialEq,
-        PartialOrd
-    )]
-    pub enum GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItemStatus {
-        #[serde(rename = "PENDING")]
-        Pending,
-        #[serde(rename = "COMPLETED")]
-        Completed,
-    }
-    impl ::std::convert::From<&Self>
-    for GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItemStatus {
-        fn from(
-            value: &GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItemStatus,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display
-    for GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItemStatus {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match *self {
-                Self::Pending => f.write_str("PENDING"),
-                Self::Completed => f.write_str("COMPLETED"),
-            }
-        }
-    }
-    impl ::std::str::FromStr
-    for GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItemStatus {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            match value {
-                "PENDING" => Ok(Self::Pending),
-                "COMPLETED" => Ok(Self::Completed),
-                _ => Err("invalid value".into()),
-            }
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetViewsTransfersPendingResponseDataIncomingProjectTransfersItemContractTransfersItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseDataOutgoing`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "contract_transfers",
-    ///    "project_transfers"
-    ///  ],
-    ///  "properties": {
-    ///    "contract_transfers": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "object",
-    ///        "required": [
-    ///          "accepted_tx_hash",
-    ///          "assertion_adopter_address",
-    ///          "assertion_adopter_id",
-    ///          "block",
-    ///          "chain_id",
-    ///          "contract_name",
-    ///          "id",
-    ///          "initial_manager",
-    ///          "initiated_tx_hash",
-    ///          "new_manager",
-    ///          "project_id",
-    ///          "status"
-    ///        ],
-    ///        "properties": {
-    ///          "accepted_tx_hash": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "assertion_adopter_address": {
-    ///            "type": "string"
-    ///          },
-    ///          "assertion_adopter_id": {
-    ///            "type": "string"
-    ///          },
-    ///          "block": {
-    ///            "type": "number"
-    ///          },
-    ///          "chain_id": {
-    ///            "type": "number"
-    ///          },
-    ///          "contract_name": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "id": {
-    ///            "type": "string"
-    ///          },
-    ///          "initial_manager": {
-    ///            "type": "string"
-    ///          },
-    ///          "initiated_tx_hash": {
-    ///            "type": "string"
-    ///          },
-    ///          "new_manager": {
-    ///            "type": "string"
-    ///          },
-    ///          "project_id": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "status": {
-    ///            "type": "string",
-    ///            "enum": [
-    ///              "PENDING",
-    ///              "COMPLETED"
-    ///            ]
-    ///          }
-    ///        }
-    ///      }
-    ///    },
-    ///    "project_transfers": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "object",
-    ///        "required": [
-    ///          "contract_transfers",
-    ///          "initial_manager",
-    ///          "is_full_project_transfer",
-    ///          "new_manager",
-    ///          "project_id",
-    ///          "project_name"
-    ///        ],
-    ///        "properties": {
-    ///          "contract_transfers": {
-    ///            "type": "array",
-    ///            "items": {
-    ///              "type": "object",
-    ///              "required": [
-    ///                "accepted_tx_hash",
-    ///                "assertion_adopter_address",
-    ///                "assertion_adopter_id",
-    ///                "block",
-    ///                "chain_id",
-    ///                "contract_name",
-    ///                "id",
-    ///                "initial_manager",
-    ///                "initiated_tx_hash",
-    ///                "new_manager",
-    ///                "project_id",
-    ///                "status"
-    ///              ],
-    ///              "properties": {
-    ///                "accepted_tx_hash": {
-    ///                  "type": [
-    ///                    "string",
-    ///                    "null"
-    ///                  ]
-    ///                },
-    ///                "assertion_adopter_address": {
-    ///                  "type": "string"
-    ///                },
-    ///                "assertion_adopter_id": {
-    ///                  "type": "string"
-    ///                },
-    ///                "block": {
-    ///                  "type": "number"
-    ///                },
-    ///                "chain_id": {
-    ///                  "type": "number"
-    ///                },
-    ///                "contract_name": {
-    ///                  "type": [
-    ///                    "string",
-    ///                    "null"
-    ///                  ]
-    ///                },
-    ///                "id": {
-    ///                  "type": "string"
-    ///                },
-    ///                "initial_manager": {
-    ///                  "type": "string"
-    ///                },
-    ///                "initiated_tx_hash": {
-    ///                  "type": "string"
-    ///                },
-    ///                "new_manager": {
-    ///                  "type": "string"
-    ///                },
-    ///                "project_id": {
-    ///                  "type": [
-    ///                    "string",
-    ///                    "null"
-    ///                  ]
-    ///                },
-    ///                "status": {
-    ///                  "type": "string",
-    ///                  "enum": [
-    ///                    "PENDING",
-    ///                    "COMPLETED"
-    ///                  ]
-    ///                }
-    ///              }
-    ///            }
-    ///          },
-    ///          "initial_manager": {
-    ///            "type": "string"
-    ///          },
-    ///          "is_full_project_transfer": {
-    ///            "type": "boolean"
-    ///          },
-    ///          "new_manager": {
-    ///            "type": "string"
-    ///          },
-    ///          "project_id": {
-    ///            "type": "string"
-    ///          },
-    ///          "project_name": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          }
-    ///        }
-    ///      }
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersPendingResponseDataOutgoing {
-        pub contract_transfers: ::std::vec::Vec<
-            GetViewsTransfersPendingResponseDataOutgoingContractTransfersItem,
-        >,
-        pub project_transfers: ::std::vec::Vec<
-            GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItem,
-        >,
-    }
-    impl ::std::convert::From<&GetViewsTransfersPendingResponseDataOutgoing>
-    for GetViewsTransfersPendingResponseDataOutgoing {
-        fn from(value: &GetViewsTransfersPendingResponseDataOutgoing) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseDataOutgoingContractTransfersItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "accepted_tx_hash",
-    ///    "assertion_adopter_address",
-    ///    "assertion_adopter_id",
-    ///    "block",
-    ///    "chain_id",
-    ///    "contract_name",
-    ///    "id",
-    ///    "initial_manager",
-    ///    "initiated_tx_hash",
-    ///    "new_manager",
-    ///    "project_id",
-    ///    "status"
-    ///  ],
-    ///  "properties": {
-    ///    "accepted_tx_hash": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "assertion_adopter_address": {
-    ///      "type": "string"
-    ///    },
-    ///    "assertion_adopter_id": {
-    ///      "type": "string"
-    ///    },
-    ///    "block": {
-    ///      "type": "number"
-    ///    },
-    ///    "chain_id": {
-    ///      "type": "number"
-    ///    },
-    ///    "contract_name": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "id": {
-    ///      "type": "string"
-    ///    },
-    ///    "initial_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "initiated_tx_hash": {
-    ///      "type": "string"
-    ///    },
-    ///    "new_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "project_id": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "status": {
-    ///      "type": "string",
-    ///      "enum": [
-    ///        "PENDING",
-    ///        "COMPLETED"
-    ///      ]
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersPendingResponseDataOutgoingContractTransfersItem {
-        pub accepted_tx_hash: ::std::option::Option<::std::string::String>,
-        pub assertion_adopter_address: ::std::string::String,
-        pub assertion_adopter_id: ::std::string::String,
-        pub block: f64,
-        pub chain_id: f64,
-        pub contract_name: ::std::option::Option<::std::string::String>,
-        pub id: ::std::string::String,
-        pub initial_manager: ::std::string::String,
-        pub initiated_tx_hash: ::std::string::String,
-        pub new_manager: ::std::string::String,
-        pub project_id: ::std::option::Option<::std::string::String>,
-        pub status: GetViewsTransfersPendingResponseDataOutgoingContractTransfersItemStatus,
-    }
-    impl ::std::convert::From<
-        &GetViewsTransfersPendingResponseDataOutgoingContractTransfersItem,
-    > for GetViewsTransfersPendingResponseDataOutgoingContractTransfersItem {
-        fn from(
-            value: &GetViewsTransfersPendingResponseDataOutgoingContractTransfersItem,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseDataOutgoingContractTransfersItemStatus`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "enum": [
-    ///    "PENDING",
-    ///    "COMPLETED"
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(
-        ::serde::Deserialize,
-        ::serde::Serialize,
-        Clone,
-        Copy,
-        Debug,
-        Eq,
-        Hash,
-        Ord,
-        PartialEq,
-        PartialOrd
-    )]
-    pub enum GetViewsTransfersPendingResponseDataOutgoingContractTransfersItemStatus {
-        #[serde(rename = "PENDING")]
-        Pending,
-        #[serde(rename = "COMPLETED")]
-        Completed,
-    }
-    impl ::std::convert::From<&Self>
-    for GetViewsTransfersPendingResponseDataOutgoingContractTransfersItemStatus {
-        fn from(
-            value: &GetViewsTransfersPendingResponseDataOutgoingContractTransfersItemStatus,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display
-    for GetViewsTransfersPendingResponseDataOutgoingContractTransfersItemStatus {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match *self {
-                Self::Pending => f.write_str("PENDING"),
-                Self::Completed => f.write_str("COMPLETED"),
-            }
-        }
-    }
-    impl ::std::str::FromStr
-    for GetViewsTransfersPendingResponseDataOutgoingContractTransfersItemStatus {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            match value {
-                "PENDING" => Ok(Self::Pending),
-                "COMPLETED" => Ok(Self::Completed),
-                _ => Err("invalid value".into()),
-            }
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetViewsTransfersPendingResponseDataOutgoingContractTransfersItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetViewsTransfersPendingResponseDataOutgoingContractTransfersItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetViewsTransfersPendingResponseDataOutgoingContractTransfersItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "contract_transfers",
-    ///    "initial_manager",
-    ///    "is_full_project_transfer",
-    ///    "new_manager",
-    ///    "project_id",
-    ///    "project_name"
-    ///  ],
-    ///  "properties": {
-    ///    "contract_transfers": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "object",
-    ///        "required": [
-    ///          "accepted_tx_hash",
-    ///          "assertion_adopter_address",
-    ///          "assertion_adopter_id",
-    ///          "block",
-    ///          "chain_id",
-    ///          "contract_name",
-    ///          "id",
-    ///          "initial_manager",
-    ///          "initiated_tx_hash",
-    ///          "new_manager",
-    ///          "project_id",
-    ///          "status"
-    ///        ],
-    ///        "properties": {
-    ///          "accepted_tx_hash": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "assertion_adopter_address": {
-    ///            "type": "string"
-    ///          },
-    ///          "assertion_adopter_id": {
-    ///            "type": "string"
-    ///          },
-    ///          "block": {
-    ///            "type": "number"
-    ///          },
-    ///          "chain_id": {
-    ///            "type": "number"
-    ///          },
-    ///          "contract_name": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "id": {
-    ///            "type": "string"
-    ///          },
-    ///          "initial_manager": {
-    ///            "type": "string"
-    ///          },
-    ///          "initiated_tx_hash": {
-    ///            "type": "string"
-    ///          },
-    ///          "new_manager": {
-    ///            "type": "string"
-    ///          },
-    ///          "project_id": {
-    ///            "type": [
-    ///              "string",
-    ///              "null"
-    ///            ]
-    ///          },
-    ///          "status": {
-    ///            "type": "string",
-    ///            "enum": [
-    ///              "PENDING",
-    ///              "COMPLETED"
-    ///            ]
-    ///          }
-    ///        }
-    ///      }
-    ///    },
-    ///    "initial_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "is_full_project_transfer": {
-    ///      "type": "boolean"
-    ///    },
-    ///    "new_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "project_id": {
-    ///      "type": "string"
-    ///    },
-    ///    "project_name": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItem {
-        pub contract_transfers: ::std::vec::Vec<
-            GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItem,
-        >,
-        pub initial_manager: ::std::string::String,
-        pub is_full_project_transfer: bool,
-        pub new_manager: ::std::string::String,
-        pub project_id: ::std::string::String,
-        pub project_name: ::std::option::Option<::std::string::String>,
-    }
-    impl ::std::convert::From<
-        &GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItem,
-    > for GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItem {
-        fn from(
-            value: &GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItem,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "accepted_tx_hash",
-    ///    "assertion_adopter_address",
-    ///    "assertion_adopter_id",
-    ///    "block",
-    ///    "chain_id",
-    ///    "contract_name",
-    ///    "id",
-    ///    "initial_manager",
-    ///    "initiated_tx_hash",
-    ///    "new_manager",
-    ///    "project_id",
-    ///    "status"
-    ///  ],
-    ///  "properties": {
-    ///    "accepted_tx_hash": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "assertion_adopter_address": {
-    ///      "type": "string"
-    ///    },
-    ///    "assertion_adopter_id": {
-    ///      "type": "string"
-    ///    },
-    ///    "block": {
-    ///      "type": "number"
-    ///    },
-    ///    "chain_id": {
-    ///      "type": "number"
-    ///    },
-    ///    "contract_name": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "id": {
-    ///      "type": "string"
-    ///    },
-    ///    "initial_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "initiated_tx_hash": {
-    ///      "type": "string"
-    ///    },
-    ///    "new_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "project_id": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "status": {
-    ///      "type": "string",
-    ///      "enum": [
-    ///        "PENDING",
-    ///        "COMPLETED"
-    ///      ]
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItem {
-        pub accepted_tx_hash: ::std::option::Option<::std::string::String>,
-        pub assertion_adopter_address: ::std::string::String,
-        pub assertion_adopter_id: ::std::string::String,
-        pub block: f64,
-        pub chain_id: f64,
-        pub contract_name: ::std::option::Option<::std::string::String>,
-        pub id: ::std::string::String,
-        pub initial_manager: ::std::string::String,
-        pub initiated_tx_hash: ::std::string::String,
-        pub new_manager: ::std::string::String,
-        pub project_id: ::std::option::Option<::std::string::String>,
-        pub status: GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItemStatus,
-    }
-    impl ::std::convert::From<
-        &GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItem,
-    >
-    for GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItem {
-        fn from(
-            value: &GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItem,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItemStatus`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "enum": [
-    ///    "PENDING",
-    ///    "COMPLETED"
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(
-        ::serde::Deserialize,
-        ::serde::Serialize,
-        Clone,
-        Copy,
-        Debug,
-        Eq,
-        Hash,
-        Ord,
-        PartialEq,
-        PartialOrd
-    )]
-    pub enum GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItemStatus {
-        #[serde(rename = "PENDING")]
-        Pending,
-        #[serde(rename = "COMPLETED")]
-        Completed,
-    }
-    impl ::std::convert::From<&Self>
-    for GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItemStatus {
-        fn from(
-            value: &GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItemStatus,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display
-    for GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItemStatus {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match *self {
-                Self::Pending => f.write_str("PENDING"),
-                Self::Completed => f.write_str("COMPLETED"),
-            }
-        }
-    }
-    impl ::std::str::FromStr
-    for GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItemStatus {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            match value {
-                "PENDING" => Ok(Self::Pending),
-                "COMPLETED" => Ok(Self::Completed),
-                _ => Err("invalid value".into()),
-            }
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetViewsTransfersPendingResponseDataOutgoingProjectTransfersItemContractTransfersItemStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseMeta`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "fetchedAt",
-    ///    "sources"
-    ///  ],
-    ///  "properties": {
-    ///    "artifactDataStale": {
-    ///      "type": "boolean"
-    ///    },
-    ///    "chainDataStale": {
-    ///      "type": "boolean"
-    ///    },
-    ///    "fetchedAt": {
-    ///      "type": "string"
-    ///    },
-    ///    "sources": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "string",
-    ///        "enum": [
-    ///          "offchain",
-    ///          "onchain",
-    ///          "artifact",
-    ///          "explorer",
-    ///          "cache"
-    ///        ]
-    ///      }
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersPendingResponseMeta {
-        #[serde(
-            rename = "artifactDataStale",
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub artifact_data_stale: ::std::option::Option<bool>,
-        #[serde(
-            rename = "chainDataStale",
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub chain_data_stale: ::std::option::Option<bool>,
-        #[serde(rename = "fetchedAt")]
-        pub fetched_at: ::std::string::String,
-        pub sources: ::std::vec::Vec<GetViewsTransfersPendingResponseMetaSourcesItem>,
-    }
-    impl ::std::convert::From<&GetViewsTransfersPendingResponseMeta>
-    for GetViewsTransfersPendingResponseMeta {
-        fn from(value: &GetViewsTransfersPendingResponseMeta) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersPendingResponseMetaSourcesItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "enum": [
-    ///    "offchain",
-    ///    "onchain",
-    ///    "artifact",
-    ///    "explorer",
-    ///    "cache"
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(
-        ::serde::Deserialize,
-        ::serde::Serialize,
-        Clone,
-        Copy,
-        Debug,
-        Eq,
-        Hash,
-        Ord,
-        PartialEq,
-        PartialOrd
-    )]
-    pub enum GetViewsTransfersPendingResponseMetaSourcesItem {
-        #[serde(rename = "offchain")]
-        Offchain,
-        #[serde(rename = "onchain")]
-        Onchain,
-        #[serde(rename = "artifact")]
-        Artifact,
-        #[serde(rename = "explorer")]
-        Explorer,
-        #[serde(rename = "cache")]
-        Cache,
-    }
-    impl ::std::convert::From<&Self>
-    for GetViewsTransfersPendingResponseMetaSourcesItem {
-        fn from(value: &GetViewsTransfersPendingResponseMetaSourcesItem) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display for GetViewsTransfersPendingResponseMetaSourcesItem {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match *self {
-                Self::Offchain => f.write_str("offchain"),
-                Self::Onchain => f.write_str("onchain"),
-                Self::Artifact => f.write_str("artifact"),
-                Self::Explorer => f.write_str("explorer"),
-                Self::Cache => f.write_str("cache"),
-            }
-        }
-    }
-    impl ::std::str::FromStr for GetViewsTransfersPendingResponseMetaSourcesItem {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            match value {
-                "offchain" => Ok(Self::Offchain),
-                "onchain" => Ok(Self::Onchain),
-                "artifact" => Ok(Self::Artifact),
-                "explorer" => Ok(Self::Explorer),
-                "cache" => Ok(Self::Cache),
-                _ => Err("invalid value".into()),
-            }
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetViewsTransfersPendingResponseMetaSourcesItem {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetViewsTransfersPendingResponseMetaSourcesItem {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetViewsTransfersPendingResponseMetaSourcesItem {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    ///`GetViewsTransfersTransferIdResponse`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "_meta",
-    ///    "data"
-    ///  ],
-    ///  "properties": {
-    ///    "_meta": {
-    ///      "type": "object",
-    ///      "required": [
-    ///        "fetchedAt",
-    ///        "sources"
-    ///      ],
-    ///      "properties": {
-    ///        "artifactDataStale": {
-    ///          "type": "boolean"
-    ///        },
-    ///        "chainDataStale": {
-    ///          "type": "boolean"
-    ///        },
-    ///        "fetchedAt": {
-    ///          "type": "string"
-    ///        },
-    ///        "sources": {
-    ///          "type": "array",
-    ///          "items": {
-    ///            "type": "string",
-    ///            "enum": [
-    ///              "offchain",
-    ///              "onchain",
-    ///              "artifact",
-    ///              "explorer",
-    ///              "cache"
-    ///            ]
-    ///          }
-    ///        }
-    ///      }
-    ///    },
-    ///    "data": {
-    ///      "type": "object",
-    ///      "required": [
-    ///        "accepted_tx_hash",
-    ///        "assertion_adopter_address",
-    ///        "assertion_adopter_id",
-    ///        "block",
-    ///        "chain_id",
-    ///        "contract_name",
-    ///        "id",
-    ///        "initial_manager",
-    ///        "initiated_tx_hash",
-    ///        "new_manager",
-    ///        "project_context",
-    ///        "status"
-    ///      ],
-    ///      "properties": {
-    ///        "accepted_tx_hash": {
-    ///          "type": [
-    ///            "string",
-    ///            "null"
-    ///          ]
-    ///        },
-    ///        "assertion_adopter_address": {
-    ///          "type": "string"
-    ///        },
-    ///        "assertion_adopter_id": {
-    ///          "type": "string"
-    ///        },
-    ///        "block": {
-    ///          "type": "number"
-    ///        },
-    ///        "chain_id": {
-    ///          "type": "number"
-    ///        },
-    ///        "contract_name": {
-    ///          "type": [
-    ///            "string",
-    ///            "null"
-    ///          ]
-    ///        },
-    ///        "id": {
-    ///          "type": "string"
-    ///        },
-    ///        "initial_manager": {
-    ///          "type": "string"
-    ///        },
-    ///        "initiated_tx_hash": {
-    ///          "type": "string"
-    ///        },
-    ///        "new_manager": {
-    ///          "type": "string"
-    ///        },
-    ///        "project_context": {
-    ///          "type": [
-    ///            "object",
-    ///            "null"
-    ///          ],
-    ///          "required": [
-    ///            "adopters_with_pending_transfer_to_same_recipient",
-    ///            "project_id",
-    ///            "project_name",
-    ///            "total_adopters_in_project"
-    ///          ],
-    ///          "properties": {
-    ///            "adopters_with_pending_transfer_to_same_recipient": {
-    ///              "type": "number"
-    ///            },
-    ///            "project_id": {
-    ///              "type": "string"
-    ///            },
-    ///            "project_name": {
-    ///              "type": [
-    ///                "string",
-    ///                "null"
-    ///              ]
-    ///            },
-    ///            "total_adopters_in_project": {
-    ///              "type": "number"
-    ///            }
-    ///          }
-    ///        },
-    ///        "status": {
-    ///          "type": "string",
-    ///          "enum": [
-    ///            "PENDING",
-    ///            "COMPLETED"
-    ///          ]
-    ///        }
-    ///      }
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersTransferIdResponse {
-        pub data: GetViewsTransfersTransferIdResponseData,
-        #[serde(rename = "_meta")]
-        pub meta: GetViewsTransfersTransferIdResponseMeta,
-    }
-    impl ::std::convert::From<&GetViewsTransfersTransferIdResponse>
-    for GetViewsTransfersTransferIdResponse {
-        fn from(value: &GetViewsTransfersTransferIdResponse) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersTransferIdResponseData`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "accepted_tx_hash",
-    ///    "assertion_adopter_address",
-    ///    "assertion_adopter_id",
-    ///    "block",
-    ///    "chain_id",
-    ///    "contract_name",
-    ///    "id",
-    ///    "initial_manager",
-    ///    "initiated_tx_hash",
-    ///    "new_manager",
-    ///    "project_context",
-    ///    "status"
-    ///  ],
-    ///  "properties": {
-    ///    "accepted_tx_hash": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "assertion_adopter_address": {
-    ///      "type": "string"
-    ///    },
-    ///    "assertion_adopter_id": {
-    ///      "type": "string"
-    ///    },
-    ///    "block": {
-    ///      "type": "number"
-    ///    },
-    ///    "chain_id": {
-    ///      "type": "number"
-    ///    },
-    ///    "contract_name": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "id": {
-    ///      "type": "string"
-    ///    },
-    ///    "initial_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "initiated_tx_hash": {
-    ///      "type": "string"
-    ///    },
-    ///    "new_manager": {
-    ///      "type": "string"
-    ///    },
-    ///    "project_context": {
-    ///      "type": [
-    ///        "object",
-    ///        "null"
-    ///      ],
-    ///      "required": [
-    ///        "adopters_with_pending_transfer_to_same_recipient",
-    ///        "project_id",
-    ///        "project_name",
-    ///        "total_adopters_in_project"
-    ///      ],
-    ///      "properties": {
-    ///        "adopters_with_pending_transfer_to_same_recipient": {
-    ///          "type": "number"
-    ///        },
-    ///        "project_id": {
-    ///          "type": "string"
-    ///        },
-    ///        "project_name": {
-    ///          "type": [
-    ///            "string",
-    ///            "null"
-    ///          ]
-    ///        },
-    ///        "total_adopters_in_project": {
-    ///          "type": "number"
-    ///        }
-    ///      }
-    ///    },
-    ///    "status": {
-    ///      "type": "string",
-    ///      "enum": [
-    ///        "PENDING",
-    ///        "COMPLETED"
-    ///      ]
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersTransferIdResponseData {
-        pub accepted_tx_hash: ::std::option::Option<::std::string::String>,
-        pub assertion_adopter_address: ::std::string::String,
-        pub assertion_adopter_id: ::std::string::String,
-        pub block: f64,
-        pub chain_id: f64,
-        pub contract_name: ::std::option::Option<::std::string::String>,
-        pub id: ::std::string::String,
-        pub initial_manager: ::std::string::String,
-        pub initiated_tx_hash: ::std::string::String,
-        pub new_manager: ::std::string::String,
-        pub project_context: ::std::option::Option<
-            GetViewsTransfersTransferIdResponseDataProjectContext,
-        >,
-        pub status: GetViewsTransfersTransferIdResponseDataStatus,
-    }
-    impl ::std::convert::From<&GetViewsTransfersTransferIdResponseData>
-    for GetViewsTransfersTransferIdResponseData {
-        fn from(value: &GetViewsTransfersTransferIdResponseData) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersTransferIdResponseDataProjectContext`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "adopters_with_pending_transfer_to_same_recipient",
-    ///    "project_id",
-    ///    "project_name",
-    ///    "total_adopters_in_project"
-    ///  ],
-    ///  "properties": {
-    ///    "adopters_with_pending_transfer_to_same_recipient": {
-    ///      "type": "number"
-    ///    },
-    ///    "project_id": {
-    ///      "type": "string"
-    ///    },
-    ///    "project_name": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "total_adopters_in_project": {
-    ///      "type": "number"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersTransferIdResponseDataProjectContext {
-        pub adopters_with_pending_transfer_to_same_recipient: f64,
-        pub project_id: ::std::string::String,
-        pub project_name: ::std::option::Option<::std::string::String>,
-        pub total_adopters_in_project: f64,
-    }
-    impl ::std::convert::From<&GetViewsTransfersTransferIdResponseDataProjectContext>
-    for GetViewsTransfersTransferIdResponseDataProjectContext {
-        fn from(value: &GetViewsTransfersTransferIdResponseDataProjectContext) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersTransferIdResponseDataStatus`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "enum": [
-    ///    "PENDING",
-    ///    "COMPLETED"
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(
-        ::serde::Deserialize,
-        ::serde::Serialize,
-        Clone,
-        Copy,
-        Debug,
-        Eq,
-        Hash,
-        Ord,
-        PartialEq,
-        PartialOrd
-    )]
-    pub enum GetViewsTransfersTransferIdResponseDataStatus {
-        #[serde(rename = "PENDING")]
-        Pending,
-        #[serde(rename = "COMPLETED")]
-        Completed,
-    }
-    impl ::std::convert::From<&Self> for GetViewsTransfersTransferIdResponseDataStatus {
-        fn from(value: &GetViewsTransfersTransferIdResponseDataStatus) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display for GetViewsTransfersTransferIdResponseDataStatus {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match *self {
-                Self::Pending => f.write_str("PENDING"),
-                Self::Completed => f.write_str("COMPLETED"),
-            }
-        }
-    }
-    impl ::std::str::FromStr for GetViewsTransfersTransferIdResponseDataStatus {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            match value {
-                "PENDING" => Ok(Self::Pending),
-                "COMPLETED" => Ok(Self::Completed),
-                _ => Err("invalid value".into()),
-            }
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetViewsTransfersTransferIdResponseDataStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetViewsTransfersTransferIdResponseDataStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetViewsTransfersTransferIdResponseDataStatus {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    ///`GetViewsTransfersTransferIdResponseMeta`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "fetchedAt",
-    ///    "sources"
-    ///  ],
-    ///  "properties": {
-    ///    "artifactDataStale": {
-    ///      "type": "boolean"
-    ///    },
-    ///    "chainDataStale": {
-    ///      "type": "boolean"
-    ///    },
-    ///    "fetchedAt": {
-    ///      "type": "string"
-    ///    },
-    ///    "sources": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "string",
-    ///        "enum": [
-    ///          "offchain",
-    ///          "onchain",
-    ///          "artifact",
-    ///          "explorer",
-    ///          "cache"
-    ///        ]
-    ///      }
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct GetViewsTransfersTransferIdResponseMeta {
-        #[serde(
-            rename = "artifactDataStale",
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub artifact_data_stale: ::std::option::Option<bool>,
-        #[serde(
-            rename = "chainDataStale",
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub chain_data_stale: ::std::option::Option<bool>,
-        #[serde(rename = "fetchedAt")]
-        pub fetched_at: ::std::string::String,
-        pub sources: ::std::vec::Vec<GetViewsTransfersTransferIdResponseMetaSourcesItem>,
-    }
-    impl ::std::convert::From<&GetViewsTransfersTransferIdResponseMeta>
-    for GetViewsTransfersTransferIdResponseMeta {
-        fn from(value: &GetViewsTransfersTransferIdResponseMeta) -> Self {
-            value.clone()
-        }
-    }
-    ///`GetViewsTransfersTransferIdResponseMetaSourcesItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "enum": [
-    ///    "offchain",
-    ///    "onchain",
-    ///    "artifact",
-    ///    "explorer",
-    ///    "cache"
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(
-        ::serde::Deserialize,
-        ::serde::Serialize,
-        Clone,
-        Copy,
-        Debug,
-        Eq,
-        Hash,
-        Ord,
-        PartialEq,
-        PartialOrd
-    )]
-    pub enum GetViewsTransfersTransferIdResponseMetaSourcesItem {
-        #[serde(rename = "offchain")]
-        Offchain,
-        #[serde(rename = "onchain")]
-        Onchain,
-        #[serde(rename = "artifact")]
-        Artifact,
-        #[serde(rename = "explorer")]
-        Explorer,
-        #[serde(rename = "cache")]
-        Cache,
-    }
-    impl ::std::convert::From<&Self>
-    for GetViewsTransfersTransferIdResponseMetaSourcesItem {
-        fn from(value: &GetViewsTransfersTransferIdResponseMetaSourcesItem) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display for GetViewsTransfersTransferIdResponseMetaSourcesItem {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match *self {
-                Self::Offchain => f.write_str("offchain"),
-                Self::Onchain => f.write_str("onchain"),
-                Self::Artifact => f.write_str("artifact"),
-                Self::Explorer => f.write_str("explorer"),
-                Self::Cache => f.write_str("cache"),
-            }
-        }
-    }
-    impl ::std::str::FromStr for GetViewsTransfersTransferIdResponseMetaSourcesItem {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            match value {
-                "offchain" => Ok(Self::Offchain),
-                "onchain" => Ok(Self::Onchain),
-                "artifact" => Ok(Self::Artifact),
-                "explorer" => Ok(Self::Explorer),
-                "cache" => Ok(Self::Cache),
-                _ => Err("invalid value".into()),
-            }
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for GetViewsTransfersTransferIdResponseMetaSourcesItem {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for GetViewsTransfersTransferIdResponseMetaSourcesItem {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for GetViewsTransfersTransferIdResponseMetaSourcesItem {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
     ///`GetWebAuthMeResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -39805,6 +41830,12 @@ pub mod types {
     ///        "cli"
     ///      ]
     ///    },
+    ///    "superadmin": {
+    ///      "type": "boolean",
+    ///      "enum": [
+    ///        true
+    ///      ]
+    ///    },
     ///    "terms_accepted": {
     ///      "type": "boolean"
     ///    },
@@ -39844,6 +41875,8 @@ pub mod types {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub scope: ::std::option::Option<GetWebAuthMeResponseScope>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub superadmin: ::std::option::Option<bool>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub terms_accepted: ::std::option::Option<bool>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub terms_accepted_at: ::std::option::Option<::std::string::String>,
@@ -39864,6 +41897,7 @@ pub mod types {
                 id: Default::default(),
                 needs_verification: Default::default(),
                 scope: Default::default(),
+                superadmin: Default::default(),
                 terms_accepted: Default::default(),
                 terms_accepted_at: Default::default(),
                 whitelisted: Default::default(),
@@ -40449,6 +42483,1234 @@ pub mod types {
             value.clone()
         }
     }
+    ///`PostAdminReviewablesReviewableRefDecisionBody`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "action"
+    ///  ],
+    ///  "properties": {
+    ///    "action": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "approve",
+    ///        "request_changes",
+    ///        "reject"
+    ///      ]
+    ///    },
+    ///    "note": {
+    ///      "description": "Reviewer note. For request_changes on summaries, used as regeneration feedback.",
+    ///      "type": "string",
+    ///      "maxLength": 4000
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostAdminReviewablesReviewableRefDecisionBody {
+        pub action: PostAdminReviewablesReviewableRefDecisionBodyAction,
+        ///Reviewer note. For request_changes on summaries, used as regeneration feedback.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub note: ::std::option::Option<
+            PostAdminReviewablesReviewableRefDecisionBodyNote,
+        >,
+    }
+    impl ::std::convert::From<&PostAdminReviewablesReviewableRefDecisionBody>
+    for PostAdminReviewablesReviewableRefDecisionBody {
+        fn from(value: &PostAdminReviewablesReviewableRefDecisionBody) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostAdminReviewablesReviewableRefDecisionBodyAction`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "approve",
+    ///    "request_changes",
+    ///    "reject"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum PostAdminReviewablesReviewableRefDecisionBodyAction {
+        #[serde(rename = "approve")]
+        Approve,
+        #[serde(rename = "request_changes")]
+        RequestChanges,
+        #[serde(rename = "reject")]
+        Reject,
+    }
+    impl ::std::convert::From<&Self>
+    for PostAdminReviewablesReviewableRefDecisionBodyAction {
+        fn from(value: &PostAdminReviewablesReviewableRefDecisionBodyAction) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display for PostAdminReviewablesReviewableRefDecisionBodyAction {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Approve => f.write_str("approve"),
+                Self::RequestChanges => f.write_str("request_changes"),
+                Self::Reject => f.write_str("reject"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for PostAdminReviewablesReviewableRefDecisionBodyAction {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "approve" => Ok(Self::Approve),
+                "request_changes" => Ok(Self::RequestChanges),
+                "reject" => Ok(Self::Reject),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostAdminReviewablesReviewableRefDecisionBodyAction {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionBodyAction {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionBodyAction {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///Reviewer note. For request_changes on summaries, used as regeneration feedback.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Reviewer note. For request_changes on summaries, used as regeneration feedback.",
+    ///  "type": "string",
+    ///  "maxLength": 4000
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostAdminReviewablesReviewableRefDecisionBodyNote(::std::string::String);
+    impl ::std::ops::Deref for PostAdminReviewablesReviewableRefDecisionBodyNote {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<PostAdminReviewablesReviewableRefDecisionBodyNote>
+    for ::std::string::String {
+        fn from(value: PostAdminReviewablesReviewableRefDecisionBodyNote) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&PostAdminReviewablesReviewableRefDecisionBodyNote>
+    for PostAdminReviewablesReviewableRefDecisionBodyNote {
+        fn from(value: &PostAdminReviewablesReviewableRefDecisionBodyNote) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for PostAdminReviewablesReviewableRefDecisionBodyNote {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() > 4000usize {
+                return Err("longer than 4000 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostAdminReviewablesReviewableRefDecisionBodyNote {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionBodyNote {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionBodyNote {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostAdminReviewablesReviewableRefDecisionBodyNote {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostAdminReviewablesReviewableRefDecisionResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "appendedHistoryEntry",
+    ///    "reviewStatus",
+    ///    "reviewableRef",
+    ///    "sideEffects"
+    ///  ],
+    ///  "properties": {
+    ///    "appendedHistoryEntry": {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "action",
+    ///        "resultingStatus",
+    ///        "reviewedAt",
+    ///        "reviewedBy"
+    ///      ],
+    ///      "properties": {
+    ///        "action": {
+    ///          "type": "string",
+    ///          "enum": [
+    ///            "approve",
+    ///            "request_changes",
+    ///            "reject"
+    ///          ]
+    ///        },
+    ///        "note": {
+    ///          "type": "string"
+    ///        },
+    ///        "resultingStatus": {
+    ///          "type": "string",
+    ///          "enum": [
+    ///            "pending",
+    ///            "approved",
+    ///            "needs_changes",
+    ///            "rejected"
+    ///          ]
+    ///        },
+    ///        "reviewedAt": {
+    ///          "type": "string",
+    ///          "format": "date-time"
+    ///        },
+    ///        "reviewedBy": {
+    ///          "description": "User ID (UUID) of the reviewer who took the action.",
+    ///          "type": "string",
+    ///          "format": "uuid"
+    ///        }
+    ///      }
+    ///    },
+    ///    "reviewStatus": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "pending",
+    ///        "approved",
+    ///        "needs_changes",
+    ///        "rejected"
+    ///      ]
+    ///    },
+    ///    "reviewableRef": {
+    ///      "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///    },
+    ///    "sideEffects": {
+    ///      "type": "object",
+    ///      "properties": {
+    ///        "notificationsScheduled": {
+    ///          "description": "Empty in v1; reserved for v1.5+ submitter notifications.",
+    ///          "type": "array",
+    ///          "items": {
+    ///            "type": "string",
+    ///            "enum": [
+    ///              "submitter_email"
+    ///            ]
+    ///          }
+    ///        },
+    ///        "regenerationDispatched": {
+    ///          "type": "object",
+    ///          "required": [
+    ///            "newJobId"
+    ///          ],
+    ///          "properties": {
+    ///            "newJobId": {
+    ///              "type": "string",
+    ///              "format": "uuid"
+    ///            }
+    ///          }
+    ///        }
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostAdminReviewablesReviewableRefDecisionResponse {
+        #[serde(rename = "appendedHistoryEntry")]
+        pub appended_history_entry: PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntry,
+        #[serde(rename = "reviewStatus")]
+        pub review_status: PostAdminReviewablesReviewableRefDecisionResponseReviewStatus,
+        ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+        #[serde(rename = "reviewableRef")]
+        pub reviewable_ref: PostAdminReviewablesReviewableRefDecisionResponseReviewableRef,
+        #[serde(rename = "sideEffects")]
+        pub side_effects: PostAdminReviewablesReviewableRefDecisionResponseSideEffects,
+    }
+    impl ::std::convert::From<&PostAdminReviewablesReviewableRefDecisionResponse>
+    for PostAdminReviewablesReviewableRefDecisionResponse {
+        fn from(value: &PostAdminReviewablesReviewableRefDecisionResponse) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntry`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "action",
+    ///    "resultingStatus",
+    ///    "reviewedAt",
+    ///    "reviewedBy"
+    ///  ],
+    ///  "properties": {
+    ///    "action": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "approve",
+    ///        "request_changes",
+    ///        "reject"
+    ///      ]
+    ///    },
+    ///    "note": {
+    ///      "type": "string"
+    ///    },
+    ///    "resultingStatus": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "pending",
+    ///        "approved",
+    ///        "needs_changes",
+    ///        "rejected"
+    ///      ]
+    ///    },
+    ///    "reviewedAt": {
+    ///      "type": "string",
+    ///      "format": "date-time"
+    ///    },
+    ///    "reviewedBy": {
+    ///      "description": "User ID (UUID) of the reviewer who took the action.",
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntry {
+        pub action: PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryAction,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub note: ::std::option::Option<::std::string::String>,
+        #[serde(rename = "resultingStatus")]
+        pub resulting_status: PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryResultingStatus,
+        #[serde(rename = "reviewedAt")]
+        pub reviewed_at: ::chrono::DateTime<::chrono::offset::Utc>,
+        ///User ID (UUID) of the reviewer who took the action.
+        #[serde(rename = "reviewedBy")]
+        pub reviewed_by: ::uuid::Uuid,
+    }
+    impl ::std::convert::From<
+        &PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntry,
+    > for PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntry {
+        fn from(
+            value: &PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntry,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryAction`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "approve",
+    ///    "request_changes",
+    ///    "reject"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryAction {
+        #[serde(rename = "approve")]
+        Approve,
+        #[serde(rename = "request_changes")]
+        RequestChanges,
+        #[serde(rename = "reject")]
+        Reject,
+    }
+    impl ::std::convert::From<&Self>
+    for PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryAction {
+        fn from(
+            value: &PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryAction,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryAction {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Approve => f.write_str("approve"),
+                Self::RequestChanges => f.write_str("request_changes"),
+                Self::Reject => f.write_str("reject"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryAction {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "approve" => Ok(Self::Approve),
+                "request_changes" => Ok(Self::RequestChanges),
+                "reject" => Ok(Self::Reject),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryAction {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryAction {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryAction {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryResultingStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "pending",
+    ///    "approved",
+    ///    "needs_changes",
+    ///    "rejected"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryResultingStatus {
+        #[serde(rename = "pending")]
+        Pending,
+        #[serde(rename = "approved")]
+        Approved,
+        #[serde(rename = "needs_changes")]
+        NeedsChanges,
+        #[serde(rename = "rejected")]
+        Rejected,
+    }
+    impl ::std::convert::From<&Self>
+    for PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryResultingStatus {
+        fn from(
+            value: &PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryResultingStatus,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryResultingStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Pending => f.write_str("pending"),
+                Self::Approved => f.write_str("approved"),
+                Self::NeedsChanges => f.write_str("needs_changes"),
+                Self::Rejected => f.write_str("rejected"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryResultingStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "pending" => Ok(Self::Pending),
+                "approved" => Ok(Self::Approved),
+                "needs_changes" => Ok(Self::NeedsChanges),
+                "rejected" => Ok(Self::Rejected),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryResultingStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryResultingStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionResponseAppendedHistoryEntryResultingStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`PostAdminReviewablesReviewableRefDecisionResponseCode`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "forbidden",
+    ///    "not_found",
+    ///    "bad_cursor",
+    ///    "invalid_action",
+    ///    "regeneration_dispatch_failed",
+    ///    "internal_error"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum PostAdminReviewablesReviewableRefDecisionResponseCode {
+        #[serde(rename = "forbidden")]
+        Forbidden,
+        #[serde(rename = "not_found")]
+        NotFound,
+        #[serde(rename = "bad_cursor")]
+        BadCursor,
+        #[serde(rename = "invalid_action")]
+        InvalidAction,
+        #[serde(rename = "regeneration_dispatch_failed")]
+        RegenerationDispatchFailed,
+        #[serde(rename = "internal_error")]
+        InternalError,
+    }
+    impl ::std::convert::From<&Self>
+    for PostAdminReviewablesReviewableRefDecisionResponseCode {
+        fn from(value: &PostAdminReviewablesReviewableRefDecisionResponseCode) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display for PostAdminReviewablesReviewableRefDecisionResponseCode {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Forbidden => f.write_str("forbidden"),
+                Self::NotFound => f.write_str("not_found"),
+                Self::BadCursor => f.write_str("bad_cursor"),
+                Self::InvalidAction => f.write_str("invalid_action"),
+                Self::RegenerationDispatchFailed => {
+                    f.write_str("regeneration_dispatch_failed")
+                }
+                Self::InternalError => f.write_str("internal_error"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for PostAdminReviewablesReviewableRefDecisionResponseCode {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "forbidden" => Ok(Self::Forbidden),
+                "not_found" => Ok(Self::NotFound),
+                "bad_cursor" => Ok(Self::BadCursor),
+                "invalid_action" => Ok(Self::InvalidAction),
+                "regeneration_dispatch_failed" => Ok(Self::RegenerationDispatchFailed),
+                "internal_error" => Ok(Self::InternalError),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostAdminReviewablesReviewableRefDecisionResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`PostAdminReviewablesReviewableRefDecisionResponseReviewStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "pending",
+    ///    "approved",
+    ///    "needs_changes",
+    ///    "rejected"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum PostAdminReviewablesReviewableRefDecisionResponseReviewStatus {
+        #[serde(rename = "pending")]
+        Pending,
+        #[serde(rename = "approved")]
+        Approved,
+        #[serde(rename = "needs_changes")]
+        NeedsChanges,
+        #[serde(rename = "rejected")]
+        Rejected,
+    }
+    impl ::std::convert::From<&Self>
+    for PostAdminReviewablesReviewableRefDecisionResponseReviewStatus {
+        fn from(
+            value: &PostAdminReviewablesReviewableRefDecisionResponseReviewStatus,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for PostAdminReviewablesReviewableRefDecisionResponseReviewStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Pending => f.write_str("pending"),
+                Self::Approved => f.write_str("approved"),
+                Self::NeedsChanges => f.write_str("needs_changes"),
+                Self::Rejected => f.write_str("rejected"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for PostAdminReviewablesReviewableRefDecisionResponseReviewStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "pending" => Ok(Self::Pending),
+                "approved" => Ok(Self::Approved),
+                "needs_changes" => Ok(Self::NeedsChanges),
+                "rejected" => Ok(Self::Rejected),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostAdminReviewablesReviewableRefDecisionResponseReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionResponseReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionResponseReviewStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostAdminReviewablesReviewableRefDecisionResponseReviewableRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostAdminReviewablesReviewableRefDecisionResponseReviewableRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostAdminReviewablesReviewableRefDecisionResponseReviewableRef,
+    > for ::std::string::String {
+        fn from(
+            value: PostAdminReviewablesReviewableRefDecisionResponseReviewableRef,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostAdminReviewablesReviewableRefDecisionResponseReviewableRef,
+    > for PostAdminReviewablesReviewableRefDecisionResponseReviewableRef {
+        fn from(
+            value: &PostAdminReviewablesReviewableRefDecisionResponseReviewableRef,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostAdminReviewablesReviewableRefDecisionResponseReviewableRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostAdminReviewablesReviewableRefDecisionResponseReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionResponseReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionResponseReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostAdminReviewablesReviewableRefDecisionResponseReviewableRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostAdminReviewablesReviewableRefDecisionResponseSideEffects`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "notificationsScheduled": {
+    ///      "description": "Empty in v1; reserved for v1.5+ submitter notifications.",
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string",
+    ///        "enum": [
+    ///          "submitter_email"
+    ///        ]
+    ///      }
+    ///    },
+    ///    "regenerationDispatched": {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "newJobId"
+    ///      ],
+    ///      "properties": {
+    ///        "newJobId": {
+    ///          "type": "string",
+    ///          "format": "uuid"
+    ///        }
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostAdminReviewablesReviewableRefDecisionResponseSideEffects {
+        ///Empty in v1; reserved for v1.5+ submitter notifications.
+        #[serde(
+            rename = "notificationsScheduled",
+            default,
+            skip_serializing_if = "::std::vec::Vec::is_empty"
+        )]
+        pub notifications_scheduled: ::std::vec::Vec<
+            PostAdminReviewablesReviewableRefDecisionResponseSideEffectsNotificationsScheduledItem,
+        >,
+        #[serde(
+            rename = "regenerationDispatched",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub regeneration_dispatched: ::std::option::Option<
+            PostAdminReviewablesReviewableRefDecisionResponseSideEffectsRegenerationDispatched,
+        >,
+    }
+    impl ::std::convert::From<
+        &PostAdminReviewablesReviewableRefDecisionResponseSideEffects,
+    > for PostAdminReviewablesReviewableRefDecisionResponseSideEffects {
+        fn from(
+            value: &PostAdminReviewablesReviewableRefDecisionResponseSideEffects,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::default::Default
+    for PostAdminReviewablesReviewableRefDecisionResponseSideEffects {
+        fn default() -> Self {
+            Self {
+                notifications_scheduled: Default::default(),
+                regeneration_dispatched: Default::default(),
+            }
+        }
+    }
+    ///`PostAdminReviewablesReviewableRefDecisionResponseSideEffectsNotificationsScheduledItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "submitter_email"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum PostAdminReviewablesReviewableRefDecisionResponseSideEffectsNotificationsScheduledItem {
+        #[serde(rename = "submitter_email")]
+        SubmitterEmail,
+    }
+    impl ::std::convert::From<&Self>
+    for PostAdminReviewablesReviewableRefDecisionResponseSideEffectsNotificationsScheduledItem {
+        fn from(
+            value: &PostAdminReviewablesReviewableRefDecisionResponseSideEffectsNotificationsScheduledItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for PostAdminReviewablesReviewableRefDecisionResponseSideEffectsNotificationsScheduledItem {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::SubmitterEmail => f.write_str("submitter_email"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for PostAdminReviewablesReviewableRefDecisionResponseSideEffectsNotificationsScheduledItem {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "submitter_email" => Ok(Self::SubmitterEmail),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostAdminReviewablesReviewableRefDecisionResponseSideEffectsNotificationsScheduledItem {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionResponseSideEffectsNotificationsScheduledItem {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionResponseSideEffectsNotificationsScheduledItem {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`PostAdminReviewablesReviewableRefDecisionResponseSideEffectsRegenerationDispatched`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "newJobId"
+    ///  ],
+    ///  "properties": {
+    ///    "newJobId": {
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostAdminReviewablesReviewableRefDecisionResponseSideEffectsRegenerationDispatched {
+        #[serde(rename = "newJobId")]
+        pub new_job_id: ::uuid::Uuid,
+    }
+    impl ::std::convert::From<
+        &PostAdminReviewablesReviewableRefDecisionResponseSideEffectsRegenerationDispatched,
+    >
+    for PostAdminReviewablesReviewableRefDecisionResponseSideEffectsRegenerationDispatched {
+        fn from(
+            value: &PostAdminReviewablesReviewableRefDecisionResponseSideEffectsRegenerationDispatched,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostAdminReviewablesReviewableRefDecisionReviewableRef`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostAdminReviewablesReviewableRefDecisionReviewableRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref for PostAdminReviewablesReviewableRefDecisionReviewableRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<PostAdminReviewablesReviewableRefDecisionReviewableRef>
+    for ::std::string::String {
+        fn from(value: PostAdminReviewablesReviewableRefDecisionReviewableRef) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&PostAdminReviewablesReviewableRefDecisionReviewableRef>
+    for PostAdminReviewablesReviewableRefDecisionReviewableRef {
+        fn from(value: &PostAdminReviewablesReviewableRefDecisionReviewableRef) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for PostAdminReviewablesReviewableRefDecisionReviewableRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostAdminReviewablesReviewableRefDecisionReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostAdminReviewablesReviewableRefDecisionReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostAdminReviewablesReviewableRefDecisionReviewableRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostAgenticEventsResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "message",
+    ///    "timestamp",
+    ///    "tracking_id"
+    ///  ],
+    ///  "properties": {
+    ///    "message": {
+    ///      "type": "string"
+    ///    },
+    ///    "timestamp": {
+    ///      "type": "string"
+    ///    },
+    ///    "tracking_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostAgenticEventsResponse {
+        pub message: ::std::string::String,
+        pub timestamp: ::std::string::String,
+        pub tracking_id: ::std::string::String,
+    }
+    impl ::std::convert::From<&PostAgenticEventsResponse> for PostAgenticEventsResponse {
+        fn from(value: &PostAgenticEventsResponse) -> Self {
+            value.clone()
+        }
+    }
     ///`PostAssertionAdoptersAssignProjectBody`
     ///
     /// <details><summary>JSON schema</summary>
@@ -40514,558 +43776,6 @@ pub mod types {
     for PostAssertionAdoptersAssignProjectResponse {
         fn from(value: &PostAssertionAdoptersAssignProjectResponse) -> Self {
             value.clone()
-        }
-    }
-    ///`PostAssertionAdoptersBody`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "address",
-    ///    "network"
-    ///  ],
-    ///  "properties": {
-    ///    "address": {
-    ///      "type": "string",
-    ///      "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///    },
-    ///    "contract_name": {
-    ///      "type": "string"
-    ///    },
-    ///    "network": {
-    ///      "oneOf": [
-    ///        {
-    ///          "type": "string"
-    ///        },
-    ///        {
-    ///          "type": "number"
-    ///        }
-    ///      ]
-    ///    },
-    ///    "project_id": {
-    ///      "type": "string",
-    ///      "format": "uuid"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct PostAssertionAdoptersBody {
-        pub address: PostAssertionAdoptersBodyAddress,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub contract_name: ::std::option::Option<::std::string::String>,
-        pub network: PostAssertionAdoptersBodyNetwork,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub project_id: ::std::option::Option<::uuid::Uuid>,
-    }
-    impl ::std::convert::From<&PostAssertionAdoptersBody> for PostAssertionAdoptersBody {
-        fn from(value: &PostAssertionAdoptersBody) -> Self {
-            value.clone()
-        }
-    }
-    ///`PostAssertionAdoptersBodyAddress`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct PostAssertionAdoptersBodyAddress(::std::string::String);
-    impl ::std::ops::Deref for PostAssertionAdoptersBodyAddress {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<PostAssertionAdoptersBodyAddress>
-    for ::std::string::String {
-        fn from(value: PostAssertionAdoptersBodyAddress) -> Self {
-            value.0
-        }
-    }
-    impl ::std::convert::From<&PostAssertionAdoptersBodyAddress>
-    for PostAssertionAdoptersBodyAddress {
-        fn from(value: &PostAssertionAdoptersBodyAddress) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::str::FromStr for PostAssertionAdoptersBodyAddress {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
-            { ::regress::Regex::new("^0x[a-fA-F0-9]{40}$").unwrap() });
-            if PATTERN.find(value).is_none() {
-                return Err("doesn't match pattern \"^0x[a-fA-F0-9]{40}$\"".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str> for PostAssertionAdoptersBodyAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for PostAssertionAdoptersBodyAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for PostAssertionAdoptersBodyAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de> for PostAssertionAdoptersBodyAddress {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`PostAssertionAdoptersBodyNetwork`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "oneOf": [
-    ///    {
-    ///      "type": "string"
-    ///    },
-    ///    {
-    ///      "type": "number"
-    ///    }
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    #[serde(untagged)]
-    pub enum PostAssertionAdoptersBodyNetwork {
-        Variant0(::std::string::String),
-        Variant1(f64),
-    }
-    impl ::std::convert::From<&Self> for PostAssertionAdoptersBodyNetwork {
-        fn from(value: &PostAssertionAdoptersBodyNetwork) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display for PostAssertionAdoptersBodyNetwork {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match self {
-                Self::Variant0(x) => x.fmt(f),
-                Self::Variant1(x) => x.fmt(f),
-            }
-        }
-    }
-    impl ::std::convert::From<f64> for PostAssertionAdoptersBodyNetwork {
-        fn from(value: f64) -> Self {
-            Self::Variant1(value)
-        }
-    }
-    ///`PostAssertionAdoptersResponse`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "address",
-    ///    "assertion_adopter_manager",
-    ///    "id",
-    ///    "network"
-    ///  ],
-    ///  "properties": {
-    ///    "address": {
-    ///      "type": "string",
-    ///      "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///    },
-    ///    "assertion_adopter_manager": {
-    ///      "type": "string",
-    ///      "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///    },
-    ///    "contract_name": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "created_at": {
-    ///      "type": "string",
-    ///      "format": "date-time"
-    ///    },
-    ///    "id": {
-    ///      "type": "string",
-    ///      "pattern": "^\\d+_0x[a-fA-F0-9]{40}$"
-    ///    },
-    ///    "network": {
-    ///      "type": "string",
-    ///      "oneOf": [
-    ///        {
-    ///          "type": "string"
-    ///        },
-    ///        {
-    ///          "type": "number"
-    ///        }
-    ///      ]
-    ///    },
-    ///    "registered_assertions": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "string"
-    ///      }
-    ///    },
-    ///    "updated_at": {
-    ///      "type": "string",
-    ///      "format": "date-time"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct PostAssertionAdoptersResponse {
-        pub address: PostAssertionAdoptersResponseAddress,
-        pub assertion_adopter_manager: PostAssertionAdoptersResponseAssertionAdopterManager,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub contract_name: ::std::option::Option<::std::string::String>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub created_at: ::std::option::Option<::chrono::DateTime<::chrono::offset::Utc>>,
-        pub id: PostAssertionAdoptersResponseId,
-        pub network: PostAssertionAdoptersResponseNetwork,
-        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
-        pub registered_assertions: ::std::vec::Vec<::std::string::String>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub updated_at: ::std::option::Option<::chrono::DateTime<::chrono::offset::Utc>>,
-    }
-    impl ::std::convert::From<&PostAssertionAdoptersResponse>
-    for PostAssertionAdoptersResponse {
-        fn from(value: &PostAssertionAdoptersResponse) -> Self {
-            value.clone()
-        }
-    }
-    ///`PostAssertionAdoptersResponseAddress`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct PostAssertionAdoptersResponseAddress(::std::string::String);
-    impl ::std::ops::Deref for PostAssertionAdoptersResponseAddress {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<PostAssertionAdoptersResponseAddress>
-    for ::std::string::String {
-        fn from(value: PostAssertionAdoptersResponseAddress) -> Self {
-            value.0
-        }
-    }
-    impl ::std::convert::From<&PostAssertionAdoptersResponseAddress>
-    for PostAssertionAdoptersResponseAddress {
-        fn from(value: &PostAssertionAdoptersResponseAddress) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::str::FromStr for PostAssertionAdoptersResponseAddress {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
-            { ::regress::Regex::new("^0x[a-fA-F0-9]{40}$").unwrap() });
-            if PATTERN.find(value).is_none() {
-                return Err("doesn't match pattern \"^0x[a-fA-F0-9]{40}$\"".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str> for PostAssertionAdoptersResponseAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for PostAssertionAdoptersResponseAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for PostAssertionAdoptersResponseAddress {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de> for PostAssertionAdoptersResponseAddress {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`PostAssertionAdoptersResponseAssertionAdopterManager`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "pattern": "^0x[a-fA-F0-9]{40}$"
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct PostAssertionAdoptersResponseAssertionAdopterManager(
-        ::std::string::String,
-    );
-    impl ::std::ops::Deref for PostAssertionAdoptersResponseAssertionAdopterManager {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<PostAssertionAdoptersResponseAssertionAdopterManager>
-    for ::std::string::String {
-        fn from(value: PostAssertionAdoptersResponseAssertionAdopterManager) -> Self {
-            value.0
-        }
-    }
-    impl ::std::convert::From<&PostAssertionAdoptersResponseAssertionAdopterManager>
-    for PostAssertionAdoptersResponseAssertionAdopterManager {
-        fn from(value: &PostAssertionAdoptersResponseAssertionAdopterManager) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::str::FromStr for PostAssertionAdoptersResponseAssertionAdopterManager {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
-            { ::regress::Regex::new("^0x[a-fA-F0-9]{40}$").unwrap() });
-            if PATTERN.find(value).is_none() {
-                return Err("doesn't match pattern \"^0x[a-fA-F0-9]{40}$\"".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str>
-    for PostAssertionAdoptersResponseAssertionAdopterManager {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for PostAssertionAdoptersResponseAssertionAdopterManager {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for PostAssertionAdoptersResponseAssertionAdopterManager {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de>
-    for PostAssertionAdoptersResponseAssertionAdopterManager {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`PostAssertionAdoptersResponseId`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "pattern": "^\\d+_0x[a-fA-F0-9]{40}$"
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct PostAssertionAdoptersResponseId(::std::string::String);
-    impl ::std::ops::Deref for PostAssertionAdoptersResponseId {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<PostAssertionAdoptersResponseId>
-    for ::std::string::String {
-        fn from(value: PostAssertionAdoptersResponseId) -> Self {
-            value.0
-        }
-    }
-    impl ::std::convert::From<&PostAssertionAdoptersResponseId>
-    for PostAssertionAdoptersResponseId {
-        fn from(value: &PostAssertionAdoptersResponseId) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::str::FromStr for PostAssertionAdoptersResponseId {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
-            { ::regress::Regex::new("^\\d+_0x[a-fA-F0-9]{40}$").unwrap() });
-            if PATTERN.find(value).is_none() {
-                return Err("doesn't match pattern \"^\\d+_0x[a-fA-F0-9]{40}$\"".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str> for PostAssertionAdoptersResponseId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for PostAssertionAdoptersResponseId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for PostAssertionAdoptersResponseId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de> for PostAssertionAdoptersResponseId {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`PostAssertionAdoptersResponseNetwork`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "oneOf": [
-    ///    {
-    ///      "type": "string"
-    ///    },
-    ///    {
-    ///      "type": "number"
-    ///    }
-    ///  ]
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    #[serde(untagged)]
-    pub enum PostAssertionAdoptersResponseNetwork {
-        Variant0(::std::string::String),
-        Variant1(f64),
-    }
-    impl ::std::convert::From<&Self> for PostAssertionAdoptersResponseNetwork {
-        fn from(value: &PostAssertionAdoptersResponseNetwork) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::fmt::Display for PostAssertionAdoptersResponseNetwork {
-        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-            match self {
-                Self::Variant0(x) => x.fmt(f),
-                Self::Variant1(x) => x.fmt(f),
-            }
-        }
-    }
-    impl ::std::convert::From<f64> for PostAssertionAdoptersResponseNetwork {
-        fn from(value: f64) -> Self {
-            Self::Variant1(value)
         }
     }
     ///`PostAuthRefreshBody`
@@ -42229,7 +44939,7 @@ pub mod types {
             value.clone()
         }
     }
-    ///`PostIncidentsIncidentIdTransactionsTxIdTraceRetryResponse`
+    ///`PostIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceRetryResponse`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -42249,13 +44959,15 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct PostIncidentsIncidentIdTransactionsTxIdTraceRetryResponse {
+    pub struct PostIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceRetryResponse {
         pub debug_trace_id: ::uuid::Uuid,
     }
-    impl ::std::convert::From<&PostIncidentsIncidentIdTransactionsTxIdTraceRetryResponse>
-    for PostIncidentsIncidentIdTransactionsTxIdTraceRetryResponse {
+    impl ::std::convert::From<
+        &PostIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceRetryResponse,
+    >
+    for PostIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceRetryResponse {
         fn from(
-            value: &PostIncidentsIncidentIdTransactionsTxIdTraceRetryResponse,
+            value: &PostIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceRetryResponse,
         ) -> Self {
             value.clone()
         }
@@ -43326,7 +46038,8 @@ pub mod types {
     ///      "type": "boolean"
     ///    },
     ///    "profile_image_url": {
-    ///      "type": "string"
+    ///      "type": "string",
+    ///      "maxLength": 2048
     ///    },
     ///    "project_description": {
     ///      "type": [
@@ -43350,7 +46063,7 @@ pub mod types {
         #[serde(default)]
         pub is_private: bool,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub profile_image_url: ::std::option::Option<::std::string::String>,
+        pub profile_image_url: ::std::option::Option<PostProjectsBodyProfileImageUrl>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub project_description: ::std::option::Option<
             PostProjectsBodyProjectDescription,
@@ -43360,6 +46073,87 @@ pub mod types {
     impl ::std::convert::From<&PostProjectsBody> for PostProjectsBody {
         fn from(value: &PostProjectsBody) -> Self {
             value.clone()
+        }
+    }
+    ///`PostProjectsBodyProfileImageUrl`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "maxLength": 2048
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsBodyProfileImageUrl(::std::string::String);
+    impl ::std::ops::Deref for PostProjectsBodyProfileImageUrl {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<PostProjectsBodyProfileImageUrl>
+    for ::std::string::String {
+        fn from(value: PostProjectsBodyProfileImageUrl) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&PostProjectsBodyProfileImageUrl>
+    for PostProjectsBodyProfileImageUrl {
+        fn from(value: &PostProjectsBodyProfileImageUrl) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for PostProjectsBodyProfileImageUrl {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() > 2048usize {
+                return Err("longer than 2048 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for PostProjectsBodyProfileImageUrl {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsBodyProfileImageUrl {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsBodyProfileImageUrl {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for PostProjectsBodyProfileImageUrl {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
         }
     }
     ///`PostProjectsBodyProjectDescription`
@@ -43515,6 +46309,4642 @@ pub mod types {
         }
     }
     impl<'de> ::serde::Deserialize<'de> for PostProjectsBodyProjectName {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef,
+    > for PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceBody`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "coverage",
+    ///    "reportMetadata",
+    ///    "reportStoragePath"
+    ///  ],
+    ///  "properties": {
+    ///    "coverage": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "chainId",
+    ///          "contractAddress",
+    ///          "coverageStatus"
+    ///        ],
+    ///        "properties": {
+    ///          "auditedCommitSha": {
+    ///            "description": "40-char lowercase hex git SHA-1",
+    ///            "type": [
+    ///              "string",
+    ///              "null"
+    ///            ],
+    ///            "pattern": "^[0-9a-f]{40}$"
+    ///          },
+    ///          "chainId": {
+    ///            "description": "Positive integer EVM chain ID",
+    ///            "type": "number"
+    ///          },
+    ///          "commitEvidence": {
+    ///            "default": {},
+    ///            "type": "object",
+    ///            "properties": {
+    ///              "auditedCommitUrl": {
+    ///                "type": "string",
+    ///                "format": "uri"
+    ///              },
+    ///              "compareUrl": {
+    ///                "type": "string",
+    ///                "format": "uri"
+    ///              },
+    ///              "deployedCommitUrl": {
+    ///                "type": "string",
+    ///                "format": "uri"
+    ///              },
+    ///              "repositoryUrl": {
+    ///                "type": "string",
+    ///                "format": "uri"
+    ///              },
+    ///              "sourceVerificationUrl": {
+    ///                "type": "string",
+    ///                "format": "uri"
+    ///              },
+    ///              "submitterNotes": {
+    ///                "type": "string"
+    ///              }
+    ///            }
+    ///          },
+    ///          "contractAddress": {
+    ///            "description": "20-byte Ethereum address, normalized to lowercase",
+    ///            "type": "string"
+    ///          },
+    ///          "coverageNotes": {
+    ///            "type": "string"
+    ///          },
+    ///          "coverageStatus": {
+    ///            "type": "string",
+    ///            "enum": [
+    ///              "covered",
+    ///              "partial",
+    ///              "out_of_scope"
+    ///            ]
+    ///          },
+    ///          "deployedCommitSha": {
+    ///            "description": "40-char lowercase hex git SHA-1",
+    ///            "type": [
+    ///              "string",
+    ///              "null"
+    ///            ],
+    ///            "pattern": "^[0-9a-f]{40}$"
+    ///          },
+    ///          "postAuditCommits": {
+    ///            "default": [],
+    ///            "type": "array",
+    ///            "items": {
+    ///              "type": "object",
+    ///              "required": [
+    ///                "label",
+    ///                "sha"
+    ///              ],
+    ///              "properties": {
+    ///                "label": {
+    ///                  "type": "string",
+    ///                  "minLength": 1
+    ///                },
+    ///                "notes": {
+    ///                  "type": "string"
+    ///                },
+    ///                "sha": {
+    ///                  "description": "40-char lowercase hex git SHA-1",
+    ///                  "type": "string",
+    ///                  "pattern": "^[0-9a-f]{40}$"
+    ///                },
+    ///                "url": {
+    ///                  "type": "string",
+    ///                  "format": "uri"
+    ///                }
+    ///              }
+    ///            }
+    ///          }
+    ///        }
+    ///      },
+    ///      "minItems": 1
+    ///    },
+    ///    "reportMetadata": {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "auditPeriodLabel",
+    ///        "auditor"
+    ///      ],
+    ///      "properties": {
+    ///        "auditPeriodLabel": {
+    ///          "type": "string",
+    ///          "minLength": 1
+    ///        },
+    ///        "auditor": {
+    ///          "type": "string",
+    ///          "minLength": 1
+    ///        },
+    ///        "contact": {
+    ///          "type": "string",
+    ///          "minLength": 1
+    ///        },
+    ///        "githubRepo": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "links": {
+    ///          "type": "array",
+    ///          "items": {
+    ///            "type": "object",
+    ///            "required": [
+    ///              "label",
+    ///              "url"
+    ///            ],
+    ///            "properties": {
+    ///              "label": {
+    ///                "type": "string",
+    ///                "minLength": 1
+    ///              },
+    ///              "url": {
+    ///                "type": "string",
+    ///                "format": "uri"
+    ///              }
+    ///            }
+    ///          }
+    ///        },
+    ///        "publicReportUrl": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "scopeDescription": {
+    ///          "type": "string",
+    ///          "minLength": 1
+    ///        }
+    ///      }
+    ///    },
+    ///    "reportStoragePath": {
+    ///      "description": "Object key in the 'audit-reports' bucket; PDF must already be uploaded via signed URL.",
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBody {
+        pub coverage: ::std::vec::Vec<
+            PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItem,
+        >,
+        #[serde(rename = "reportMetadata")]
+        pub report_metadata: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadata,
+        ///Object key in the 'audit-reports' bucket; PDF must already be uploaded via signed URL.
+        #[serde(rename = "reportStoragePath")]
+        pub report_storage_path: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportStoragePath,
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsAuditReportRefReplaceBody>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBody {
+        fn from(value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBody) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "chainId",
+    ///    "contractAddress",
+    ///    "coverageStatus"
+    ///  ],
+    ///  "properties": {
+    ///    "auditedCommitSha": {
+    ///      "description": "40-char lowercase hex git SHA-1",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ],
+    ///      "pattern": "^[0-9a-f]{40}$"
+    ///    },
+    ///    "chainId": {
+    ///      "description": "Positive integer EVM chain ID",
+    ///      "type": "number"
+    ///    },
+    ///    "commitEvidence": {
+    ///      "default": {},
+    ///      "type": "object",
+    ///      "properties": {
+    ///        "auditedCommitUrl": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "compareUrl": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "deployedCommitUrl": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "repositoryUrl": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "sourceVerificationUrl": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "submitterNotes": {
+    ///          "type": "string"
+    ///        }
+    ///      }
+    ///    },
+    ///    "contractAddress": {
+    ///      "description": "20-byte Ethereum address, normalized to lowercase",
+    ///      "type": "string"
+    ///    },
+    ///    "coverageNotes": {
+    ///      "type": "string"
+    ///    },
+    ///    "coverageStatus": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "covered",
+    ///        "partial",
+    ///        "out_of_scope"
+    ///      ]
+    ///    },
+    ///    "deployedCommitSha": {
+    ///      "description": "40-char lowercase hex git SHA-1",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ],
+    ///      "pattern": "^[0-9a-f]{40}$"
+    ///    },
+    ///    "postAuditCommits": {
+    ///      "default": [],
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "label",
+    ///          "sha"
+    ///        ],
+    ///        "properties": {
+    ///          "label": {
+    ///            "type": "string",
+    ///            "minLength": 1
+    ///          },
+    ///          "notes": {
+    ///            "type": "string"
+    ///          },
+    ///          "sha": {
+    ///            "description": "40-char lowercase hex git SHA-1",
+    ///            "type": "string",
+    ///            "pattern": "^[0-9a-f]{40}$"
+    ///          },
+    ///          "url": {
+    ///            "type": "string",
+    ///            "format": "uri"
+    ///          }
+    ///        }
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItem {
+        ///40-char lowercase hex git SHA-1
+        #[serde(
+            rename = "auditedCommitSha",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub audited_commit_sha: ::std::option::Option<
+            PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemAuditedCommitSha,
+        >,
+        #[serde(rename = "chainId")]
+        pub chain_id: f64,
+        #[serde(
+            rename = "commitEvidence",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub commit_evidence: ::std::option::Option<
+            PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCommitEvidence,
+        >,
+        ///20-byte Ethereum address, normalized to lowercase
+        #[serde(rename = "contractAddress")]
+        pub contract_address: ::std::string::String,
+        #[serde(
+            rename = "coverageNotes",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub coverage_notes: ::std::option::Option<::std::string::String>,
+        #[serde(rename = "coverageStatus")]
+        pub coverage_status: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCoverageStatus,
+        ///40-char lowercase hex git SHA-1
+        #[serde(
+            rename = "deployedCommitSha",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub deployed_commit_sha: ::std::option::Option<
+            PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemDeployedCommitSha,
+        >,
+        #[serde(
+            rename = "postAuditCommits",
+            default,
+            skip_serializing_if = "::std::vec::Vec::is_empty"
+        )]
+        pub post_audit_commits: ::std::vec::Vec<
+            PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItem,
+        >,
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItem,
+    > for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItem {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///40-char lowercase hex git SHA-1
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "40-char lowercase hex git SHA-1",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{40}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemAuditedCommitSha(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemAuditedCommitSha {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemAuditedCommitSha,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemAuditedCommitSha,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemAuditedCommitSha,
+    >
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemAuditedCommitSha {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemAuditedCommitSha,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemAuditedCommitSha {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^[0-9a-f]{40}$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^[0-9a-f]{40}$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemAuditedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemAuditedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemAuditedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemAuditedCommitSha {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCommitEvidence`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "default": {},
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "auditedCommitUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "compareUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "deployedCommitUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "repositoryUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "sourceVerificationUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "submitterNotes": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCommitEvidence {
+        #[serde(
+            rename = "auditedCommitUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub audited_commit_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "compareUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub compare_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "deployedCommitUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub deployed_commit_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "repositoryUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub repository_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "sourceVerificationUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub source_verification_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "submitterNotes",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub submitter_notes: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCommitEvidence,
+    >
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCommitEvidence {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCommitEvidence,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::default::Default
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCommitEvidence {
+        fn default() -> Self {
+            PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCommitEvidence {
+                audited_commit_url: Default::default(),
+                compare_url: Default::default(),
+                deployed_commit_url: Default::default(),
+                repository_url: Default::default(),
+                source_verification_url: Default::default(),
+                submitter_notes: Default::default(),
+            }
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCoverageStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "covered",
+    ///    "partial",
+    ///    "out_of_scope"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCoverageStatus {
+        #[serde(rename = "covered")]
+        Covered,
+        #[serde(rename = "partial")]
+        Partial,
+        #[serde(rename = "out_of_scope")]
+        OutOfScope,
+    }
+    impl ::std::convert::From<&Self>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCoverageStatus {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCoverageStatus,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCoverageStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Covered => f.write_str("covered"),
+                Self::Partial => f.write_str("partial"),
+                Self::OutOfScope => f.write_str("out_of_scope"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCoverageStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "covered" => Ok(Self::Covered),
+                "partial" => Ok(Self::Partial),
+                "out_of_scope" => Ok(Self::OutOfScope),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///40-char lowercase hex git SHA-1
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "40-char lowercase hex git SHA-1",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{40}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemDeployedCommitSha(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemDeployedCommitSha {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemDeployedCommitSha,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemDeployedCommitSha,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemDeployedCommitSha,
+    >
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemDeployedCommitSha {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemDeployedCommitSha,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemDeployedCommitSha {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^[0-9a-f]{40}$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^[0-9a-f]{40}$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemDeployedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemDeployedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemDeployedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemDeployedCommitSha {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "label",
+    ///    "sha"
+    ///  ],
+    ///  "properties": {
+    ///    "label": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "notes": {
+    ///      "type": "string"
+    ///    },
+    ///    "sha": {
+    ///      "description": "40-char lowercase hex git SHA-1",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{40}$"
+    ///    },
+    ///    "url": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItem {
+        pub label: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub notes: ::std::option::Option<::std::string::String>,
+        ///40-char lowercase hex git SHA-1
+        pub sha: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemSha,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub url: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItem,
+    >
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItem {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel,
+    >
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemLabel {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///40-char lowercase hex git SHA-1
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "40-char lowercase hex git SHA-1",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{40}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemSha(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemSha {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemSha,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemSha,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemSha,
+    >
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemSha {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemSha,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemSha {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^[0-9a-f]{40}$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^[0-9a-f]{40}$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyCoverageItemPostAuditCommitsItemSha {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadata`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "auditPeriodLabel",
+    ///    "auditor"
+    ///  ],
+    ///  "properties": {
+    ///    "auditPeriodLabel": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "auditor": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "contact": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "githubRepo": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "links": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "label",
+    ///          "url"
+    ///        ],
+    ///        "properties": {
+    ///          "label": {
+    ///            "type": "string",
+    ///            "minLength": 1
+    ///          },
+    ///          "url": {
+    ///            "type": "string",
+    ///            "format": "uri"
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    "publicReportUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "scopeDescription": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadata {
+        #[serde(rename = "auditPeriodLabel")]
+        pub audit_period_label: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel,
+        pub auditor: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub contact: ::std::option::Option<
+            PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact,
+        >,
+        #[serde(
+            rename = "githubRepo",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub github_repo: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub links: ::std::vec::Vec<
+            PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItem,
+        >,
+        #[serde(
+            rename = "publicReportUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub public_report_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "scopeDescription",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub scope_description: ::std::option::Option<
+            PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription,
+        >,
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadata,
+    > for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadata {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadata,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel,
+    >
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditPeriodLabel {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor,
+    > for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataAuditor {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact,
+    > for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataContact {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "label",
+    ///    "url"
+    ///  ],
+    ///  "properties": {
+    ///    "label": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "url": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItem {
+        pub label: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel,
+        pub url: ::std::string::String,
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItem,
+    > for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItem {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel,
+    >
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataLinksItemLabel {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription,
+    >
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportMetadataScopeDescription {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///Object key in the 'audit-reports' bucket; PDF must already be uploaded via signed URL.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Object key in the 'audit-reports' bucket; PDF must already be uploaded via signed URL.",
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportStoragePath(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportStoragePath {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportStoragePath,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportStoragePath,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportStoragePath,
+    > for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportStoragePath {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportStoragePath,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportStoragePath {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportStoragePath {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportStoragePath {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportStoragePath {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceBodyReportStoragePath {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "auditReportId",
+    ///    "auditReportRef",
+    ///    "coverageRows",
+    ///    "reviewableRef"
+    ///  ],
+    ///  "properties": {
+    ///    "auditReportId": {
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    },
+    ///    "auditReportRef": {
+    ///      "description": "Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///    },
+    ///    "coverageRows": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "auditReportCoverageId",
+    ///          "chainId",
+    ///          "contractAddress",
+    ///          "reviewableRef"
+    ///        ],
+    ///        "properties": {
+    ///          "auditReportCoverageId": {
+    ///            "type": "string",
+    ///            "format": "uuid"
+    ///          },
+    ///          "chainId": {
+    ///            "description": "Positive integer EVM chain ID",
+    ///            "type": "number"
+    ///          },
+    ///          "contractAddress": {
+    ///            "description": "20-byte Ethereum address, normalized to lowercase",
+    ///            "type": "string"
+    ///          },
+    ///          "reviewableRef": {
+    ///            "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///            "type": "string",
+    ///            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    "reviewableRef": {
+    ///      "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceResponse {
+        #[serde(rename = "auditReportId")]
+        pub audit_report_id: ::uuid::Uuid,
+        ///Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.
+        #[serde(rename = "auditReportRef")]
+        pub audit_report_ref: PostProjectsProjectIdAuditsAuditReportRefReplaceResponseAuditReportRef,
+        #[serde(rename = "coverageRows")]
+        pub coverage_rows: ::std::vec::Vec<
+            PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItem,
+        >,
+        ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+        #[serde(rename = "reviewableRef")]
+        pub reviewable_ref: PostProjectsProjectIdAuditsAuditReportRefReplaceResponseReviewableRef,
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsAuditReportRefReplaceResponse>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponse {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceResponse,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceResponseAuditReportRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseAuditReportRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceResponseAuditReportRef,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceResponseAuditReportRef,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceResponseAuditReportRef,
+    > for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseAuditReportRef {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceResponseAuditReportRef,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseAuditReportRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseAuditReportRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCode`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "forbidden",
+    ///    "not_found",
+    ///    "pdf_storage_path_invalid",
+    ///    "pdf_object_missing",
+    ///    "pdf_too_large",
+    ///    "unknown_contract",
+    ///    "bad_sha_format",
+    ///    "bad_address_format",
+    ///    "no_coverage_rows",
+    ///    "idempotency_replay_mismatch",
+    ///    "audit_report_ref_not_found",
+    ///    "audit_report_ref_not_owned_by_project",
+    ///    "internal_error"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCode {
+        #[serde(rename = "forbidden")]
+        Forbidden,
+        #[serde(rename = "not_found")]
+        NotFound,
+        #[serde(rename = "pdf_storage_path_invalid")]
+        PdfStoragePathInvalid,
+        #[serde(rename = "pdf_object_missing")]
+        PdfObjectMissing,
+        #[serde(rename = "pdf_too_large")]
+        PdfTooLarge,
+        #[serde(rename = "unknown_contract")]
+        UnknownContract,
+        #[serde(rename = "bad_sha_format")]
+        BadShaFormat,
+        #[serde(rename = "bad_address_format")]
+        BadAddressFormat,
+        #[serde(rename = "no_coverage_rows")]
+        NoCoverageRows,
+        #[serde(rename = "idempotency_replay_mismatch")]
+        IdempotencyReplayMismatch,
+        #[serde(rename = "audit_report_ref_not_found")]
+        AuditReportRefNotFound,
+        #[serde(rename = "audit_report_ref_not_owned_by_project")]
+        AuditReportRefNotOwnedByProject,
+        #[serde(rename = "internal_error")]
+        InternalError,
+    }
+    impl ::std::convert::From<&Self>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCode {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCode,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCode {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Forbidden => f.write_str("forbidden"),
+                Self::NotFound => f.write_str("not_found"),
+                Self::PdfStoragePathInvalid => f.write_str("pdf_storage_path_invalid"),
+                Self::PdfObjectMissing => f.write_str("pdf_object_missing"),
+                Self::PdfTooLarge => f.write_str("pdf_too_large"),
+                Self::UnknownContract => f.write_str("unknown_contract"),
+                Self::BadShaFormat => f.write_str("bad_sha_format"),
+                Self::BadAddressFormat => f.write_str("bad_address_format"),
+                Self::NoCoverageRows => f.write_str("no_coverage_rows"),
+                Self::IdempotencyReplayMismatch => {
+                    f.write_str("idempotency_replay_mismatch")
+                }
+                Self::AuditReportRefNotFound => f.write_str("audit_report_ref_not_found"),
+                Self::AuditReportRefNotOwnedByProject => {
+                    f.write_str("audit_report_ref_not_owned_by_project")
+                }
+                Self::InternalError => f.write_str("internal_error"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCode {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "forbidden" => Ok(Self::Forbidden),
+                "not_found" => Ok(Self::NotFound),
+                "pdf_storage_path_invalid" => Ok(Self::PdfStoragePathInvalid),
+                "pdf_object_missing" => Ok(Self::PdfObjectMissing),
+                "pdf_too_large" => Ok(Self::PdfTooLarge),
+                "unknown_contract" => Ok(Self::UnknownContract),
+                "bad_sha_format" => Ok(Self::BadShaFormat),
+                "bad_address_format" => Ok(Self::BadAddressFormat),
+                "no_coverage_rows" => Ok(Self::NoCoverageRows),
+                "idempotency_replay_mismatch" => Ok(Self::IdempotencyReplayMismatch),
+                "audit_report_ref_not_found" => Ok(Self::AuditReportRefNotFound),
+                "audit_report_ref_not_owned_by_project" => {
+                    Ok(Self::AuditReportRefNotOwnedByProject)
+                }
+                "internal_error" => Ok(Self::InternalError),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "auditReportCoverageId",
+    ///    "chainId",
+    ///    "contractAddress",
+    ///    "reviewableRef"
+    ///  ],
+    ///  "properties": {
+    ///    "auditReportCoverageId": {
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    },
+    ///    "chainId": {
+    ///      "description": "Positive integer EVM chain ID",
+    ///      "type": "number"
+    ///    },
+    ///    "contractAddress": {
+    ///      "description": "20-byte Ethereum address, normalized to lowercase",
+    ///      "type": "string"
+    ///    },
+    ///    "reviewableRef": {
+    ///      "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItem {
+        #[serde(rename = "auditReportCoverageId")]
+        pub audit_report_coverage_id: ::uuid::Uuid,
+        #[serde(rename = "chainId")]
+        pub chain_id: f64,
+        ///20-byte Ethereum address, normalized to lowercase
+        #[serde(rename = "contractAddress")]
+        pub contract_address: ::std::string::String,
+        ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+        #[serde(rename = "reviewableRef")]
+        pub reviewable_ref: PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItemReviewableRef,
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItem,
+    > for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItem {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItemReviewableRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItemReviewableRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItemReviewableRef,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItemReviewableRef,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItemReviewableRef,
+    >
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItemReviewableRef {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItemReviewableRef,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItemReviewableRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseCoverageRowsItemReviewableRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsAuditReportRefReplaceResponseReviewableRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseReviewableRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsAuditReportRefReplaceResponseReviewableRef,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsAuditReportRefReplaceResponseReviewableRef,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsAuditReportRefReplaceResponseReviewableRef,
+    > for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseReviewableRef {
+        fn from(
+            value: &PostProjectsProjectIdAuditsAuditReportRefReplaceResponseReviewableRef,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseReviewableRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsAuditReportRefReplaceResponseReviewableRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsBody`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "coverage",
+    ///    "reportMetadata",
+    ///    "reportStoragePath"
+    ///  ],
+    ///  "properties": {
+    ///    "coverage": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "chainId",
+    ///          "contractAddress",
+    ///          "coverageStatus"
+    ///        ],
+    ///        "properties": {
+    ///          "auditedCommitSha": {
+    ///            "description": "40-char lowercase hex git SHA-1",
+    ///            "type": [
+    ///              "string",
+    ///              "null"
+    ///            ],
+    ///            "pattern": "^[0-9a-f]{40}$"
+    ///          },
+    ///          "chainId": {
+    ///            "description": "Positive integer EVM chain ID",
+    ///            "type": "number"
+    ///          },
+    ///          "commitEvidence": {
+    ///            "default": {},
+    ///            "type": "object",
+    ///            "properties": {
+    ///              "auditedCommitUrl": {
+    ///                "type": "string",
+    ///                "format": "uri"
+    ///              },
+    ///              "compareUrl": {
+    ///                "type": "string",
+    ///                "format": "uri"
+    ///              },
+    ///              "deployedCommitUrl": {
+    ///                "type": "string",
+    ///                "format": "uri"
+    ///              },
+    ///              "repositoryUrl": {
+    ///                "type": "string",
+    ///                "format": "uri"
+    ///              },
+    ///              "sourceVerificationUrl": {
+    ///                "type": "string",
+    ///                "format": "uri"
+    ///              },
+    ///              "submitterNotes": {
+    ///                "type": "string"
+    ///              }
+    ///            }
+    ///          },
+    ///          "contractAddress": {
+    ///            "description": "20-byte Ethereum address, normalized to lowercase",
+    ///            "type": "string"
+    ///          },
+    ///          "coverageNotes": {
+    ///            "type": "string"
+    ///          },
+    ///          "coverageStatus": {
+    ///            "type": "string",
+    ///            "enum": [
+    ///              "covered",
+    ///              "partial",
+    ///              "out_of_scope"
+    ///            ]
+    ///          },
+    ///          "deployedCommitSha": {
+    ///            "description": "40-char lowercase hex git SHA-1",
+    ///            "type": [
+    ///              "string",
+    ///              "null"
+    ///            ],
+    ///            "pattern": "^[0-9a-f]{40}$"
+    ///          },
+    ///          "postAuditCommits": {
+    ///            "default": [],
+    ///            "type": "array",
+    ///            "items": {
+    ///              "type": "object",
+    ///              "required": [
+    ///                "label",
+    ///                "sha"
+    ///              ],
+    ///              "properties": {
+    ///                "label": {
+    ///                  "type": "string",
+    ///                  "minLength": 1
+    ///                },
+    ///                "notes": {
+    ///                  "type": "string"
+    ///                },
+    ///                "sha": {
+    ///                  "description": "40-char lowercase hex git SHA-1",
+    ///                  "type": "string",
+    ///                  "pattern": "^[0-9a-f]{40}$"
+    ///                },
+    ///                "url": {
+    ///                  "type": "string",
+    ///                  "format": "uri"
+    ///                }
+    ///              }
+    ///            }
+    ///          }
+    ///        }
+    ///      },
+    ///      "minItems": 1
+    ///    },
+    ///    "reportMetadata": {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "auditPeriodLabel",
+    ///        "auditor"
+    ///      ],
+    ///      "properties": {
+    ///        "auditPeriodLabel": {
+    ///          "type": "string",
+    ///          "minLength": 1
+    ///        },
+    ///        "auditor": {
+    ///          "type": "string",
+    ///          "minLength": 1
+    ///        },
+    ///        "contact": {
+    ///          "type": "string",
+    ///          "minLength": 1
+    ///        },
+    ///        "githubRepo": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "links": {
+    ///          "type": "array",
+    ///          "items": {
+    ///            "type": "object",
+    ///            "required": [
+    ///              "label",
+    ///              "url"
+    ///            ],
+    ///            "properties": {
+    ///              "label": {
+    ///                "type": "string",
+    ///                "minLength": 1
+    ///              },
+    ///              "url": {
+    ///                "type": "string",
+    ///                "format": "uri"
+    ///              }
+    ///            }
+    ///          }
+    ///        },
+    ///        "publicReportUrl": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "scopeDescription": {
+    ///          "type": "string",
+    ///          "minLength": 1
+    ///        }
+    ///      }
+    ///    },
+    ///    "reportStoragePath": {
+    ///      "description": "Object key in the 'audit-reports' bucket; PDF must already be uploaded via signed URL.",
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsBody {
+        pub coverage: ::std::vec::Vec<PostProjectsProjectIdAuditsBodyCoverageItem>,
+        #[serde(rename = "reportMetadata")]
+        pub report_metadata: PostProjectsProjectIdAuditsBodyReportMetadata,
+        ///Object key in the 'audit-reports' bucket; PDF must already be uploaded via signed URL.
+        #[serde(rename = "reportStoragePath")]
+        pub report_storage_path: PostProjectsProjectIdAuditsBodyReportStoragePath,
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsBody>
+    for PostProjectsProjectIdAuditsBody {
+        fn from(value: &PostProjectsProjectIdAuditsBody) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostProjectsProjectIdAuditsBodyCoverageItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "chainId",
+    ///    "contractAddress",
+    ///    "coverageStatus"
+    ///  ],
+    ///  "properties": {
+    ///    "auditedCommitSha": {
+    ///      "description": "40-char lowercase hex git SHA-1",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ],
+    ///      "pattern": "^[0-9a-f]{40}$"
+    ///    },
+    ///    "chainId": {
+    ///      "description": "Positive integer EVM chain ID",
+    ///      "type": "number"
+    ///    },
+    ///    "commitEvidence": {
+    ///      "default": {},
+    ///      "type": "object",
+    ///      "properties": {
+    ///        "auditedCommitUrl": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "compareUrl": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "deployedCommitUrl": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "repositoryUrl": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "sourceVerificationUrl": {
+    ///          "type": "string",
+    ///          "format": "uri"
+    ///        },
+    ///        "submitterNotes": {
+    ///          "type": "string"
+    ///        }
+    ///      }
+    ///    },
+    ///    "contractAddress": {
+    ///      "description": "20-byte Ethereum address, normalized to lowercase",
+    ///      "type": "string"
+    ///    },
+    ///    "coverageNotes": {
+    ///      "type": "string"
+    ///    },
+    ///    "coverageStatus": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "covered",
+    ///        "partial",
+    ///        "out_of_scope"
+    ///      ]
+    ///    },
+    ///    "deployedCommitSha": {
+    ///      "description": "40-char lowercase hex git SHA-1",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ],
+    ///      "pattern": "^[0-9a-f]{40}$"
+    ///    },
+    ///    "postAuditCommits": {
+    ///      "default": [],
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "label",
+    ///          "sha"
+    ///        ],
+    ///        "properties": {
+    ///          "label": {
+    ///            "type": "string",
+    ///            "minLength": 1
+    ///          },
+    ///          "notes": {
+    ///            "type": "string"
+    ///          },
+    ///          "sha": {
+    ///            "description": "40-char lowercase hex git SHA-1",
+    ///            "type": "string",
+    ///            "pattern": "^[0-9a-f]{40}$"
+    ///          },
+    ///          "url": {
+    ///            "type": "string",
+    ///            "format": "uri"
+    ///          }
+    ///        }
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsBodyCoverageItem {
+        ///40-char lowercase hex git SHA-1
+        #[serde(
+            rename = "auditedCommitSha",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub audited_commit_sha: ::std::option::Option<
+            PostProjectsProjectIdAuditsBodyCoverageItemAuditedCommitSha,
+        >,
+        #[serde(rename = "chainId")]
+        pub chain_id: f64,
+        #[serde(
+            rename = "commitEvidence",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub commit_evidence: ::std::option::Option<
+            PostProjectsProjectIdAuditsBodyCoverageItemCommitEvidence,
+        >,
+        ///20-byte Ethereum address, normalized to lowercase
+        #[serde(rename = "contractAddress")]
+        pub contract_address: ::std::string::String,
+        #[serde(
+            rename = "coverageNotes",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub coverage_notes: ::std::option::Option<::std::string::String>,
+        #[serde(rename = "coverageStatus")]
+        pub coverage_status: PostProjectsProjectIdAuditsBodyCoverageItemCoverageStatus,
+        ///40-char lowercase hex git SHA-1
+        #[serde(
+            rename = "deployedCommitSha",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub deployed_commit_sha: ::std::option::Option<
+            PostProjectsProjectIdAuditsBodyCoverageItemDeployedCommitSha,
+        >,
+        #[serde(
+            rename = "postAuditCommits",
+            default,
+            skip_serializing_if = "::std::vec::Vec::is_empty"
+        )]
+        pub post_audit_commits: ::std::vec::Vec<
+            PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItem,
+        >,
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsBodyCoverageItem>
+    for PostProjectsProjectIdAuditsBodyCoverageItem {
+        fn from(value: &PostProjectsProjectIdAuditsBodyCoverageItem) -> Self {
+            value.clone()
+        }
+    }
+    ///40-char lowercase hex git SHA-1
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "40-char lowercase hex git SHA-1",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{40}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsBodyCoverageItemAuditedCommitSha(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsBodyCoverageItemAuditedCommitSha {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsBodyCoverageItemAuditedCommitSha,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsBodyCoverageItemAuditedCommitSha,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsBodyCoverageItemAuditedCommitSha,
+    > for PostProjectsProjectIdAuditsBodyCoverageItemAuditedCommitSha {
+        fn from(
+            value: &PostProjectsProjectIdAuditsBodyCoverageItemAuditedCommitSha,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsBodyCoverageItemAuditedCommitSha {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^[0-9a-f]{40}$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^[0-9a-f]{40}$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsBodyCoverageItemAuditedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsBodyCoverageItemAuditedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsBodyCoverageItemAuditedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsBodyCoverageItemAuditedCommitSha {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsBodyCoverageItemCommitEvidence`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "default": {},
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "auditedCommitUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "compareUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "deployedCommitUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "repositoryUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "sourceVerificationUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "submitterNotes": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsBodyCoverageItemCommitEvidence {
+        #[serde(
+            rename = "auditedCommitUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub audited_commit_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "compareUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub compare_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "deployedCommitUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub deployed_commit_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "repositoryUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub repository_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "sourceVerificationUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub source_verification_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "submitterNotes",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub submitter_notes: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsBodyCoverageItemCommitEvidence>
+    for PostProjectsProjectIdAuditsBodyCoverageItemCommitEvidence {
+        fn from(
+            value: &PostProjectsProjectIdAuditsBodyCoverageItemCommitEvidence,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::default::Default
+    for PostProjectsProjectIdAuditsBodyCoverageItemCommitEvidence {
+        fn default() -> Self {
+            PostProjectsProjectIdAuditsBodyCoverageItemCommitEvidence {
+                audited_commit_url: Default::default(),
+                compare_url: Default::default(),
+                deployed_commit_url: Default::default(),
+                repository_url: Default::default(),
+                source_verification_url: Default::default(),
+                submitter_notes: Default::default(),
+            }
+        }
+    }
+    ///`PostProjectsProjectIdAuditsBodyCoverageItemCoverageStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "covered",
+    ///    "partial",
+    ///    "out_of_scope"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum PostProjectsProjectIdAuditsBodyCoverageItemCoverageStatus {
+        #[serde(rename = "covered")]
+        Covered,
+        #[serde(rename = "partial")]
+        Partial,
+        #[serde(rename = "out_of_scope")]
+        OutOfScope,
+    }
+    impl ::std::convert::From<&Self>
+    for PostProjectsProjectIdAuditsBodyCoverageItemCoverageStatus {
+        fn from(
+            value: &PostProjectsProjectIdAuditsBodyCoverageItemCoverageStatus,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display
+    for PostProjectsProjectIdAuditsBodyCoverageItemCoverageStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Covered => f.write_str("covered"),
+                Self::Partial => f.write_str("partial"),
+                Self::OutOfScope => f.write_str("out_of_scope"),
+            }
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsBodyCoverageItemCoverageStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "covered" => Ok(Self::Covered),
+                "partial" => Ok(Self::Partial),
+                "out_of_scope" => Ok(Self::OutOfScope),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsBodyCoverageItemCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsBodyCoverageItemCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsBodyCoverageItemCoverageStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///40-char lowercase hex git SHA-1
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "40-char lowercase hex git SHA-1",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{40}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsBodyCoverageItemDeployedCommitSha(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsBodyCoverageItemDeployedCommitSha {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsBodyCoverageItemDeployedCommitSha,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsBodyCoverageItemDeployedCommitSha,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsBodyCoverageItemDeployedCommitSha,
+    > for PostProjectsProjectIdAuditsBodyCoverageItemDeployedCommitSha {
+        fn from(
+            value: &PostProjectsProjectIdAuditsBodyCoverageItemDeployedCommitSha,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsBodyCoverageItemDeployedCommitSha {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^[0-9a-f]{40}$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^[0-9a-f]{40}$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsBodyCoverageItemDeployedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsBodyCoverageItemDeployedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsBodyCoverageItemDeployedCommitSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsBodyCoverageItemDeployedCommitSha {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "label",
+    ///    "sha"
+    ///  ],
+    ///  "properties": {
+    ///    "label": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "notes": {
+    ///      "type": "string"
+    ///    },
+    ///    "sha": {
+    ///      "description": "40-char lowercase hex git SHA-1",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{40}$"
+    ///    },
+    ///    "url": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItem {
+        pub label: PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub notes: ::std::option::Option<::std::string::String>,
+        ///40-char lowercase hex git SHA-1
+        pub sha: PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemSha,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub url: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItem,
+    > for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItem {
+        fn from(
+            value: &PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItem,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel,
+    > for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel {
+        fn from(
+            value: &PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemLabel {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///40-char lowercase hex git SHA-1
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "40-char lowercase hex git SHA-1",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{40}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemSha(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemSha {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemSha,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemSha,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemSha,
+    > for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemSha {
+        fn from(
+            value: &PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemSha,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemSha {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^[0-9a-f]{40}$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^[0-9a-f]{40}$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemSha {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsBodyCoverageItemPostAuditCommitsItemSha {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsBodyReportMetadata`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "auditPeriodLabel",
+    ///    "auditor"
+    ///  ],
+    ///  "properties": {
+    ///    "auditPeriodLabel": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "auditor": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "contact": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "githubRepo": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "links": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "label",
+    ///          "url"
+    ///        ],
+    ///        "properties": {
+    ///          "label": {
+    ///            "type": "string",
+    ///            "minLength": 1
+    ///          },
+    ///          "url": {
+    ///            "type": "string",
+    ///            "format": "uri"
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    "publicReportUrl": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    },
+    ///    "scopeDescription": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsBodyReportMetadata {
+        #[serde(rename = "auditPeriodLabel")]
+        pub audit_period_label: PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel,
+        pub auditor: PostProjectsProjectIdAuditsBodyReportMetadataAuditor,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub contact: ::std::option::Option<
+            PostProjectsProjectIdAuditsBodyReportMetadataContact,
+        >,
+        #[serde(
+            rename = "githubRepo",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub github_repo: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub links: ::std::vec::Vec<
+            PostProjectsProjectIdAuditsBodyReportMetadataLinksItem,
+        >,
+        #[serde(
+            rename = "publicReportUrl",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub public_report_url: ::std::option::Option<::std::string::String>,
+        #[serde(
+            rename = "scopeDescription",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub scope_description: ::std::option::Option<
+            PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription,
+        >,
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsBodyReportMetadata>
+    for PostProjectsProjectIdAuditsBodyReportMetadata {
+        fn from(value: &PostProjectsProjectIdAuditsBodyReportMetadata) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel,
+    > for PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel {
+        fn from(
+            value: &PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsBodyReportMetadataAuditPeriodLabel {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsBodyReportMetadataAuditor`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsBodyReportMetadataAuditor(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref for PostProjectsProjectIdAuditsBodyReportMetadataAuditor {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<PostProjectsProjectIdAuditsBodyReportMetadataAuditor>
+    for ::std::string::String {
+        fn from(value: PostProjectsProjectIdAuditsBodyReportMetadataAuditor) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsBodyReportMetadataAuditor>
+    for PostProjectsProjectIdAuditsBodyReportMetadataAuditor {
+        fn from(value: &PostProjectsProjectIdAuditsBodyReportMetadataAuditor) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for PostProjectsProjectIdAuditsBodyReportMetadataAuditor {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsBodyReportMetadataAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsBodyReportMetadataAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsBodyReportMetadataAuditor {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsBodyReportMetadataAuditor {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsBodyReportMetadataContact`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsBodyReportMetadataContact(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref for PostProjectsProjectIdAuditsBodyReportMetadataContact {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<PostProjectsProjectIdAuditsBodyReportMetadataContact>
+    for ::std::string::String {
+        fn from(value: PostProjectsProjectIdAuditsBodyReportMetadataContact) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsBodyReportMetadataContact>
+    for PostProjectsProjectIdAuditsBodyReportMetadataContact {
+        fn from(value: &PostProjectsProjectIdAuditsBodyReportMetadataContact) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for PostProjectsProjectIdAuditsBodyReportMetadataContact {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsBodyReportMetadataContact {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsBodyReportMetadataContact {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsBodyReportMetadataContact {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsBodyReportMetadataContact {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsBodyReportMetadataLinksItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "label",
+    ///    "url"
+    ///  ],
+    ///  "properties": {
+    ///    "label": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "url": {
+    ///      "type": "string",
+    ///      "format": "uri"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsBodyReportMetadataLinksItem {
+        pub label: PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel,
+        pub url: ::std::string::String,
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsBodyReportMetadataLinksItem>
+    for PostProjectsProjectIdAuditsBodyReportMetadataLinksItem {
+        fn from(value: &PostProjectsProjectIdAuditsBodyReportMetadataLinksItem) -> Self {
+            value.clone()
+        }
+    }
+    ///`PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel,
+    > for PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel {
+        fn from(
+            value: &PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsBodyReportMetadataLinksItemLabel {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription,
+    > for PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription {
+        fn from(
+            value: &PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsBodyReportMetadataScopeDescription {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///Object key in the 'audit-reports' bucket; PDF must already be uploaded via signed URL.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Object key in the 'audit-reports' bucket; PDF must already be uploaded via signed URL.",
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsBodyReportStoragePath(::std::string::String);
+    impl ::std::ops::Deref for PostProjectsProjectIdAuditsBodyReportStoragePath {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<PostProjectsProjectIdAuditsBodyReportStoragePath>
+    for ::std::string::String {
+        fn from(value: PostProjectsProjectIdAuditsBodyReportStoragePath) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsBodyReportStoragePath>
+    for PostProjectsProjectIdAuditsBodyReportStoragePath {
+        fn from(value: &PostProjectsProjectIdAuditsBodyReportStoragePath) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for PostProjectsProjectIdAuditsBodyReportStoragePath {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsBodyReportStoragePath {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsBodyReportStoragePath {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsBodyReportStoragePath {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsBodyReportStoragePath {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "auditReportId",
+    ///    "auditReportRef",
+    ///    "coverageRows",
+    ///    "reviewableRef"
+    ///  ],
+    ///  "properties": {
+    ///    "auditReportId": {
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    },
+    ///    "auditReportRef": {
+    ///      "description": "Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///    },
+    ///    "coverageRows": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "auditReportCoverageId",
+    ///          "chainId",
+    ///          "contractAddress",
+    ///          "reviewableRef"
+    ///        ],
+    ///        "properties": {
+    ///          "auditReportCoverageId": {
+    ///            "type": "string",
+    ///            "format": "uuid"
+    ///          },
+    ///          "chainId": {
+    ///            "description": "Positive integer EVM chain ID",
+    ///            "type": "number"
+    ///          },
+    ///          "contractAddress": {
+    ///            "description": "20-byte Ethereum address, normalized to lowercase",
+    ///            "type": "string"
+    ///          },
+    ///          "reviewableRef": {
+    ///            "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///            "type": "string",
+    ///            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///          }
+    ///        }
+    ///      }
+    ///    },
+    ///    "reviewableRef": {
+    ///      "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsResponse {
+        #[serde(rename = "auditReportId")]
+        pub audit_report_id: ::uuid::Uuid,
+        ///Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.
+        #[serde(rename = "auditReportRef")]
+        pub audit_report_ref: PostProjectsProjectIdAuditsResponseAuditReportRef,
+        #[serde(rename = "coverageRows")]
+        pub coverage_rows: ::std::vec::Vec<
+            PostProjectsProjectIdAuditsResponseCoverageRowsItem,
+        >,
+        ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+        #[serde(rename = "reviewableRef")]
+        pub reviewable_ref: PostProjectsProjectIdAuditsResponseReviewableRef,
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsResponse>
+    for PostProjectsProjectIdAuditsResponse {
+        fn from(value: &PostProjectsProjectIdAuditsResponse) -> Self {
+            value.clone()
+        }
+    }
+    ///Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsResponseAuditReportRef(::std::string::String);
+    impl ::std::ops::Deref for PostProjectsProjectIdAuditsResponseAuditReportRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<PostProjectsProjectIdAuditsResponseAuditReportRef>
+    for ::std::string::String {
+        fn from(value: PostProjectsProjectIdAuditsResponseAuditReportRef) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsResponseAuditReportRef>
+    for PostProjectsProjectIdAuditsResponseAuditReportRef {
+        fn from(value: &PostProjectsProjectIdAuditsResponseAuditReportRef) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for PostProjectsProjectIdAuditsResponseAuditReportRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsResponseAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsResponseAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsResponseAuditReportRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsResponseAuditReportRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PostProjectsProjectIdAuditsResponseCode`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "forbidden",
+    ///    "not_found",
+    ///    "pdf_storage_path_invalid",
+    ///    "pdf_object_missing",
+    ///    "pdf_too_large",
+    ///    "unknown_contract",
+    ///    "bad_sha_format",
+    ///    "bad_address_format",
+    ///    "no_coverage_rows",
+    ///    "idempotency_replay_mismatch",
+    ///    "audit_report_ref_not_found",
+    ///    "audit_report_ref_not_owned_by_project",
+    ///    "internal_error"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum PostProjectsProjectIdAuditsResponseCode {
+        #[serde(rename = "forbidden")]
+        Forbidden,
+        #[serde(rename = "not_found")]
+        NotFound,
+        #[serde(rename = "pdf_storage_path_invalid")]
+        PdfStoragePathInvalid,
+        #[serde(rename = "pdf_object_missing")]
+        PdfObjectMissing,
+        #[serde(rename = "pdf_too_large")]
+        PdfTooLarge,
+        #[serde(rename = "unknown_contract")]
+        UnknownContract,
+        #[serde(rename = "bad_sha_format")]
+        BadShaFormat,
+        #[serde(rename = "bad_address_format")]
+        BadAddressFormat,
+        #[serde(rename = "no_coverage_rows")]
+        NoCoverageRows,
+        #[serde(rename = "idempotency_replay_mismatch")]
+        IdempotencyReplayMismatch,
+        #[serde(rename = "audit_report_ref_not_found")]
+        AuditReportRefNotFound,
+        #[serde(rename = "audit_report_ref_not_owned_by_project")]
+        AuditReportRefNotOwnedByProject,
+        #[serde(rename = "internal_error")]
+        InternalError,
+    }
+    impl ::std::convert::From<&Self> for PostProjectsProjectIdAuditsResponseCode {
+        fn from(value: &PostProjectsProjectIdAuditsResponseCode) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display for PostProjectsProjectIdAuditsResponseCode {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Forbidden => f.write_str("forbidden"),
+                Self::NotFound => f.write_str("not_found"),
+                Self::PdfStoragePathInvalid => f.write_str("pdf_storage_path_invalid"),
+                Self::PdfObjectMissing => f.write_str("pdf_object_missing"),
+                Self::PdfTooLarge => f.write_str("pdf_too_large"),
+                Self::UnknownContract => f.write_str("unknown_contract"),
+                Self::BadShaFormat => f.write_str("bad_sha_format"),
+                Self::BadAddressFormat => f.write_str("bad_address_format"),
+                Self::NoCoverageRows => f.write_str("no_coverage_rows"),
+                Self::IdempotencyReplayMismatch => {
+                    f.write_str("idempotency_replay_mismatch")
+                }
+                Self::AuditReportRefNotFound => f.write_str("audit_report_ref_not_found"),
+                Self::AuditReportRefNotOwnedByProject => {
+                    f.write_str("audit_report_ref_not_owned_by_project")
+                }
+                Self::InternalError => f.write_str("internal_error"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for PostProjectsProjectIdAuditsResponseCode {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "forbidden" => Ok(Self::Forbidden),
+                "not_found" => Ok(Self::NotFound),
+                "pdf_storage_path_invalid" => Ok(Self::PdfStoragePathInvalid),
+                "pdf_object_missing" => Ok(Self::PdfObjectMissing),
+                "pdf_too_large" => Ok(Self::PdfTooLarge),
+                "unknown_contract" => Ok(Self::UnknownContract),
+                "bad_sha_format" => Ok(Self::BadShaFormat),
+                "bad_address_format" => Ok(Self::BadAddressFormat),
+                "no_coverage_rows" => Ok(Self::NoCoverageRows),
+                "idempotency_replay_mismatch" => Ok(Self::IdempotencyReplayMismatch),
+                "audit_report_ref_not_found" => Ok(Self::AuditReportRefNotFound),
+                "audit_report_ref_not_owned_by_project" => {
+                    Ok(Self::AuditReportRefNotOwnedByProject)
+                }
+                "internal_error" => Ok(Self::InternalError),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for PostProjectsProjectIdAuditsResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsResponseCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`PostProjectsProjectIdAuditsResponseCoverageRowsItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "auditReportCoverageId",
+    ///    "chainId",
+    ///    "contractAddress",
+    ///    "reviewableRef"
+    ///  ],
+    ///  "properties": {
+    ///    "auditReportCoverageId": {
+    ///      "type": "string",
+    ///      "format": "uuid"
+    ///    },
+    ///    "chainId": {
+    ///      "description": "Positive integer EVM chain ID",
+    ///      "type": "number"
+    ///    },
+    ///    "contractAddress": {
+    ///      "description": "20-byte Ethereum address, normalized to lowercase",
+    ///      "type": "string"
+    ///    },
+    ///    "reviewableRef": {
+    ///      "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///      "type": "string",
+    ///      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PostProjectsProjectIdAuditsResponseCoverageRowsItem {
+        #[serde(rename = "auditReportCoverageId")]
+        pub audit_report_coverage_id: ::uuid::Uuid,
+        #[serde(rename = "chainId")]
+        pub chain_id: f64,
+        ///20-byte Ethereum address, normalized to lowercase
+        #[serde(rename = "contractAddress")]
+        pub contract_address: ::std::string::String,
+        ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+        #[serde(rename = "reviewableRef")]
+        pub reviewable_ref: PostProjectsProjectIdAuditsResponseCoverageRowsItemReviewableRef,
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsResponseCoverageRowsItem>
+    for PostProjectsProjectIdAuditsResponseCoverageRowsItem {
+        fn from(value: &PostProjectsProjectIdAuditsResponseCoverageRowsItem) -> Self {
+            value.clone()
+        }
+    }
+    ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsResponseCoverageRowsItemReviewableRef(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for PostProjectsProjectIdAuditsResponseCoverageRowsItemReviewableRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        PostProjectsProjectIdAuditsResponseCoverageRowsItemReviewableRef,
+    > for ::std::string::String {
+        fn from(
+            value: PostProjectsProjectIdAuditsResponseCoverageRowsItemReviewableRef,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &PostProjectsProjectIdAuditsResponseCoverageRowsItemReviewableRef,
+    > for PostProjectsProjectIdAuditsResponseCoverageRowsItemReviewableRef {
+        fn from(
+            value: &PostProjectsProjectIdAuditsResponseCoverageRowsItemReviewableRef,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for PostProjectsProjectIdAuditsResponseCoverageRowsItemReviewableRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsResponseCoverageRowsItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsResponseCoverageRowsItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsResponseCoverageRowsItemReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsResponseCoverageRowsItemReviewableRef {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.",
+    ///  "type": "string",
+    ///  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PostProjectsProjectIdAuditsResponseReviewableRef(::std::string::String);
+    impl ::std::ops::Deref for PostProjectsProjectIdAuditsResponseReviewableRef {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<PostProjectsProjectIdAuditsResponseReviewableRef>
+    for ::std::string::String {
+        fn from(value: PostProjectsProjectIdAuditsResponseReviewableRef) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&PostProjectsProjectIdAuditsResponseReviewableRef>
+    for PostProjectsProjectIdAuditsResponseReviewableRef {
+        fn from(value: &PostProjectsProjectIdAuditsResponseReviewableRef) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for PostProjectsProjectIdAuditsResponseReviewableRef {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\""
+                        .into(),
+                );
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdAuditsResponseReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdAuditsResponseReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdAuditsResponseReviewableRef {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for PostProjectsProjectIdAuditsResponseReviewableRef {
         fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
         where
             D: ::serde::Deserializer<'de>,
@@ -46316,15 +53746,11 @@ pub mod types {
     ///                },
     ///                "constructorAbiSignature": {
     ///                  "type": "string",
-    ///                  "minLength": 1
+    ///                  "pattern": "^constructor\\(.*\\)$"
     ///                },
     ///                "contractName": {
     ///                  "type": "string",
     ///                  "minLength": 1
-    ///                },
-    ///                "encodedConstructorArgs": {
-    ///                  "type": "string",
-    ///                  "pattern": "^0x[a-fA-F0-9]*$"
     ///                },
     ///                "evmVersion": {
     ///                  "type": "string",
@@ -46530,15 +53956,11 @@ pub mod types {
     ///          },
     ///          "constructorAbiSignature": {
     ///            "type": "string",
-    ///            "minLength": 1
+    ///            "pattern": "^constructor\\(.*\\)$"
     ///          },
     ///          "contractName": {
     ///            "type": "string",
     ///            "minLength": 1
-    ///          },
-    ///          "encodedConstructorArgs": {
-    ///            "type": "string",
-    ///            "pattern": "^0x[a-fA-F0-9]*$"
     ///          },
     ///          "evmVersion": {
     ///            "type": "string",
@@ -46718,15 +54140,11 @@ pub mod types {
     ///    },
     ///    "constructorAbiSignature": {
     ///      "type": "string",
-    ///      "minLength": 1
+    ///      "pattern": "^constructor\\(.*\\)$"
     ///    },
     ///    "contractName": {
     ///      "type": "string",
     ///      "minLength": 1
-    ///    },
-    ///    "encodedConstructorArgs": {
-    ///      "type": "string",
-    ///      "pattern": "^0x[a-fA-F0-9]*$"
     ///    },
     ///    "evmVersion": {
     ///      "type": "string",
@@ -47006,7 +54424,7 @@ pub mod types {
     /// ```json
     ///{
     ///  "type": "string",
-    ///  "minLength": 1
+    ///  "pattern": "^constructor\\(.*\\)$"
     ///}
     /// ```
     /// </details>
@@ -47047,8 +54465,10 @@ pub mod types {
         fn from_str(
             value: &str,
         ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() < 1usize {
-                return Err("shorter than 1 characters".into());
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^constructor\\(.*\\)$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^constructor\\(.*\\)$\"".into());
             }
             Ok(Self(value.to_string()))
         }
@@ -47615,15 +55035,11 @@ pub mod types {
     ///                },
     ///                "constructorAbiSignature": {
     ///                  "type": "string",
-    ///                  "minLength": 1
+    ///                  "pattern": "^constructor\\(.*\\)$"
     ///                },
     ///                "contractName": {
     ///                  "type": "string",
     ///                  "minLength": 1
-    ///                },
-    ///                "encodedConstructorArgs": {
-    ///                  "type": "string",
-    ///                  "pattern": "^0x[a-fA-F0-9]*$"
     ///                },
     ///                "evmVersion": {
     ///                  "type": "string",
@@ -47831,15 +55247,11 @@ pub mod types {
     ///          },
     ///          "constructorAbiSignature": {
     ///            "type": "string",
-    ///            "minLength": 1
+    ///            "pattern": "^constructor\\(.*\\)$"
     ///          },
     ///          "contractName": {
     ///            "type": "string",
     ///            "minLength": 1
-    ///          },
-    ///          "encodedConstructorArgs": {
-    ///            "type": "string",
-    ///            "pattern": "^0x[a-fA-F0-9]*$"
     ///          },
     ///          "evmVersion": {
     ///            "type": "string",
@@ -48027,15 +55439,11 @@ pub mod types {
     ///    },
     ///    "constructorAbiSignature": {
     ///      "type": "string",
-    ///      "minLength": 1
+    ///      "pattern": "^constructor\\(.*\\)$"
     ///    },
     ///    "contractName": {
     ///      "type": "string",
     ///      "minLength": 1
-    ///    },
-    ///    "encodedConstructorArgs": {
-    ///      "type": "string",
-    ///      "pattern": "^0x[a-fA-F0-9]*$"
     ///    },
     ///    "evmVersion": {
     ///      "type": "string",
@@ -48316,7 +55724,7 @@ pub mod types {
     /// ```json
     ///{
     ///  "type": "string",
-    ///  "minLength": 1
+    ///  "pattern": "^constructor\\(.*\\)$"
     ///}
     /// ```
     /// </details>
@@ -48357,8 +55765,10 @@ pub mod types {
         fn from_str(
             value: &str,
         ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() < 1usize {
-                return Err("shorter than 1 characters".into());
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^constructor\\(.*\\)$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^constructor\\(.*\\)$\"".into());
             }
             Ok(Self(value.to_string()))
         }
@@ -50549,17 +57959,17 @@ pub mod types {
     /// ```json
     ///{
     ///  "type": "object",
-    ///  "required": [
-    ///    "chainId"
-    ///  ],
     ///  "properties": {
-    ///    "chainId": {
-    ///      "type": "integer",
-    ///      "exclusiveMinimum": 0.0
+    ///    "mode": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "transaction",
+    ///        "noop"
+    ///      ]
     ///    },
     ///    "txHash": {
     ///      "type": "string",
-    ///      "pattern": "^0x[a-fA-F0-9]+$"
+    ///      "pattern": "^0x[a-fA-F0-9]{64}$"
     ///    }
     ///  }
     ///}
@@ -50567,8 +57977,10 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct PostProjectsProjectIdReleasesReleaseIdDeployBody {
-        #[serde(rename = "chainId")]
-        pub chain_id: ::std::num::NonZeroU64,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub mode: ::std::option::Option<
+            PostProjectsProjectIdReleasesReleaseIdDeployBodyMode,
+        >,
         #[serde(
             rename = "txHash",
             default,
@@ -50584,6 +57996,99 @@ pub mod types {
             value.clone()
         }
     }
+    impl ::std::default::Default for PostProjectsProjectIdReleasesReleaseIdDeployBody {
+        fn default() -> Self {
+            Self {
+                mode: Default::default(),
+                tx_hash: Default::default(),
+            }
+        }
+    }
+    ///`PostProjectsProjectIdReleasesReleaseIdDeployBodyMode`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "transaction",
+    ///    "noop"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd
+    )]
+    pub enum PostProjectsProjectIdReleasesReleaseIdDeployBodyMode {
+        #[serde(rename = "transaction")]
+        Transaction,
+        #[serde(rename = "noop")]
+        Noop,
+    }
+    impl ::std::convert::From<&Self>
+    for PostProjectsProjectIdReleasesReleaseIdDeployBodyMode {
+        fn from(value: &PostProjectsProjectIdReleasesReleaseIdDeployBodyMode) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::fmt::Display for PostProjectsProjectIdReleasesReleaseIdDeployBodyMode {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Transaction => f.write_str("transaction"),
+                Self::Noop => f.write_str("noop"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for PostProjectsProjectIdReleasesReleaseIdDeployBodyMode {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "transaction" => Ok(Self::Transaction),
+                "noop" => Ok(Self::Noop),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for PostProjectsProjectIdReleasesReleaseIdDeployBodyMode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PostProjectsProjectIdReleasesReleaseIdDeployBodyMode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PostProjectsProjectIdReleasesReleaseIdDeployBodyMode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
     ///`PostProjectsProjectIdReleasesReleaseIdDeployBodyTxHash`
     ///
     /// <details><summary>JSON schema</summary>
@@ -50591,7 +58096,7 @@ pub mod types {
     /// ```json
     ///{
     ///  "type": "string",
-    ///  "pattern": "^0x[a-fA-F0-9]+$"
+    ///  "pattern": "^0x[a-fA-F0-9]{64}$"
     ///}
     /// ```
     /// </details>
@@ -50624,9 +58129,9 @@ pub mod types {
             value: &str,
         ) -> ::std::result::Result<Self, self::error::ConversionError> {
             static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
-            { ::regress::Regex::new("^0x[a-fA-F0-9]+$").unwrap() });
+            { ::regress::Regex::new("^0x[a-fA-F0-9]{64}$").unwrap() });
             if PATTERN.find(value).is_none() {
-                return Err("doesn't match pattern \"^0x[a-fA-F0-9]+$\"".into());
+                return Err("doesn't match pattern \"^0x[a-fA-F0-9]{64}$\"".into());
             }
             Ok(Self(value.to_string()))
         }
@@ -50945,14 +58450,9 @@ pub mod types {
     ///{
     ///  "type": "object",
     ///  "required": [
-    ///    "chainId",
     ///    "txHash"
     ///  ],
     ///  "properties": {
-    ///    "chainId": {
-    ///      "type": "integer",
-    ///      "exclusiveMinimum": 0.0
-    ///    },
     ///    "txHash": {
     ///      "type": "string",
     ///      "pattern": "^0x[a-fA-F0-9]{64}$"
@@ -50963,8 +58463,6 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct PostProjectsProjectIdReleasesReleaseIdRemoveBody {
-        #[serde(rename = "chainId")]
-        pub chain_id: ::std::num::NonZeroU64,
         #[serde(rename = "txHash")]
         pub tx_hash: PostProjectsProjectIdReleasesReleaseIdRemoveBodyTxHash,
     }
@@ -52954,124 +60452,6 @@ pub mod types {
             value.parse()
         }
     }
-    ///`PostProjectsProjectIdSubmittedAssertionsBody`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "assertions"
-    ///  ],
-    ///  "properties": {
-    ///    "assertions": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "object",
-    ///        "required": [
-    ///          "assertion_id",
-    ///          "contract_name",
-    ///          "signature"
-    ///        ],
-    ///        "properties": {
-    ///          "assertion_id": {
-    ///            "type": "string"
-    ///          },
-    ///          "contract_name": {
-    ///            "type": "string"
-    ///          },
-    ///          "signature": {
-    ///            "type": "string"
-    ///          }
-    ///        }
-    ///      }
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct PostProjectsProjectIdSubmittedAssertionsBody {
-        pub assertions: ::std::vec::Vec<
-            PostProjectsProjectIdSubmittedAssertionsBodyAssertionsItem,
-        >,
-    }
-    impl ::std::convert::From<&PostProjectsProjectIdSubmittedAssertionsBody>
-    for PostProjectsProjectIdSubmittedAssertionsBody {
-        fn from(value: &PostProjectsProjectIdSubmittedAssertionsBody) -> Self {
-            value.clone()
-        }
-    }
-    ///`PostProjectsProjectIdSubmittedAssertionsBodyAssertionsItem`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "assertion_id",
-    ///    "contract_name",
-    ///    "signature"
-    ///  ],
-    ///  "properties": {
-    ///    "assertion_id": {
-    ///      "type": "string"
-    ///    },
-    ///    "contract_name": {
-    ///      "type": "string"
-    ///    },
-    ///    "signature": {
-    ///      "type": "string"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct PostProjectsProjectIdSubmittedAssertionsBodyAssertionsItem {
-        pub assertion_id: ::std::string::String,
-        pub contract_name: ::std::string::String,
-        pub signature: ::std::string::String,
-    }
-    impl ::std::convert::From<
-        &PostProjectsProjectIdSubmittedAssertionsBodyAssertionsItem,
-    > for PostProjectsProjectIdSubmittedAssertionsBodyAssertionsItem {
-        fn from(
-            value: &PostProjectsProjectIdSubmittedAssertionsBodyAssertionsItem,
-        ) -> Self {
-            value.clone()
-        }
-    }
-    ///`PostProjectsProjectIdSubmittedAssertionsResponse`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "success"
-    ///  ],
-    ///  "properties": {
-    ///    "success": {
-    ///      "type": "boolean"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct PostProjectsProjectIdSubmittedAssertionsResponse {
-        pub success: bool,
-    }
-    impl ::std::convert::From<&PostProjectsProjectIdSubmittedAssertionsResponse>
-    for PostProjectsProjectIdSubmittedAssertionsResponse {
-        fn from(value: &PostProjectsProjectIdSubmittedAssertionsResponse) -> Self {
-            value.clone()
-        }
-    }
     ///`PostProjectsResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -53844,143 +61224,6 @@ pub mod types {
             value.clone()
         }
     }
-    ///`PostTransfersRejectBody`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "ponder_transfer_id"
-    ///  ],
-    ///  "properties": {
-    ///    "ponder_transfer_id": {
-    ///      "type": "string",
-    ///      "minLength": 1
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct PostTransfersRejectBody {
-        pub ponder_transfer_id: PostTransfersRejectBodyPonderTransferId,
-    }
-    impl ::std::convert::From<&PostTransfersRejectBody> for PostTransfersRejectBody {
-        fn from(value: &PostTransfersRejectBody) -> Self {
-            value.clone()
-        }
-    }
-    ///`PostTransfersRejectBodyPonderTransferId`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "minLength": 1
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct PostTransfersRejectBodyPonderTransferId(::std::string::String);
-    impl ::std::ops::Deref for PostTransfersRejectBodyPonderTransferId {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<PostTransfersRejectBodyPonderTransferId>
-    for ::std::string::String {
-        fn from(value: PostTransfersRejectBodyPonderTransferId) -> Self {
-            value.0
-        }
-    }
-    impl ::std::convert::From<&PostTransfersRejectBodyPonderTransferId>
-    for PostTransfersRejectBodyPonderTransferId {
-        fn from(value: &PostTransfersRejectBodyPonderTransferId) -> Self {
-            value.clone()
-        }
-    }
-    impl ::std::str::FromStr for PostTransfersRejectBodyPonderTransferId {
-        type Err = self::error::ConversionError;
-        fn from_str(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() < 1usize {
-                return Err("shorter than 1 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str> for PostTransfersRejectBodyPonderTransferId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &str,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String>
-    for PostTransfersRejectBodyPonderTransferId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String>
-    for PostTransfersRejectBodyPonderTransferId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de> for PostTransfersRejectBodyPonderTransferId {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`PostTransfersRejectResponse`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "message"
-    ///  ],
-    ///  "properties": {
-    ///    "message": {
-    ///      "type": "string"
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct PostTransfersRejectResponse {
-        pub message: ::std::string::String,
-    }
-    impl ::std::convert::From<&PostTransfersRejectResponse>
-    for PostTransfersRejectResponse {
-        fn from(value: &PostTransfersRejectResponse) -> Self {
-            value.clone()
-        }
-    }
     ///`PostWebAuthAcceptTermsResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -54205,7 +61448,8 @@ pub mod types {
     ///        "string",
     ///        "null"
     ///      ],
-    ///      "maxLength": 2048
+    ///      "maxLength": 2048,
+    ///      "pattern": "^https:\\/\\/github\\.com\\/[^/?#]+\\/[^/?#]+\\/?$"
     ///    },
     ///    "is_dev": {
     ///      "type": [
@@ -54220,7 +61464,8 @@ pub mod types {
     ///      "type": [
     ///        "string",
     ///        "null"
-    ///      ]
+    ///      ],
+    ///      "maxLength": 2048
     ///    },
     ///    "project_description": {
     ///      "type": [
@@ -54251,7 +61496,9 @@ pub mod types {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub is_private: ::std::option::Option<bool>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub profile_image_url: ::std::option::Option<::std::string::String>,
+        pub profile_image_url: ::std::option::Option<
+            PutProjectsProjectIdBodyProfileImageUrl,
+        >,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub project_description: ::std::option::Option<
             PutProjectsProjectIdBodyProjectDescription,
@@ -54522,7 +61769,8 @@ pub mod types {
     /// ```json
     ///{
     ///  "type": "string",
-    ///  "maxLength": 2048
+    ///  "maxLength": 2048,
+    ///  "pattern": "^https:\\/\\/github\\.com\\/[^/?#]+\\/[^/?#]+\\/?$"
     ///}
     /// ```
     /// </details>
@@ -54555,6 +61803,19 @@ pub mod types {
             if value.chars().count() > 2048usize {
                 return Err("longer than 2048 characters".into());
             }
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            {
+                ::regress::Regex::new(
+                        "^https:\\/\\/github\\.com\\/[^/?#]+\\/[^/?#]+\\/?$",
+                    )
+                    .unwrap()
+            });
+            if PATTERN.find(value).is_none() {
+                return Err(
+                    "doesn't match pattern \"^https:\\/\\/github\\.com\\/[^/?#]+\\/[^/?#]+\\/?$\""
+                        .into(),
+                );
+            }
             Ok(Self(value.to_string()))
         }
     }
@@ -54585,6 +61846,87 @@ pub mod types {
         }
     }
     impl<'de> ::serde::Deserialize<'de> for PutProjectsProjectIdBodyGithubUrl {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`PutProjectsProjectIdBodyProfileImageUrl`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "maxLength": 2048
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct PutProjectsProjectIdBodyProfileImageUrl(::std::string::String);
+    impl ::std::ops::Deref for PutProjectsProjectIdBodyProfileImageUrl {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<PutProjectsProjectIdBodyProfileImageUrl>
+    for ::std::string::String {
+        fn from(value: PutProjectsProjectIdBodyProfileImageUrl) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&PutProjectsProjectIdBodyProfileImageUrl>
+    for PutProjectsProjectIdBodyProfileImageUrl {
+        fn from(value: &PutProjectsProjectIdBodyProfileImageUrl) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for PutProjectsProjectIdBodyProfileImageUrl {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() > 2048usize {
+                return Err("longer than 2048 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for PutProjectsProjectIdBodyProfileImageUrl {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for PutProjectsProjectIdBodyProfileImageUrl {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for PutProjectsProjectIdBodyProfileImageUrl {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for PutProjectsProjectIdBodyProfileImageUrl {
         fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
         where
             D: ::serde::Deserializer<'de>,
@@ -55652,23 +62994,23 @@ impl ClientInfo<()> for Client {
 impl ClientHooks<()> for &Client {}
 #[allow(clippy::all)]
 impl Client {
-    /**Get assertion adopters
+    /**Paginated pending queue across all 4 reviewable categories
 
-Get assertion adopters filtered by project or address
+Sends a `GET` request to `/admin/reviewables`
 
-Sends a `GET` request to `/assertion_adopters`
-
+Arguments:
+- `cursor`: Opaque keyset-pagination token. base64(JSON.stringify({ queuedAt, reviewableRef })).
+- `limit`
 */
-    pub async fn get_assertion_adopters<'a>(
+    pub async fn get_admin_reviewables<'a>(
         &'a self,
-        address: Option<&'a types::GetAssertionAdoptersAddress>,
-        network: Option<&'a types::GetAssertionAdoptersNetwork>,
-        project_id: Option<&'a ::uuid::Uuid>,
+        cursor: Option<&'a types::GetAdminReviewablesCursor>,
+        limit: Option<::std::num::NonZeroU64>,
     ) -> Result<
-        ResponseValue<::std::vec::Vec<types::GetAssertionAdoptersResponseItem>>,
-        Error<types::GetAssertionAdoptersResponse>,
+        ResponseValue<types::GetAdminReviewablesResponse>,
+        Error<types::GetAdminReviewablesResponse>,
     > {
-        let url = format!("{}/assertion_adopters", self.baseurl,);
+        let url = format!("{}/admin/reviewables", self.baseurl,);
         let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
         header_map
             .append(
@@ -55683,70 +63025,12 @@ Sends a `GET` request to `/assertion_adopters`
                 ::reqwest::header::ACCEPT,
                 ::reqwest::header::HeaderValue::from_static("application/json"),
             )
-            .query(&progenitor_client::QueryParam::new("address", &address))
-            .query(&progenitor_client::QueryParam::new("network", &network))
-            .query(&progenitor_client::QueryParam::new("project_id", &project_id))
+            .query(&progenitor_client::QueryParam::new("cursor", &cursor))
+            .query(&progenitor_client::QueryParam::new("limit", &limit))
             .headers(header_map)
             .build()?;
         let info = OperationInfo {
-            operation_id: "get_assertion_adopters",
-        };
-        self.pre(&mut request, &info).await?;
-        let result = self.exec(request, &info).await;
-        self.post(&result, &info).await?;
-        let response = result?;
-        match response.status().as_u16() {
-            200u16 => ResponseValue::from_response(response).await,
-            400u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            500u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            _ => Err(Error::UnexpectedResponse(response)),
-        }
-    }
-    /**Create assertion adopter
-
-Create a new assertion adopter. Optionally assign to a project.
-
-Sends a `POST` request to `/assertion_adopters`
-
-Arguments:
-- `authorization`
-- `body`: Body
-*/
-    pub async fn post_assertion_adopters<'a>(
-        &'a self,
-        authorization: Option<&'a str>,
-        body: &'a types::PostAssertionAdoptersBody,
-    ) -> Result<
-        ResponseValue<types::PostAssertionAdoptersResponse>,
-        Error<types::PostAssertionAdoptersResponse>,
-    > {
-        let url = format!("{}/assertion_adopters", self.baseurl,);
-        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
-        header_map
-            .append(
-                ::reqwest::header::HeaderName::from_static("api-version"),
-                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-            );
-        if let Some(value) = authorization {
-            header_map.append("Authorization", value.to_string().try_into()?);
-        }
-        #[allow(unused_mut)]
-        let mut request = self
-            .client
-            .post(url)
-            .header(
-                ::reqwest::header::ACCEPT,
-                ::reqwest::header::HeaderValue::from_static("application/json"),
-            )
-            .json(&body)
-            .headers(header_map)
-            .build()?;
-        let info = OperationInfo {
-            operation_id: "post_assertion_adopters",
+            operation_id: "get_admin_reviewables",
         };
         self.pre(&mut request, &info).await?;
         let result = self.exec(request, &info).await;
@@ -55766,7 +63050,195 @@ Arguments:
             404u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
-            409u16 => {
+            500u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+    /**Category-discriminated detail payload for a single reviewable
+
+Sends a `GET` request to `/admin/reviewables/{reviewable_ref}`
+
+Arguments:
+- `reviewable_ref`: Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+*/
+    pub async fn get_admin_reviewables_reviewable_ref<'a>(
+        &'a self,
+        reviewable_ref: &'a types::GetAdminReviewablesReviewableRefReviewableRef,
+    ) -> Result<
+        ResponseValue<types::GetAdminReviewablesReviewableRefResponse>,
+        Error<types::GetAdminReviewablesReviewableRefResponse>,
+    > {
+        let url = format!(
+            "{}/admin/reviewables/{}", self.baseurl, encode_path(& reviewable_ref
+            .to_string()),
+        );
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .get(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "get_admin_reviewables_reviewable_ref",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            400u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            401u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            403u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            404u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            500u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+    /**Apply approve / request_changes / reject; runs category-specific side effects
+
+Sends a `POST` request to `/admin/reviewables/{reviewable_ref}/decision`
+
+Arguments:
+- `reviewable_ref`: Opaque per-review-attempt UUID. Resolved server-side via resolve_reviewable_ref to a (category, row id) pair.
+- `body`: Body
+*/
+    pub async fn post_admin_reviewables_reviewable_ref_decision<'a>(
+        &'a self,
+        reviewable_ref: &'a types::PostAdminReviewablesReviewableRefDecisionReviewableRef,
+        body: &'a types::PostAdminReviewablesReviewableRefDecisionBody,
+    ) -> Result<
+        ResponseValue<types::PostAdminReviewablesReviewableRefDecisionResponse>,
+        Error<types::PostAdminReviewablesReviewableRefDecisionResponse>,
+    > {
+        let url = format!(
+            "{}/admin/reviewables/{}/decision", self.baseurl, encode_path(&
+            reviewable_ref.to_string()),
+        );
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .post(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .json(&body)
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "post_admin_reviewables_reviewable_ref_decision",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            400u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            401u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            403u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            404u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            500u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            502u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+    /**Receive agentic workflow callback
+
+Webhook endpoint for the external agentic service to report workflow results. Body is the workflow-keyed callback envelope from @phylax-systems/agentic-contracts; the definition resolved via the registry validates it.
+
+Sends a `POST` request to `/agentic/events`
+
+Arguments:
+- `attempt_id`
+- `authorization`
+- `body`: Body
+*/
+    pub async fn post_agentic_events<'a>(
+        &'a self,
+        attempt_id: &'a ::uuid::Uuid,
+        authorization: Option<&'a str>,
+        body: &'a ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ) -> Result<
+        ResponseValue<types::PostAgenticEventsResponse>,
+        Error<types::PostAgenticEventsResponse>,
+    > {
+        let url = format!("{}/agentic/events", self.baseurl,);
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
+        if let Some(value) = authorization {
+            header_map.append("authorization", value.to_string().try_into()?);
+        }
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .post(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .json(&body)
+            .query(&progenitor_client::QueryParam::new("attempt_id", &attempt_id))
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "post_agentic_events",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            202u16 => ResponseValue::from_response(response).await,
+            400u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            401u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
             500u16 => {
@@ -56086,12 +63558,14 @@ Webhook endpoint for the external backtesting service to report results
 Sends a `POST` request to `/backtesting/events`
 
 Arguments:
+- `attempt_id`
 - `check_id`
 - `x_api_key`
 - `body`: Body
 */
     pub async fn post_backtesting_events<'a>(
         &'a self,
+        attempt_id: Option<&'a ::uuid::Uuid>,
         check_id: &'a ::uuid::Uuid,
         x_api_key: Option<&'a str>,
         body: &'a types::PostBacktestingEventsBody,
@@ -56118,6 +63592,7 @@ Arguments:
                 ::reqwest::header::HeaderValue::from_static("application/json"),
             )
             .json(&body)
+            .query(&progenitor_client::QueryParam::new("attempt_id", &attempt_id))
             .query(&progenitor_client::QueryParam::new("check_id", &check_id))
             .headers(header_map)
             .build()?;
@@ -56522,20 +63997,27 @@ Sends a `GET` request to `/incidents/{incident_id}`
 
 Retrieve the debug trace content for a specific invalidating transaction
 
-Sends a `GET` request to `/incidents/{incident_id}/transactions/{tx_id}/trace`
+Sends a `GET` request to `/incidents/{incident_id}/transactions/{invalidating_transaction_id}/trace`
 
 */
-    pub async fn get_incidents_incident_id_transactions_tx_id_trace<'a>(
+    pub async fn get_incidents_incident_id_transactions_invalidating_transaction_id_trace<
+        'a,
+    >(
         &'a self,
         incident_id: &'a ::uuid::Uuid,
-        tx_id: &'a ::uuid::Uuid,
+        invalidating_transaction_id: &'a ::uuid::Uuid,
     ) -> Result<
-        ResponseValue<types::GetIncidentsIncidentIdTransactionsTxIdTraceResponse>,
-        Error<types::GetIncidentsIncidentIdTransactionsTxIdTraceResponse>,
+        ResponseValue<
+            types::GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse,
+        >,
+        Error<
+            types::GetIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse,
+        >,
     > {
         let url = format!(
             "{}/incidents/{}/transactions/{}/trace", self.baseurl, encode_path(&
-            incident_id.to_string()), encode_path(& tx_id.to_string()),
+            incident_id.to_string()), encode_path(& invalidating_transaction_id
+            .to_string()),
         );
         let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
         header_map
@@ -56554,7 +64036,7 @@ Sends a `GET` request to `/incidents/{incident_id}/transactions/{tx_id}/trace`
             .headers(header_map)
             .build()?;
         let info = OperationInfo {
-            operation_id: "get_incidents_incident_id_transactions_tx_id_trace",
+            operation_id: "get_incidents_incident_id_transactions_invalidating_transaction_id_trace",
         };
         self.pre(&mut request, &info).await?;
         let result = self.exec(request, &info).await;
@@ -56581,25 +64063,32 @@ Sends a `GET` request to `/incidents/{incident_id}/transactions/{tx_id}/trace`
 
 Re-trigger trace generation for a failed or timed-out debug trace
 
-Sends a `POST` request to `/incidents/{incident_id}/transactions/{tx_id}/trace/retry`
+Sends a `POST` request to `/incidents/{incident_id}/transactions/{invalidating_transaction_id}/trace/retry`
 
 Arguments:
 - `incident_id`
-- `tx_id`
+- `invalidating_transaction_id`
 - `body`: Body
 */
-    pub async fn post_incidents_incident_id_transactions_tx_id_trace_retry<'a>(
+    pub async fn post_incidents_incident_id_transactions_invalidating_transaction_id_trace_retry<
+        'a,
+    >(
         &'a self,
         incident_id: &'a ::uuid::Uuid,
-        tx_id: &'a ::uuid::Uuid,
+        invalidating_transaction_id: &'a ::uuid::Uuid,
         body: &'a ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     ) -> Result<
-        ResponseValue<types::PostIncidentsIncidentIdTransactionsTxIdTraceRetryResponse>,
-        Error<types::PostIncidentsIncidentIdTransactionsTxIdTraceRetryResponse>,
+        ResponseValue<
+            types::PostIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceRetryResponse,
+        >,
+        Error<
+            types::PostIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceRetryResponse,
+        >,
     > {
         let url = format!(
             "{}/incidents/{}/transactions/{}/trace/retry", self.baseurl, encode_path(&
-            incident_id.to_string()), encode_path(& tx_id.to_string()),
+            incident_id.to_string()), encode_path(& invalidating_transaction_id
+            .to_string()),
         );
         let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
         header_map
@@ -56619,7 +64108,7 @@ Arguments:
             .headers(header_map)
             .build()?;
         let info = OperationInfo {
-            operation_id: "post_incidents_incident_id_transactions_tx_id_trace_retry",
+            operation_id: "post_incidents_incident_id_transactions_invalidating_transaction_id_trace_retry",
         };
         self.pre(&mut request, &info).await?;
         let result = self.exec(request, &info).await;
@@ -57204,25 +64693,28 @@ Sends a `GET` request to `/projects/resolve/{project_ref}`
     }
     /**Get saved projects
 
-Get all projects saved by a user
+Get all projects saved by the authenticated user. User identity is derived from the session — not from any query parameter.
 
 Sends a `GET` request to `/projects/saved`
 
 */
     pub async fn get_projects_saved<'a>(
         &'a self,
-        user_id: &'a ::uuid::Uuid,
+        authorization: Option<&'a str>,
     ) -> Result<
         ResponseValue<::std::vec::Vec<types::GetProjectsSavedResponseItem>>,
         Error<types::GetProjectsSavedResponse>,
     > {
         let url = format!("{}/projects/saved", self.baseurl,);
-        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
         header_map
             .append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(Self::api_version()),
             );
+        if let Some(value) = authorization {
+            header_map.append("Authorization", value.to_string().try_into()?);
+        }
         #[allow(unused_mut)]
         let mut request = self
             .client
@@ -57231,7 +64723,6 @@ Sends a `GET` request to `/projects/saved`
                 ::reqwest::header::ACCEPT,
                 ::reqwest::header::HeaderValue::from_static("application/json"),
             )
-            .query(&progenitor_client::QueryParam::new("user_id", &user_id))
             .headers(header_map)
             .build()?;
         let info = OperationInfo {
@@ -57244,6 +64735,9 @@ Sends a `GET` request to `/projects/saved`
         match response.status().as_u16() {
             200u16 => ResponseValue::from_response(response).await,
             400u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            401u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
             500u16 => {
@@ -57554,6 +65048,216 @@ Sends a `DELETE` request to `/projects/{project_id}`
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
             404u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            500u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+    /**List the project's audits for the settings UI
+
+Sends a `GET` request to `/projects/{project_id}/audits`
+
+Arguments:
+- `project_id`
+- `cursor`: Opaque keyset-pagination token. base64(JSON.stringify({ submittedAt, auditReportId })).
+- `limit`
+- `status`
+*/
+    pub async fn get_projects_project_id_audits<'a>(
+        &'a self,
+        project_id: &'a ::uuid::Uuid,
+        cursor: Option<&'a types::GetProjectsProjectIdAuditsCursor>,
+        limit: Option<::std::num::NonZeroU64>,
+        status: Option<types::GetProjectsProjectIdAuditsStatus>,
+    ) -> Result<
+        ResponseValue<types::GetProjectsProjectIdAuditsResponse>,
+        Error<types::GetProjectsProjectIdAuditsResponse>,
+    > {
+        let url = format!(
+            "{}/projects/{}/audits", self.baseurl, encode_path(& project_id.to_string()),
+        );
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .get(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .query(&progenitor_client::QueryParam::new("cursor", &cursor))
+            .query(&progenitor_client::QueryParam::new("limit", &limit))
+            .query(&progenitor_client::QueryParam::new("status", &status))
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "get_projects_project_id_audits",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            400u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            401u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            403u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            404u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            500u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+    /**Submit a new audit (PDF + metadata + per-contract coverage)
+
+Sends a `POST` request to `/projects/{project_id}/audits`
+
+Arguments:
+- `project_id`
+- `body`: Body
+*/
+    pub async fn post_projects_project_id_audits<'a>(
+        &'a self,
+        project_id: &'a ::uuid::Uuid,
+        body: &'a types::PostProjectsProjectIdAuditsBody,
+    ) -> Result<
+        ResponseValue<types::PostProjectsProjectIdAuditsResponse>,
+        Error<types::PostProjectsProjectIdAuditsResponse>,
+    > {
+        let url = format!(
+            "{}/projects/{}/audits", self.baseurl, encode_path(& project_id.to_string()),
+        );
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .post(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .json(&body)
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "post_projects_project_id_audits",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            400u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            401u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            403u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            404u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            409u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            413u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            500u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+    /**Submit a replacement attempt for an existing audit
+
+Sends a `POST` request to `/projects/{project_id}/audits/{audit_report_ref}/replace`
+
+Arguments:
+- `project_id`
+- `audit_report_ref`: Logical audit identity. Stable across replacements — every attempt for the same audit shares this ref.
+- `body`: Body
+*/
+    pub async fn post_projects_project_id_audits_audit_report_ref_replace<'a>(
+        &'a self,
+        project_id: &'a ::uuid::Uuid,
+        audit_report_ref: &'a types::PostProjectsProjectIdAuditsAuditReportRefReplaceAuditReportRef,
+        body: &'a types::PostProjectsProjectIdAuditsAuditReportRefReplaceBody,
+    ) -> Result<
+        ResponseValue<types::PostProjectsProjectIdAuditsAuditReportRefReplaceResponse>,
+        Error<types::PostProjectsProjectIdAuditsAuditReportRefReplaceResponse>,
+    > {
+        let url = format!(
+            "{}/projects/{}/audits/{}/replace", self.baseurl, encode_path(& project_id
+            .to_string()), encode_path(& audit_report_ref.to_string()),
+        );
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .post(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .json(&body)
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "post_projects_project_id_audits_audit_report_ref_replace",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            400u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            401u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            403u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            404u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            409u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            413u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
             500u16 => {
@@ -59049,7 +66753,7 @@ Sends a `GET` request to `/projects/{project_id}/protocol-manager/nonce`
         &'a self,
         project_id: &'a ::uuid::Uuid,
         address: &'a types::GetProjectsProjectIdProtocolManagerNonceAddress,
-        chain_id: Option<::std::num::NonZeroU64>,
+        chain_id: ::std::num::NonZeroU64,
         authorization: Option<&'a str>,
     ) -> Result<
         ResponseValue<types::GetProjectsProjectIdProtocolManagerNonceResponse>,
@@ -59089,6 +66793,9 @@ Sends a `GET` request to `/projects/{project_id}/protocol-manager/nonce`
         let response = result?;
         match response.status().as_u16() {
             200u16 => ResponseValue::from_response(response).await,
+            400u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
             401u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
@@ -59220,60 +66927,6 @@ Sends a `GET` request to `/projects/{project_id}/protocol-manager/transfer-calld
             403u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
-            404u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            500u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            _ => Err(Error::UnexpectedResponse(response)),
-        }
-    }
-    /**Get registered assertions for project
-
-Get all registered assertions associated with a project
-
-Sends a `GET` request to `/projects/{project_id}/registered-assertions`
-
-*/
-    pub async fn get_projects_project_id_registered_assertions<'a>(
-        &'a self,
-        project_id: &'a ::uuid::Uuid,
-        environment: Option<types::GetProjectsProjectIdRegisteredAssertionsEnvironment>,
-    ) -> Result<
-        ResponseValue<types::GetProjectsProjectIdRegisteredAssertionsResponse>,
-        Error<types::GetProjectsProjectIdRegisteredAssertionsResponse>,
-    > {
-        let url = format!(
-            "{}/projects/{}/registered-assertions", self.baseurl, encode_path(&
-            project_id.to_string()),
-        );
-        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
-        header_map
-            .append(
-                ::reqwest::header::HeaderName::from_static("api-version"),
-                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-            );
-        #[allow(unused_mut)]
-        let mut request = self
-            .client
-            .get(url)
-            .header(
-                ::reqwest::header::ACCEPT,
-                ::reqwest::header::HeaderValue::from_static("application/json"),
-            )
-            .query(&progenitor_client::QueryParam::new("environment", &environment))
-            .headers(header_map)
-            .build()?;
-        let info = OperationInfo {
-            operation_id: "get_projects_project_id_registered_assertions",
-        };
-        self.pre(&mut request, &info).await?;
-        let result = self.exec(request, &info).await;
-        self.post(&result, &info).await?;
-        let response = result?;
-        match response.status().as_u16() {
-            200u16 => ResponseValue::from_response(response).await,
             404u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
@@ -59691,7 +67344,7 @@ Arguments:
     }
     /**Confirm deployment of a release
 
-Marks the release active after the deploy transaction is mined and recorded.
+Marks the release active after a mined deploy transaction, or activates a server-verified no-op release.
 
 Sends a `POST` request to `/projects/{project_id}/releases/{release_id}/deploy`
 
@@ -59759,7 +67412,13 @@ Arguments:
             409u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
+            422u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
             500u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            502u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
             _ => Err(Error::UnexpectedResponse(response)),
@@ -59900,7 +67559,13 @@ Arguments:
             409u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
+            422u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
             500u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
+            502u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
             _ => Err(Error::UnexpectedResponse(response)),
@@ -60077,142 +67742,6 @@ Sends a `GET` request to `/projects/{project_id}/remove-assertions-info`
             .build()?;
         let info = OperationInfo {
             operation_id: "get_projects_project_id_remove_assertions_info",
-        };
-        self.pre(&mut request, &info).await?;
-        let result = self.exec(request, &info).await;
-        self.post(&result, &info).await?;
-        let response = result?;
-        match response.status().as_u16() {
-            200u16 => ResponseValue::from_response(response).await,
-            400u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            401u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            404u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            500u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            _ => Err(Error::UnexpectedResponse(response)),
-        }
-    }
-    /**Get submitted assertions for a project
-
-Get all assertions that have been submitted for a specific project
-
-Sends a `GET` request to `/projects/{project_id}/submitted-assertions`
-
-*/
-    pub async fn get_projects_project_id_submitted_assertions<'a>(
-        &'a self,
-        project_id: &'a str,
-        environment: Option<types::GetProjectsProjectIdSubmittedAssertionsEnvironment>,
-        network: Option<&'a str>,
-        authorization: Option<&'a str>,
-    ) -> Result<
-        ResponseValue<types::GetProjectsProjectIdSubmittedAssertionsResponse>,
-        Error<types::GetProjectsProjectIdSubmittedAssertionsResponse>,
-    > {
-        let url = format!(
-            "{}/projects/{}/submitted-assertions", self.baseurl, encode_path(& project_id
-            .to_string()),
-        );
-        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
-        header_map
-            .append(
-                ::reqwest::header::HeaderName::from_static("api-version"),
-                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-            );
-        if let Some(value) = authorization {
-            header_map.append("Authorization", value.to_string().try_into()?);
-        }
-        #[allow(unused_mut)]
-        let mut request = self
-            .client
-            .get(url)
-            .header(
-                ::reqwest::header::ACCEPT,
-                ::reqwest::header::HeaderValue::from_static("application/json"),
-            )
-            .query(&progenitor_client::QueryParam::new("environment", &environment))
-            .query(&progenitor_client::QueryParam::new("network", &network))
-            .headers(header_map)
-            .build()?;
-        let info = OperationInfo {
-            operation_id: "get_projects_project_id_submitted_assertions",
-        };
-        self.pre(&mut request, &info).await?;
-        let result = self.exec(request, &info).await;
-        self.post(&result, &info).await?;
-        let response = result?;
-        match response.status().as_u16() {
-            200u16 => ResponseValue::from_response(response).await,
-            401u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            404u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            500u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            _ => Err(Error::UnexpectedResponse(response)),
-        }
-    }
-    /**Submit assertions to a project
-
-Submit one or more assertions to a specific project (CLI only)
-
-Sends a `POST` request to `/projects/{project_id}/submitted-assertions`
-
-Arguments:
-- `project_id`
-- `authorization`
-- `x_auth_scope`
-- `body`: Body
-*/
-    pub async fn post_projects_project_id_submitted_assertions<'a>(
-        &'a self,
-        project_id: &'a str,
-        authorization: Option<&'a str>,
-        x_auth_scope: Option<&'a str>,
-        body: &'a types::PostProjectsProjectIdSubmittedAssertionsBody,
-    ) -> Result<
-        ResponseValue<types::PostProjectsProjectIdSubmittedAssertionsResponse>,
-        Error<types::PostProjectsProjectIdSubmittedAssertionsResponse>,
-    > {
-        let url = format!(
-            "{}/projects/{}/submitted-assertions", self.baseurl, encode_path(& project_id
-            .to_string()),
-        );
-        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(3usize);
-        header_map
-            .append(
-                ::reqwest::header::HeaderName::from_static("api-version"),
-                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-            );
-        if let Some(value) = authorization {
-            header_map.append("Authorization", value.to_string().try_into()?);
-        }
-        if let Some(value) = x_auth_scope {
-            header_map.append("X-Auth-Scope", value.to_string().try_into()?);
-        }
-        #[allow(unused_mut)]
-        let mut request = self
-            .client
-            .post(url)
-            .header(
-                ::reqwest::header::ACCEPT,
-                ::reqwest::header::HeaderValue::from_static("application/json"),
-            )
-            .json(&body)
-            .headers(header_map)
-            .build()?;
-        let info = OperationInfo {
-            operation_id: "post_projects_project_id_submitted_assertions",
         };
         self.pre(&mut request, &info).await?;
         let result = self.exec(request, &info).await;
@@ -60511,54 +68040,6 @@ Sends a `GET` request to `/stats`
             _ => Err(Error::UnexpectedResponse(response)),
         }
     }
-    /**System status
-
-Get detailed system status information
-
-Sends a `GET` request to `/system-status`
-
-*/
-    pub async fn get_system_status<'a>(
-        &'a self,
-    ) -> Result<
-        ResponseValue<types::GetSystemStatusResponse>,
-        Error<types::GetSystemStatusResponse>,
-    > {
-        let url = format!("{}/system-status", self.baseurl,);
-        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
-        header_map
-            .append(
-                ::reqwest::header::HeaderName::from_static("api-version"),
-                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-            );
-        #[allow(unused_mut)]
-        let mut request = self
-            .client
-            .get(url)
-            .header(
-                ::reqwest::header::ACCEPT,
-                ::reqwest::header::HeaderValue::from_static("application/json"),
-            )
-            .headers(header_map)
-            .build()?;
-        let info = OperationInfo {
-            operation_id: "get_system_status",
-        };
-        self.pre(&mut request, &info).await?;
-        let result = self.exec(request, &info).await;
-        self.post(&result, &info).await?;
-        let response = result?;
-        match response.status().as_u16() {
-            200u16 => ResponseValue::from_response(response).await,
-            403u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            500u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            _ => Err(Error::UnexpectedResponse(response)),
-        }
-    }
     /**Receive trace result callback
 
 Webhook endpoint for the assertion-replay service to report replay results
@@ -60566,12 +68047,14 @@ Webhook endpoint for the assertion-replay service to report replay results
 Sends a `POST` request to `/tracer/events`
 
 Arguments:
+- `attempt_id`
 - `debug_trace_id`
 - `x_api_key`
 - `body`: Body
 */
     pub async fn post_tracer_events<'a>(
         &'a self,
+        attempt_id: Option<&'a ::uuid::Uuid>,
         debug_trace_id: &'a ::uuid::Uuid,
         x_api_key: Option<&'a str>,
         body: &'a types::PostTracerEventsBody,
@@ -60598,6 +68081,7 @@ Arguments:
                 ::reqwest::header::HeaderValue::from_static("application/json"),
             )
             .json(&body)
+            .query(&progenitor_client::QueryParam::new("attempt_id", &attempt_id))
             .query(
                 &progenitor_client::QueryParam::new("debug_trace_id", &debug_trace_id),
             )
@@ -60619,75 +68103,6 @@ Arguments:
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
             404u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            500u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            _ => Err(Error::UnexpectedResponse(response)),
-        }
-    }
-    /**Reject an incoming transfer
-
-Reject a pending on-chain manager transfer. This is a UI-only action — the on-chain transfer remains PENDING until it times out or is cancelled by the initiator.
-
-Sends a `POST` request to `/transfers/reject`
-
-Arguments:
-- `authorization`
-- `body`: Body
-*/
-    pub async fn post_transfers_reject<'a>(
-        &'a self,
-        authorization: Option<&'a str>,
-        body: &'a types::PostTransfersRejectBody,
-    ) -> Result<
-        ResponseValue<types::PostTransfersRejectResponse>,
-        Error<types::PostTransfersRejectResponse>,
-    > {
-        let url = format!("{}/transfers/reject", self.baseurl,);
-        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
-        header_map
-            .append(
-                ::reqwest::header::HeaderName::from_static("api-version"),
-                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-            );
-        if let Some(value) = authorization {
-            header_map.append("Authorization", value.to_string().try_into()?);
-        }
-        #[allow(unused_mut)]
-        let mut request = self
-            .client
-            .post(url)
-            .header(
-                ::reqwest::header::ACCEPT,
-                ::reqwest::header::HeaderValue::from_static("application/json"),
-            )
-            .json(&body)
-            .headers(header_map)
-            .build()?;
-        let info = OperationInfo {
-            operation_id: "post_transfers_reject",
-        };
-        self.pre(&mut request, &info).await?;
-        let result = self.exec(request, &info).await;
-        self.post(&result, &info).await?;
-        let response = result?;
-        match response.status().as_u16() {
-            200u16 => ResponseValue::from_response(response).await,
-            400u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            401u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            403u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            404u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            409u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
             500u16 => {
@@ -60761,20 +68176,27 @@ Sends a `GET` request to `/views/incidents/{incidentId}`
 
 View endpoint returning invalidating transaction details plus optional debug trace for that transaction
 
-Sends a `GET` request to `/views/incidents/{incidentId}/transactions/{txId}/trace`
+Sends a `GET` request to `/views/incidents/{incidentId}/transactions/{invalidatingTransactionId}/trace`
 
 */
-    pub async fn get_views_incidents_incident_id_transactions_tx_id_trace<'a>(
+    pub async fn get_views_incidents_incident_id_transactions_invalidating_transaction_id_trace<
+        'a,
+    >(
         &'a self,
         incident_id: &'a ::uuid::Uuid,
-        tx_id: &'a ::uuid::Uuid,
+        invalidating_transaction_id: &'a ::uuid::Uuid,
     ) -> Result<
-        ResponseValue<types::GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponse>,
-        Error<types::GetViewsIncidentsIncidentIdTransactionsTxIdTraceResponse>,
+        ResponseValue<
+            types::GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse,
+        >,
+        Error<
+            types::GetViewsIncidentsIncidentIdTransactionsInvalidatingTransactionIdTraceResponse,
+        >,
     > {
         let url = format!(
             "{}/views/incidents/{}/transactions/{}/trace", self.baseurl, encode_path(&
-            incident_id.to_string()), encode_path(& tx_id.to_string()),
+            incident_id.to_string()), encode_path(& invalidating_transaction_id
+            .to_string()),
         );
         let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
         header_map
@@ -60793,7 +68215,7 @@ Sends a `GET` request to `/views/incidents/{incidentId}/transactions/{txId}/trac
             .headers(header_map)
             .build()?;
         let info = OperationInfo {
-            operation_id: "get_views_incidents_incident_id_transactions_tx_id_trace",
+            operation_id: "get_views_incidents_incident_id_transactions_invalidating_transaction_id_trace",
         };
         self.pre(&mut request, &info).await?;
         let result = self.exec(request, &info).await;
@@ -61469,110 +68891,6 @@ Sends a `GET` request to `/views/public/incidents`
         match response.status().as_u16() {
             200u16 => ResponseValue::from_response(response).await,
             400u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            500u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            _ => Err(Error::UnexpectedResponse(response)),
-        }
-    }
-    /**Get pending transfers for authenticated user (view endpoint)
-
-View endpoint returning incoming and outgoing pending transfers grouped by project
-
-Sends a `GET` request to `/views/transfers/pending`
-
-*/
-    pub async fn get_views_transfers_pending<'a>(
-        &'a self,
-        authorization: Option<&'a str>,
-    ) -> Result<
-        ResponseValue<types::GetViewsTransfersPendingResponse>,
-        Error<types::GetViewsTransfersPendingResponse>,
-    > {
-        let url = format!("{}/views/transfers/pending", self.baseurl,);
-        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
-        header_map
-            .append(
-                ::reqwest::header::HeaderName::from_static("api-version"),
-                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-            );
-        if let Some(value) = authorization {
-            header_map.append("Authorization", value.to_string().try_into()?);
-        }
-        #[allow(unused_mut)]
-        let mut request = self
-            .client
-            .get(url)
-            .header(
-                ::reqwest::header::ACCEPT,
-                ::reqwest::header::HeaderValue::from_static("application/json"),
-            )
-            .headers(header_map)
-            .build()?;
-        let info = OperationInfo {
-            operation_id: "get_views_transfers_pending",
-        };
-        self.pre(&mut request, &info).await?;
-        let result = self.exec(request, &info).await;
-        self.post(&result, &info).await?;
-        let response = result?;
-        match response.status().as_u16() {
-            200u16 => ResponseValue::from_response(response).await,
-            401u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            500u16 => {
-                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
-            }
-            _ => Err(Error::UnexpectedResponse(response)),
-        }
-    }
-    /**Get transfer detail (view endpoint)
-
-View endpoint returning detailed transfer information with project context
-
-Sends a `GET` request to `/views/transfers/{transferId}`
-
-*/
-    pub async fn get_views_transfers_transfer_id<'a>(
-        &'a self,
-        transfer_id: &'a str,
-    ) -> Result<
-        ResponseValue<types::GetViewsTransfersTransferIdResponse>,
-        Error<types::GetViewsTransfersTransferIdResponse>,
-    > {
-        let url = format!(
-            "{}/views/transfers/{}", self.baseurl, encode_path(& transfer_id
-            .to_string()),
-        );
-        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
-        header_map
-            .append(
-                ::reqwest::header::HeaderName::from_static("api-version"),
-                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-            );
-        #[allow(unused_mut)]
-        let mut request = self
-            .client
-            .get(url)
-            .header(
-                ::reqwest::header::ACCEPT,
-                ::reqwest::header::HeaderValue::from_static("application/json"),
-            )
-            .headers(header_map)
-            .build()?;
-        let info = OperationInfo {
-            operation_id: "get_views_transfers_transfer_id",
-        };
-        self.pre(&mut request, &info).await?;
-        let result = self.exec(request, &info).await;
-        self.post(&result, &info).await?;
-        let response = result?;
-        match response.status().as_u16() {
-            200u16 => ResponseValue::from_response(response).await,
-            404u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
             500u16 => {
