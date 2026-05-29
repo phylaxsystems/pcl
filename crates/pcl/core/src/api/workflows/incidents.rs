@@ -47,10 +47,10 @@ pub(in crate::api) fn incidents_request(
             return workflow_operation_with_body(
                 WorkflowOperation::new(
                     HttpMethod::Post,
-                    "post_incidents_incident_id_transactions_tx_id_trace_retry",
+                    "post_incidents_incident_id_transactions_invalidating_transaction_id_trace_retry",
                 )
                 .path_param("incident_id", incident_id)
-                .path_param("tx_id", &tx_id),
+                .path_param("invalidating_transaction_id", &tx_id),
                 true,
                 Some("{}".to_string()),
                 vec![format!(
@@ -62,16 +62,16 @@ pub(in crate::api) fn incidents_request(
             WorkflowRequest::from_operation(
                 WorkflowOperation::new(
                     HttpMethod::Get,
-                    "get_views_incidents_incident_id_transactions_tx_id_trace",
+                    "get_views_incidents_incident_id_transactions_invalidating_transaction_id_trace",
                 )
                 .path_param("incidentId", incident_id)
-                .path_param("txId", tx_id),
+                .path_param("invalidatingTransactionId", tx_id),
                 query,
                 None,
                 true,
                 vec![
                     "pcl incidents --limit 5".to_string(),
-                    "pcl api inspect get_views_incidents_incident_id_transactions_tx_id_trace"
+                    "pcl api inspect get_views_incidents_incident_id_transactions_invalidating_transaction_id_trace"
                         .to_string(),
                 ],
             )?
@@ -186,15 +186,12 @@ workflow_definition!(
     description: "List public incidents, project incidents, fetch all incident pages, inspect incident detail, incident stats, or incident trace.",
     output: "incident data from /views/public/incidents, /views/projects/{projectId}/incidents, /views/incidents/{incidentId}, or /projects/{project_id}/incidents/stats",
     policy: MachineRaw,
-    legacy_examples: [
-
-    ],
     actions: [
-        action!("list_public", false, "GET", "/views/public/incidents", "pcl incidents --limit 5", optional: ["--page", "--limit", "--network", "--sort", "--dev-mode", "--all", "--max-pages", "--output"]),
-        action!("list_project", true, "GET", "/views/projects/{projectId}/incidents", "pcl incidents --project <project-ref> --all --limit 50 --output incidents.json", required: ["--project"], optional: ["--page", "--limit", "--assertion-id", "--adopter-id", "--environment", "--from", "--to", "--all", "--max-pages", "--output"]),
-        action!("stats", true, "GET", "/projects/{project_id}/incidents/stats", "pcl incidents --project <project-ref> --stats", required: ["--project"]),
-        action!("detail", true, "GET", "/views/incidents/{incidentId}", "pcl incidents --incident-id <incident-id>", required: ["--incident-id"]),
-        action!("trace", true, "GET", "/views/incidents/{incidentId}/transactions/{txId}/trace", "pcl incidents --incident-id <incident-id> --tx-id <invalidating-transaction-id>", required: ["--incident-id", "--tx-id"]),
-        action!("retry_trace", true, "POST", "/incidents/{incident_id}/transactions/{tx_id}/trace/retry", "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace", required: ["--incident-id", "--tx-id"], body_template: "empty_object"),
+        action!("list_public", false, "get_views_public_incidents", "pcl incidents --limit 5", optional: ["--page", "--limit", "--network", "--sort", "--dev-mode", "--all", "--max-pages", "--output"]),
+        action!("list_project", true, "get_views_projects_project_id_incidents", "pcl incidents --project <project-ref> --all --limit 50 --output incidents.json", required: ["--project"], optional: ["--page", "--limit", "--assertion-id", "--adopter-id", "--environment", "--from", "--to", "--all", "--max-pages", "--output"]),
+        action!("stats", true, "get_projects_project_id_incidents_stats", "pcl incidents --project <project-ref> --stats", required: ["--project"]),
+        action!("detail", true, "get_views_incidents_incident_id", "pcl incidents --incident-id <incident-id>", required: ["--incident-id"]),
+        action!("trace", true, "get_views_incidents_incident_id_transactions_invalidating_transaction_id_trace", "pcl incidents --incident-id <incident-id> --tx-id <invalidating-transaction-id>", required: ["--incident-id", "--tx-id"]),
+        action!("retry_trace", true, "post_incidents_incident_id_transactions_invalidating_transaction_id_trace_retry", "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace", required: ["--incident-id", "--tx-id"], body_template: "empty_object"),
     ],
 );

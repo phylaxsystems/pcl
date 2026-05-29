@@ -9,11 +9,10 @@ use chrono::{
     Utc,
 };
 use dapp_api_client::generated::client::{
-    Error as ApiError,
-    types::GetCliAuthStatusResponse,
+    Error as GeneratedApiError,
+    types::ApiError as DappApiError,
 };
 use pcl_phoundry::error::PhoundryError;
-use serde::Deserialize;
 use thiserror::Error;
 
 /// Errors that can occur during declarative apply.
@@ -257,64 +256,80 @@ pub enum AuthError {
     ConfigError(#[source] ConfigError),
 }
 
-/// API error response body with structured error code.
-#[derive(Deserialize)]
-struct ApiErrorBody {
-    error: String,
-    code: Option<DappErrorCode>,
-}
-
 /// Structured error codes returned by the dapp CLI auth status endpoint.
 ///
 /// Only codes that drive distinct polling behavior are listed here.
-#[derive(Deserialize, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum DappErrorCode {
-    #[serde(rename = "SESSION_EXPIRED")]
     SessionExpired,
-    #[serde(rename = "SESSION_NOT_FOUND")]
     SessionNotFound,
-    #[serde(rename = "USER_NOT_FOUND")]
     UserNotFound,
-    #[serde(rename = "INTERNAL_ERROR")]
     InternalError,
     /// Catch-all for codes that don't need distinct handling.
-    #[serde(other)]
     Other,
 }
 
-impl From<ApiError<GetCliAuthStatusResponse>> for AuthError {
+impl DappErrorCode {
+    fn from_api_code(code: Option<&str>) -> Self {
+        match code {
+            Some("SESSION_EXPIRED") => Self::SessionExpired,
+            Some("SESSION_NOT_FOUND") => Self::SessionNotFound,
+            Some("USER_NOT_FOUND") => Self::UserNotFound,
+            Some("INTERNAL_ERROR") => Self::InternalError,
+            Some(_) | None => Self::Other,
+        }
+    }
+}
+
+impl From<GeneratedApiError<DappApiError>> for AuthError {
     /// Convert a progenitor API error into a typed `AuthError`.
-    ///
-    /// The generated client returns `InvalidResponsePayload` for 400/500
-    /// responses because the error body `{ error, code }` doesn't match the
-    /// success type. We extract the raw bytes, parse the error code, and map
-    /// to the appropriate variant.
-    fn from(err: ApiError<GetCliAuthStatusResponse>) -> Self {
-        // InvalidResponsePayload carries the raw bytes — parse them.
-        if let ApiError::InvalidResponsePayload(bytes, _) = &err
-            && let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes)
-        {
-            return match body.code {
-                Some(DappErrorCode::SessionExpired) => Self::SessionExpired,
-                Some(DappErrorCode::SessionNotFound) => Self::SessionNotFound,
-                Some(DappErrorCode::UserNotFound) => Self::UserNotFound,
-                Some(DappErrorCode::InternalError) => Self::ServerError(body.error),
-                Some(DappErrorCode::Other) | None => Self::InvalidSession(body.error),
-            };
-        }
-
-        // ErrorResponse means progenitor managed to deserialize — shouldn't
-        // happen for our error shapes, but handle gracefully.
-        if let ApiError::ErrorResponse(ref rv) = err {
-            if let Some(status) = err.status()
-                && status.is_server_error()
-            {
-                return Self::ServerError(format!("HTTP {status}"));
+    fn from(err: GeneratedApiError<DappApiError>) -> Self {
+        match err {
+            GeneratedApiError::ErrorResponse(response) => {
+                let status = response.status();
+                let body = response.into_inner();
+                match DappErrorCode::from_api_code(body.code.as_deref()) {
+                    DappErrorCode::SessionExpired => Self::SessionExpired,
+                    DappErrorCode::SessionNotFound => Self::SessionNotFound,
+                    DappErrorCode::UserNotFound => Self::UserNotFound,
+                    DappErrorCode::InternalError => Self::ServerError(body.error),
+                    DappErrorCode::Other if status.is_server_error() => {
+                        Self::ServerError(body.error)
+                    }
+                    DappErrorCode::Other => Self::InvalidSession(body.error),
+                }
             }
-            return Self::InvalidSession(format!("{rv:?}"));
+            GeneratedApiError::InvalidResponsePayload(bytes, _) => {
+                if let Ok(body) = serde_json::from_slice::<DappApiError>(&bytes) {
+                    return match DappErrorCode::from_api_code(body.code.as_deref()) {
+                        DappErrorCode::SessionExpired => Self::SessionExpired,
+                        DappErrorCode::SessionNotFound => Self::SessionNotFound,
+                        DappErrorCode::UserNotFound => Self::UserNotFound,
+                        DappErrorCode::InternalError => Self::ServerError(body.error),
+                        DappErrorCode::Other => Self::InvalidSession(body.error),
+                    };
+                }
+                Self::StatusRequestFailed(format!(
+                    "Invalid response payload: {}",
+                    String::from_utf8_lossy(&bytes)
+                ))
+            }
+            GeneratedApiError::UnexpectedResponse(response) => {
+                let status = response.status();
+                if status.is_server_error() {
+                    Self::ServerError(format!("HTTP {status}"))
+                } else {
+                    Self::InvalidSession(format!("HTTP {status}"))
+                }
+            }
+            GeneratedApiError::CommunicationError(error)
+            | GeneratedApiError::InvalidUpgrade(error)
+            | GeneratedApiError::ResponseBodyError(error) => {
+                Self::StatusRequestFailed(error.to_string())
+            }
+            GeneratedApiError::InvalidRequest(message) | GeneratedApiError::Custom(message) => {
+                Self::StatusRequestFailed(message)
+            }
         }
-
-        // Network / transport failures
-        Self::StatusRequestFailed(err.to_string())
     }
 }

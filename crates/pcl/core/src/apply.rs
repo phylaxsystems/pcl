@@ -9,6 +9,7 @@ use crate::verify::{
 use crate::{
     DEFAULT_PLATFORM_URL,
     abi,
+    api::generated_operation_path,
     client::{
         ClientBuildError,
         authenticated_client,
@@ -190,19 +191,7 @@ impl ApplyArgs {
             }
         }
 
-        let release = match client
-            .post_projects_project_id_releases(&project_id, None, &payload)
-            .await
-        {
-            Ok(response) => response.into_inner(),
-            Err(error) => {
-                return Err(generated_apply_api_error(
-                    format!("/projects/{project_id}/releases"),
-                    error,
-                )
-                .await);
-            }
-        };
+        let release = Self::call_create_release(&client, &project_id, &payload).await?;
 
         if output_mode != OutputMode::Human {
             let envelope = ok_envelope(
@@ -321,7 +310,12 @@ impl ApplyArgs {
         project_id: &Uuid,
         payload: &PostProjectsProjectIdReleasesBody,
     ) -> Result<PreviewResponse, ApplyError> {
-        let endpoint = format!("/projects/{project_id}/releases/preview");
+        let project_id_string = project_id.to_string();
+        let endpoint = generated_operation_path(
+            "post_projects_project_id_releases_preview",
+            &[("project_id", project_id_string.as_str())],
+        )
+        .unwrap_or_else(|| "post_projects_project_id_releases_preview".to_string());
         let body: PostProjectsProjectIdReleasesPreviewBody =
             serde_json::from_value(serde_json::to_value(payload)?)?;
         let response = match client
@@ -341,6 +335,26 @@ impl ApplyArgs {
                 body: format!("Failed to parse preview response: {e}"),
             }
         })
+    }
+
+    async fn call_create_release(
+        client: &GeneratedClient,
+        project_id: &Uuid,
+        payload: &PostProjectsProjectIdReleasesBody,
+    ) -> Result<PostProjectsProjectIdReleasesResponse, ApplyError> {
+        let project_id_string = project_id.to_string();
+        let endpoint = generated_operation_path(
+            "post_projects_project_id_releases",
+            &[("project_id", project_id_string.as_str())],
+        )
+        .unwrap_or_else(|| "post_projects_project_id_releases".to_string());
+        match client
+            .post_projects_project_id_releases(project_id, None, payload)
+            .await
+        {
+            Ok(response) => Ok(response.into_inner()),
+            Err(error) => Err(generated_apply_api_error(endpoint, error).await),
+        }
     }
 
     fn build_payload(
@@ -441,17 +455,18 @@ impl ApplyArgs {
         })?;
 
         let client = self.build_client(config)?;
-        let projects: Vec<GetProjectsResponseItem> = client
-            .get_projects(None, Some(user_id), None)
-            .await
-            .map(dapp_api_client::generated::client::ResponseValue::into_inner)
-            .map_err(|e| {
-                ApplyError::Api {
-                    endpoint: "/projects".to_string(),
-                    status: e.status().map(|s| s.as_u16()),
-                    body: e.to_string(),
+        let projects: Vec<GetProjectsResponseItem> =
+            match client.get_projects(None, Some(user_id), None).await {
+                Ok(response) => response.into_inner(),
+                Err(error) => {
+                    return Err(generated_apply_api_error(
+                        generated_operation_path("get_projects", &[])
+                            .unwrap_or_else(|| "get_projects".to_string()),
+                        error,
+                    )
+                    .await);
                 }
-            })?;
+            };
 
         if projects.is_empty() {
             return Err(ApplyError::NoProjectsFound);

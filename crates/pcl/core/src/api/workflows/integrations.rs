@@ -145,13 +145,14 @@ workflow_definition!(
     description: "Manage Slack and PagerDuty integrations.",
     output: "integration status or mutation/test results",
     policy: MachineRaw,
-    legacy_examples: [
-
-    ],
     actions: [
-        action!("get", true, "GET", "/projects/{project}/integrations/{provider}", "pcl integrations --project <project-ref> --provider slack", required: ["--project", "--provider"]),
-        action!("configure", true, "POST", "/projects/{project}/integrations/{provider}", "pcl integrations --project <project-ref> --provider slack --configure --body-template", required: ["--project", "--provider"], body_template: "slack|pagerduty"),
-        action!("test", true, "POST", "/projects/{project}/integrations/{provider}/test", "pcl integrations --project <project-ref> --provider slack --test", required: ["--project", "--provider"], body_template: "slack|pagerduty"),
-        action!("delete", true, "DELETE", "/projects/{project}/integrations/{provider}", "pcl integrations --project <project-ref> --provider slack --delete", required: ["--project", "--provider"]),
+        action!("get_slack", true, "get_projects_project_id_integrations_slack", "pcl integrations --project <project-ref> --provider slack", required: ["--project", "--provider"]),
+        action!("configure_slack", true, "post_projects_project_id_integrations_slack", "pcl integrations --project <project-ref> --provider slack --configure --body-template", required: ["--project", "--provider"], body_template: "slack"),
+        action!("test_slack", true, "post_projects_project_id_integrations_slack_test", "pcl integrations --project <project-ref> --provider slack --test", required: ["--project", "--provider"], body_template: "slack"),
+        action!("delete_slack", true, "delete_projects_project_id_integrations_slack", "pcl integrations --project <project-ref> --provider slack --delete", required: ["--project", "--provider"]),
+        action!("get_pagerduty", true, "get_projects_project_id_integrations_pagerduty", "pcl integrations --project <project-ref> --provider pagerduty", required: ["--project", "--provider"]),
+        action!("configure_pagerduty", true, "post_projects_project_id_integrations_pagerduty", "pcl integrations --project <project-ref> --provider pagerduty --configure --body-template", required: ["--project", "--provider"], body_template: "pagerduty"),
+        action!("test_pagerduty", true, "post_projects_project_id_integrations_pagerduty_test", "pcl integrations --project <project-ref> --provider pagerduty --test", required: ["--project", "--provider"], body_template: "pagerduty"),
+        action!("delete_pagerduty", true, "delete_projects_project_id_integrations_pagerduty", "pcl integrations --project <project-ref> --provider pagerduty --delete", required: ["--project", "--provider"]),
     ],
 );

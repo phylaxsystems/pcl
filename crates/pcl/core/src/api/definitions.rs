@@ -6,7 +6,11 @@ use serde_json::{
     json,
 };
 
-use super::workflows;
+use super::{
+    HttpMethod,
+    generated_operation_template,
+    workflows,
+};
 
 // Workflow metadata lives here so schema, manifest, OpenAPI alternatives, and
 // output policies cannot silently diverge as new API functionality is added.
@@ -32,7 +36,6 @@ pub(super) struct WorkflowDefinition {
     pub(in crate::api) description: &'static str,
     pub(in crate::api) output: &'static str,
     pub(super) output_policy: WorkflowOutputPolicy,
-    pub(in crate::api) legacy_examples: &'static [&'static str],
     pub(super) actions: &'static [WorkflowActionDefinition],
 }
 
@@ -40,14 +43,12 @@ pub(super) struct WorkflowDefinition {
 pub(super) struct WorkflowActionDefinition {
     pub(super) name: &'static str,
     pub(super) auth: bool,
-    pub(super) method: &'static str,
-    pub(super) path: &'static str,
+    pub(super) operation_id: &'static str,
     pub(in crate::api) required_flags: &'static [&'static str],
     pub(in crate::api) optional_flags: &'static [&'static str],
     pub(in crate::api) required_body_fields: &'static [&'static str],
     pub(in crate::api) body_template: Option<&'static str>,
     pub(in crate::api) query: &'static [(&'static str, &'static str)],
-    pub(in crate::api) legacy_aliases: &'static [&'static str],
     pub(in crate::api) example: &'static str,
 }
 
@@ -61,12 +62,6 @@ impl WorkflowDefinition {
             "output_policy".to_string(),
             json!(self.output_policy.as_str()),
         );
-        if !self.legacy_examples.is_empty() {
-            object.insert(
-                "legacy_examples".to_string(),
-                string_array(self.legacy_examples, true),
-            );
-        }
         object.insert(
             "actions".to_string(),
             Value::Array(
@@ -82,27 +77,30 @@ impl WorkflowDefinition {
 
 impl WorkflowActionDefinition {
     fn manifest_value(&self) -> Value {
+        let method = self.method();
+        let path = self.path();
         let mut object = Map::new();
         object.insert("name".to_string(), json!(self.name));
         object.insert("auth".to_string(), json!(self.auth));
-        object.insert("method".to_string(), json!(self.method));
-        object.insert("path".to_string(), json!(self.path));
+        object.insert("operation_id".to_string(), json!(self.operation_id));
+        object.insert("method".to_string(), json!(method.as_str()));
+        object.insert("path".to_string(), json!(path));
         if !self.required_flags.is_empty() {
             object.insert(
                 "required_flags".to_string(),
-                string_array(self.required_flags, false),
+                string_array(self.required_flags),
             );
         }
         if !self.optional_flags.is_empty() {
             object.insert(
                 "optional_flags".to_string(),
-                string_array(self.optional_flags, false),
+                string_array(self.optional_flags),
             );
         }
         if !self.required_body_fields.is_empty() {
             object.insert(
                 "required_body_fields".to_string(),
-                string_array(self.required_body_fields, false),
+                string_array(self.required_body_fields),
             );
         }
         if let Some(body_template) = self.body_template {
@@ -111,21 +109,32 @@ impl WorkflowActionDefinition {
         if !self.query.is_empty() {
             object.insert("query".to_string(), query_object(self.query));
         }
-        if !self.legacy_aliases.is_empty() {
-            object.insert(
-                "legacy_aliases".to_string(),
-                string_array(self.legacy_aliases, true),
-            );
-        }
         object.insert("example".to_string(), agent_command(self.example));
         Value::Object(object)
+    }
+
+    pub(super) fn method(&self) -> HttpMethod {
+        self.generated_operation().0
+    }
+
+    pub(super) fn path(&self) -> &'static str {
+        self.generated_operation().1
+    }
+
+    fn generated_operation(&self) -> (HttpMethod, &'static str) {
+        generated_operation_template(self.operation_id).unwrap_or_else(|| {
+            panic!(
+                "workflow action `{}` references missing generated OpenAPI operation `{}`",
+                self.name, self.operation_id
+            )
+        })
     }
 
     pub(super) fn required_flags_value(&self) -> Value {
         if self.required_flags.is_empty() {
             Value::Null
         } else {
-            string_array(self.required_flags, false)
+            string_array(self.required_flags)
         }
     }
 
@@ -221,19 +230,8 @@ fn raw_api_command_manifests() -> Vec<Value> {
     ]
 }
 
-fn string_array(values: &[&str], normalize_commands: bool) -> Value {
-    Value::Array(
-        values
-            .iter()
-            .map(|value| {
-                if normalize_commands && value.trim_start().starts_with("pcl ") {
-                    agent_command(value)
-                } else {
-                    json!(value)
-                }
-            })
-            .collect(),
-    )
+fn string_array(values: &[&str]) -> Value {
+    Value::Array(values.iter().map(|value| json!(value)).collect())
 }
 
 fn query_object(values: &[(&str, &str)]) -> Value {
@@ -261,6 +259,5 @@ const WORKFLOW_DEFINITIONS: &[WorkflowDefinition] = &[
     workflows::access::DEFINITION,
     workflows::integrations::DEFINITION,
     workflows::protocol_manager::DEFINITION,
-    workflows::transfers::DEFINITION,
     workflows::events::DEFINITION,
 ];

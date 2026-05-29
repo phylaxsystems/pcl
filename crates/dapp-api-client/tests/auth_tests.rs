@@ -112,13 +112,9 @@ async fn test_public_endpoint_with_auth() {
 async fn test_private_endpoint_without_auth() {
     let server = try_start_mock_server();
 
-    let test_uuid = uuid::Uuid::parse_str("c1e794ce-4030-487c-a4e6-917caeeb4875").unwrap();
-
     // Mock a private endpoint that requires auth (e.g., saved projects)
     let mock = server.mock(|when, then| {
-        when.method(GET)
-            .path("/api/v1/projects/saved")
-            .query_param("user_id", "c1e794ce-4030-487c-a4e6-917caeeb4875");
+        when.method(GET).path("/api/v1/projects/saved");
         then.status(401)
             .header("content-type", "application/json")
             .json_body(json!({
@@ -133,7 +129,7 @@ async fn test_private_endpoint_without_auth() {
 
     // Call private endpoint without auth
     let api = client.inner();
-    let result = api.get_projects_saved(&test_uuid).await;
+    let result = api.get_projects_saved(None).await;
 
     // Should fail with 401
     assert!(result.is_err(), "Private endpoint should fail without auth");
@@ -154,13 +150,10 @@ async fn test_private_endpoint_without_auth() {
 async fn test_private_endpoint_with_auth() {
     let server = try_start_mock_server();
 
-    let test_uuid = uuid::Uuid::parse_str("c1e794ce-4030-487c-a4e6-917caeeb4875").unwrap();
-
     // Mock a private endpoint with valid auth
     let mock = server.mock(|when, then| {
         when.method(GET)
             .path("/api/v1/projects/saved")
-            .query_param("user_id", "c1e794ce-4030-487c-a4e6-917caeeb4875")
             .header("authorization", "Bearer test-token");
         then.status(200)
             .header("content-type", "application/json")
@@ -187,7 +180,7 @@ async fn test_private_endpoint_with_auth() {
 
     // Call private endpoint with auth
     let api = client.inner();
-    let result = api.get_projects_saved(&test_uuid).await;
+    let result = api.get_projects_saved(None).await;
 
     // Should succeed
     assert!(result.is_ok(), "Private endpoint should work with auth");

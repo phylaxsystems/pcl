@@ -45,12 +45,9 @@ workflow_definition!(
     description: "Inspect authenticated web user state and perform onboarding actions.",
     output: "current user account state, terms acceptance result, or logout result",
     policy: MachineRaw,
-    legacy_examples: [
-
-    ],
     actions: [
-        action!("me", true, "GET", "/web/auth/me", "pcl account"),
-        action!("accept_terms", true, "POST", "/web/auth/accept-terms", "pcl account --accept-terms", body_template: "empty_object"),
-        action!("logout", true, "POST", "/web/auth/logout", "pcl account --logout", body_template: "empty_object"),
+        action!("me", true, "get_web_auth_me", "pcl account"),
+        action!("accept_terms", true, "post_web_auth_accept_terms", "pcl account --accept-terms", body_template: "empty_object"),
+        action!("logout", true, "post_web_auth_logout", "pcl account --logout", body_template: "empty_object"),
     ],
 );

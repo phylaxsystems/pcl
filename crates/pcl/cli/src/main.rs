@@ -177,7 +177,6 @@ async fn run_command(
         Commands::Access(command) => command.run(config, cli_args, json_output).await?,
         Commands::Integrations(command) => command.run(config, cli_args, json_output).await?,
         Commands::ProtocolManager(command) => command.run(config, cli_args, json_output).await?,
-        Commands::Transfers(command) => command.run(config, cli_args, json_output).await?,
         Commands::Events(command) => command.run(config, cli_args, json_output).await?,
         Commands::Doctor(command) => command.run(config, cli_args, json_output).await?,
         Commands::Whoami(command) => command.run(config, json_output)?,
@@ -794,31 +793,13 @@ where
 {
     let mut saw_json = false;
     let mut saw_toon = false;
-    let mut saw_format_flag = false;
 
     for arg in args {
         let arg = arg.as_ref();
-        if saw_format_flag {
-            saw_format_flag = false;
-            match arg.to_str() {
-                Some("json") => saw_json = true,
-                Some("toon") => saw_toon = true,
-                _ => {}
-            }
-            continue;
-        }
         if arg == OsStr::new("--json") || arg == OsStr::new("-j") {
             saw_json = true;
         } else if arg == OsStr::new("--toon") {
             saw_toon = true;
-        } else if arg == OsStr::new("--format") {
-            saw_format_flag = true;
-        } else if let Some(value) = arg.to_str().and_then(|arg| arg.strip_prefix("--format=")) {
-            match value {
-                "json" => saw_json = true,
-                "toon" => saw_toon = true,
-                _ => {}
-            }
         }
     }
 
@@ -958,7 +939,6 @@ fn is_known_top_level_command(command: &str) -> bool {
             | "access"
             | "integrations"
             | "protocol-manager"
-            | "transfers"
             | "events"
             | "doctor"
             | "whoami"
@@ -985,10 +965,10 @@ fn parsed_command_name(args: &[OsString]) -> Option<String> {
         let value = arg.to_string_lossy();
         match value.as_ref() {
             "--json" | "-j" | "--toon" | "--llms" | "--help" | "-h" | "--version" | "-V" => {}
-            "--config-dir" | "--format" => {
+            "--config-dir" => {
                 let _ = iter.next();
             }
-            _ if value.starts_with("--config-dir=") || value.starts_with("--format=") => {}
+            _ if value.starts_with("--config-dir=") => {}
             _ if value.starts_with('-') => {}
             _ => return Some(value.into_owned()),
         }
@@ -1029,19 +1009,7 @@ mod tests {
             OutputMode::Json
         );
         assert_eq!(
-            wants_output_mode(["pcl", "--format", "json", "api"]),
-            OutputMode::Json
-        );
-        assert_eq!(
-            wants_output_mode(["pcl", "--format=json", "api"]),
-            OutputMode::Json
-        );
-        assert_eq!(
             wants_output_mode(["pcl", "--toon", "api"]),
-            OutputMode::Toon
-        );
-        assert_eq!(
-            wants_output_mode(["pcl", "--format", "toon", "api"]),
             OutputMode::Toon
         );
         assert_eq!(wants_output_mode(["pcl", "api"]), OutputMode::Human);
@@ -1063,15 +1031,30 @@ mod tests {
     #[test]
     fn wraps_clap_conflicts_as_json_errors() {
         let err = Cli::command()
-            .try_get_matches_from(["pcl", "--json", "api", "projects", "--save", "--unsave"])
+            .try_get_matches_from([
+                "pcl",
+                "--json",
+                "api",
+                "call",
+                "get",
+                "/health",
+                "--body",
+                "{}",
+                "--body-file",
+                "body.json",
+            ])
             .unwrap_err();
         let args = vec![
             OsString::from("pcl"),
             OsString::from("--json"),
             OsString::from("api"),
-            OsString::from("projects"),
-            OsString::from("--save"),
-            OsString::from("--unsave"),
+            OsString::from("call"),
+            OsString::from("get"),
+            OsString::from("/health"),
+            OsString::from("--body"),
+            OsString::from("{}"),
+            OsString::from("--body-file"),
+            OsString::from("body.json"),
         ];
         let envelope = clap_error_envelope(&err, &args);
 
@@ -1086,21 +1069,35 @@ mod tests {
     #[test]
     fn wraps_clap_conflicts_as_toon_errors() {
         let err = Cli::command()
-            .try_get_matches_from(["pcl", "api", "projects", "--save", "--unsave"])
+            .try_get_matches_from([
+                "pcl",
+                "api",
+                "call",
+                "get",
+                "/health",
+                "--body",
+                "{}",
+                "--body-file",
+                "body.json",
+            ])
             .unwrap_err();
         let args = vec![
             OsString::from("pcl"),
             OsString::from("api"),
-            OsString::from("projects"),
-            OsString::from("--save"),
-            OsString::from("--unsave"),
+            OsString::from("call"),
+            OsString::from("get"),
+            OsString::from("/health"),
+            OsString::from("--body"),
+            OsString::from("{}"),
+            OsString::from("--body-file"),
+            OsString::from("body.json"),
         ];
         let output = toon_string(&clap_error_envelope(&err, &args));
 
         assert!(output.contains("status: error"));
         assert!(output.contains("code: cli.argument_conflict"));
         assert!(output.contains("message:"));
-        assert!(output.contains("Usage: pcl api projects --save"));
+        assert!(output.contains("Usage: pcl api call --body"));
         assert!(output.contains("recoverable: true"));
         assert!(output.contains("next_actions[2]:"));
         assert!(!output.contains("Location:"));

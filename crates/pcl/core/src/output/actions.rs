@@ -67,8 +67,6 @@ pub fn shell_word(value: impl AsRef<str>) -> String {
 
 fn strip_mode_flags(command: &str) -> String {
     command
-        .replace(" --format toon", "")
-        .replace(" --format json", "")
         .replace(" --toon", "")
         .replace(" --json", "")
         .replace("--toon ", "")

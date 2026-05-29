@@ -93,6 +93,10 @@ use openapi::{
     workflow_alternatives,
 };
 use operations::WorkflowOperation;
+pub(crate) use operations::generated_operation_path;
+pub(in crate::api) use operations::generated_operation_template;
+#[cfg(test)]
+use operations::generated_operation_templates;
 use render::print_output;
 use runtime_types::{
     ApiRequestInput,
@@ -112,7 +116,6 @@ use templates::{
     protocol_manager_body_template,
     release_body_template,
     template_envelope,
-    transfer_body_template,
 };
 pub(crate) use transport::{
     generated_error_details,
@@ -136,7 +139,6 @@ use workflows::{
     incidents_next_actions,
     incidents_request,
     integrations_request,
-    project_segment,
     projects_next_actions,
     projects_request,
     protocol_manager_next_actions,
@@ -146,8 +148,6 @@ use workflows::{
     request_body,
     search_next_actions,
     search_request,
-    transfers_next_actions,
-    transfers_request,
 };
 
 #[derive(clap::Parser, Debug)]
@@ -199,7 +199,7 @@ macro_rules! top_level_workflow_command {
             ) -> Result<(), ApiCommandError> {
                 self.globals
                     .run(
-                        ApiCommand::$variant(self.args),
+                        WorkflowCommand::$variant(self.args),
                         config,
                         cli_args,
                         json_output,
@@ -210,86 +210,24 @@ macro_rules! top_level_workflow_command {
     };
 }
 
+#[derive(Debug)]
+enum WorkflowCommand {
+    Incidents(IncidentsArgs),
+    Projects(ProjectsArgs),
+    Assertions(AssertionsArgs),
+    Search(SearchArgs),
+    Account(AccountArgs),
+    Contracts(ContractsArgs),
+    Releases(ReleasesArgs),
+    Deployments(DeploymentsArgs),
+    Access(AccessArgs),
+    Integrations(IntegrationsArgs),
+    ProtocolManager(ProtocolManagerArgs),
+    Events(EventsArgs),
+}
+
 #[derive(clap::Subcommand, Debug)]
 enum ApiCommand {
-    #[command(
-        about = "List or inspect incidents",
-        after_help = "Examples:\n  pcl incidents --limit 5\n  pcl incidents --project-id <project-id> --environment production\n  pcl incidents --project-id <project-id> --all --limit 50 --output incidents.json\n  pcl incidents --incident-id <incident-id>\n  pcl incidents --incident-id <incident-id> --tx-id <tx-id>\n  pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"
-    )]
-    Incidents(IncidentsArgs),
-
-    #[command(
-        about = "List, inspect, create, update, save, or delete projects",
-        after_help = "Examples:\n  pcl projects mine\n  pcl projects list\n  pcl projects show <project-ref>\n  pcl projects saved --user-id <user-id>\n  pcl projects create --project-name demo --chain-id 1\n  pcl projects update <project-ref> --field github_url=https://github.com/org/repo\n  pcl projects save <project-ref>"
-    )]
-    Projects(ProjectsArgs),
-
-    #[command(
-        about = "List, inspect, and manage project assertions",
-        after_help = "Examples:\n  pcl assertions --project-id <project-ref>\n  pcl assertions --project-id <project-ref> --registered\n  pcl assertions --project-id <project-ref> --remove-info"
-    )]
-    Assertions(AssertionsArgs),
-
-    #[command(
-        about = "Search and inspect platform-wide metadata",
-        after_help = "Examples:\n  pcl search --query settler\n  pcl search --stats\n  pcl search --system-status\n  pcl search --verified-contract --address 0x... --chain-id 1"
-    )]
-    Search(SearchArgs),
-
-    #[command(
-        about = "Inspect and manage current account onboarding state",
-        after_help = "Examples:\n  pcl account\n  pcl account --accept-terms\n  pcl account --logout"
-    )]
-    Account(AccountArgs),
-
-    #[command(
-        about = "List or manage project contracts and assertion adopters",
-        after_help = "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl contracts --unassigned --manager <manager-address>\n  pcl contracts --create --body-template"
-    )]
-    Contracts(ContractsArgs),
-
-    #[command(
-        about = "List, inspect, create, preview, check, retry, deploy, or remove releases",
-        after_help = "Examples:\n  pcl releases list <project-ref>\n  pcl releases show <project-ref> <release-id>\n  pcl releases preview <project-ref> --body-file release.json\n  pcl releases backtest-progress <project-ref> <release-id>\n  pcl releases retry-check <project-ref> <release-id> <check-id>\n  pcl releases calldata deploy <project-ref> <release-id> --signer-address <signer-address>"
-    )]
-    Releases(ReleasesArgs),
-
-    #[command(
-        about = "Inspect deployments and confirm deployed assertions",
-        after_help = "Examples:\n  pcl deployments --project <project-ref>\n  pcl deployments --project <project-ref> --confirm --body-template"
-    )]
-    Deployments(DeploymentsArgs),
-
-    #[command(
-        about = "Manage members, roles, and invitations",
-        after_help = "Examples:\n  pcl access members <project-ref>\n  pcl access invite <project-ref> --body-template\n  pcl access pending\n  pcl access preview <token>"
-    )]
-    Access(AccessArgs),
-
-    #[command(
-        about = "Manage Slack and PagerDuty integrations",
-        after_help = "Examples:\n  pcl integrations --project <project-ref> --provider slack\n  pcl integrations --project <project-ref> --provider pagerduty --configure --body-template\n  pcl integrations --project <project-ref> --provider slack --test"
-    )]
-    Integrations(IntegrationsArgs),
-
-    #[command(
-        about = "Manage project protocol manager settings",
-        after_help = "Examples:\n  pcl protocol-manager --project <project-ref> --nonce --address <manager-address>\n  pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...\n  pcl protocol-manager --project <project-ref> --set --body-template"
-    )]
-    ProtocolManager(ProtocolManagerArgs),
-
-    #[command(
-        about = "Inspect or reject protocol manager transfers",
-        after_help = "Examples:\n  pcl transfers --pending\n  pcl transfers --transfer-id <transfer-id>\n  pcl transfers --reject --body-template"
-    )]
-    Transfers(TransfersArgs),
-
-    #[command(
-        about = "Inspect project events and audit logs",
-        after_help = "Examples:\n  pcl events --project <project-ref>\n  pcl events --project <project-ref> --audit-log"
-    )]
-    Events(EventsArgs),
-
     #[command(
         about = "Print an agent-readable command manifest",
         after_help = "Examples:\n  pcl api manifest\n  pcl api manifest --toon\n  pcl api manifest --json"
@@ -341,115 +279,97 @@ enum ApiCommand {
         about = "Call any platform API endpoint",
         after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --toon"
     )]
-    Call {
-        #[arg(value_enum, ignore_case = true, help = "HTTP method")]
-        method: HttpMethod,
-        #[arg(help = "API path below /api/v1, for example /views/public/incidents")]
-        path: String,
-        #[arg(long = "query", short = 'q', help = "Query parameter as KEY=VALUE")]
-        query: Vec<String>,
-        #[arg(
-            long = "header",
-            short = 'H',
-            help = "Extra request header as NAME=VALUE"
-        )]
-        header: Vec<String>,
-        #[arg(long, conflicts_with = "body_file", help = "JSON request body")]
-        body: Option<String>,
-        #[arg(
-            long = "body-file",
-            conflicts_with = "body",
-            help = "Path to JSON request body, or - for stdin"
-        )]
-        body_file: Option<PathBuf>,
-        #[arg(
-            long = "field",
-            help = "Extra JSON body field as KEY=VALUE; VALUE may be a JSON scalar/object/array"
-        )]
-        field: Vec<String>,
-        #[arg(
-            long,
-            value_name = "FIELD",
-            help = "Fetch every page and aggregate array field/path from each response"
-        )]
-        paginate: Option<String>,
-        #[arg(
-            long,
-            requires = "paginate",
-            help = "Explicitly fetch all pages; --paginate already enables this"
-        )]
-        all: bool,
-        #[arg(long, requires = "paginate", help = "Starting page for --paginate")]
-        page: Option<u64>,
-        #[arg(long, requires = "paginate", help = "Items per page for --paginate")]
-        limit: Option<u64>,
-        #[arg(
-            long = "page-param",
-            requires = "paginate",
-            help = "Query parameter name for page number"
-        )]
-        page_param: Option<String>,
-        #[arg(
-            long = "limit-param",
-            requires = "paginate",
-            help = "Query parameter name for page size"
-        )]
-        limit_param: Option<String>,
-        #[arg(
-            long,
-            requires = "paginate",
-            help = "Maximum pages to fetch with --paginate"
-        )]
-        max_pages: Option<u64>,
-        #[arg(
-            long,
-            requires = "paginate",
-            help = "With --paginate and --output, write items as JSON Lines"
-        )]
-        jsonl: bool,
-        #[arg(long, help = "Write response body to a JSON file")]
-        output: Option<PathBuf>,
-    },
+    Call(Box<ApiCallArgs>),
+}
+
+#[derive(clap::Args, Debug)]
+struct ApiCallArgs {
+    #[arg(value_enum, ignore_case = true, help = "HTTP method")]
+    method: HttpMethod,
+    #[arg(help = "API path below /api/v1, for example /views/public/incidents")]
+    path: String,
+    #[arg(long = "query", short = 'q', help = "Query parameter as KEY=VALUE")]
+    query: Vec<String>,
+    #[arg(
+        long = "header",
+        short = 'H',
+        help = "Extra request header as NAME=VALUE"
+    )]
+    header: Vec<String>,
+    #[arg(long, conflicts_with = "body_file", help = "JSON request body")]
+    body: Option<String>,
+    #[arg(
+        long = "body-file",
+        conflicts_with = "body",
+        help = "Path to JSON request body, or - for stdin"
+    )]
+    body_file: Option<PathBuf>,
+    #[arg(
+        long = "field",
+        help = "Extra JSON body field as KEY=VALUE; VALUE may be a JSON scalar/object/array"
+    )]
+    field: Vec<String>,
+    #[arg(
+        long,
+        value_name = "FIELD",
+        help = "Fetch every page and aggregate array field/path from each response"
+    )]
+    paginate: Option<String>,
+    #[arg(
+        long,
+        requires = "paginate",
+        help = "Explicitly fetch all pages; --paginate already enables this"
+    )]
+    all: bool,
+    #[arg(long, requires = "paginate", help = "Starting page for --paginate")]
+    page: Option<u64>,
+    #[arg(long, requires = "paginate", help = "Items per page for --paginate")]
+    limit: Option<u64>,
+    #[arg(
+        long = "page-param",
+        requires = "paginate",
+        help = "Query parameter name for page number"
+    )]
+    page_param: Option<String>,
+    #[arg(
+        long = "limit-param",
+        requires = "paginate",
+        help = "Query parameter name for page size"
+    )]
+    limit_param: Option<String>,
+    #[arg(
+        long,
+        requires = "paginate",
+        help = "Maximum pages to fetch with --paginate"
+    )]
+    max_pages: Option<u64>,
+    #[arg(
+        long,
+        requires = "paginate",
+        help = "With --paginate and --output, write items as JSON Lines"
+    )]
+    jsonl: bool,
+    #[arg(long, help = "Write response body to a JSON file")]
+    output: Option<PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]
 struct IncidentsArgs {
-    #[arg(
-        long,
-        visible_alias = "project",
-        alias = "project_id",
-        help = "Project UUID or slug"
-    )]
+    #[arg(long, visible_alias = "project", help = "Project UUID or slug")]
     project_id: Option<String>,
-    #[arg(long, alias = "incident_id", help = "Incident ID to inspect")]
+    #[arg(long, help = "Incident ID to inspect")]
     incident_id: Option<String>,
-    #[arg(long, alias = "tx_id", help = "Transaction ID for incident trace")]
+    #[arg(long, help = "Transaction ID for incident trace")]
     tx_id: Option<String>,
-    #[arg(
-        long,
-        alias = "assertion_id",
-        help = "Filter project incidents by assertion"
-    )]
+    #[arg(long, help = "Filter project incidents by assertion")]
     assertion_id: Option<String>,
-    #[arg(
-        long,
-        alias = "assertion_adopter_id",
-        help = "Filter project incidents by assertion adopter"
-    )]
+    #[arg(long, help = "Filter project incidents by assertion adopter")]
     assertion_adopter_id: Option<String>,
     #[arg(long, help = "Filter project incidents by environment")]
     environment: Option<String>,
-    #[arg(
-        long,
-        alias = "from_date",
-        help = "Filter project incidents from an ISO date"
-    )]
+    #[arg(long, help = "Filter project incidents from an ISO date")]
     from_date: Option<String>,
-    #[arg(
-        long,
-        alias = "to_date",
-        help = "Filter project incidents until an ISO date"
-    )]
+    #[arg(long, help = "Filter project incidents until an ISO date")]
     to_date: Option<String>,
     #[arg(long, help = "Page number")]
     page: Option<u64>,
@@ -459,15 +379,11 @@ struct IncidentsArgs {
     network: Option<u64>,
     #[arg(long, help = "Sort direction for public incidents")]
     sort: Option<String>,
-    #[arg(
-        long,
-        alias = "dev_mode",
-        help = "Include development-mode public incidents"
-    )]
+    #[arg(long, help = "Include development-mode public incidents")]
     dev_mode: Option<String>,
     #[arg(long, help = "Return incident stats for --project-id")]
     stats: bool,
-    #[arg(long, alias = "retry_trace", help = "Retry failed trace generation")]
+    #[arg(long, help = "Retry failed trace generation")]
     retry_trace: bool,
     #[arg(long, help = "Fetch every page for incident list workflows")]
     all: bool,
@@ -483,89 +399,45 @@ struct IncidentsArgs {
     jsonl: bool,
 }
 
-#[derive(clap::Args, Debug, Default)]
-#[command(group(
-    ArgGroup::new("project_action")
-        .args(["mine", "saved", "create", "update", "delete", "save", "unsave", "resolve", "widget"])
-        .multiple(false)
-))]
+#[derive(Debug, Default)]
 struct ProjectsArgs {
-    #[arg(
-        long,
-        visible_alias = "project",
-        alias = "project_id",
-        help = "Project UUID or slug"
-    )]
     project_id: Option<String>,
-    #[arg(long, visible_alias = "home", help = "Show projects you belong to")]
     mine: bool,
-    #[arg(long, help = "Return saved projects")]
     saved: bool,
-    #[arg(long, alias = "user_id", help = "User ID for --saved")]
     user_id: Option<String>,
-    #[arg(long, help = "Page number for project explorer")]
     page: Option<u64>,
-    #[arg(long, help = "Items per page for project explorer")]
     limit: Option<u64>,
-    #[arg(long, help = "Filter by search term if supported by the API")]
     search: Option<String>,
-    #[arg(long, help = "Create a project")]
     create: bool,
-    #[arg(long, help = "Update --project-id")]
     update: bool,
-    #[arg(long, help = "Delete --project-id")]
     delete: bool,
-    #[arg(long, help = "Save --project-id for current user")]
     save: bool,
-    #[arg(long, help = "Unsave --project-id for current user")]
     unsave: bool,
-    #[arg(
-        long,
-        help = "Resolve --project-id slug or UUID to canonical identifiers"
-    )]
     resolve: bool,
-    #[arg(long, help = "Return lightweight widget data for --project-id")]
     widget: bool,
-    #[arg(long, alias = "project_name", help = "Project name for create/update")]
     project_name: Option<String>,
-    #[arg(long, alias = "project_description", help = "Project description")]
     project_description: Option<String>,
-    #[arg(long, alias = "profile_image_url", help = "Project profile image URL")]
     profile_image_url: Option<String>,
-    #[arg(long, alias = "github_url", help = "Project GitHub URL")]
     github_url: Option<String>,
-    #[arg(long, alias = "chain_id", help = "Chain ID for create")]
     chain_id: Option<u64>,
-    #[arg(long, alias = "is_private", help = "Project privacy flag")]
     is_private: Option<bool>,
-    #[arg(long, alias = "is_dev", help = "Project dev-mode flag")]
     is_dev: Option<bool>,
-    #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
     field: Vec<String>,
-    #[arg(long, help = "JSON request body")]
     body: Option<String>,
-    #[arg(
-        long = "body-file",
-        conflicts_with = "body",
-        help = "Path to JSON body, or - for stdin"
-    )]
     body_file: Option<PathBuf>,
-    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
     body_template: bool,
 }
 
 #[derive(clap::Args, Debug)]
 #[command(
     about = "List, inspect, create, update, save, or delete projects",
-    after_help = "Examples:\n  pcl projects mine\n  pcl projects list\n  pcl projects show <project-ref>\n  pcl projects saved --user-id <user-id>\n  pcl projects create --project-name demo --chain-id 1\n  pcl projects update <project-ref> --field github_url=https://github.com/org/repo\n  pcl projects save <project-ref>\n\nLegacy flag forms are still supported."
+    after_help = "Examples:\n  pcl projects mine\n  pcl projects list\n  pcl projects show <project-ref>\n  pcl projects saved --user-id <user-id>\n  pcl projects create --project-name demo --chain-id 1\n  pcl projects update <project-ref> --field github_url=https://github.com/org/repo\n  pcl projects save <project-ref>"
 )]
 pub struct ProjectsCommand {
     #[command(flatten)]
     globals: ApiWorkflowOptions,
     #[command(subcommand)]
     command: Option<ProjectsSubcommand>,
-    #[command(flatten)]
-    legacy: ProjectsArgs,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -612,7 +484,7 @@ struct ProjectListArgs {
 
 #[derive(clap::Args, Debug, Default)]
 struct ProjectSavedArgs {
-    #[arg(long, alias = "user_id", help = "User ID for saved projects")]
+    #[arg(long, help = "User ID for saved projects")]
     user_id: Option<String>,
 }
 
@@ -626,19 +498,19 @@ struct ProjectUpdateArgs {
 
 #[derive(clap::Args, Debug, Default)]
 struct ProjectWriteArgs {
-    #[arg(long, alias = "project_name", help = "Project name for create/update")]
+    #[arg(long, help = "Project name for create/update")]
     project_name: Option<String>,
-    #[arg(long, alias = "project_description", help = "Project description")]
+    #[arg(long, help = "Project description")]
     project_description: Option<String>,
-    #[arg(long, alias = "profile_image_url", help = "Project profile image URL")]
+    #[arg(long, help = "Project profile image URL")]
     profile_image_url: Option<String>,
-    #[arg(long, alias = "github_url", help = "Project GitHub URL")]
+    #[arg(long, help = "Project GitHub URL")]
     github_url: Option<String>,
-    #[arg(long, alias = "chain_id", help = "Chain ID for create")]
+    #[arg(long, help = "Chain ID for create")]
     chain_id: Option<u64>,
-    #[arg(long, alias = "is_private", help = "Project privacy flag")]
+    #[arg(long, help = "Project privacy flag")]
     is_private: Option<bool>,
-    #[arg(long, alias = "is_dev", help = "Project dev-mode flag")]
+    #[arg(long, help = "Project dev-mode flag")]
     is_dev: Option<bool>,
     #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
     field: Vec<String>,
@@ -650,7 +522,7 @@ struct ProjectWriteArgs {
         help = "Path to JSON body, or - for stdin"
     )]
     body_file: Option<PathBuf>,
-    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
+    #[arg(long, help = "Print a JSON body template")]
     body_template: bool,
 }
 
@@ -661,12 +533,16 @@ impl ProjectsCommand {
         cli_args: &CliArgs,
         json_output: bool,
     ) -> Result<(), ApiCommandError> {
-        let args = match self.command {
-            Some(command) => command.into_args(),
-            None => self.legacy,
-        };
+        let args = self
+            .command
+            .map_or_else(ProjectsArgs::default, ProjectsSubcommand::into_args);
         self.globals
-            .run(ApiCommand::Projects(args), config, cli_args, json_output)
+            .run(
+                WorkflowCommand::Projects(args),
+                config,
+                cli_args,
+                json_output,
+            )
             .await
     }
 }
@@ -787,7 +663,7 @@ struct WorkflowBodyArgs {
         help = "Path to JSON body, or - for stdin"
     )]
     body_file: Option<PathBuf>,
-    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
+    #[arg(long, help = "Print a JSON body template")]
     body_template: bool,
 }
 
@@ -810,35 +686,25 @@ impl WorkflowBodyArgs {
 #[derive(clap::Args, Debug)]
 #[command(group(
     ArgGroup::new("assertions_action")
-        .args(["assertion_id", "adopter_address", "submitted", "registered", "submit", "remove_info", "remove_calldata"])
+        .args(["assertion_id", "adopter_address", "registered", "remove_info", "remove_calldata"])
         .multiple(false)
 ))]
 struct AssertionsArgs {
-    #[arg(
-        long,
-        visible_alias = "project",
-        alias = "project_id",
-        help = "Project UUID or slug"
-    )]
+    #[arg(long, visible_alias = "project", help = "Project UUID or slug")]
     project_id: Option<String>,
-    #[arg(long, alias = "assertion_id", help = "Assertion ID to inspect")]
+    #[arg(long, help = "Assertion ID to inspect")]
     assertion_id: Option<String>,
-    #[arg(long, alias = "adopter_id", help = "Filter by assertion adopter")]
+    #[arg(long, help = "Filter by assertion adopter")]
     adopter_id: Option<String>,
     #[arg(
         long,
-        alias = "adopter_address",
         alias = "aa-address",
         help = "Assertion adopter contract address for /assertions lookup"
     )]
     adopter_address: Option<String>,
     #[arg(long, help = "Network/chain ID for --adopter-address")]
     network: Option<String>,
-    #[arg(
-        long,
-        alias = "include_onchain_only",
-        help = "Only include on-chain assertions for --adopter-address"
-    )]
+    #[arg(long, help = "Only include on-chain assertions for --adopter-address")]
     include_onchain_only: Option<bool>,
     #[arg(long, help = "Filter by assertion environment")]
     environment: Option<String>,
@@ -846,27 +712,11 @@ struct AssertionsArgs {
     page: Option<u64>,
     #[arg(long, help = "Items per page")]
     limit: Option<u64>,
-    #[arg(
-        long,
-        hide = true,
-        help = "Removed: submitted assertions are no longer exposed by the API"
-    )]
-    submitted: bool,
     #[arg(long, help = "Return registered assertions for --project-id")]
     registered: bool,
-    #[arg(
-        long,
-        hide = true,
-        help = "Removed: submitted assertions are no longer exposed by the API"
-    )]
-    submit: bool,
-    #[arg(long, alias = "remove_info", help = "Return remove assertions info")]
+    #[arg(long, help = "Return remove assertions info")]
     remove_info: bool,
-    #[arg(
-        long,
-        alias = "remove_calldata",
-        help = "Generate remove assertions calldata"
-    )]
+    #[arg(long, help = "Generate remove assertions calldata")]
     remove_calldata: bool,
     #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
     field: Vec<String>,
@@ -878,14 +728,14 @@ struct AssertionsArgs {
         help = "Path to JSON body, or - for stdin"
     )]
     body_file: Option<PathBuf>,
-    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
+    #[arg(long, help = "Print a JSON body template")]
     body_template: bool,
 }
 
 #[derive(clap::Args, Debug)]
 #[command(group(
     ArgGroup::new("search_action")
-        .args(["stats", "system_status", "health", "whitelist", "verified_contract"])
+        .args(["stats", "health", "whitelist", "verified_contract"])
         .multiple(false)
 ))]
 struct SearchArgs {
@@ -895,21 +745,15 @@ struct SearchArgs {
     query: Option<String>,
     #[arg(long, help = "Return network statistics")]
     stats: bool,
-    #[arg(long, alias = "system_status", help = "Return system status")]
-    system_status: bool,
     #[arg(long, help = "Return health check")]
     health: bool,
     #[arg(long, help = "Return whitelist status for the authenticated user")]
     whitelist: bool,
-    #[arg(
-        long,
-        alias = "verified_contract",
-        help = "Look up verified contract info"
-    )]
+    #[arg(long, help = "Look up verified contract info")]
     verified_contract: bool,
     #[arg(long, help = "Contract address for --verified-contract")]
     address: Option<String>,
-    #[arg(long, alias = "chain_id", help = "Chain ID for --verified-contract")]
+    #[arg(long, help = "Chain ID for --verified-contract")]
     chain_id: Option<u64>,
 }
 
@@ -922,7 +766,7 @@ struct SearchArgs {
 struct AccountArgs {
     #[arg(long, help = "Return current authenticated user info")]
     me: bool,
-    #[arg(long, alias = "accept_terms", help = "Accept terms of service")]
+    #[arg(long, help = "Accept terms of service")]
     accept_terms: bool,
     #[arg(long, help = "Clear web auth session")]
     logout: bool,
@@ -936,35 +780,22 @@ struct AccountArgs {
         help = "Path to JSON body, or - for stdin"
     )]
     body_file: Option<PathBuf>,
-    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
+    #[arg(long, help = "Print a JSON body template")]
     body_template: bool,
 }
 
 #[derive(clap::Args, Debug)]
 #[command(group(
     ArgGroup::new("contracts_action")
-        .args(["unassigned", "create", "assign_project", "remove", "remove_calldata"])
+        .args(["unassigned", "assign_project", "remove", "remove_calldata"])
         .multiple(false)
 ))]
 struct ContractsArgs {
-    #[arg(
-        long,
-        visible_alias = "project-id",
-        alias = "project_id",
-        help = "Project UUID or slug"
-    )]
+    #[arg(long, visible_alias = "project-id", help = "Project UUID or slug")]
     project: Option<String>,
-    #[arg(
-        long,
-        alias = "adopter_id",
-        help = "Assertion adopter ID for contract detail"
-    )]
+    #[arg(long, help = "Assertion adopter ID for contract detail")]
     adopter_id: Option<String>,
-    #[arg(
-        long,
-        alias = "aa_address",
-        help = "Assertion adopter contract address"
-    )]
+    #[arg(long, help = "Assertion adopter contract address")]
     aa_address: Option<String>,
     #[arg(long, help = "Manager address for --unassigned")]
     manager: Option<String>,
@@ -974,25 +805,17 @@ struct ContractsArgs {
     environment: Option<String>,
     #[arg(
         long = "assertion-id",
-        alias = "assertion_id",
         alias = "assertion-ids",
-        alias = "assertion_ids",
         help = "Assertion ID to include in --remove-calldata; repeat for multiple assertions"
     )]
     assertion_ids: Vec<String>,
     #[arg(long, help = "List unassigned assertion adopters")]
     unassigned: bool,
-    #[arg(long, help = "Create an assertion adopter")]
-    create: bool,
-    #[arg(long, alias = "assign_project", help = "Assign adopters to a project")]
+    #[arg(long, help = "Assign adopters to a project")]
     assign_project: bool,
     #[arg(long, help = "Remove assertion adopter from --project")]
     remove: bool,
-    #[arg(
-        long,
-        alias = "remove_calldata",
-        help = "Get remove assertions calldata"
-    )]
+    #[arg(long, help = "Get remove assertions calldata")]
     remove_calldata: bool,
     #[arg(long, help = "JSON request body")]
     body: Option<String>,
@@ -1004,80 +827,40 @@ struct ContractsArgs {
         help = "Path to JSON body, or - for stdin"
     )]
     body_file: Option<PathBuf>,
-    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
+    #[arg(long, help = "Print a JSON body template")]
     body_template: bool,
 }
 
-#[derive(clap::Args, Debug, Default)]
-#[command(group(
-    ArgGroup::new("releases_action")
-        .args(["create", "preview", "deploy", "remove", "deploy_calldata", "remove_calldata", "backtest_progress", "retry_check"])
-        .multiple(false)
-))]
+#[derive(Debug, Default)]
 struct ReleasesArgs {
-    #[arg(
-        long,
-        visible_alias = "project-id",
-        alias = "project_id",
-        help = "Project UUID or slug"
-    )]
     project: Option<String>,
-    #[arg(long, alias = "release_id", help = "Release ID")]
     release_id: Option<String>,
-    #[arg(
-        long,
-        alias = "signer_address",
-        help = "Signer address for --deploy-calldata"
-    )]
     signer_address: Option<String>,
-    #[arg(long, alias = "check_id", help = "Release check ID for --retry-check")]
     check_id: Option<String>,
-    #[arg(long, help = "Create a release")]
     create: bool,
-    #[arg(long, help = "Preview release diff without persisting")]
     preview: bool,
-    #[arg(long, help = "Confirm release deployment")]
     deploy: bool,
-    #[arg(long, help = "Confirm release removal")]
     remove: bool,
-    #[arg(long, alias = "deploy_calldata", help = "Build deploy calldata")]
     deploy_calldata: bool,
-    #[arg(long, alias = "remove_calldata", help = "Build remove calldata")]
     remove_calldata: bool,
-    #[arg(
-        long,
-        alias = "backtest_progress",
-        help = "Get release backtest/check progress"
-    )]
     backtest_progress: bool,
-    #[arg(long, alias = "retry_check", help = "Retry a failed release check")]
     retry_check: bool,
-    #[arg(long, help = "JSON request body")]
     body: Option<String>,
-    #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
     field: Vec<String>,
-    #[arg(
-        long = "body-file",
-        conflicts_with = "body",
-        help = "Path to JSON body, or - for stdin"
-    )]
     body_file: Option<PathBuf>,
-    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
     body_template: bool,
 }
 
 #[derive(clap::Args, Debug)]
 #[command(
     about = "List, inspect, create, preview, check, retry, deploy, or remove releases",
-    after_help = "Examples:\n  pcl releases list <project-ref>\n  pcl releases show <project-ref> <release-id>\n  pcl releases preview <project-ref> --body-file release.json\n  pcl releases deploy <project-ref> <release-id> --body-file deploy.json\n  pcl releases calldata deploy <project-ref> <release-id> --signer-address <address>\n\nLegacy flag forms are still supported."
+    after_help = "Examples:\n  pcl releases list <project-ref>\n  pcl releases show <project-ref> <release-id>\n  pcl releases preview <project-ref> --body-file release.json\n  pcl releases deploy <project-ref> <release-id> --body-file deploy.json\n  pcl releases calldata deploy <project-ref> <release-id> --signer-address <address>"
 )]
 pub struct ReleasesCommand {
     #[command(flatten)]
     globals: ApiWorkflowOptions,
     #[command(subcommand)]
-    command: Option<ReleasesSubcommand>,
-    #[command(flatten)]
-    legacy: ReleasesArgs,
+    command: ReleasesSubcommand,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -1169,7 +952,7 @@ struct ReleaseDeployCalldataArgs {
     project: String,
     #[arg(value_name = "RELEASE_ID")]
     release_id: String,
-    #[arg(long, alias = "signer_address", help = "Signer address")]
+    #[arg(long, help = "Signer address")]
     signer_address: String,
 }
 
@@ -1180,12 +963,14 @@ impl ReleasesCommand {
         cli_args: &CliArgs,
         json_output: bool,
     ) -> Result<(), ApiCommandError> {
-        let args = match self.command {
-            Some(command) => command.into_args(),
-            None => self.legacy,
-        };
+        let args = self.command.into_args();
         self.globals
-            .run(ApiCommand::Releases(args), config, cli_args, json_output)
+            .run(
+                WorkflowCommand::Releases(args),
+                config,
+                cli_args,
+                json_output,
+            )
             .await
     }
 }
@@ -1280,12 +1065,7 @@ fn release_ref_args_optional(project: Option<String>, release_id: Option<String>
         .multiple(false)
 ))]
 struct DeploymentsArgs {
-    #[arg(
-        long,
-        visible_alias = "project-id",
-        alias = "project_id",
-        help = "Project UUID or slug"
-    )]
+    #[arg(long, visible_alias = "project-id", help = "Project UUID or slug")]
     project: Option<String>,
     #[arg(long, help = "Confirm deployment")]
     confirm: bool,
@@ -1299,78 +1079,43 @@ struct DeploymentsArgs {
         help = "Path to JSON body, or - for stdin"
     )]
     body_file: Option<PathBuf>,
-    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
+    #[arg(long, help = "Print a JSON body template")]
     body_template: bool,
 }
 
-#[derive(clap::Args, Debug, Default)]
-#[command(group(
-    ArgGroup::new("access_action")
-        .args(["members", "invitations", "pending", "preview", "accept", "invite", "resend", "revoke", "update_role", "remove", "my_role"])
-        .multiple(false)
-))]
+#[derive(Debug, Default)]
 struct AccessArgs {
-    #[arg(
-        long,
-        visible_alias = "project-id",
-        alias = "project_id",
-        help = "Project UUID or slug"
-    )]
     project: Option<String>,
-    #[arg(long, alias = "member_user_id", help = "Member user ID")]
     member_user_id: Option<String>,
-    #[arg(long, alias = "invitation_id", help = "Invitation ID")]
     invitation_id: Option<String>,
-    #[arg(long, help = "Invitation token")]
     token: Option<String>,
-    #[arg(long, help = "List members")]
     members: bool,
-    #[arg(long, help = "List project invitations")]
     invitations: bool,
-    #[arg(long, help = "List pending invitations for current user")]
     pending: bool,
-    #[arg(long, help = "Preview invitation token")]
     preview: bool,
-    #[arg(long, help = "Accept invitation token")]
     accept: bool,
-    #[arg(long, help = "Create invitation")]
     invite: bool,
-    #[arg(long, help = "Resend invitation")]
     resend: bool,
-    #[arg(long, help = "Revoke invitation")]
     revoke: bool,
-    #[arg(long, alias = "update_role", help = "Update member role")]
     update_role: bool,
-    #[arg(long, help = "Remove member")]
     remove: bool,
-    #[arg(long, alias = "my_role", help = "Get current user's project role")]
     my_role: bool,
-    #[arg(long, help = "JSON request body")]
     body: Option<String>,
-    #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
     field: Vec<String>,
-    #[arg(
-        long = "body-file",
-        conflicts_with = "body",
-        help = "Path to JSON body, or - for stdin"
-    )]
     body_file: Option<PathBuf>,
-    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
     body_template: bool,
 }
 
 #[derive(clap::Args, Debug)]
 #[command(
     about = "Manage members, roles, and invitations",
-    after_help = "Examples:\n  pcl access members <project-ref>\n  pcl access invitations <project-ref>\n  pcl access pending\n  pcl access preview <token>\n  pcl access invite <project-ref> --body-file invite.json\n  pcl access role update <project-ref> <member-user-id> --field role=admin\n\nLegacy flag forms are still supported."
+    after_help = "Examples:\n  pcl access members <project-ref>\n  pcl access invitations <project-ref>\n  pcl access pending\n  pcl access preview <token>\n  pcl access invite <project-ref> --body-file invite.json\n  pcl access role update <project-ref> <member-user-id> --field role=admin"
 )]
 pub struct AccessCommand {
     #[command(flatten)]
     globals: ApiWorkflowOptions,
     #[command(subcommand)]
-    command: Option<AccessSubcommand>,
-    #[command(flatten)]
-    legacy: AccessArgs,
+    command: AccessSubcommand,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -1478,12 +1223,9 @@ impl AccessCommand {
         cli_args: &CliArgs,
         json_output: bool,
     ) -> Result<(), ApiCommandError> {
-        let args = match self.command {
-            Some(command) => command.into_args(),
-            None => self.legacy,
-        };
+        let args = self.command.into_args();
         self.globals
-            .run(ApiCommand::Access(args), config, cli_args, json_output)
+            .run(WorkflowCommand::Access(args), config, cli_args, json_output)
             .await
     }
 }
@@ -1617,12 +1359,7 @@ impl IntegrationProvider {
         .multiple(false)
 ))]
 struct IntegrationsArgs {
-    #[arg(
-        long,
-        visible_alias = "project-id",
-        alias = "project_id",
-        help = "Project UUID or slug"
-    )]
+    #[arg(long, visible_alias = "project-id", help = "Project UUID or slug")]
     project: Option<String>,
     #[arg(long, value_enum, help = "Integration provider")]
     provider: Option<IntegrationProvider>,
@@ -1642,7 +1379,7 @@ struct IntegrationsArgs {
         help = "Path to JSON body, or - for stdin"
     )]
     body_file: Option<PathBuf>,
-    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
+    #[arg(long, help = "Print a JSON body template")]
     body_template: bool,
 }
 
@@ -1653,12 +1390,7 @@ struct IntegrationsArgs {
         .multiple(false)
 ))]
 struct ProtocolManagerArgs {
-    #[arg(
-        long,
-        visible_alias = "project-id",
-        alias = "project_id",
-        help = "Project UUID or slug"
-    )]
+    #[arg(long, visible_alias = "project-id", help = "Project UUID or slug")]
     project: Option<String>,
     #[arg(long, help = "Get nonce")]
     nonce: bool,
@@ -1666,23 +1398,19 @@ struct ProtocolManagerArgs {
     set: bool,
     #[arg(long, help = "Clear protocol manager")]
     clear: bool,
-    #[arg(long, alias = "transfer_calldata", help = "Get transfer calldata")]
+    #[arg(long, help = "Get transfer calldata")]
     transfer_calldata: bool,
-    #[arg(long, alias = "accept_calldata", help = "Get accept calldata")]
+    #[arg(long, help = "Get accept calldata")]
     accept_calldata: bool,
-    #[arg(long, alias = "pending_transfer", help = "Get pending transfer")]
+    #[arg(long, help = "Get pending transfer")]
     pending_transfer: bool,
-    #[arg(long, alias = "confirm_transfer", help = "Confirm transfer")]
+    #[arg(long, help = "Confirm transfer")]
     confirm_transfer: bool,
-    #[arg(
-        long,
-        alias = "new_manager",
-        help = "New manager address for transfer calldata"
-    )]
+    #[arg(long, help = "New manager address for transfer calldata")]
     new_manager: Option<String>,
     #[arg(long, help = "Address for --nonce")]
     address: Option<String>,
-    #[arg(long, alias = "chain_id", help = "Chain ID for --nonce")]
+    #[arg(long, help = "Chain ID for --nonce")]
     chain_id: Option<u64>,
     #[arg(long, help = "JSON request body")]
     body: Option<String>,
@@ -1694,51 +1422,15 @@ struct ProtocolManagerArgs {
         help = "Path to JSON body, or - for stdin"
     )]
     body_file: Option<PathBuf>,
-    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
-    body_template: bool,
-}
-
-#[derive(clap::Args, Debug)]
-#[command(group(
-    ArgGroup::new("transfers_action")
-        .args(["pending", "transfer_id", "reject"])
-        .multiple(false)
-))]
-struct TransfersArgs {
-    #[arg(long, alias = "transfer_id", help = "Transfer ID")]
-    transfer_id: Option<String>,
-    #[arg(long, help = "List pending transfers")]
-    pending: bool,
-    #[arg(long, help = "Reject an incoming transfer")]
-    reject: bool,
-    #[arg(long, help = "JSON request body")]
-    body: Option<String>,
-    #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
-    field: Vec<String>,
-    #[arg(
-        long = "body-file",
-        conflicts_with = "body",
-        help = "Path to JSON body, or - for stdin"
-    )]
-    body_file: Option<PathBuf>,
-    #[arg(long, alias = "body_template", help = "Print a JSON body template")]
+    #[arg(long, help = "Print a JSON body template")]
     body_template: bool,
 }
 
 #[derive(clap::Args, Debug)]
 struct EventsArgs {
-    #[arg(
-        long,
-        visible_alias = "project-id",
-        alias = "project_id",
-        help = "Project UUID or slug"
-    )]
+    #[arg(long, visible_alias = "project-id", help = "Project UUID or slug")]
     project: Option<String>,
-    #[arg(
-        long,
-        alias = "audit_log",
-        help = "Return audit log instead of project events"
-    )]
+    #[arg(long, help = "Return audit log instead of project events")]
     audit_log: bool,
     #[arg(long, help = "Page number")]
     page: Option<u64>,
@@ -1753,7 +1445,7 @@ top_level_workflow_command!(
     IncidentsArgs,
     Incidents,
     "List, inspect, export, and retry incidents",
-    "Examples:\n  pcl incidents --limit 5\n  pcl incidents --project-id <project-id> --environment production\n  pcl incidents --project-id <project-id> --all --limit 50 --output incidents.json\n  pcl incidents --incident-id <incident-id>\n  pcl incidents --incident-id <incident-id> --tx-id <tx-id>\n  pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace\n\nCompatibility alias:\n  pcl api incidents ..."
+    "Examples:\n  pcl incidents --limit 5\n  pcl incidents --project-id <project-id> --environment production\n  pcl incidents --project-id <project-id> --all --limit 50 --output incidents.json\n  pcl incidents --incident-id <incident-id>\n  pcl incidents --incident-id <incident-id> --tx-id <tx-id>\n  pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace"
 );
 
 top_level_workflow_command!(
@@ -1761,7 +1453,7 @@ top_level_workflow_command!(
     AssertionsArgs,
     Assertions,
     "List, inspect, and manage assertions",
-    "Examples:\n  pcl assertions --project-id <project-ref>\n  pcl assertions --adopter-address 0x... --network 1\n  pcl assertions --project-id <project-ref> --registered\n  pcl assertions --project-id <project-ref> --remove-info\n\nCompatibility alias:\n  pcl api assertions ..."
+    "Examples:\n  pcl assertions --project-id <project-ref>\n  pcl assertions --adopter-address 0x... --network 1\n  pcl assertions --project-id <project-ref> --registered\n  pcl assertions --project-id <project-ref> --remove-info"
 );
 
 top_level_workflow_command!(
@@ -1769,7 +1461,7 @@ top_level_workflow_command!(
     SearchArgs,
     Search,
     "Search and inspect platform-wide metadata",
-    "Examples:\n  pcl search --query settler\n  pcl search --stats\n  pcl search --system-status\n  pcl search --verified-contract --address 0x... --chain-id 1\n\nCompatibility alias:\n  pcl api search ..."
+    "Examples:\n  pcl search --query settler\n  pcl search --stats\n  pcl search --health\n  pcl search --verified-contract --address 0x... --chain-id 1"
 );
 
 top_level_workflow_command!(
@@ -1777,7 +1469,7 @@ top_level_workflow_command!(
     AccountArgs,
     Account,
     "Inspect and manage current account onboarding state",
-    "Examples:\n  pcl account\n  pcl account --accept-terms\n  pcl account --logout\n\nCompatibility alias:\n  pcl api account ..."
+    "Examples:\n  pcl account\n  pcl account --accept-terms\n  pcl account --logout"
 );
 
 top_level_workflow_command!(
@@ -1785,7 +1477,7 @@ top_level_workflow_command!(
     ContractsArgs,
     Contracts,
     "List or manage project contracts and assertion adopters",
-    "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl contracts --unassigned --manager <manager-address>\n  pcl contracts --create --body-template\n\nCompatibility alias:\n  pcl api contracts ..."
+    "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl contracts --unassigned --manager <manager-address>\n  pcl contracts --assign-project --body-template"
 );
 
 top_level_workflow_command!(
@@ -1793,7 +1485,7 @@ top_level_workflow_command!(
     DeploymentsArgs,
     Deployments,
     "Inspect deployments and confirm deployed assertions",
-    "Examples:\n  pcl deployments --project <project-ref>\n  pcl deployments --project <project-ref> --confirm --body-template\n\nCompatibility alias:\n  pcl api deployments ..."
+    "Examples:\n  pcl deployments --project <project-ref>\n  pcl deployments --project <project-ref> --confirm --body-template"
 );
 
 top_level_workflow_command!(
@@ -1801,7 +1493,7 @@ top_level_workflow_command!(
     IntegrationsArgs,
     Integrations,
     "Manage Slack and PagerDuty integrations",
-    "Examples:\n  pcl integrations --project <project-ref> --provider slack\n  pcl integrations --project <project-ref> --provider pagerduty --configure --body-template\n  pcl integrations --project <project-ref> --provider slack --test\n\nCompatibility alias:\n  pcl api integrations ..."
+    "Examples:\n  pcl integrations --project <project-ref> --provider slack\n  pcl integrations --project <project-ref> --provider pagerduty --configure --body-template\n  pcl integrations --project <project-ref> --provider slack --test"
 );
 
 top_level_workflow_command!(
@@ -1809,15 +1501,7 @@ top_level_workflow_command!(
     ProtocolManagerArgs,
     ProtocolManager,
     "Manage project protocol manager settings",
-    "Examples:\n  pcl protocol-manager --project <project-ref> --nonce --address <manager-address>\n  pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...\n  pcl protocol-manager --project <project-ref> --set --body-template\n\nCompatibility alias:\n  pcl api protocol-manager ..."
-);
-
-top_level_workflow_command!(
-    TransfersCommand,
-    TransfersArgs,
-    Transfers,
-    "Inspect or reject protocol manager transfers",
-    "Examples:\n  pcl transfers --pending\n  pcl transfers --transfer-id <transfer-id>\n  pcl transfers --reject --body-template\n\nCompatibility alias:\n  pcl api transfers ..."
+    "Examples:\n  pcl protocol-manager --project <project-ref> --nonce --address <manager-address>\n  pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...\n  pcl protocol-manager --project <project-ref> --set --body-template"
 );
 
 top_level_workflow_command!(
@@ -1825,7 +1509,7 @@ top_level_workflow_command!(
     EventsArgs,
     Events,
     "Inspect project events and audit logs",
-    "Examples:\n  pcl events --project <project-ref>\n  pcl events --project <project-ref> --audit-log\n\nCompatibility alias:\n  pcl api events ..."
+    "Examples:\n  pcl events --project <project-ref>\n  pcl events --project <project-ref> --audit-log"
 );
 
 #[cfg(test)]

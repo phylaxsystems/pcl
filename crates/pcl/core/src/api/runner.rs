@@ -14,8 +14,8 @@ use super::{
     RawPaginationOptions,
     ReleasesArgs,
     SearchArgs,
-    TransfersArgs,
     WorkflowCallResult,
+    WorkflowCommand,
     WorkflowOperation,
     WorkflowPaginationOptions,
     WorkflowRequest,
@@ -48,7 +48,6 @@ use super::{
     parse_key_values,
     print_output,
     project_body_template,
-    project_segment,
     projects_next_actions,
     projects_request,
     protocol_manager_body_template,
@@ -67,9 +66,6 @@ use super::{
     search_request,
     split_path_and_inline_query,
     template_envelope,
-    transfer_body_template,
-    transfers_next_actions,
-    transfers_request,
     upsert_query,
     workflow_data_for_output_mode,
     workflow_success_envelope,
@@ -99,6 +95,18 @@ use serde_json::{
     json,
 };
 use std::path::Path;
+
+fn generated_error_request_id<E>(error: &GeneratedError<E>) -> Option<String> {
+    match error {
+        GeneratedError::ErrorResponse(response) => request_id_from_headers(response.headers()),
+        GeneratedError::UnexpectedResponse(response) => request_id_from_headers(response.headers()),
+        _ => None,
+    }
+}
+
+fn is_project_path_param(name: &str) -> bool {
+    matches!(name, "project_id" | "projectId")
+}
 
 async fn generated_error_to_api_error<E>(
     method: &'static str,
@@ -167,43 +175,44 @@ fn print_api_value(output: Value, json_output: bool) -> Result<(), ApiCommandErr
 }
 
 impl ApiArgs {
-    pub async fn run(
+    pub(in crate::api) async fn run_workflow_command(
         &self,
+        command: &WorkflowCommand,
         config: &mut CliConfig,
         cli_args: &CliArgs,
         json_output: bool,
     ) -> Result<(), ApiCommandError> {
         let request_log_path = crate::request_log::request_log_path_for_args(cli_args);
-        match &self.command {
-            ApiCommand::Incidents(args) => {
+        match command {
+            WorkflowCommand::Incidents(args) => {
                 print_api_value(
                     self.run_incidents(config, cli_args, args, &request_log_path)
                         .await?,
                     json_output,
                 )?;
             }
-            ApiCommand::Projects(args) => {
+            WorkflowCommand::Projects(args) => {
                 print_api_value(
                     self.run_projects(config, cli_args, args, &request_log_path)
                         .await?,
                     json_output,
                 )?;
             }
-            ApiCommand::Assertions(args) => {
+            WorkflowCommand::Assertions(args) => {
                 print_api_value(
                     self.run_assertions(config, cli_args, args, &request_log_path)
                         .await?,
                     json_output,
                 )?;
             }
-            ApiCommand::Search(args) => {
+            WorkflowCommand::Search(args) => {
                 print_api_value(
                     self.run_search(config, cli_args, args, &request_log_path)
                         .await?,
                     json_output,
                 )?;
             }
-            ApiCommand::Account(args) => {
+            WorkflowCommand::Account(args) => {
                 if args.body_template {
                     return print_api_value(
                         template_envelope(body_template("empty_object")),
@@ -222,7 +231,7 @@ impl ApiArgs {
                     json_output,
                 )?;
             }
-            ApiCommand::Contracts(args) => {
+            WorkflowCommand::Contracts(args) => {
                 if args.body_template {
                     return print_api_value(
                         template_envelope(contracts_body_template(args)),
@@ -235,7 +244,7 @@ impl ApiArgs {
                     json_output,
                 )?;
             }
-            ApiCommand::Releases(args) => {
+            WorkflowCommand::Releases(args) => {
                 if args.body_template {
                     return print_api_value(
                         template_envelope(release_body_template(args)),
@@ -248,7 +257,7 @@ impl ApiArgs {
                     json_output,
                 )?;
             }
-            ApiCommand::Deployments(args) => {
+            WorkflowCommand::Deployments(args) => {
                 if args.body_template {
                     return print_api_value(
                         template_envelope(deployment_body_template(args)),
@@ -261,7 +270,7 @@ impl ApiArgs {
                     json_output,
                 )?;
             }
-            ApiCommand::Access(args) => {
+            WorkflowCommand::Access(args) => {
                 if args.body_template {
                     return print_api_value(
                         template_envelope(access_body_template(args)),
@@ -280,7 +289,7 @@ impl ApiArgs {
                     json_output,
                 )?;
             }
-            ApiCommand::Integrations(args) => {
+            WorkflowCommand::Integrations(args) => {
                 if args.body_template {
                     return print_api_value(
                         template_envelope(integration_body_template(args)),
@@ -299,7 +308,7 @@ impl ApiArgs {
                     json_output,
                 )?;
             }
-            ApiCommand::ProtocolManager(args) => {
+            WorkflowCommand::ProtocolManager(args) => {
                 if args.body_template {
                     return print_api_value(
                         template_envelope(protocol_manager_body_template(args)),
@@ -312,20 +321,7 @@ impl ApiArgs {
                     json_output,
                 )?;
             }
-            ApiCommand::Transfers(args) => {
-                if args.body_template {
-                    return print_api_value(
-                        template_envelope(transfer_body_template(args)),
-                        json_output,
-                    );
-                }
-                print_api_value(
-                    self.run_transfers(config, cli_args, args, &request_log_path)
-                        .await?,
-                    json_output,
-                )?;
-            }
-            ApiCommand::Events(args) => {
+            WorkflowCommand::Events(args) => {
                 print_api_value(
                     self.run_workflow(
                         config,
@@ -338,6 +334,18 @@ impl ApiArgs {
                     json_output,
                 )?;
             }
+        }
+        Ok(())
+    }
+
+    pub async fn run(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        json_output: bool,
+    ) -> Result<(), ApiCommandError> {
+        let request_log_path = crate::request_log::request_log_path_for_args(cli_args);
+        match &self.command {
             ApiCommand::Manifest => print_api_value(ok_envelope(api_manifest()), json_output)?,
             ApiCommand::List { filter, method } => {
                 let spec = self.fetch_openapi(config).await?;
@@ -391,47 +399,30 @@ impl ApiArgs {
                     json_output,
                 )?;
             }
-            ApiCommand::Call {
-                method,
-                path,
-                query,
-                header,
-                body,
-                body_file,
-                field,
-                paginate,
-                all: _,
-                page,
-                limit,
-                page_param,
-                limit_param,
-                max_pages,
-                jsonl,
-                output,
-            } => {
-                if *jsonl && output.is_none() {
+            ApiCommand::Call(args) => {
+                if args.jsonl && args.output.is_none() {
                     return Err(ApiCommandError::InvalidWorkflow {
                         message: "--jsonl requires --output".to_string(),
                     });
                 }
                 let input = ApiRequestInput {
-                    method: *method,
-                    path,
-                    query,
-                    header,
-                    body: body.as_deref(),
-                    body_file: body_file.as_ref(),
-                    field,
-                    require_auth: self.raw_call_requires_auth(*method, path)?,
+                    method: args.method,
+                    path: &args.path,
+                    query: &args.query,
+                    header: &args.header,
+                    body: args.body.as_deref(),
+                    body_file: args.body_file.as_ref(),
+                    field: &args.field,
+                    require_auth: self.raw_call_requires_auth(args.method, &args.path)?,
                 };
-                let pagination = paginate.as_ref().map(|item_field| {
+                let pagination = args.paginate.as_ref().map(|item_field| {
                     RawPaginationOptions {
                         item_field,
-                        start_page: page.unwrap_or(1),
-                        limit: limit.unwrap_or(50),
-                        page_param: page_param.as_deref().unwrap_or("page"),
-                        limit_param: limit_param.as_deref().unwrap_or("limit"),
-                        max_pages: max_pages.unwrap_or(100),
+                        start_page: args.page.unwrap_or(1),
+                        limit: args.limit.unwrap_or(50),
+                        page_param: args.page_param.as_deref().unwrap_or("page"),
+                        limit_param: args.limit_param.as_deref().unwrap_or("limit"),
+                        max_pages: args.max_pages.unwrap_or(100),
                     }
                 });
                 let (mut response, next_actions) = if let Some(pagination) = pagination {
@@ -459,8 +450,8 @@ impl ApiArgs {
                         ],
                     )
                 };
-                if let Some(path) = output {
-                    if *jsonl {
+                if let Some(path) = &args.output {
+                    if args.jsonl {
                         write_jsonl_items_output_file(path, &response)?;
                     } else {
                         let body = response.pointer("/response/body").unwrap_or(&response);
@@ -787,25 +778,6 @@ impl ApiArgs {
         .await
     }
 
-    pub(in crate::api) async fn run_transfers(
-        &self,
-        config: &mut CliConfig,
-        cli_args: &CliArgs,
-        args: &TransfersArgs,
-        request_log_path: &Path,
-    ) -> Result<Value, ApiCommandError> {
-        let request = transfers_request(args)?;
-        self.run_prepared_workflow(
-            config,
-            cli_args,
-            "transfers",
-            request,
-            request_log_path,
-            |data, fallback| transfers_next_actions(data, args, fallback),
-        )
-        .await
-    }
-
     pub(in crate::api) async fn run_protocol_manager(
         &self,
         config: &mut CliConfig,
@@ -1073,21 +1045,22 @@ impl ApiArgs {
         self.ensure_request_auth(config, cli_args, request.require_auth)
             .await?;
         let attach_auth = self.workflow_attach_auth(request, config);
-        let path = self
-            .normalize_project_path(
+        let resolved_request = self
+            .resolve_workflow_path_params(
                 config,
-                &request.path,
+                request,
                 attach_auth,
                 requires_auth,
                 request_log_path,
             )
             .await?;
+        let path = resolved_request.path.clone();
         let url = self.api_url(&path)?;
         let json_body = if let Some(body) = &request.body {
             Some(
                 self.normalize_request_body(
                     config,
-                    &path,
+                    request.operation_id,
                     body,
                     attach_auth,
                     requires_auth,
@@ -1099,7 +1072,7 @@ impl ApiArgs {
             None
         };
         let mut response = read_api_response(
-            self.send_workflow_request(config, request, &url, json_body.as_ref())
+            self.send_workflow_request(config, &resolved_request, &url, json_body.as_ref())
                 .await?,
         )
         .await?;
@@ -1118,7 +1091,7 @@ impl ApiArgs {
             && self.try_refresh_after_401(config, cli_args).await?
         {
             response = read_api_response(
-                self.send_workflow_request(config, request, &url, json_body.as_ref())
+                self.send_workflow_request(config, &resolved_request, &url, json_body.as_ref())
                     .await?,
             )
             .await?;
@@ -1238,14 +1211,14 @@ impl ApiArgs {
     pub(in crate::api) async fn normalize_request_body(
         &self,
         config: &CliConfig,
-        path: &str,
+        operation_id: &str,
         body: &str,
         attach_auth: bool,
         require_auth: bool,
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         let mut json_body: Value = serde_json::from_str(body)?;
-        if path == "/projects/saved"
+        if operation_id == "post_projects_saved"
             && let Some(project_ref) = json_body.get("project_id").and_then(Value::as_str)
             && project_ref.parse::<uuid::Uuid>().is_err()
         {
@@ -1265,30 +1238,39 @@ impl ApiArgs {
         Ok(json_body)
     }
 
-    pub(in crate::api) async fn normalize_project_path(
+    pub(in crate::api) async fn resolve_workflow_path_params(
         &self,
         config: &CliConfig,
-        path: &str,
+        request: &WorkflowRequest,
         attach_auth: bool,
         require_auth: bool,
         request_log_path: &Path,
-    ) -> Result<String, ApiCommandError> {
-        let Some((prefix, project_ref, suffix)) = project_segment(path) else {
-            return Ok(path.to_string());
-        };
-        if project_ref.parse::<uuid::Uuid>().is_ok() {
-            return Ok(path.to_string());
+    ) -> Result<WorkflowRequest, ApiCommandError> {
+        let mut resolved = request.clone();
+        let project_params = request
+            .operation
+            .path_params()
+            .filter(|(name, value)| {
+                is_project_path_param(name) && value.parse::<uuid::Uuid>().is_err()
+            })
+            .map(|(name, value)| (name, value.to_string()))
+            .collect::<Vec<_>>();
+
+        for (name, project_ref) in project_params {
+            let project_id = self
+                .resolve_project_id(
+                    config,
+                    &project_ref,
+                    attach_auth,
+                    require_auth,
+                    request_log_path,
+                )
+                .await?;
+            resolved.operation.replace_path_param(name, project_id);
         }
-        let project_id = self
-            .resolve_project_id(
-                config,
-                project_ref,
-                attach_auth,
-                require_auth,
-                request_log_path,
-            )
-            .await?;
-        Ok(format!("{prefix}{project_id}{suffix}"))
+
+        resolved.path = resolved.operation.path()?;
+        Ok(resolved)
     }
 
     pub(in crate::api) async fn resolve_project_id(
@@ -1302,40 +1284,45 @@ impl ApiArgs {
         let operation = WorkflowOperation::new(HttpMethod::Get, "get_projects_resolve_project_ref")
             .path_param("project_ref", project_ref);
         let path = operation.path()?;
-        // Project resolution accepts slugs and must preserve 404 request IDs. The
-        // generated method currently loses that metadata for the shared error schema.
-        let url = self.api_url(&path)?;
-        let client = self.http_client(config, attach_auth, require_auth)?;
-        let response = read_api_response(client.get(url).send().await?).await?;
-        write_request_log(
-            request_log_path,
-            "workflow_project_resolution",
-            "GET",
-            &path,
-            response.status.as_u16(),
-            response.request_id.as_deref(),
-            Some(operation.operation_id),
-        );
-        if !response.status.is_success() {
-            return Err(ApiCommandError::HttpStatus {
-                method: "GET",
-                path,
-                status: response.status.as_u16(),
-                request_id: response.request_id,
-                body: Box::new(response.body),
-            });
-        }
-        let body = response.body;
-        body.get("project_id")
-            .or_else(|| body.get("projectId"))
-            .or_else(|| body.get("id"))
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
-            .ok_or_else(|| {
-                ApiCommandError::InvalidWorkflow {
-                    message: format!("Could not resolve project reference `{project_ref}`"),
+        let client = self.generated_client(config, attach_auth, require_auth)?;
+        match client.get_projects_resolve_project_ref(project_ref).await {
+            Ok(response) => {
+                let request_id = request_id_from_headers(response.headers());
+                write_request_log(
+                    request_log_path,
+                    "workflow_project_resolution",
+                    "GET",
+                    &path,
+                    response.status().as_u16(),
+                    request_id.as_deref(),
+                    Some(operation.operation_id),
+                );
+                let project_id = response.into_inner().project_id;
+                if project_id.is_empty() {
+                    Err(ApiCommandError::InvalidWorkflow {
+                        message: format!("Could not resolve project reference `{project_ref}`"),
+                    })
+                } else {
+                    Ok(project_id)
                 }
-            })
+            }
+            Err(error) => {
+                let status = error.status().map(|status| status.as_u16());
+                let request_id = generated_error_request_id(&error);
+                if let Some(status) = status {
+                    write_request_log(
+                        request_log_path,
+                        "workflow_project_resolution",
+                        "GET",
+                        &path,
+                        status,
+                        request_id.as_deref(),
+                        Some(operation.operation_id),
+                    );
+                }
+                Err(generated_error_to_api_error("GET", &path, error).await)
+            }
+        }
     }
 
     pub(in crate::api) async fn ensure_request_auth(

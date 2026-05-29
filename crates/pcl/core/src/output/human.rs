@@ -2046,7 +2046,6 @@ fn human_action_str(value: &str) -> String {
 
 fn humanize_command(command: &str) -> String {
     command
-        .replace(" --format toon", "")
         .replace(" --toon", "")
         .replace(" --json", "")
         .replace("--toon ", "")
@@ -2082,7 +2081,6 @@ fn is_body_template_key(key: &str) -> bool {
             | "environment"
             | "mode"
             | "new_manager_address"
-            | "ponder_transfer_id"
             | "reason"
             | "notify"
     )

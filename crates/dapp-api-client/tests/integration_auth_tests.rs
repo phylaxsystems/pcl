@@ -64,14 +64,10 @@ async fn test_public_endpoint_without_auth_real_api() {
 async fn test_private_endpoint_without_auth_real_api() {
     let server = try_start_mock_server();
 
-    let test_uuid = uuid::Uuid::parse_str("c1e794ce-4030-487c-a4e6-917caeeb4875").unwrap();
-
     // Mock the private endpoint returning empty array for unauthenticated requests
     // (mimics real API behavior)
     let mock = setup_mock(&server, |when, then| {
-        when.method(GET)
-            .path("/api/v1/projects/saved")
-            .query_param("user_id", "c1e794ce-4030-487c-a4e6-917caeeb4875");
+        when.method(GET).path("/api/v1/projects/saved");
         then.status(200)
             .header("content-type", "application/json")
             .json_body(json!([])); // Empty array for unauthenticated requests
@@ -83,7 +79,7 @@ async fn test_private_endpoint_without_auth_real_api() {
 
     // Try to call a private endpoint without auth
     let api = client.inner();
-    let result = api.get_projects_saved(&test_uuid).await;
+    let result = api.get_projects_saved(None).await;
 
     // The API returns an empty array for unauthenticated requests
     // rather than a 401/403 error - this is valid API design
@@ -107,12 +103,9 @@ async fn test_private_endpoint_with_auth_real_api() {
     let server = try_start_mock_server();
 
     // Mock the private endpoint with valid auth returning data
-    let test_uuid = uuid::Uuid::parse_str("c1e794ce-4030-487c-a4e6-917caeeb4875").unwrap();
-
     let mock = setup_mock(&server, |when, then| {
         when.method(GET)
             .path("/api/v1/projects/saved")
-            .query_param("user_id", "c1e794ce-4030-487c-a4e6-917caeeb4875")
             .header("authorization", "Bearer test-token");
         then.status(200)
             .header("content-type", "application/json")
@@ -139,7 +132,7 @@ async fn test_private_endpoint_with_auth_real_api() {
 
     // Call private endpoint with auth
     let api = client.inner();
-    let result = api.get_projects_saved(&test_uuid).await;
+    let result = api.get_projects_saved(None).await;
 
     // Should succeed with valid auth
     assert!(

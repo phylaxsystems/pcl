@@ -9,6 +9,7 @@ use crate::{
     api::{
         api_manifest,
         envelope_output_string,
+        generated_operation_path,
         request_id_from_headers,
         response_body_value,
         with_envelope_metadata,
@@ -27,6 +28,11 @@ use chrono::Utc;
 use dapp_api_client::generated::client::{
     Client as GeneratedClient,
     Error as GeneratedError,
+    ResponseValue,
+    types::{
+        ApiError as GeneratedApiErrorBody,
+        GetViewsProjectsProjectIdIncidentsEnvironment,
+    },
 };
 use pcl_common::args::{
     CliArgs,
@@ -56,6 +62,7 @@ use std::{
         BufWriter,
         Write,
     },
+    num::NonZeroU64,
     path::{
         Path,
         PathBuf,
@@ -65,6 +72,7 @@ use tokio::time::{
     Duration,
     sleep,
 };
+use uuid::Uuid;
 
 const ARTIFACT_DIR_ENV: &str = "PCL_ARTIFACT_DIR";
 const JOBS_FILE_ENV: &str = "PCL_JOBS_FILE";
@@ -83,6 +91,14 @@ enum ExportPageError {
         attempts: u64,
         #[source]
         source: reqwest::Error,
+    },
+    #[error("Generated API response failed after {attempts} attempts: {message}")]
+    Generated { attempts: u64, message: String },
+    #[error("Failed to serialize generated response after {attempts} attempts: {source}")]
+    Serialization {
+        attempts: u64,
+        #[source]
+        source: serde_json::Error,
     },
 }
 
@@ -513,7 +529,6 @@ impl DoctorArgs {
                     "default_output": "human",
                     "toon_output_flag": "--toon",
                     "json_output_flag": "--json",
-                    "legacy_format_flag": "--format toon|json",
                     "api_url": self.api_url.as_str(),
                 },
                 "next_actions": next_actions,
@@ -898,6 +913,14 @@ async fn export_incidents(
             "Checkpoint page must be greater than zero".to_string(),
         ));
     }
+    let limit = NonZeroU64::new(args.limit).ok_or_else(|| {
+        ProductSurfaceError::InvalidInput("Export limit must be greater than zero".to_string())
+    })?;
+    if args.project_id.is_none() && args.environment.is_some() {
+        return Err(ProductSurfaceError::InvalidInput(
+            "--environment requires --project-id for incident exports".to_string(),
+        ));
+    }
     let mut out_file = BufWriter::new(
         fs::OpenOptions::new()
             .create(true)
@@ -923,13 +946,26 @@ async fn export_incidents(
             })?,
     );
 
-    let client = reqwest::Client::builder()
+    let http_client = reqwest::Client::builder()
         .default_headers(default_headers(
             config,
             args.project_id.is_some(),
             args.allow_unauthenticated,
         )?)
         .build()?;
+    let client = generated_client_with_http_client(&args.api_url, http_client);
+    let project_id = match args.project_id.as_deref() {
+        Some(project_ref) => Some(resolve_export_project_id(&client, project_ref).await?),
+        None => None,
+    };
+    let environment = args
+        .environment
+        .as_deref()
+        .map(GetViewsProjectsProjectIdIncidentsEnvironment::try_from)
+        .transpose()
+        .map_err(|error| {
+            ProductSurfaceError::InvalidInput(format!("Invalid export environment: {error}"))
+        })?;
     let mut pages_fetched = 0_u64;
     let mut incidents_written = 0_u64;
     let mut errors_written = 0_u64;
@@ -949,21 +985,22 @@ async fn export_incidents(
     )?;
 
     for offset in 0..args.max_pages {
-        let page = start_page + offset;
-        let path = args.project_id.as_ref().map_or_else(
-            || "/views/public/incidents".to_string(),
-            |project_id| format!("/views/projects/{project_id}/incidents"),
-        );
-        let url = build_api_url(&args.api_url, &path)?;
-        let mut query = vec![
-            ("page".to_string(), page.to_string()),
-            ("limit".to_string(), args.limit.to_string()),
-        ];
-        if let Some(environment) = &args.environment {
-            query.push(("environment".to_string(), environment.clone()));
-        }
+        let page_value = start_page + offset;
+        let page = NonZeroU64::new(page_value).ok_or_else(|| {
+            ProductSurfaceError::InvalidInput("Export page must be greater than zero".to_string())
+        })?;
+        let path = export_incidents_operation_path(project_id.as_ref());
 
-        let response = match fetch_export_page(&client, url, &query, args.max_retries).await {
+        let response = match fetch_export_page(
+            &client,
+            project_id.as_ref(),
+            environment,
+            page,
+            limit,
+            args.max_retries,
+        )
+        .await
+        {
             Ok(response) => response,
             Err(ExportPageError::Request { attempts, source }) => {
                 retries_attempted += attempts.saturating_sub(1);
@@ -974,7 +1011,7 @@ async fn export_incidents(
                 write_jsonl(
                     &mut error_file,
                     &json!({
-                        "page": page,
+                        "page": page_value,
                         "path": path.clone(),
                         "status": null,
                         "request_id": null,
@@ -1009,10 +1046,57 @@ async fn export_incidents(
                 )?;
                 return Err(ProductSurfaceError::ExportRequest {
                     path,
-                    page,
+                    page: page.get(),
                     attempts,
                     source,
                 });
+            }
+            Err(ExportPageError::Generated { attempts, message }) => {
+                retries_attempted += attempts.saturating_sub(1);
+                errors_written += 1;
+                if log_request(cli_args, "export", "GET", &path, 0, None) {
+                    log_warnings += 1;
+                }
+                write_jsonl(
+                    &mut error_file,
+                    &json!({
+                        "page": page.get(),
+                        "path": path.clone(),
+                        "status": null,
+                        "request_id": null,
+                        "attempts": attempts,
+                        "error": {
+                            "code": "api.invalid_generated_response",
+                            "message": message,
+                        },
+                    }),
+                )?;
+                flush_jsonl_writer(&mut error_file, &errors)?;
+                append_job_record(
+                    cli_args,
+                    &with_job_stats(
+                        job_record(
+                            &job_id,
+                            "incident_export",
+                            "failed",
+                            &resume_command,
+                            &out,
+                            &errors,
+                            &checkpoint,
+                        ),
+                        incident_export_stats(
+                            pages_fetched,
+                            incidents_written,
+                            errors_written,
+                            retries_attempted,
+                            log_warnings,
+                        ),
+                    ),
+                )?;
+                return Err(ProductSurfaceError::InvalidInput(message));
+            }
+            Err(ExportPageError::Serialization { source, .. }) => {
+                return Err(ProductSurfaceError::Json(source));
             }
         };
         let status = response.status;
@@ -1035,7 +1119,7 @@ async fn export_incidents(
             write_jsonl(
                 &mut error_file,
                 &json!({
-                    "page": page,
+                    "page": page_value,
                     "path": path,
                     "status": status.as_u16(),
                     "request_id": request_id,
@@ -1086,7 +1170,7 @@ async fn export_incidents(
         }
         pages_fetched += 1;
         flush_jsonl_writer(&mut out_file, &out)?;
-        write_checkpoint(&checkpoint, page + 1, incidents_written)?;
+        write_checkpoint(&checkpoint, page_value + 1, incidents_written)?;
         if page_count < usize::try_from(args.limit).unwrap_or(usize::MAX) {
             break;
         }
@@ -1408,7 +1492,6 @@ fn llms_guide() -> Value {
         "default_output": "human",
         "toon_flag": "--toon",
         "json_flag": "--json",
-        "legacy_format_flag": "--format toon|json",
         "output_modes": {
             "default": "Human-readable output optimized for people using the CLI directly.",
             "toon": "Use --toon for compact machine-readable envelopes; preferred for agent context efficiency.",
@@ -1459,7 +1542,7 @@ fn llms_guide() -> Value {
             }
         ],
         "command_surfaces": {
-            "workflows": ["pcl incidents", "pcl projects", "pcl assertions", "pcl account", "pcl contracts", "pcl releases", "pcl deployments", "pcl access", "pcl integrations", "pcl protocol-manager", "pcl transfers", "pcl events", "pcl search"],
+            "workflows": ["pcl incidents", "pcl projects", "pcl assertions", "pcl account", "pcl contracts", "pcl releases", "pcl deployments", "pcl access", "pcl integrations", "pcl protocol-manager", "pcl events", "pcl search"],
             "discovery": ["pcl --toon --llms", "pcl llms --toon", "pcl workflows --toon", "pcl schema --toon", "pcl api manifest --toon", "pcl api list --toon", "pcl api inspect --toon"],
             "execution": ["pcl api call", "pcl export incidents"],
             "state": ["pcl artifacts", "pcl requests", "pcl jobs"],
@@ -1639,9 +1722,21 @@ fn auth_value(auth: Option<&UserAuth>) -> Value {
 }
 
 fn generated_client(api_url: &url::Url) -> GeneratedClient {
+    GeneratedClient::new(&generated_client_base_url(api_url))
+}
+
+fn generated_client_with_http_client(
+    api_url: &url::Url,
+    http_client: reqwest::Client,
+) -> GeneratedClient {
+    GeneratedClient::new_with_client(&generated_client_base_url(api_url), http_client)
+}
+
+fn generated_client_base_url(api_url: &url::Url) -> String {
     let mut base = api_url.clone();
     base.set_path("/api/v1");
-    GeneratedClient::new(base.as_str())
+    base.set_query(None);
+    base.to_string()
 }
 
 fn generated_error_request_id<E>(error: &GeneratedError<E>) -> Option<String> {
@@ -1650,6 +1745,107 @@ fn generated_error_request_id<E>(error: &GeneratedError<E>) -> Option<String> {
         GeneratedError::UnexpectedResponse(response) => request_id_from_headers(response.headers()),
         _ => None,
     }
+}
+
+async fn generated_product_surface_error<E>(
+    method: &'static str,
+    path: &str,
+    error: GeneratedError<E>,
+) -> ProductSurfaceError
+where
+    E: serde::Serialize + std::fmt::Debug,
+{
+    match error {
+        GeneratedError::ErrorResponse(response) => {
+            let status = response.status().as_u16();
+            let request_id = request_id_from_headers(response.headers());
+            let body = serde_json::to_value(response.as_ref()).unwrap_or_else(|error| {
+                json!({
+                    "error": error.to_string(),
+                    "body": format!("{response:?}"),
+                })
+            });
+            ProductSurfaceError::HttpStatus {
+                method,
+                path: path.to_string(),
+                status,
+                request_id,
+                body: Box::new(body),
+            }
+        }
+        GeneratedError::UnexpectedResponse(response) => {
+            let status = response.status().as_u16();
+            let request_id = request_id_from_headers(response.headers());
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            let body = match response.bytes().await {
+                Ok(bytes) => response_body_value(&content_type, &bytes),
+                Err(error) => {
+                    return ProductSurfaceError::Request(error);
+                }
+            };
+            ProductSurfaceError::HttpStatus {
+                method,
+                path: path.to_string(),
+                status,
+                request_id,
+                body: Box::new(body),
+            }
+        }
+        GeneratedError::CommunicationError(error)
+        | GeneratedError::InvalidUpgrade(error)
+        | GeneratedError::ResponseBodyError(error) => ProductSurfaceError::Request(error),
+        GeneratedError::InvalidResponsePayload(bytes, error) => {
+            ProductSurfaceError::InvalidInput(format!(
+                "Invalid generated API response payload: {error}; body={}",
+                String::from_utf8_lossy(&bytes)
+            ))
+        }
+        GeneratedError::InvalidRequest(message) | GeneratedError::Custom(message) => {
+            ProductSurfaceError::InvalidInput(message)
+        }
+    }
+}
+
+async fn resolve_export_project_id(
+    client: &GeneratedClient,
+    project_ref: &str,
+) -> Result<Uuid, ProductSurfaceError> {
+    if let Ok(project_id) = Uuid::parse_str(project_ref) {
+        return Ok(project_id);
+    }
+    let path = generated_operation_path(
+        "get_projects_resolve_project_ref",
+        &[("project_ref", project_ref)],
+    )
+    .unwrap_or_else(|| "get_projects_resolve_project_ref".to_string());
+    let response = match client.get_projects_resolve_project_ref(project_ref).await {
+        Ok(response) => response.into_inner(),
+        Err(error) => return Err(generated_product_surface_error("GET", &path, error).await),
+    };
+    Uuid::parse_str(&response.project_id).map_err(|error| {
+        ProductSurfaceError::InvalidInput(format!(
+            "Project reference `{project_ref}` resolved to invalid project_id `{}`: {error}",
+            response.project_id
+        ))
+    })
+}
+
+fn export_incidents_operation_path(project_id: Option<&Uuid>) -> String {
+    if let Some(project_id) = project_id {
+        let project_id = project_id.to_string();
+        return generated_operation_path(
+            "get_views_projects_project_id_incidents",
+            &[("projectId", project_id.as_str())],
+        )
+        .unwrap_or_else(|| "get_views_projects_project_id_incidents".to_string());
+    }
+    generated_operation_path("get_views_public_incidents", &[])
+        .unwrap_or_else(|| "get_views_public_incidents".to_string())
 }
 
 async fn health_check(api_url: &url::Url) -> Value {
@@ -1872,59 +2068,136 @@ fn default_headers(
 }
 
 async fn fetch_export_page(
-    client: &reqwest::Client,
-    url: url::Url,
-    query: &[(String, String)],
+    client: &GeneratedClient,
+    project_id: Option<&Uuid>,
+    environment: Option<GetViewsProjectsProjectIdIncidentsEnvironment>,
+    page: NonZeroU64,
+    limit: NonZeroU64,
     max_retries: u64,
 ) -> Result<ExportPageResponse, ExportPageError> {
-    // Export retries need raw status and body metadata from non-2xx pages. The
-    // generated incident list methods currently erase those when the API returns
-    // the shared error schema.
     let max_attempts = max_retries.saturating_add(1);
     for attempt in 1..=max_attempts {
-        let result = client.get(url.clone()).query(query).send().await;
-        match result {
+        let response = if let Some(project_id) = project_id {
+            generated_export_page_response(
+                client
+                    .get_views_projects_project_id_incidents(
+                        project_id,
+                        None,
+                        None,
+                        environment,
+                        None,
+                        Some(limit),
+                        Some(page),
+                        None,
+                    )
+                    .await,
+                attempt,
+            )
+            .await
+        } else {
+            generated_export_page_response(
+                client
+                    .get_views_public_incidents(None, Some(limit), None, Some(page), None)
+                    .await,
+                attempt,
+            )
+            .await
+        };
+        match response {
             Ok(response) => {
-                let status = response.status();
-                let request_id = request_id_from_headers(response.headers());
-                let content_type = response
-                    .headers()
-                    .get(reqwest::header::CONTENT_TYPE)
-                    .and_then(|value| value.to_str().ok())
-                    .unwrap_or_default()
-                    .to_string();
-                let bytes = response.bytes().await.map_err(|source| {
-                    ExportPageError::Request {
-                        attempts: attempt,
-                        source,
-                    }
-                })?;
-                let body = response_body_value(&content_type, &bytes);
-                if status.is_success()
-                    || !should_retry_export_status(status.as_u16())
+                if response.status.is_success()
+                    || !should_retry_export_status(response.status.as_u16())
                     || attempt == max_attempts
                 {
-                    return Ok(ExportPageResponse {
-                        status,
-                        request_id,
-                        body,
-                        attempts: attempt,
-                    });
+                    return Ok(response);
                 }
             }
-            Err(error) => {
-                if attempt == max_attempts || !should_retry_export_error(&error) {
+            Err(ExportPageError::Request { source, .. }) => {
+                if attempt == max_attempts || !should_retry_export_error(&source) {
                     return Err(ExportPageError::Request {
                         attempts: attempt,
-                        source: error,
+                        source,
                     });
                 }
             }
+            Err(error) => return Err(error),
         }
         sleep(export_retry_delay(attempt)).await;
     }
 
     unreachable!("export retry loop must return a response or error")
+}
+
+async fn generated_export_page_response<T>(
+    result: Result<ResponseValue<T>, GeneratedError<GeneratedApiErrorBody>>,
+    attempts: u64,
+) -> Result<ExportPageResponse, ExportPageError>
+where
+    T: serde::Serialize + std::fmt::Debug,
+{
+    match result {
+        Ok(response) => {
+            let status = response.status();
+            let request_id = request_id_from_headers(response.headers());
+            let body = serde_json::to_value(response.as_ref())
+                .map_err(|source| ExportPageError::Serialization { attempts, source })?;
+            Ok(ExportPageResponse {
+                status,
+                request_id,
+                body,
+                attempts,
+            })
+        }
+        Err(GeneratedError::ErrorResponse(response)) => {
+            let status = response.status();
+            let request_id = request_id_from_headers(response.headers());
+            let body = serde_json::to_value(response.as_ref())
+                .map_err(|source| ExportPageError::Serialization { attempts, source })?;
+            Ok(ExportPageResponse {
+                status,
+                request_id,
+                body,
+                attempts,
+            })
+        }
+        Err(GeneratedError::UnexpectedResponse(response)) => {
+            let status = response.status();
+            let request_id = request_id_from_headers(response.headers());
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|source| ExportPageError::Request { attempts, source })?;
+            Ok(ExportPageResponse {
+                status,
+                request_id,
+                body: response_body_value(&content_type, &bytes),
+                attempts,
+            })
+        }
+        Err(
+            GeneratedError::CommunicationError(source)
+            | GeneratedError::InvalidUpgrade(source)
+            | GeneratedError::ResponseBodyError(source),
+        ) => Err(ExportPageError::Request { attempts, source }),
+        Err(GeneratedError::InvalidResponsePayload(bytes, error)) => {
+            Err(ExportPageError::Generated {
+                attempts,
+                message: format!(
+                    "Invalid generated API response payload: {error}; body={}",
+                    String::from_utf8_lossy(&bytes)
+                ),
+            })
+        }
+        Err(GeneratedError::InvalidRequest(message) | GeneratedError::Custom(message)) => {
+            Err(ExportPageError::Generated { attempts, message })
+        }
+    }
 }
 
 fn should_retry_export_status(status: u16) -> bool {
@@ -1940,17 +2213,6 @@ fn export_retry_delay(attempt: u64) -> Duration {
     let shift = u32::try_from(exponent).unwrap_or(5);
     let multiplier = 1_u64.checked_shl(shift).unwrap_or(32);
     Duration::from_millis(250_u64.saturating_mul(multiplier))
-}
-
-fn build_api_url(base: &url::Url, path: &str) -> Result<url::Url, ProductSurfaceError> {
-    if !path.starts_with('/') {
-        return Err(ProductSurfaceError::InvalidInput(format!(
-            "API path `{path}` must start with /"
-        )));
-    }
-    let mut url = base.clone();
-    url.set_path(&format!("/api/v1{path}"));
-    Ok(url)
 }
 
 fn extract_items(body: &Value, field: &str) -> Vec<Value> {
@@ -2067,6 +2329,69 @@ mod tests {
     use pcl_common::args::CliArgs;
     use std::net::TcpListener;
     use tempfile::tempdir;
+
+    fn public_incidents_body(ids: &[&str], page: u64, limit: u64) -> String {
+        json!({
+            "data": {
+                "items": ids.iter().map(|id| json!({
+                    "id": id,
+                    "network": {
+                        "chainId": 1,
+                        "name": "Testnet",
+                    },
+                    "referenceId": format!("ref-{id}"),
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "title": format!("Incident {id}"),
+                })).collect::<Vec<_>>(),
+                "pagination": {
+                    "hasMore": false,
+                    "limit": limit,
+                    "page": page,
+                    "total": ids.len(),
+                },
+            },
+            "_meta": {
+                "fetchedAt": "2026-01-01T00:00:00Z",
+                "sources": ["offchain"],
+            },
+        })
+        .to_string()
+    }
+
+    fn project_incidents_body(ids: &[&str], page: u64, limit: u64) -> String {
+        json!({
+            "data": {
+                "items": ids.iter().map(|id| json!({
+                    "assertionAdopterId": "adopter-1",
+                    "assertionId": "assertion-1",
+                    "assertionTitle": null,
+                    "chainId": 1,
+                    "contractAddress": "0x0000000000000000000000000000000000000001",
+                    "contractName": null,
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "environment": "production",
+                    "incidentId": id,
+                    "tracesCompleted": 0,
+                    "tracesPending": 0,
+                    "transactionCount": 1,
+                    "windowStart": "2026-01-01T00:00:00Z",
+                })).collect::<Vec<_>>(),
+                "pagination": {
+                    "hasNext": false,
+                    "hasPrev": false,
+                    "limit": limit,
+                    "page": page,
+                    "total": ids.len(),
+                    "totalPages": 1,
+                },
+            },
+            "_meta": {
+                "fetchedAt": "2026-01-01T00:00:00Z",
+                "sources": ["offchain"],
+            },
+        })
+        .to_string()
+    }
 
     #[test]
     fn workflows_can_show_one_recipe() {
@@ -2330,7 +2655,7 @@ mod tests {
             .match_query(query.clone())
             .with_status(500)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"message":"temporary"}"#)
+            .with_body(r#"{"error":"temporary"}"#)
             .expect(1)
             .create_async()
             .await;
@@ -2339,7 +2664,7 @@ mod tests {
             .match_query(query)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"incidents":[{"id":"i1"}]}"#)
+            .with_body(public_incidents_body(&["i1"], 1, 50))
             .expect(1)
             .create_async()
             .await;
@@ -2383,6 +2708,7 @@ mod tests {
     #[tokio::test]
     async fn incident_export_refreshes_expired_project_auth_before_request() {
         let mut server = mockito::Server::new_async().await;
+        let project_id = "11111111-1111-4111-8111-111111111111";
         let refresh = server
             .mock("POST", "/api/v1/auth/refresh")
             .match_header("authorization", Matcher::Missing)
@@ -2400,12 +2726,15 @@ mod tests {
             Matcher::UrlEncoded("limit".into(), "50".into()),
         ]);
         let export = server
-            .mock("GET", "/api/v1/views/projects/project-1/incidents")
+            .mock(
+                "GET",
+                format!("/api/v1/views/projects/{project_id}/incidents").as_str(),
+            )
             .match_header("authorization", "Bearer new_access")
             .match_query(query)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"incidents":[{"id":"i1"}]}"#)
+            .with_body(project_incidents_body(&["i1"], 1, 50))
             .expect(1)
             .create_async()
             .await;
@@ -2431,7 +2760,7 @@ mod tests {
         let errors = temp.path().join("errors.jsonl");
         let checkpoint = temp.path().join("checkpoint.json");
         let args = ExportIncidentsArgs {
-            project_id: Some("project-1".to_string()),
+            project_id: Some(project_id.to_string()),
             environment: None,
             page: 1,
             limit: 50,
@@ -2530,7 +2859,7 @@ mod tests {
             .with_status(500)
             .with_header("content-type", "application/json")
             .with_header("x-request-id", "req_export_partial")
-            .with_body(r#"{"message":"temporary"}"#)
+            .with_body(r#"{"error":"temporary"}"#)
             .expect(1)
             .create_async()
             .await;

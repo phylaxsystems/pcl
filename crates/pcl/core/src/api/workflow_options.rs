@@ -2,6 +2,7 @@ use super::{
     ApiArgs,
     ApiCommand,
     ApiCommandError,
+    WorkflowCommand,
 };
 use crate::{
     DEFAULT_PLATFORM_URL,
@@ -32,18 +33,18 @@ pub(in crate::api) struct ApiWorkflowOptions {
 impl ApiWorkflowOptions {
     pub(in crate::api) async fn run(
         self,
-        command: ApiCommand,
+        command: WorkflowCommand,
         config: &mut CliConfig,
         cli_args: &CliArgs,
         json_output: bool,
     ) -> Result<(), ApiCommandError> {
         ApiArgs {
-            command,
+            command: ApiCommand::Manifest,
             api_url: self.api_url,
             allow_unauthenticated: self.allow_unauthenticated,
             refresh_after_401: Cell::new(true),
         }
-        .run(config, cli_args, json_output)
+        .run_workflow_command(&command, config, cli_args, json_output)
         .await
     }
 }

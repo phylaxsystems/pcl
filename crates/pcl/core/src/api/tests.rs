@@ -114,9 +114,7 @@ fn assertions_args(project_id: Option<&str>) -> AssertionsArgs {
         environment: None,
         page: None,
         limit: None,
-        submitted: false,
         registered: false,
-        submit: false,
         remove_info: false,
         remove_calldata: false,
         field: Vec::new(),
@@ -186,7 +184,6 @@ fn contracts_args() -> ContractsArgs {
         environment: None,
         assertion_ids: Vec::new(),
         unassigned: false,
-        create: false,
         assign_project: false,
         remove: false,
         remove_calldata: false,
@@ -263,18 +260,6 @@ fn incidents_args() -> IncidentsArgs {
         max_pages: None,
         output: None,
         jsonl: false,
-    }
-}
-
-fn transfers_args() -> TransfersArgs {
-    TransfersArgs {
-        transfer_id: None,
-        pending: false,
-        reject: false,
-        body: None,
-        field: Vec::new(),
-        body_file: None,
-        body_template: false,
     }
 }
 
@@ -969,17 +954,30 @@ async fn incident_workflow_pagination_rejects_zero_limit() {
 async fn authenticated_project_slug_resolution_attaches_auth() {
     let mut server = mockito::Server::new_async().await;
     let project_id = "550e8400-e29b-41d4-a716-446655440000";
+    let resolve_path = format!(
+        "/api/v1{}",
+        generated_operation_path(
+            "get_projects_resolve_project_ref",
+            &[("project_ref", "private-slug")]
+        )
+        .unwrap()
+    );
+    let detail_path =
+        generated_operation_path("get_projects_project_id", &[("project_id", project_id)]).unwrap();
+    let detail_mock_path = format!("/api/v1{detail_path}");
     let resolve = server
-        .mock("GET", "/api/v1/projects/resolve/private-slug")
+        .mock("GET", resolve_path.as_str())
         .match_header("authorization", "Bearer access-token")
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(format!(r#"{{"project_id":"{project_id}"}}"#))
+        .with_body(format!(
+            r#"{{"project_id":"{project_id}","slug":"private-slug"}}"#
+        ))
         .expect(1)
         .create_async()
         .await;
     let detail = server
-        .mock("GET", format!("/api/v1/projects/{project_id}").as_str())
+        .mock("GET", detail_mock_path.as_str())
         .match_header("authorization", "Bearer access-token")
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -1009,7 +1007,7 @@ async fn authenticated_project_slug_resolution_attaches_auth() {
         .unwrap();
 
     assert_eq!(result.body["slug"], "private-slug");
-    assert_eq!(result.request["path"], format!("/projects/{project_id}"));
+    assert_eq!(result.request["path"], detail_path);
     resolve.assert_async().await;
     detail.assert_async().await;
 }
@@ -1402,7 +1400,7 @@ fn builds_assertion_lifecycle_requests() {
         ..assertions_args(Some("project-1"))
     })
     .unwrap();
-    assert_eq!(registered.path, "/projects/project-1/registered-assertions");
+    assert_eq!(registered.path, "/views/projects/project-1/assertions");
 
     let remove = assertions_request(&AssertionsArgs {
         remove_calldata: true,
@@ -1413,22 +1411,6 @@ fn builds_assertion_lifecycle_requests() {
         remove.path,
         "/projects/project-1/remove-assertions-calldata"
     );
-}
-
-#[test]
-fn submitted_assertion_workflows_are_removed() {
-    let error = assertions_request(&AssertionsArgs {
-        submitted: true,
-        ..assertions_args(Some("project-1"))
-    })
-    .unwrap_err();
-
-    match error {
-        ApiCommandError::InvalidWorkflow { message } => {
-            assert!(message.contains("Submitted assertions have been removed"));
-        }
-        other => panic!("unexpected error: {other:?}"),
-    }
 }
 
 #[test]
@@ -1687,7 +1669,7 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
     );
     assert!(integration.iter().any(|alternative| {
         alternative["workflow"] == "integrations"
-            && alternative["action"] == "test"
+            && alternative["action"] == "test_slack"
             && alternative["example"]
                 .as_str()
                 .is_some_and(|example| example.contains("--provider slack --test"))
@@ -2362,10 +2344,10 @@ fn api_error_envelope_keeps_recoverable_inside_error_object() {
 fn forbidden_errors_preserve_permission_context() {
     let error = ApiCommandError::HttpStatus {
         method: "GET",
-        path: "/system-status".to_string(),
+        path: "/projects".to_string(),
         status: 403,
         request_id: Some("req-disabled".to_string()),
-        body: Box::new(json!({"error": "System status checks are temporarily disabled"})),
+        body: Box::new(json!({"error": "Project access denied"})),
     };
     let envelope = error.json_envelope();
 
@@ -2651,25 +2633,6 @@ fn contract_list_next_actions_use_returned_adopter_id() {
         next_actions,
         vec!["pcl contracts --project project-1 --adopter-id 59144_0xabc"]
     );
-}
-
-#[test]
-fn transfer_list_next_actions_use_returned_transfer_id() {
-    let args = transfers_args();
-    let next_actions = transfers_next_actions(
-        &json!({
-            "incoming": {
-                "project_transfers": [
-                    {"id": "transfer-1", "project_id": "project-1"}
-                ]
-            },
-            "outgoing": {"project_transfers": []}
-        }),
-        &args,
-        vec!["pcl transfers --transfer-id <transfer-id>".to_string()],
-    );
-
-    assert_eq!(next_actions, vec!["pcl transfers --transfer-id transfer-1"]);
 }
 
 #[test]
@@ -3110,13 +3073,13 @@ fn human_errors_include_api_reason_and_hide_internal_actions() {
             "status": "error",
             "error": {
                 "code": "auth.forbidden",
-                "message": "API request failed with status 403 for GET /system-status",
+                "message": "API request failed with status 403 for GET /projects",
                 "request_id": "req_forbidden",
                 "http": {
                     "method": "GET",
-                    "path": "/system-status",
+                    "path": "/projects",
                     "status": 403,
-                    "body": {"error": "System status checks are temporarily disabled"}
+                    "body": {"error": "Project access denied"}
                 }
             },
             "next_actions": [
@@ -3131,7 +3094,7 @@ fn human_errors_include_api_reason_and_hide_internal_actions() {
     assert_output_contains(
         &output,
         &[
-            "API reason: System status checks are temporarily disabled",
+            "API reason: Project access denied",
             "Request ID: req_forbidden",
         ],
     );
@@ -3439,7 +3402,7 @@ fn manifest_lists_structured_actions_for_every_workflow() {
         });
         assert!(!actions.is_empty(), "empty actions for {command_name}");
         for action in actions {
-            for field in ["name", "method", "path", "example"] {
+            for field in ["name", "operation_id", "method", "path", "example"] {
                 assert!(
                     action[field]
                         .as_str()
@@ -3465,6 +3428,17 @@ fn manifest_lists_structured_actions_for_every_workflow() {
                 "invalid method for {command_name} action {action:?}"
             );
             let path = action["path"].as_str().unwrap();
+            let operation_id = action["operation_id"].as_str().unwrap();
+            assert!(
+                generated_operation_templates().iter().any(
+                    |(generated_operation_id, operation_method, operation_path)| {
+                        *generated_operation_id == operation_id
+                            && operation_method.as_str() == action["method"].as_str().unwrap()
+                            && *operation_path == path
+                    },
+                ),
+                "manifest action must derive from a generated OpenAPI operation for {command_name} action {action:?}"
+            );
             if path.contains('{') {
                 let required_flags = action["required_flags"].as_array().unwrap_or_else(|| {
                         panic!(
@@ -3630,7 +3604,7 @@ fn workflow_definitions_are_the_manifest_source_of_truth() {
 }
 
 #[test]
-fn parser_rejects_conflicting_workflow_actions() {
+fn raw_api_parser_rejects_workflow_aliases() {
     assert!(ApiArgs::try_parse_from(["api", "projects", "--save", "--unsave"]).is_err());
     assert!(ApiArgs::try_parse_from(["api", "projects", "--mine", "--saved"]).is_err());
     assert!(
@@ -3647,40 +3621,12 @@ fn parser_rejects_conflicting_workflow_actions() {
     assert!(
         ApiArgs::try_parse_from(["api", "transfers", "--transfer-id", "t1", "--reject"]).is_err()
     );
-}
-
-#[test]
-fn parser_accepts_projects_mine_and_home_aliases() {
-    let mine = ApiArgs::try_parse_from(["api", "projects", "--mine"]).unwrap();
-    let ApiCommand::Projects(args) = mine.command else {
-        panic!("expected projects command");
-    };
-    assert!(args.mine);
-
-    let home = ApiArgs::try_parse_from(["api", "projects", "--home"]).unwrap();
-    let ApiCommand::Projects(args) = home.command else {
-        panic!("expected projects command");
-    };
-    assert!(args.mine);
-}
-
-#[test]
-fn parser_accepts_search_query_as_positional_term() {
-    let parsed = ApiArgs::try_parse_from(["api", "search", "settler"]).unwrap();
-    let ApiCommand::Search(args) = parsed.command else {
-        panic!("expected search command");
-    };
-    assert_eq!(args.term.as_deref(), Some("settler"));
-}
-
-#[test]
-fn parser_allows_body_template_without_routing_ids() {
-    assert!(ApiArgs::try_parse_from(["api", "releases", "--deploy", "--body-template"]).is_ok());
+    assert!(ApiArgs::try_parse_from(["api", "releases", "--deploy", "--body-template"]).is_err());
     assert!(
-        ApiArgs::try_parse_from(["api", "deployments", "--confirm", "--body-template"]).is_ok()
+        ApiArgs::try_parse_from(["api", "deployments", "--confirm", "--body-template"]).is_err()
     );
     assert!(
-        ApiArgs::try_parse_from(["api", "integrations", "--configure", "--body-template"]).is_ok()
+        ApiArgs::try_parse_from(["api", "integrations", "--configure", "--body-template"]).is_err()
     );
     assert!(
         ApiArgs::try_parse_from([
@@ -3689,7 +3635,7 @@ fn parser_allows_body_template_without_routing_ids() {
             "--confirm-transfer",
             "--body-template"
         ])
-        .is_ok()
+        .is_err()
     );
 }
 

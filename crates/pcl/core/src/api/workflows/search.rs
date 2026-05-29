@@ -21,13 +21,6 @@ pub(in crate::api) fn search_request(
         return workflow_operation_get(
             WorkflowOperation::new(HttpMethod::Get, "get_health"),
             false,
-            ["pcl search --system-status"],
-        );
-    }
-    if args.system_status {
-        return workflow_operation_get(
-            WorkflowOperation::new(HttpMethod::Get, "get_system_status"),
-            false,
             ["pcl search --stats"],
         );
     }
@@ -132,31 +125,17 @@ pub(in crate::api) fn search_next_actions(data: &Value, fallback: Vec<String>) -
 
 workflow_definition!(
     "search",
-    command: "pcl search [--query <term>] [--stats] [--system-status] [--verified-contract --address <addr> --chain-id <id>]",
+    command: "pcl search [--query <term>] [--stats] [--health] [--verified-contract --address <addr> --chain-id <id>]",
     description: "Search projects/contracts and inspect platform metadata.",
-    output: "search results, stats, system status, health, whitelist, or verified contract data",
+    output: "search results, stats, health, whitelist, or verified contract data",
     policy: MachineRaw,
-    legacy_examples: [
-
-    ],
     actions: [
-        action!("query", false, "GET", "/search", "pcl search --query settler", optional: ["--query"]),
-        action!("stats", false, "GET", "/stats", "pcl search --stats"),
-        action!(
-            "system_status",
-            false,
-            "GET",
-            "/system-status",
-            "pcl search --system-status"
-        ),
-        action!("health", false, "GET", "/health", "pcl search --health"),
-        action!(
-            "whitelist",
-            true,
-            "GET",
-            "/whitelist",
+        action!("query", false, "get_search", "pcl search --query settler", optional: ["--query"]),
+        action!("stats", false, "get_stats", "pcl search --stats"),
+        action!("health", false, "get_health", "pcl search --health"),
+        action!("whitelist", true, "get_whitelist",
             "pcl search --whitelist"
         ),
-        action!("verified_contract", false, "GET", "/web/verified-contract", "pcl search --verified-contract --address 0x... --chain-id 1", required: ["--address", "--chain-id"]),
+        action!("verified_contract", false, "get_web_verified_contract", "pcl search --verified-contract --address 0x... --chain-id 1", required: ["--address", "--chain-id"]),
     ],
 );

@@ -7,6 +7,7 @@
 
 use crate::{
     DEFAULT_PLATFORM_URL,
+    api::generated_operation_path,
     client::{
         ClientBuildError,
         authenticated_client,
@@ -335,7 +336,18 @@ impl DownloadArgs {
         let pid = self.project_id.ok_or(DownloadError::MissingIdentifier)?;
         let project = match client.get_projects_project_id(&pid, None).await {
             Ok(response) => response.into_inner(),
-            Err(error) => return Err(generated_api_error(format!("/projects/{pid}"), error).await),
+            Err(error) => {
+                let pid = pid.to_string();
+                return Err(generated_api_error(
+                    generated_operation_path(
+                        "get_projects_project_id",
+                        &[("project_id", pid.as_str())],
+                    )
+                    .unwrap_or_else(|| "get_projects_project_id".to_string()),
+                    error,
+                )
+                .await);
+            }
         };
         let project = serde_json::to_value(project)?;
         let project_id = project
@@ -367,8 +379,13 @@ impl DownloadArgs {
         {
             Ok(response) => response.into_inner(),
             Err(error) => {
+                let project_id = project_id.to_string();
                 return Err(generated_api_error(
-                    format!("/views/projects/{project_id}/assertions"),
+                    generated_operation_path(
+                        "get_views_projects_project_id_assertions",
+                        &[("projectId", project_id.as_str())],
+                    )
+                    .unwrap_or_else(|| "get_views_projects_project_id_assertions".to_string()),
                     error,
                 )
                 .await);
@@ -432,8 +449,18 @@ impl DownloadArgs {
         {
             Ok(response) => response.into_inner(),
             Err(error) => {
+                let project_id = project_id.to_string();
                 return Err(generated_api_error(
-                    format!("/views/projects/{project_id}/assertions/{assertion_id}"),
+                    generated_operation_path(
+                        "get_views_projects_project_id_assertions_assertion_id",
+                        &[
+                            ("projectId", project_id.as_str()),
+                            ("assertionId", assertion_id),
+                        ],
+                    )
+                    .unwrap_or_else(|| {
+                        "get_views_projects_project_id_assertions_assertion_id".to_string()
+                    }),
                     error,
                 )
                 .await);

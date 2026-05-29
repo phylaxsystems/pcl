@@ -7,6 +7,7 @@
 //! Generated client module
 
 pub mod client;
+pub mod operation_paths;
 
 // Re-export the main client struct
 pub use client::Client as GeneratedClient;

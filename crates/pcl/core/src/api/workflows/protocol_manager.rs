@@ -180,16 +180,13 @@ workflow_definition!(
     description: "Manage protocol manager transfers and calldata.",
     output: "manager state, nonce, calldata, pending transfer, or mutation result",
     policy: MachineRaw,
-    legacy_examples: [
-
-    ],
     actions: [
-        action!("pending_transfer", true, "GET", "/projects/{project}/protocol-manager/pending-transfer", "pcl protocol-manager --project <project-ref> --pending-transfer", required: ["--project"]),
-        action!("nonce", true, "GET", "/projects/{project}/protocol-manager/nonce", "pcl protocol-manager --project <project-ref> --nonce --address 0x...", required: ["--project", "--address"], optional: ["--chain-id"], query: {"address" => "<address>", "chain_id" => "<chain-id>"}),
-        action!("set", true, "POST", "/projects/{project}/protocol-manager", "pcl protocol-manager --project <project-ref> --set --body-template", required: ["--project"], body_template: "protocol_manager_set"),
-        action!("clear", true, "DELETE", "/projects/{project}/protocol-manager", "pcl protocol-manager --project <project-ref> --clear", required: ["--project"], body_template: "empty_object"),
-        action!("transfer_calldata", true, "GET", "/projects/{project}/protocol-manager/transfer-calldata", "pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...", required: ["--project", "--new-manager"], query: {"new_manager" => "<address>"}),
-        action!("accept_calldata", true, "GET", "/projects/{project}/protocol-manager/accept-calldata", "pcl protocol-manager --project <project-ref> --accept-calldata", required: ["--project"]),
-        action!("confirm_transfer", true, "POST", "/projects/{project}/protocol-manager/confirm-transfer", "pcl protocol-manager --project <project-ref> --confirm-transfer --body-template", required: ["--project"], body_template: "protocol_manager_confirm"),
+        action!("pending_transfer", true, "get_projects_project_id_protocol_manager_pending_transfer", "pcl protocol-manager --project <project-ref> --pending-transfer", required: ["--project"]),
+        action!("nonce", true, "get_projects_project_id_protocol_manager_nonce", "pcl protocol-manager --project <project-ref> --nonce --address 0x...", required: ["--project", "--address"], optional: ["--chain-id"], query: {"address" => "<address>", "chain_id" => "<chain-id>"}),
+        action!("set", true, "post_projects_project_id_protocol_manager", "pcl protocol-manager --project <project-ref> --set --body-template", required: ["--project"], body_template: "protocol_manager_set"),
+        action!("clear", true, "delete_projects_project_id_protocol_manager", "pcl protocol-manager --project <project-ref> --clear", required: ["--project"], body_template: "empty_object"),
+        action!("transfer_calldata", true, "get_projects_project_id_protocol_manager_transfer_calldata", "pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...", required: ["--project", "--new-manager"], query: {"new_manager" => "<address>"}),
+        action!("accept_calldata", true, "get_projects_project_id_protocol_manager_accept_calldata", "pcl protocol-manager --project <project-ref> --accept-calldata", required: ["--project"]),
+        action!("confirm_transfer", true, "post_projects_project_id_protocol_manager_confirm_transfer", "pcl protocol-manager --project <project-ref> --confirm-transfer --body-template", required: ["--project"], body_template: "protocol_manager_confirm"),
     ],
 );

@@ -68,13 +68,17 @@ fn assert_body_template_fields(
 
 fn mock_incident_export_page(
     server: &mut mockito::Server,
+    project_id: &str,
     page: &str,
     status: usize,
     request_id: &str,
     body: &str,
 ) -> mockito::Mock {
     server
-        .mock("GET", "/api/v1/views/public/incidents")
+        .mock(
+            "GET",
+            format!("/api/v1/views/projects/{project_id}/incidents").as_str(),
+        )
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("environment".into(), "production".into()),
             Matcher::UrlEncoded("page".into(), page.into()),
@@ -88,6 +92,42 @@ fn mock_incident_export_page(
         .create()
 }
 
+fn project_incidents_body(ids: &[&str], page: u64, limit: u64) -> String {
+    serde_json::json!({
+        "data": {
+            "items": ids.iter().map(|id| serde_json::json!({
+                "assertionAdopterId": "adopter-1",
+                "assertionId": "assertion-1",
+                "assertionTitle": null,
+                "chainId": 1,
+                "contractAddress": "0x0000000000000000000000000000000000000001",
+                "contractName": null,
+                "createdAt": "2026-01-01T00:00:00Z",
+                "environment": "production",
+                "incidentId": id,
+                "id": id,
+                "tracesCompleted": 0,
+                "tracesPending": 0,
+                "transactionCount": 1,
+                "windowStart": "2026-01-01T00:00:00Z",
+            })).collect::<Vec<_>>(),
+            "pagination": {
+                "hasNext": false,
+                "hasPrev": false,
+                "limit": limit,
+                "page": page,
+                "total": ids.len(),
+                "totalPages": 1,
+            },
+        },
+        "_meta": {
+            "fetchedAt": "2026-01-01T00:00:00Z",
+            "sources": ["offchain"],
+        },
+    })
+    .to_string()
+}
+
 #[test]
 fn workflow_body_templates_cover_project_release_families() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
@@ -96,14 +136,20 @@ fn workflow_body_templates_cover_project_release_families() {
     assert_body_template_fields(
         temp_dir.path(),
         "projects",
-        &["projects", "--api-url", api, "--create", "--body-template"],
+        &["projects", "--api-url", api, "create", "--body-template"],
         &["project_name", "chain_id"],
     );
     assert_body_template_fields(
         temp_dir.path(),
         "contracts",
-        &["contracts", "--api-url", api, "--create", "--body-template"],
-        &["network", "address", "contract_name", "project_id"],
+        &[
+            "contracts",
+            "--api-url",
+            api,
+            "--assign-project",
+            "--body-template",
+        ],
+        &["project_id", "assertion_adopter_ids"],
     );
     assert_body_template_fields(
         temp_dir.path(),
@@ -112,9 +158,8 @@ fn workflow_body_templates_cover_project_release_families() {
             "releases",
             "--api-url",
             api,
-            "--project",
+            "preview",
             "project-1",
-            "--preview",
             "--body-template",
         ],
         &["environment", "assertionsDir", "contracts"],
@@ -147,9 +192,8 @@ fn workflow_body_templates_cover_access_manager_families() {
             "access",
             "--api-url",
             api,
-            "--project",
+            "invite",
             "project-1",
-            "--invite",
             "--body-template",
         ],
         &["identifier", "identifier_type", "role"],
@@ -184,12 +228,6 @@ fn workflow_body_templates_cover_access_manager_families() {
         ],
         &["address", "signature", "nonce"],
     );
-    assert_body_template_fields(
-        temp_dir.path(),
-        "transfers",
-        &["transfers", "--api-url", api, "--reject", "--body-template"],
-        &["ponder_transfer_id"],
-    );
 }
 
 #[test]
@@ -205,7 +243,7 @@ fn workflow_body_template_toon_flag_emits_toon_envelope() {
             "projects",
             "--api-url",
             "http://127.0.0.1:9",
-            "--create",
+            "create",
             "--body-template",
         ])
         .output()
@@ -255,7 +293,7 @@ fn workflow_mutating_server_error_preserves_request_provenance() {
             "projects",
             "--api-url",
             &server.url(),
-            "--create",
+            "create",
             "--project-name",
             "demo",
             "--chain-id",
@@ -309,26 +347,30 @@ fn workflow_mutating_server_error_preserves_request_provenance() {
 fn export_incidents_cli_writes_checkpoint_errors_and_resume_command() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     let mut server = mockito::Server::new();
+    let project_id = "11111111-1111-4111-8111-111111111111";
     let page_1 = mock_incident_export_page(
         &mut server,
+        project_id,
         "1",
         200,
         "req-export-1",
-        r#"{"incidents":[{"id":"i1"},{"id":"i2"}]}"#,
+        &project_incidents_body(&["i1", "i2"], 1, 2),
     );
     let page_2 = mock_incident_export_page(
         &mut server,
+        project_id,
         "2",
         500,
         "req-export-500",
-        r#"{"message":"temporary page failure"}"#,
+        r#"{"error":"temporary page failure"}"#,
     );
     let page_3 = mock_incident_export_page(
         &mut server,
+        project_id,
         "3",
         200,
         "req-export-3",
-        r#"{"incidents":[{"id":"i3"}]}"#,
+        &project_incidents_body(&["i3"], 3, 2),
     );
 
     let out = temp_dir.path().join("incidents.jsonl");
@@ -344,6 +386,8 @@ fn export_incidents_cli_writes_checkpoint_errors_and_resume_command() {
             "--api-url",
             &server.url(),
             "--allow-unauthenticated",
+            "--project-id",
+            project_id,
             "--environment",
             "production",
             "--limit",
@@ -379,9 +423,9 @@ fn export_incidents_cli_writes_checkpoint_errors_and_resume_command() {
     );
 
     let out_lines = fs::read_to_string(&out).expect("read export output");
-    assert!(out_lines.contains(r#""id":"i1""#), "{out_lines}");
-    assert!(out_lines.contains(r#""id":"i2""#), "{out_lines}");
-    assert!(out_lines.contains(r#""id":"i3""#), "{out_lines}");
+    assert!(out_lines.contains(r#""incidentId":"i1""#), "{out_lines}");
+    assert!(out_lines.contains(r#""incidentId":"i2""#), "{out_lines}");
+    assert!(out_lines.contains(r#""incidentId":"i3""#), "{out_lines}");
 
     let error_lines = fs::read_to_string(&errors).expect("read export errors");
     assert!(error_lines.contains(r#""page":2"#), "{error_lines}");
