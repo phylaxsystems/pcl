@@ -118,6 +118,7 @@ pub struct ApplyArgs {
 }
 
 impl ApplyArgs {
+    #[allow(clippy::too_many_lines)]
     pub async fn run(&self, cli_args: &CliArgs, config: &mut CliConfig) -> Result<(), ApplyError> {
         let output_mode = cli_args.output_mode();
         let root = canonicalize_root(&self.root)?;
