@@ -1,11 +1,11 @@
-#[cfg(feature = "full")]
+#[cfg(feature = "credible")]
 use std::{
     fs,
     path::Path,
     process::Command,
 };
 
-#[cfg(feature = "full")]
+#[cfg(feature = "credible")]
 fn copy_dir(from: &Path, to: &Path) {
     fs::create_dir_all(to).expect("create fixture destination");
     for entry in fs::read_dir(from).expect("read fixture directory") {
@@ -20,7 +20,7 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-#[cfg(feature = "full")]
+#[cfg(feature = "credible")]
 fn fixture_project() -> tempfile::TempDir {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/verify-project");
     let temp_dir = tempfile::tempdir().expect("create temp project");
@@ -28,7 +28,7 @@ fn fixture_project() -> tempfile::TempDir {
     temp_dir
 }
 
-#[cfg(feature = "full")]
+#[cfg(feature = "credible")]
 fn assert_verify_success(output: std::process::Output) {
     assert!(
         output.status.success(),
@@ -52,9 +52,17 @@ fn assert_verify_success(output: std::process::Output) {
         summary["assertions"][0]["triggers"]["0x0f04ec21"],
         "allCall"
     );
+    let next_action = envelope["next_actions"][0]
+        .as_str()
+        .expect("next action string");
+    assert!(next_action.contains("pcl apply --root "), "{next_action}");
+    assert!(
+        next_action.contains("--config assertions/credible.toml"),
+        "{next_action}"
+    );
 }
 
-#[cfg(feature = "full")]
+#[cfg(feature = "credible")]
 fn assert_command_success(output: &std::process::Output, command: &str) {
     assert!(
         output.status.success(),
@@ -64,7 +72,7 @@ fn assert_command_success(output: &std::process::Output, command: &str) {
     );
 }
 
-#[cfg(feature = "full")]
+#[cfg(feature = "credible")]
 #[test]
 fn build_cli_succeeds_for_fixture_project() {
     let project = fixture_project();
@@ -81,7 +89,7 @@ fn build_cli_succeeds_for_fixture_project() {
     assert_command_success(&output, "pcl build");
 }
 
-#[cfg(feature = "full")]
+#[cfg(feature = "credible")]
 #[test]
 fn test_cli_succeeds_for_fixture_project() {
     let project = fixture_project();
@@ -98,7 +106,7 @@ fn test_cli_succeeds_for_fixture_project() {
     assert_command_success(&output, "pcl test");
 }
 
-#[cfg(feature = "full")]
+#[cfg(feature = "credible")]
 #[test]
 fn apply_dry_run_builds_and_verifies_fixture_payload_without_api() {
     let project = fixture_project();
@@ -139,15 +147,23 @@ fn apply_dry_run_builds_and_verifies_fixture_payload_without_api() {
             .as_str()
             .is_some_and(|bytecode| bytecode.starts_with("0x"))
     );
+    let root = fs::canonicalize(project.path()).expect("canonical fixture root");
+    assert_eq!(
+        envelope["next_actions"][0],
+        format!(
+            "pcl apply --root {} --config assertions/credible.toml --yes --json",
+            root.display()
+        )
+    );
 }
 
-#[cfg(feature = "full")]
+#[cfg(feature = "credible")]
 #[test]
 fn apply_dry_run_json_preserves_failed_assertion_summary() {
     let project = fixture_project();
     fs::write(
         project.path().join("assertions/src/NoArgsAssertion.a.sol"),
-        r#"// SPDX-License-Identifier: MIT
+        r"// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
 abstract contract Assertion {
@@ -161,7 +177,7 @@ contract NoArgsAssertion is Assertion {
         return true;
     }
 }
-"#,
+",
     )
     .expect("write failing assertion fixture");
 
@@ -197,7 +213,7 @@ contract NoArgsAssertion is Assertion {
     );
 }
 
-#[cfg(feature = "full")]
+#[cfg(feature = "credible")]
 #[test]
 fn verify_cli_succeeds_for_explicit_fixture_assertion() {
     let project = fixture_project();
@@ -216,7 +232,7 @@ fn verify_cli_succeeds_for_explicit_fixture_assertion() {
     assert_verify_success(output);
 }
 
-#[cfg(feature = "full")]
+#[cfg(feature = "credible")]
 #[test]
 fn verify_cli_succeeds_for_credible_toml_fixture() {
     let project = fixture_project();

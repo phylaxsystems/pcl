@@ -148,7 +148,7 @@ The core discovery commands in this section are exercised by `make agent-smoke`,
 Start with CLI-native discovery. Do not scrape human help text unless the structured surfaces are missing the field you need.
 
 1. `pcl --toon --llms` for the current CLI-native agent guide.
-2. `pcl doctor --toon` and `pcl whoami --toon` for readiness and token truthfulness.
+2. `pcl doctor --toon`, `pcl auth ensure --toon`, and `pcl whoami --toon` for readiness and token truthfulness.
 3. `pcl workflows --toon`, `pcl schema list --toon`, and `pcl api manifest --toon` for discovery.
 4. Top-level workflow commands for normal work.
 5. `pcl api list`, `pcl api inspect`, `pcl api call`, and `pcl api coverage` only for debugging, API parity checks, internal/service endpoints, or endpoints without `workflow_alternatives`.
@@ -207,8 +207,8 @@ pcl incidents --incident-id <incident-id> --toon
 pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace --toon
 pcl projects list --limit 10 --toon
 pcl projects show <project-ref> --toon
-pcl projects create --project-name demo --chain-id 1 --dry-run --toon
-pcl projects update <project-ref> --field github_url=https://github.com/org/repo --dry-run --toon
+pcl projects create --body-template --toon
+pcl projects update <project-ref> --body-template --toon
 pcl assertions --project-id <project-ref> --toon
 pcl assertions --adopter-address 0x... --network 1 --toon
 pcl account --toon
@@ -225,8 +225,7 @@ pcl search --query settler --toon
 
 ### Mutation Rules
 
-Use `--dry-run` before writes and `--body-template` before constructing mutation payloads.
-`--dry-run` is a planning mode, not an enforced confirmation gate; rerunning without it executes the request.
+Use `--body-template` before constructing nested mutation payloads.
 Prefer typed flags, then `--field key=value`, then `--body-file` for nested payloads.
 
 ```bash
@@ -242,8 +241,7 @@ For complex bodies:
 
 1. Get the template with `--body-template --toon`.
 2. Fill the returned body into a file.
-3. Run the write with `--dry-run --body-file <file> --toon`.
-4. Execute without `--dry-run` only after the request plan is correct.
+3. Run the write with `--body-file <file> --toon` once the payload is correct.
 
 ### Raw API Fallback
 
@@ -256,12 +254,12 @@ For simple JSON object bodies, repeated `--field key=value` works on raw `pcl ap
 ```bash
 pcl api list --filter integrations --toon
 pcl api inspect get_views_projects_project_id_incidents --toon
-pcl incidents --limit 5
-pcl projects create --field project_name=demo --field chain_id=1
-pcl incidents --project <project-id> --environment production
-pcl incidents --all --limit 50 --output incidents.json
-pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --resume
-pcl assertions --project <project-id>
+pcl incidents --limit 5 --toon
+pcl projects create --body-template --toon
+pcl incidents --project <project-id> --environment production --toon
+pcl incidents --all --limit 50 --output incidents.json --toon
+pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --resume --toon
+pcl assertions --project <project-id> --toon
 pcl account --logout
 ```
 

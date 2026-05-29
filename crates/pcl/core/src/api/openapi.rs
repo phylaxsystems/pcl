@@ -1,9 +1,11 @@
 use super::{
     ApiCommandError,
     HttpMethod,
-    api_manifest,
+    definitions::workflow_definitions,
     method_side_effecting,
 };
+use crate::output::command_for_mode;
+use pcl_common::args::OutputMode;
 use serde::Serialize;
 use serde_json::{
     Map,
@@ -608,34 +610,12 @@ pub(super) fn workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value
 }
 
 fn manifest_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
-    let Some(commands) = api_manifest()
-        .get("commands")
-        .and_then(Value::as_array)
-        .cloned()
-    else {
-        return Vec::new();
-    };
-
     let mut alternatives = Vec::new();
     let mut best_score = None;
-    for command in commands {
-        let Some(command_text) = command.get("command").and_then(Value::as_str) else {
-            continue;
-        };
-        if command_text.starts_with("pcl api ") {
-            continue;
-        }
-        let workflow = command_text
-            .split_whitespace()
-            .nth(1)
-            .unwrap_or(command_text)
-            .to_string();
-        let Some(actions) = command.get("actions").and_then(Value::as_array) else {
-            continue;
-        };
-
-        for action in actions {
-            let Some(score) = manifest_action_match_score(action, method, path) else {
+    for definition in workflow_definitions() {
+        for action in definition.actions {
+            let Some(score) = manifest_action_match_score(action.method, action.path, method, path)
+            else {
                 continue;
             };
             match best_score {
@@ -647,15 +627,13 @@ fn manifest_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> 
                 None => best_score = Some(score),
                 Some(_) => {}
             }
-            let action_name = action.get("name").and_then(Value::as_str);
-            let example = workflow_example_for_operation(&workflow, action.get("example"), path);
             alternatives.push(json!({
-                "workflow": workflow,
-                "action": action_name,
-                "command": command_text,
-                "example": example,
-                "required_flags": action.get("required_flags").cloned().unwrap_or(Value::Null),
-                "body_template": action.get("body_template").cloned().unwrap_or(Value::Null),
+                "workflow": definition.name,
+                "action": action.name,
+                "command": definition.command,
+                "example": action.example_for_operation(definition.name, path),
+                "required_flags": action.required_flags_value(),
+                "body_template": action.body_template_value(),
             }));
         }
     }
@@ -663,33 +641,17 @@ fn manifest_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> 
     alternatives
 }
 
-fn workflow_example_for_operation(
-    workflow: &str,
-    example: Option<&Value>,
-    operation_path: &str,
-) -> Option<String> {
-    let example = example.and_then(Value::as_str)?;
-    if workflow == "integrations" {
-        if operation_path.contains("/integrations/pagerduty") {
-            return Some(example.replace("--provider slack", "--provider pagerduty"));
-        }
-        if operation_path.contains("/integrations/slack") {
-            return Some(example.replace("--provider pagerduty", "--provider slack"));
-        }
-    }
-    Some(example.to_string())
-}
-
-fn manifest_action_match_score(action: &Value, method: HttpMethod, path: &str) -> Option<usize> {
-    let method_matches = action
-        .get("method")
-        .and_then(Value::as_str)
-        .is_some_and(|action_method| action_method.eq_ignore_ascii_case(method.as_str()));
+fn manifest_action_match_score(
+    action_method: &str,
+    action_path: &str,
+    method: HttpMethod,
+    path: &str,
+) -> Option<usize> {
+    let method_matches = action_method.eq_ignore_ascii_case(method.as_str());
     if !method_matches {
         return None;
     }
 
-    let action_path = action.get("path").and_then(Value::as_str)?;
     path_match_score(action_path, path)
 }
 
@@ -844,6 +806,7 @@ fn single_special_workflow(workflow: &str, action: &str, example: &str, note: &s
 }
 
 fn special_workflow(workflow: &str, action: &str, example: &str, note: &str) -> Value {
+    let example = command_for_mode(example, OutputMode::Toon);
     json!({
         "workflow": workflow,
         "action": action,
@@ -1319,15 +1282,22 @@ pub(super) fn next_actions_for_operations(operations: &[OperationSummary]) -> Ve
     operations.first().map_or_else(
         || vec!["pcl api list".to_string(), "pcl api manifest".to_string()],
         |operation| {
-            if let Some(example) = operation
-                .workflow_alternatives
-                .first()
-                .and_then(|alternative| alternative.get("example"))
-                .and_then(Value::as_str)
+            if let Some((safe_operation, example)) = operations
+                .iter()
+                .filter(|operation| !operation.requires_input)
+                .find_map(safe_workflow_example)
             {
                 return vec![
-                    example.to_string(),
-                    format!("{} --toon", operation.inspect_command),
+                    example,
+                    format!("{} --toon", safe_operation.inspect_command),
+                ];
+            }
+            if let Some((safe_operation, example)) =
+                operations.iter().find_map(safe_workflow_example)
+            {
+                return vec![
+                    example,
+                    format!("{} --toon", safe_operation.inspect_command),
                 ];
             }
             if operation.requires_input {
@@ -1347,14 +1317,18 @@ pub(super) fn next_actions_for_operations(operations: &[OperationSummary]) -> Ve
 }
 
 pub(super) fn command_next_actions(inspected: &Value) -> Vec<String> {
-    if let Some(example) = inspected
+    if let Some(example) = safe_inspected_workflow_example(inspected) {
+        return vec![example];
+    }
+    if inspected
         .get("workflow_alternatives")
         .and_then(Value::as_array)
-        .and_then(|alternatives| alternatives.first())
-        .and_then(|alternative| alternative.get("example"))
-        .and_then(Value::as_str)
+        .is_some_and(|alternatives| !alternatives.is_empty())
     {
-        return vec![example.to_string()];
+        return vec![
+            "Review data.workflow_alternatives before running mutating workflow commands"
+                .to_string(),
+        ];
     }
     inspected
         .get("example_call")
@@ -1363,6 +1337,56 @@ pub(super) fn command_next_actions(inspected: &Value) -> Vec<String> {
             || vec!["pcl api list".to_string()],
             |command| vec![command.to_string()],
         )
+}
+
+fn safe_workflow_example(operation: &OperationSummary) -> Option<(&OperationSummary, String)> {
+    operation
+        .workflow_alternatives
+        .iter()
+        .filter_map(|alternative| {
+            alternative
+                .get("example")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .find(|example| safe_next_action_example(operation.method, example))
+        .map(|example| (operation, example))
+}
+
+fn safe_inspected_workflow_example(inspected: &Value) -> Option<String> {
+    let method = inspected
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    inspected
+        .get("workflow_alternatives")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(|alternative| alternative.get("example").and_then(Value::as_str))
+        .find(|example| safe_next_action_example(method, example))
+        .map(ToString::to_string)
+}
+
+fn safe_next_action_example(method: &str, example: &str) -> bool {
+    !is_dangerous_workflow_example(example)
+        && (!method_side_effecting(method) || example.contains("--body-template"))
+}
+
+fn is_dangerous_workflow_example(example: &str) -> bool {
+    let action = example.trim();
+    let has_dangerous_flag = action.split_whitespace().any(|token| {
+        matches!(
+            token,
+            "--clear" | "--delete" | "--remove" | "--revoke" | "--logout"
+        )
+    });
+    has_dangerous_flag
+        || action.starts_with("pcl projects delete")
+        || action.starts_with("pcl projects unsave")
+        || action.starts_with("pcl releases remove")
+        || action.starts_with("pcl access revoke")
+        || action.starts_with("pcl access member remove")
+        || action.starts_with("pcl transfers reject")
 }
 
 pub(super) fn synthetic_operation_id(method: HttpMethod, path: &str) -> String {

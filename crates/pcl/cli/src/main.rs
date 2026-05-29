@@ -87,26 +87,19 @@ async fn main() -> Result<()> {
                 }
                 err.exit();
             }
-            if matches!(
+            let is_success_display = matches!(
                 err.kind(),
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
-            ) && output_mode != OutputMode::Json
-            {
-                err.exit();
-            }
-            if output_mode == OutputMode::Json {
-                let exit_code = err.exit_code();
-                eprintln!(
-                    "{}",
-                    serde_json::to_string_pretty(&clap_error_envelope(&err, &raw_args))?
-                );
-                std::process::exit(exit_code);
-            }
-            eprint!(
-                "{}",
-                envelope_output_string(&clap_error_envelope(&err, &raw_args), false)?
             );
-            std::process::exit(err.exit_code());
+            let exit_code = err.exit_code();
+            let envelope = clap_error_envelope(&err, &raw_args);
+            let output = envelope_output_string(&envelope, output_mode == OutputMode::Json)?;
+            if is_success_display {
+                print!("{output}");
+            } else {
+                eprint!("{output}");
+            }
+            std::process::exit(exit_code);
         }
     };
     set_current_output_mode(cli.args.output_mode());
@@ -170,6 +163,7 @@ async fn run_command(
             ensure_human_pass_through(cli_args, "pcl test")?;
             phorge.run().await?;
         }
+        #[cfg(feature = "credible")]
         Commands::Apply(apply) => apply.run(cli_args, config).await?,
         Commands::Api(api) => api.run(config, cli_args, json_output).await?,
         Commands::Incidents(command) => command.run(config, cli_args, json_output).await?,
@@ -216,7 +210,7 @@ fn ensure_human_pass_through(
         return Ok(());
     }
     Err(ProductSurfaceError::InvalidInput(format!(
-        "{command} is a developer pass-through command and does not support --toon/--json yet. Use human output, or use pcl verify/apply for structured assertion workflows."
+        "{command} is a developer pass-through command and does not support --toon/--json yet. Use human output, or use pcl verify/apply from a credible-enabled build for structured assertion workflows."
     )))
 }
 
@@ -288,6 +282,20 @@ fn apply_error_envelope(err: &ApplyError) -> Value {
                 &["pcl auth login", "pcl auth status"],
             )
         }
+        ApplyError::ExpiredAuthToken(_) => {
+            (
+                "auth.expired_token",
+                err.to_string(),
+                &["pcl auth refresh --toon", "pcl auth login --force"],
+            )
+        }
+        ApplyError::AuthRefresh(_) => {
+            (
+                "auth.refresh_failed",
+                err.to_string(),
+                &["pcl auth refresh --toon", "pcl auth login --force"],
+            )
+        }
         ApplyError::InvalidConfig(message) if message.contains("credible.toml not found") => {
             (
                 "config.credible_toml_not_found",
@@ -330,12 +338,52 @@ fn apply_error_envelope(err: &ApplyError) -> Value {
 }
 
 fn download_error_envelope(err: &DownloadError) -> Value {
+    if let DownloadError::Api {
+        endpoint,
+        status,
+        request_id,
+        body,
+    } = err
+    {
+        return json!({
+            "status": "error",
+            "error": {
+                "code": "download.api_failed",
+                "message": err.to_string(),
+                "recoverable": true,
+                "request_id": request_id,
+                "http": {
+                    "method": "GET",
+                    "path": endpoint,
+                    "status": status,
+                    "request_id": request_id,
+                    "body": body,
+                },
+            },
+            "next_actions": ["pcl download --help", "pcl doctor"],
+        });
+    }
+
     let (code, message, next_actions): (&str, String, &[&str]) = match err {
         DownloadError::NoAuthToken => {
             (
                 "auth.no_token",
                 err.to_string(),
                 &["pcl auth login", "pcl auth status"],
+            )
+        }
+        DownloadError::ExpiredAuthToken(_) => {
+            (
+                "auth.expired_token",
+                err.to_string(),
+                &["pcl auth refresh --toon", "pcl auth login --force"],
+            )
+        }
+        DownloadError::AuthRefresh(_) => {
+            (
+                "auth.refresh_failed",
+                err.to_string(),
+                &["pcl auth refresh --toon", "pcl auth login --force"],
             )
         }
         DownloadError::MissingIdentifier => {
@@ -803,6 +851,19 @@ fn clap_error_envelope(err: &clap::Error, args: &[OsString]) -> Value {
     let command = parsed_command_name(args);
     let message = clap_error_message(err, command.as_deref());
     let next_actions = clap_error_next_actions(err.kind(), command.as_deref());
+    if matches!(
+        err.kind(),
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+    ) {
+        return with_envelope_metadata(json!({
+            "status": "ok",
+            "data": {
+                "kind": clap_error_code(err.kind()),
+                "message": message,
+            },
+            "next_actions": next_actions,
+        }));
+    }
     with_envelope_metadata(json!({
         "status": "error",
         "error": {
@@ -1044,6 +1105,19 @@ mod tests {
         assert!(output.contains("next_actions[2]:"));
         assert!(!output.contains("Location:"));
         assert!(!output.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn wraps_clap_help_as_success_envelope() {
+        let err = Cli::command()
+            .try_get_matches_from(["pcl", "--help"])
+            .unwrap_err();
+        let args = vec![OsString::from("pcl"), OsString::from("--help")];
+        let envelope = clap_error_envelope(&err, &args);
+
+        assert_eq!(envelope["status"], "ok");
+        assert_eq!(envelope["data"]["kind"], "cli.help");
+        assert!(envelope["error"].is_null());
     }
 
     #[test]

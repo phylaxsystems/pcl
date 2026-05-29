@@ -144,47 +144,52 @@ fn subcommand_help_advertises_global_json_mode() {
 }
 
 #[test]
-fn new_workflow_subcommands_parse_and_emit_structured_dry_runs() {
+fn machine_help_requests_stay_structured() {
+    let toon = run_pcl(&["projects", "--help", "--toon"]);
+    toon.assert_success();
+    assert!(toon.stderr.is_empty(), "{}", toon.stderr);
+    assert!(toon.stdout.starts_with("status: ok\n"), "{}", toon.stdout);
+    assert!(toon.stdout.contains("kind: cli.help"), "{}", toon.stdout);
+    assert!(
+        toon.stdout.contains("schema_version: pcl.envelope.v1"),
+        "{}",
+        toon.stdout
+    );
+
+    let root_toon = run_pcl(&["--help", "--toon"]);
+    root_toon.assert_success();
+    assert!(root_toon.stderr.is_empty(), "{}", root_toon.stderr);
+    assert!(
+        root_toon.stdout.starts_with("status: ok\n"),
+        "{}",
+        root_toon.stdout
+    );
+    assert!(
+        root_toon.stdout.contains("kind: cli.help"),
+        "{}",
+        root_toon.stdout
+    );
+    assert!(
+        root_toon.stdout.contains("schema_version: pcl.envelope.v1"),
+        "{}",
+        root_toon.stdout
+    );
+}
+
+#[test]
+fn new_workflow_subcommands_parse_and_emit_structured_templates() {
     for args in [
-        [
-            "--json",
-            "projects",
-            "create",
-            "--project-name",
-            "demo",
-            "--chain-id",
-            "1",
-            "--dry-run",
-        ]
-        .as_slice(),
-        [
-            "--json",
-            "projects",
-            "update",
-            "project-1",
-            "--field",
-            "github_url=https://github.com/org/repo",
-            "--dry-run",
-        ]
-        .as_slice(),
         [
             "--json",
             "releases",
             "preview",
             "project-1",
             "--body-template",
-            "--dry-run",
         ]
         .as_slice(),
-        [
-            "--json",
-            "access",
-            "invite",
-            "project-1",
-            "--body-template",
-            "--dry-run",
-        ]
-        .as_slice(),
+        ["--json", "access", "invite", "project-1", "--body-template"].as_slice(),
+        ["--json", "releases", "deploy", "--body-template"].as_slice(),
+        ["--json", "access", "invite", "--body-template"].as_slice(),
     ] {
         let output = run_pcl(args);
 
@@ -242,6 +247,25 @@ fn machine_parse_errors_stay_structured() {
     assert_eq!(envelope["status"], "error");
     assert_eq!(envelope["error"]["code"], "cli.argument_conflict");
     assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+    let next_actions = envelope["next_actions"]
+        .as_array()
+        .expect("next actions array");
+    assert!(
+        next_actions.iter().all(|action| {
+            action
+                .as_str()
+                .is_none_or(|action| !action.contains("--toon"))
+        }),
+        "{envelope}"
+    );
+    assert!(
+        next_actions.iter().any(|action| {
+            action
+                .as_str()
+                .is_some_and(|action| action.contains(" --json"))
+        }),
+        "{envelope}"
+    );
 
     let toon_at_end = run_pcl(&["projects", "--mine", "--saved", "--toon"]);
     assert_toon_error(&toon_at_end, "cli.argument_conflict");
@@ -309,6 +333,43 @@ fn documented_agent_leaf_commands_accept_toon_after_subcommands() {
 }
 
 #[test]
+fn schema_list_exposes_output_contract_summary() {
+    let output = run_pcl(&["schema", "list", "--json"]);
+
+    output.assert_success();
+    assert!(
+        output.stderr.is_empty(),
+        "schema list should write JSON to stdout: {}",
+        output.stderr
+    );
+
+    let envelope: serde_json::Value = serde_json::from_str(&output.stdout).expect("json envelope");
+    let schemas = envelope["data"]["schemas"]
+        .as_array()
+        .expect("schemas array");
+    assert_eq!(schemas.len(), 13);
+    assert!(
+        schemas.iter().all(|schema| schema["workflow"] != "api"),
+        "{schemas:?}"
+    );
+    let deployments = schemas
+        .iter()
+        .find(|schema| schema["workflow"] == "deployments")
+        .expect("deployments schema");
+
+    assert_eq!(
+        deployments["output_policy"],
+        "machine_raw_human_compact_artifacts"
+    );
+    assert!(
+        deployments["output"]
+            .as_str()
+            .is_some_and(|output| output.contains("deployment")),
+        "{deployments:?}"
+    );
+}
+
+#[test]
 fn llms_machine_next_actions_leave_completion_redirect_raw() {
     let completion_install =
         "pcl completions bash > ~/.local/share/bash-completion/completions/pcl";
@@ -349,7 +410,13 @@ fn llms_machine_next_actions_leave_completion_redirect_raw() {
 fn completions_machine_next_action_is_raw_redirect() {
     let output = run_pcl(&["--toon", "completions", "bash"]);
     output.assert_success();
-    assert!(output.stdout.contains("script:"), "{}", output.stdout);
+    assert!(
+        output.stdout.contains("script_omitted: true"),
+        "{}",
+        output.stdout
+    );
+    assert!(output.stdout.contains("script_bytes:"), "{}", output.stdout);
+    assert!(!output.stdout.contains("_pcl()"), "{}", output.stdout);
     assert!(
         output
             .stdout
@@ -366,6 +433,12 @@ fn completions_machine_next_action_is_raw_redirect() {
     let json = run_pcl(&["--json", "completions", "bash"]);
     json.assert_success();
     let envelope: serde_json::Value = serde_json::from_str(&json.stdout).expect("json envelope");
+    assert!(
+        envelope["data"]["script"]
+            .as_str()
+            .is_some_and(|script| script.contains("_pcl()")),
+        "{envelope}"
+    );
     assert_eq!(
         envelope["next_actions"],
         serde_json::json!(["pcl completions bash > <completion-file>"])

@@ -7,6 +7,7 @@ pub use actions::{
     NextAction,
     command_for_mode,
     normalize_next_actions_for_mode,
+    shell_word,
 };
 pub use envelope::{
     ENVELOPE_SCHEMA_VERSION,

@@ -9,18 +9,26 @@ use crate::{
     api::{
         api_manifest,
         envelope_output_string,
+        request_id_from_headers,
         response_body_value,
         with_envelope_metadata,
     },
+    auth::refresh_stored_auth,
     config::{
         AUTH_EXPIRES_SOON_SECONDS,
         CliConfig,
         UserAuth,
     },
+    error::AuthError,
+    output::shell_word,
     request_log,
 };
 use chrono::Utc;
-use pcl_common::args::CliArgs;
+use pcl_common::args::{
+    CliArgs,
+    OutputMode,
+    current_output_mode,
+};
 use reqwest::header::{
     HeaderMap,
     HeaderName,
@@ -82,6 +90,9 @@ pub enum ProductSurfaceError {
     #[error("Stored auth token expired at {0}")]
     ExpiredAuthToken(chrono::DateTime<chrono::Utc>),
 
+    #[error("Failed to refresh stored auth before running the command: {0}")]
+    AuthRefresh(#[source] AuthError),
+
     #[error("{0}")]
     InvalidInput(String),
 
@@ -122,6 +133,7 @@ impl ProductSurfaceError {
         match self {
             Self::NoAuthToken => "auth.no_token",
             Self::ExpiredAuthToken(_) => "auth.expired_token",
+            Self::AuthRefresh(_) => "auth.refresh_failed",
             Self::InvalidInput(_) => "input.invalid",
             Self::Io { .. } => "io.failed",
             Self::Json(_) => "json.failed",
@@ -184,7 +196,6 @@ impl ProductSurfaceError {
         with_envelope_metadata(json!({
             "status": "error",
             "error": error,
-            "recoverable": self.recoverable(),
             "next_actions": self.next_actions(),
         }))
     }
@@ -195,8 +206,15 @@ impl ProductSurfaceError {
 
     fn next_actions(&self) -> Vec<String> {
         match self {
-            Self::NoAuthToken | Self::ExpiredAuthToken(_) => {
+            Self::NoAuthToken => {
                 vec!["pcl auth login".to_string(), "pcl doctor".to_string()]
+            }
+            Self::ExpiredAuthToken(_) | Self::AuthRefresh(_) => {
+                vec![
+                    "pcl auth refresh".to_string(),
+                    "pcl auth login --force".to_string(),
+                    "pcl doctor".to_string(),
+                ]
             }
             Self::InvalidInput(message) if message.starts_with("Unknown job") => {
                 vec![
@@ -481,19 +499,7 @@ impl DoctorArgs {
             "ok"
         };
 
-        let next_actions = if status == "error" {
-            json!([
-                "Check --api-url or PCL_API_URL",
-                "pcl requests list --limit 20",
-                "pcl whoami",
-            ])
-        } else {
-            json!([
-                "pcl whoami",
-                "pcl workflows",
-                "pcl requests list --limit 20",
-            ])
-        };
+        let next_actions = doctor_next_actions(status, config.auth.as_ref());
 
         print_output(
             &json!({
@@ -672,12 +678,15 @@ impl SchemaArgs {
                 let schemas = commands
                     .iter()
                     .filter_map(|command| {
+                        command["output_policy"].as_str()?;
                         let command_text = command["command"].as_str()?;
                         let workflow = command_text.split_whitespace().nth(1)?;
                         Some(json!({
                             "workflow": workflow,
                             "command": command_text,
                             "description": command["description"],
+                            "output": command["output"],
+                            "output_policy": command["output_policy"],
                             "actions": command["actions"].as_array().map_or(0, Vec::len),
                         }))
                     })
@@ -793,7 +802,7 @@ impl JobsArgs {
 impl ExportArgs {
     pub async fn run(
         &self,
-        config: &CliConfig,
+        config: &mut CliConfig,
         cli_args: &CliArgs,
         json_output: bool,
     ) -> Result<(), ProductSurfaceError> {
@@ -807,7 +816,7 @@ impl ExportArgs {
 
 async fn export_incidents(
     args: &ExportIncidentsArgs,
-    config: &CliConfig,
+    config: &mut CliConfig,
     cli_args: &CliArgs,
     json_output: bool,
 ) -> Result<(), ProductSurfaceError> {
@@ -836,7 +845,13 @@ async fn export_incidents(
         .unwrap_or_else(|| artifact_dir(cli_args).join("incident-export-checkpoint.json"));
     let plan = export_plan(args, &out, &errors, &checkpoint);
     let job_id = incident_export_job_id(args, &checkpoint);
-    let resume_command = incident_export_resume_command(args, &out, &errors, &checkpoint);
+    let output_mode = if json_output {
+        OutputMode::Json
+    } else {
+        current_output_mode()
+    };
+    let resume_command =
+        incident_export_resume_command(args, &out, &errors, &checkpoint, output_mode);
 
     if args.dry_run {
         return print_output(
@@ -856,6 +871,14 @@ async fn export_incidents(
     ensure_parent_dir(&out)?;
     ensure_parent_dir(&errors)?;
     ensure_parent_dir(&checkpoint)?;
+    ensure_export_auth(
+        config,
+        cli_args,
+        &args.api_url,
+        args.project_id.is_some(),
+        args.allow_unauthenticated,
+    )
+    .await?;
 
     let start_page = if args.resume {
         read_checkpoint_page(&checkpoint).unwrap_or(args.page)
@@ -1301,6 +1324,7 @@ fn incident_export_resume_command(
     out: &Path,
     errors: &Path,
     checkpoint: &Path,
+    output_mode: OutputMode,
 ) -> String {
     let mut parts = vec![
         "pcl".to_string(),
@@ -1339,21 +1363,13 @@ fn incident_export_resume_command(
     if args.allow_unauthenticated {
         parts.push("--allow-unauthenticated".to_string());
     }
+    match output_mode {
+        OutputMode::Human => {}
+        OutputMode::Toon => parts.push("--toon".to_string()),
+        OutputMode::Json => parts.push("--json".to_string()),
+    }
 
     parts.join(" ")
-}
-
-fn shell_word(value: impl AsRef<str>) -> String {
-    let value = value.as_ref();
-    if !value.is_empty()
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric()
-                || matches!(byte, b'/' | b'.' | b'_' | b'-' | b':' | b'@' | b'=')
-        })
-    {
-        return value.to_string();
-    }
-    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 pub fn print_llms_guide(json_output: bool) -> Result<(), ProductSurfaceError> {
@@ -1397,6 +1413,7 @@ fn llms_guide() -> Value {
         "consumption_order": [
             "pcl --toon --llms",
             "pcl doctor --toon",
+            "pcl auth ensure --toon",
             "pcl whoami --toon",
             "pcl workflows --toon",
             "pcl schema list --toon",
@@ -1458,9 +1475,9 @@ fn llms_guide() -> Value {
             "logout": "pcl auth logout attempts remote logout first, then clears local credentials; pass --local to skip the remote request."
         },
         "mutation_safety": {
-            "order": ["--body-template", "--dry-run", "typed flags", "--field key=value", "--body-file body.json"],
+            "order": ["--body-template", "typed flags", "--field key=value", "--body-file body.json"],
             "body_templates": "Print payload contracts before writes; choose a concrete body variant when body_variants is returned.",
-            "dry_run": "Use dry-run request plans before destructive project, assertion, release, access, integration, transfer, or protocol-manager operations. Dry-run is a planner, not an enforced confirmation gate."
+            "execution": "Workflow commands execute when invoked; inspect body templates and use typed flags or body files deliberately."
         },
         "raw_api": {
             "policy": "For normal product work, use workflow_alternatives from pcl api list/inspect or a top-level workflow command. Raw api call is for debugging, OpenAPI parity checks, internal/service endpoints, browser-session bridge investigation, or new endpoint exploration before promotion.",
@@ -1540,6 +1557,40 @@ fn auth_check_status(auth: Option<&UserAuth>) -> &'static str {
         None => "missing",
         Some(auth) if auth.expires_at <= Utc::now() => "warning",
         Some(_) => "ok",
+    }
+}
+
+fn doctor_next_actions(status: &str, auth: Option<&UserAuth>) -> Vec<String> {
+    if status == "error" {
+        return vec![
+            "Check --api-url or PCL_API_URL".to_string(),
+            "pcl requests list --limit 20".to_string(),
+            "pcl doctor --offline".to_string(),
+        ];
+    }
+
+    match auth_check_status(auth) {
+        "missing" => {
+            vec![
+                "pcl auth ensure".to_string(),
+                "pcl auth login".to_string(),
+                "pcl workflows".to_string(),
+            ]
+        }
+        "warning" => {
+            vec![
+                "pcl auth ensure".to_string(),
+                "pcl auth refresh".to_string(),
+                "pcl auth login --force".to_string(),
+            ]
+        }
+        _ => {
+            vec![
+                "pcl whoami".to_string(),
+                "pcl workflows".to_string(),
+                "pcl requests list --limit 20".to_string(),
+            ]
+        }
     }
 }
 
@@ -1767,6 +1818,29 @@ fn export_plan(args: &ExportIncidentsArgs, out: &Path, errors: &Path, checkpoint
     })
 }
 
+async fn ensure_export_auth(
+    config: &mut CliConfig,
+    cli_args: &CliArgs,
+    api_url: &url::Url,
+    require_auth: bool,
+    allow_unauthenticated: bool,
+) -> Result<(), ProductSurfaceError> {
+    if allow_unauthenticated || !require_auth {
+        return Ok(());
+    }
+    let Some(auth) = &config.auth else {
+        return Err(ProductSurfaceError::NoAuthToken);
+    };
+    let now = Utc::now();
+    let seconds_remaining = (auth.expires_at - now).num_seconds();
+    if auth.expires_at <= now || seconds_remaining <= AUTH_EXPIRES_SOON_SECONDS {
+        refresh_stored_auth(config, api_url, cli_args, false)
+            .await
+            .map_err(ProductSurfaceError::AuthRefresh)?;
+    }
+    Ok(())
+}
+
 fn default_headers(
     config: &CliConfig,
     require_auth: bool,
@@ -1873,24 +1947,6 @@ fn build_api_url(base: &url::Url, path: &str) -> Result<url::Url, ProductSurface
     let mut url = base.clone();
     url.set_path(&format!("/api/v1{path}"));
     Ok(url)
-}
-
-fn request_id_from_headers(headers: &HeaderMap) -> Option<String> {
-    [
-        "x-request-id",
-        "x-correlation-id",
-        "x-amzn-requestid",
-        "cf-ray",
-        "request-id",
-    ]
-    .into_iter()
-    .find_map(|name| {
-        headers
-            .get(name)
-            .and_then(|value| value.to_str().ok())
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string)
-    })
 }
 
 fn extract_items(body: &Value, field: &str) -> Vec<Value> {
@@ -2038,11 +2094,66 @@ mod tests {
     }
 
     #[test]
+    fn expired_auth_next_actions_prefer_refresh() {
+        let error = ProductSurfaceError::ExpiredAuthToken(
+            chrono::Utc::now() - chrono::Duration::minutes(1),
+        );
+
+        assert_eq!(
+            error.next_actions(),
+            vec![
+                "pcl auth refresh".to_string(),
+                "pcl auth login --force".to_string(),
+                "pcl doctor".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn surface_error_envelope_keeps_recoverable_inside_error_object() {
+        let envelope = ProductSurfaceError::InvalidInput("bad input".to_string()).json_envelope();
+
+        assert_eq!(envelope["status"], "error");
+        assert_eq!(envelope["error"]["recoverable"], true);
+        assert!(envelope.get("recoverable").is_none(), "{envelope}");
+    }
+
+    #[test]
+    fn doctor_next_actions_recover_missing_or_expired_auth() {
+        assert_eq!(
+            doctor_next_actions("warning", None),
+            vec![
+                "pcl auth ensure".to_string(),
+                "pcl auth login".to_string(),
+                "pcl workflows".to_string(),
+            ]
+        );
+
+        let auth = UserAuth {
+            access_token: "expired-token".to_string(),
+            refresh_token: "refresh-token".to_string(),
+            expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
+            refresh_expires_at: None,
+            user_id: None,
+            wallet_address: None,
+            email: Some("agent@example.com".to_string()),
+        };
+        assert_eq!(
+            doctor_next_actions("warning", Some(&auth)),
+            vec![
+                "pcl auth ensure".to_string(),
+                "pcl auth refresh".to_string(),
+                "pcl auth login --force".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn schema_finds_action_contract() {
         let commands = api_manifest()["commands"].as_array().cloned().unwrap();
         let schema = find_workflow_schema(&commands, "incidents").unwrap();
         assert!(schema["actions"].as_array().unwrap().iter().any(|action| {
-            action["name"] == "list_public" && action["example"] == "pcl incidents --limit 5"
+            action["name"] == "list_public" && action["example"] == "pcl incidents --limit 5 --toon"
         }));
     }
 
@@ -2078,6 +2189,16 @@ mod tests {
                 .iter()
                 .any(|command| command == "pcl api manifest --toon")
         );
+        let consumption_order = guide["consumption_order"].as_array().unwrap();
+        let auth_ensure_position = consumption_order
+            .iter()
+            .position(|command| command == "pcl auth ensure --toon")
+            .expect("auth ensure in consumption order");
+        let whoami_position = consumption_order
+            .iter()
+            .position(|command| command == "pcl whoami --toon")
+            .expect("whoami in consumption order");
+        assert!(auth_ensure_position < whoami_position);
         assert!(
             guide["command_surfaces"]["state"]
                 .as_array()
@@ -2087,6 +2208,13 @@ mod tests {
         );
         assert!(
             guide["mutation_safety"]["order"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|step| step == "--body-template")
+        );
+        assert!(
+            !guide["mutation_safety"]["order"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -2166,12 +2294,24 @@ mod tests {
             Path::new("/tmp/pcl artifacts/incidents.jsonl"),
             Path::new("/tmp/pcl artifacts/errors.jsonl"),
             Path::new("/tmp/pcl artifacts/checkpoint.json"),
+            OutputMode::Human,
         );
 
         assert!(command.contains("--resume"));
         assert!(command.contains("'project one'"));
         assert!(command.contains("'/tmp/pcl artifacts/incidents.jsonl'"));
         assert!(command.contains("--continue-on-error"));
+        assert!(!command.contains("--toon"));
+        assert!(
+            incident_export_resume_command(
+                &args,
+                Path::new("/tmp/pcl artifacts/incidents.jsonl"),
+                Path::new("/tmp/pcl artifacts/errors.jsonl"),
+                Path::new("/tmp/pcl artifacts/checkpoint.json"),
+                OutputMode::Toon,
+            )
+            .contains("--toon")
+        );
     }
 
     #[tokio::test]
@@ -2224,7 +2364,8 @@ mod tests {
             allow_unauthenticated: true,
         };
 
-        export_incidents(&args, &CliConfig::default(), &cli_args, true)
+        let mut config = CliConfig::default();
+        export_incidents(&args, &mut config, &cli_args, true)
             .await
             .unwrap();
 
@@ -2233,6 +2374,84 @@ mod tests {
         let lines = fs::read_to_string(out).unwrap();
         assert!(lines.contains(r#""id":"i1""#));
         assert_eq!(fs::read_to_string(errors).unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn incident_export_refreshes_expired_project_auth_before_request() {
+        let mut server = mockito::Server::new_async().await;
+        let refresh = server
+            .mock("POST", "/api/v1/auth/refresh")
+            .match_header("authorization", Matcher::Missing)
+            .match_body(Matcher::Json(json!({ "refresh_token": "old_refresh" })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"token":"new_access","refresh_token":"new_refresh","expires_at":"2030-01-01T00:00:00Z","refresh_expires_at":"2030-02-01T00:00:00Z"}"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let query = Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("limit".into(), "50".into()),
+        ]);
+        let export = server
+            .mock("GET", "/api/v1/views/projects/project-1/incidents")
+            .match_header("authorization", "Bearer new_access")
+            .match_query(query)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"incidents":[{"id":"i1"}]}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let temp = tempdir().unwrap();
+        let cli_args = CliArgs {
+            config_dir: Some(temp.path().join("config")),
+            ..Default::default()
+        };
+        let mut config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "old_access".to_string(),
+                refresh_token: "old_refresh".to_string(),
+                expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: Some("agent@example.com".to_string()),
+            }),
+        };
+        config.write_to_file(&cli_args).unwrap();
+        let out = temp.path().join("incidents.jsonl");
+        let errors = temp.path().join("errors.jsonl");
+        let checkpoint = temp.path().join("checkpoint.json");
+        let args = ExportIncidentsArgs {
+            project_id: Some("project-1".to_string()),
+            environment: None,
+            page: 1,
+            limit: 50,
+            max_pages: 1,
+            out: Some(out),
+            errors: Some(errors),
+            checkpoint: Some(checkpoint),
+            resume: false,
+            continue_on_error: false,
+            max_retries: 0,
+            dry_run: false,
+            api_url: server.url().parse().unwrap(),
+            allow_unauthenticated: false,
+        };
+
+        export_incidents(&args, &mut config, &cli_args, true)
+            .await
+            .unwrap();
+
+        refresh.assert_async().await;
+        export.assert_async().await;
+        let auth = config.auth.as_ref().expect("refreshed auth");
+        assert_eq!(auth.access_token, "new_access");
+        assert_eq!(auth.refresh_token, "new_refresh");
     }
 
     #[tokio::test]
@@ -2268,7 +2487,8 @@ mod tests {
             allow_unauthenticated: true,
         };
 
-        let error = export_incidents(&args, &CliConfig::default(), &cli_args, true)
+        let mut config = CliConfig::default();
+        let error = export_incidents(&args, &mut config, &cli_args, true)
             .await
             .unwrap_err();
         assert!(matches!(
@@ -2336,7 +2556,8 @@ mod tests {
             allow_unauthenticated: true,
         };
 
-        export_incidents(&args, &CliConfig::default(), &cli_args, true)
+        let mut config = CliConfig::default();
+        export_incidents(&args, &mut config, &cli_args, true)
             .await
             .unwrap();
 

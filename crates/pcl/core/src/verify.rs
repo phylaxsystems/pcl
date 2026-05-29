@@ -10,6 +10,7 @@ use crate::{
         OutputStream,
         ok_envelope,
         print_envelope,
+        shell_word,
     },
 };
 use alloy_json_abi::JsonAbi;
@@ -126,6 +127,7 @@ impl VerifyArgs {
                 );
             }
         } else if summary.failed == 0 {
+            let next_action = self.apply_dry_run_command(&root);
             let envelope = ok_envelope(
                 json!({
                     "outcome": "success",
@@ -134,7 +136,7 @@ impl VerifyArgs {
                     "failed": summary.failed,
                     "assertions": &summary.assertions,
                 }),
-                vec!["pcl apply --dry-run".to_string()],
+                vec![next_action],
             );
             print_envelope(&envelope, output_mode, OutputStream::Stdout)?;
         }
@@ -144,6 +146,19 @@ impl VerifyArgs {
         }
 
         Ok(())
+    }
+
+    fn apply_dry_run_command(&self, root: &Path) -> String {
+        [
+            "pcl".to_string(),
+            "apply".to_string(),
+            "--root".to_string(),
+            shell_word(root.display().to_string()),
+            "--config".to_string(),
+            shell_word(self.config.display().to_string()),
+            "--dry-run".to_string(),
+        ]
+        .join(" ")
     }
 
     fn build_single(&self, assertion: &str, root: &Path) -> Result<Vec<VerifyInput>, VerifyError> {

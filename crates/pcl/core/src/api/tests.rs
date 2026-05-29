@@ -1,16 +1,84 @@
 use super::*;
-use crate::config::UserAuth;
+use crate::config::{
+    CliConfig,
+    UserAuth,
+};
 use chrono::{
     TimeZone,
     Utc,
 };
 use clap::Parser;
 use mockito::Matcher;
-use pcl_common::args::CliArgs;
-use std::path::Path;
+use pcl_common::args::{
+    CliArgs,
+    OutputMode,
+};
+use serde_json::{
+    Value,
+    json,
+};
+use std::{
+    cell::Cell,
+    fs,
+    path::Path,
+};
 
 fn test_request_log_path() -> &'static Path {
     Path::new("/tmp/pcl-test-requests.jsonl")
+}
+
+fn test_api(api_url: impl AsRef<str>, allow_unauthenticated: bool) -> ApiArgs {
+    ApiArgs {
+        command: ApiCommand::Manifest,
+        api_url: api_url.as_ref().parse().unwrap(),
+        allow_unauthenticated,
+        refresh_after_401: Cell::new(true),
+    }
+}
+
+fn valid_auth_config(access_token: &str, refresh_token: &str) -> CliConfig {
+    auth_config(access_token, refresh_token, 2030, Some("agent@example.com"))
+}
+
+fn expired_auth_config(access_token: &str, refresh_token: &str) -> CliConfig {
+    auth_config(access_token, refresh_token, 2020, Some("agent@example.com"))
+}
+
+fn auth_config(
+    access_token: &str,
+    refresh_token: &str,
+    expires_year: i32,
+    email: Option<&str>,
+) -> CliConfig {
+    CliConfig {
+        auth: Some(UserAuth {
+            access_token: access_token.to_string(),
+            refresh_token: refresh_token.to_string(),
+            expires_at: Utc.with_ymd_and_hms(expires_year, 1, 1, 0, 0, 0).unwrap(),
+            refresh_expires_at: None,
+            user_id: None,
+            wallet_address: None,
+            email: email.map(ToString::to_string),
+        }),
+    }
+}
+
+fn assert_output_contains(output: &str, expected: &[&str]) {
+    for &needle in expected {
+        assert!(
+            output.contains(needle),
+            "expected output to contain {needle:?}:\n{output}"
+        );
+    }
+}
+
+fn assert_output_omits(output: &str, forbidden: &[&str]) {
+    for &needle in forbidden {
+        assert!(
+            !output.contains(needle),
+            "expected output to omit {needle:?}:\n{output}"
+        );
+    }
 }
 
 fn assertions_args(project_id: Option<&str>) -> AssertionsArgs {
@@ -176,6 +244,18 @@ fn incidents_args() -> IncidentsArgs {
     }
 }
 
+fn transfers_args() -> TransfersArgs {
+    TransfersArgs {
+        transfer_id: None,
+        pending: false,
+        reject: false,
+        body: None,
+        field: Vec::new(),
+        body_file: None,
+        body_template: false,
+    }
+}
+
 #[test]
 fn parses_key_values() {
     let parsed = parse_key_values("query", &["limit=5".to_string()]).unwrap();
@@ -289,6 +369,111 @@ fn openapi_call_commands_include_required_inputs() {
     assert_eq!(
         inspected["input_placeholders"],
         json!(["path:project_id", "query:environment", "body"])
+    );
+}
+
+#[test]
+fn openapi_next_actions_prefer_runnable_safe_workflow_examples() {
+    let spec = json!({
+        "paths": {
+            "/incidents/{incident_id}": {
+                "get": {
+                    "operationId": "get_incidents_incident_id",
+                    "summary": "Get incident details",
+                    "parameters": [
+                        {"name": "incident_id", "in": "path", "required": true, "schema": {"type": "string"}}
+                    ]
+                }
+            },
+            "/views/public/incidents": {
+                "get": {
+                    "operationId": "get_views_public_incidents",
+                    "summary": "Get public incidents"
+                }
+            }
+        }
+    });
+
+    let operations = list_operations(&spec, Some("incidents"), Some(HttpMethod::Get)).unwrap();
+
+    assert_eq!(
+        next_actions_for_operations(&operations),
+        vec![
+            "pcl incidents --limit 5 --toon".to_string(),
+            "pcl api inspect get_views_public_incidents --toon".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn openapi_next_actions_skip_destructive_workflow_examples() {
+    let spec = json!({
+        "paths": {
+            "/projects/{project_id}/protocol-manager": {
+                "delete": {
+                    "operationId": "delete_projects_project_id_protocol_manager",
+                    "summary": "Clear protocol manager for a project",
+                    "tags": ["projects"],
+                    "parameters": [
+                        {"name": "project_id", "in": "path", "required": true, "schema": {"type": "string"}}
+                    ]
+                },
+                "post": {
+                    "operationId": "post_projects_project_id_protocol_manager",
+                    "summary": "Set protocol manager for a project",
+                    "tags": ["projects"],
+                    "parameters": [
+                        {"name": "project_id", "in": "path", "required": true, "schema": {"type": "string"}}
+                    ],
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"type": "object"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let operations = list_operations(&spec, Some("protocol-manager"), None).unwrap();
+
+    assert_eq!(
+        next_actions_for_operations(&operations),
+        vec![
+            "pcl protocol-manager --project <project-ref> --set --body-template --toon".to_string(),
+            "pcl api inspect post_projects_project_id_protocol_manager --toon".to_string(),
+        ]
+    );
+
+    let inspected_delete = inspect_operation(
+        &spec,
+        "delete_projects_project_id_protocol_manager",
+        None,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        command_next_actions(&inspected_delete),
+        vec!["Review data.workflow_alternatives before running mutating workflow commands"]
+    );
+}
+
+#[test]
+fn openapi_next_actions_keep_safe_remove_calldata_examples() {
+    let inspected = json!({
+        "method": "GET",
+        "workflow_alternatives": [
+            {
+                "example": "pcl assertions --project-id <project-ref> --remove-calldata"
+            }
+        ]
+    });
+
+    assert_eq!(
+        command_next_actions(&inspected),
+        vec!["pcl assertions --project-id <project-ref> --remove-calldata"]
     );
 }
 
@@ -638,6 +823,33 @@ fn builds_incident_trace_retry_request() {
     assert!(request.require_auth);
 }
 
+#[test]
+fn incident_detail_next_action_uses_invalidating_transaction_id() {
+    let next_actions = incidents_next_actions(
+        &json!({
+            "data": {
+                "invalidating_transactions": [{
+                    "id": "invalidating-tx-1",
+                    "transaction_hash": "0xde68add41baa3f8541de6acd572ad61b1dae78c4916412d8f273cc6f57af540b"
+                }]
+            }
+        }),
+        &IncidentsArgs {
+            incident_id: Some("incident-1".to_string()),
+            ..incidents_args()
+        },
+        vec!["fallback".to_string()],
+    );
+
+    assert_eq!(
+        next_actions,
+        vec![
+            "pcl incidents --incident-id incident-1 --tx-id invalidating-tx-1".to_string(),
+            "pcl incidents --limit 5".to_string(),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn paginates_incident_list_workflows() {
     let mut server = mockito::Server::new_async().await;
@@ -663,13 +875,7 @@ async fn paginates_incident_list_workflows() {
         .with_body(r#"{"incidents":[{"id":"i3"}]}"#)
         .create_async()
         .await;
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: server.url().parse().unwrap(),
-        allow_unauthenticated: true,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
+    let api = test_api(server.url(), true);
     let request = WorkflowRequest::get("/views/public/incidents", false, Vec::<String>::new());
     let mut config = CliConfig::default();
     let cli_args = CliArgs::default();
@@ -699,13 +905,7 @@ async fn paginates_incident_list_workflows() {
 
 #[tokio::test]
 async fn incident_workflow_pagination_rejects_zero_limit() {
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: "https://app.phylax.systems".parse().unwrap(),
-        allow_unauthenticated: true,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
+    let api = test_api("https://app.phylax.systems", true);
     let request = WorkflowRequest::get("/views/public/incidents", false, Vec::<String>::new());
     let mut config = CliConfig::default();
     let cli_args = CliArgs::default();
@@ -734,6 +934,138 @@ async fn incident_workflow_pagination_rejects_zero_limit() {
 }
 
 #[tokio::test]
+async fn authenticated_project_slug_resolution_attaches_auth() {
+    let mut server = mockito::Server::new_async().await;
+    let project_id = "550e8400-e29b-41d4-a716-446655440000";
+    let resolve = server
+        .mock("GET", "/api/v1/projects/resolve/private-slug")
+        .match_header("authorization", "Bearer access-token")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"{{"project_id":"{project_id}"}}"#))
+        .expect(1)
+        .create_async()
+        .await;
+    let detail = server
+        .mock("GET", format!("/api/v1/projects/{project_id}").as_str())
+        .match_header("authorization", "Bearer access-token")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"project_id":"{project_id}","slug":"private-slug"}}"#
+        ))
+        .expect(1)
+        .create_async()
+        .await;
+    let api = test_api(server.url(), false);
+    let mut config = valid_auth_config("access-token", "refresh-token");
+    let request = WorkflowRequest::get("/projects/private-slug", true, Vec::<String>::new());
+
+    let result = api
+        .call_workflow_result(
+            &mut config,
+            &CliArgs::default(),
+            &request,
+            test_request_log_path(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.body["slug"], "private-slug");
+    assert_eq!(result.request["path"], format!("/projects/{project_id}"));
+    resolve.assert_async().await;
+    detail.assert_async().await;
+}
+
+#[tokio::test]
+async fn project_slug_resolution_errors_preserve_http_metadata() {
+    let mut server = mockito::Server::new_async().await;
+    let resolve = server
+        .mock("GET", "/api/v1/projects/resolve/missing-slug")
+        .match_header("authorization", "Bearer access-token")
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-resolve-404")
+        .with_body(r#"{"error":"Project not found"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let api = test_api(server.url(), false);
+    let mut config = valid_auth_config("access-token", "refresh-token");
+    let request = WorkflowRequest::get("/projects/missing-slug", true, Vec::<String>::new());
+
+    let error = api
+        .call_workflow_result(
+            &mut config,
+            &CliArgs::default(),
+            &request,
+            test_request_log_path(),
+        )
+        .await
+        .unwrap_err();
+
+    let ApiCommandError::HttpStatus {
+        method,
+        path,
+        status,
+        request_id,
+        body,
+    } = &error
+    else {
+        panic!("expected HTTP status error, got {error:?}");
+    };
+    assert_eq!(*method, "GET");
+    assert_eq!(path, "/projects/resolve/missing-slug");
+    assert_eq!(*status, 404);
+    assert_eq!(request_id.as_deref(), Some("req-resolve-404"));
+    assert_eq!(body["error"], "Project not found");
+    assert_eq!(
+        error.json_envelope()["error"]["request_id"],
+        "req-resolve-404"
+    );
+    assert_eq!(error.json_envelope()["http_status"], 404);
+    resolve.assert_async().await;
+}
+
+#[tokio::test]
+async fn openapi_discovery_errors_preserve_http_metadata() {
+    let mut server = mockito::Server::new_async().await;
+    let openapi = server
+        .mock("GET", "/api/v1/openapi")
+        .with_status(503)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-openapi-503")
+        .with_body(r#"{"error":"OpenAPI unavailable"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let api = test_api(server.url(), true);
+
+    let error = api.fetch_openapi(&CliConfig::default()).await.unwrap_err();
+
+    let ApiCommandError::HttpStatus {
+        method,
+        path,
+        status,
+        request_id,
+        body,
+    } = &error
+    else {
+        panic!("expected HTTP status error, got {error:?}");
+    };
+    assert_eq!(*method, "GET");
+    assert_eq!(path, "/openapi");
+    assert_eq!(*status, 503);
+    assert_eq!(request_id.as_deref(), Some("req-openapi-503"));
+    assert_eq!(body["error"], "OpenAPI unavailable");
+    assert_eq!(
+        error.json_envelope()["error"]["request_id"],
+        "req-openapi-503"
+    );
+    openapi.assert_async().await;
+}
+
+#[tokio::test]
 async fn public_workflows_do_not_attach_expired_stored_tokens() {
     let mut server = mockito::Server::new_async().await;
     let mock = server
@@ -744,29 +1076,14 @@ async fn public_workflows_do_not_attach_expired_stored_tokens() {
         .with_body(r#"{"healthy":true}"#)
         .create_async()
         .await;
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: server.url().parse().unwrap(),
-        allow_unauthenticated: false,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
-    let mut config = CliConfig {
-        auth: Some(UserAuth {
-            access_token: "expired-token".to_string(),
-            refresh_token: "refresh-token".to_string(),
-            expires_at: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
-            refresh_expires_at: None,
-            user_id: None,
-            wallet_address: None,
-            email: Some("agent@example.com".to_string()),
-        }),
-    };
+    let api = test_api(server.url(), false);
+    let mut config = expired_auth_config("expired-token", "refresh-token");
 
     let output = api
         .run_workflow(
             &mut config,
             &CliArgs::default(),
+            "search",
             WorkflowRequest::get("/health", false, vec!["pcl search --health".to_string()]),
             test_request_log_path(),
         )
@@ -789,24 +1106,8 @@ async fn public_raw_calls_do_not_attach_expired_stored_tokens() {
         .with_body(r#"{"incidents":[]}"#)
         .create_async()
         .await;
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: server.url().parse().unwrap(),
-        allow_unauthenticated: false,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
-    let mut config = CliConfig {
-        auth: Some(UserAuth {
-            access_token: "expired-token".to_string(),
-            refresh_token: "refresh-token".to_string(),
-            expires_at: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
-            refresh_expires_at: None,
-            user_id: None,
-            wallet_address: None,
-            email: Some("agent@example.com".to_string()),
-        }),
-    };
+    let api = test_api(server.url(), false);
+    let mut config = expired_auth_config("expired-token", "refresh-token");
 
     let input = ApiRequestInput {
         method: HttpMethod::Get,
@@ -867,29 +1168,13 @@ async fn authenticated_workflow_retries_once_after_refresh_on_401() {
         .expect(1)
         .create_async()
         .await;
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: server.url().parse().unwrap(),
-        allow_unauthenticated: false,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
+    let api = test_api(server.url(), false);
     let temp_dir = tempfile::tempdir().unwrap();
     let cli_args = CliArgs {
         config_dir: Some(temp_dir.path().to_path_buf()),
         ..Default::default()
     };
-    let mut config = CliConfig {
-        auth: Some(UserAuth {
-            access_token: "old_access".to_string(),
-            refresh_token: "old_refresh".to_string(),
-            expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
-            refresh_expires_at: None,
-            user_id: None,
-            wallet_address: None,
-            email: Some("agent@example.com".to_string()),
-        }),
-    };
+    let mut config = valid_auth_config("old_access", "old_refresh");
     config.write_to_file(&cli_args).unwrap();
     let request = WorkflowRequest::get("/web/auth/me", true, Vec::<String>::new());
 
@@ -932,29 +1217,13 @@ async fn raw_401_preserves_original_error_when_refresh_endpoint_is_missing() {
         .expect(1)
         .create_async()
         .await;
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: server.url().parse().unwrap(),
-        allow_unauthenticated: false,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
+    let api = test_api(server.url(), false);
     let temp_dir = tempfile::tempdir().unwrap();
     let cli_args = CliArgs {
         config_dir: Some(temp_dir.path().to_path_buf()),
         ..Default::default()
     };
-    let mut config = CliConfig {
-        auth: Some(UserAuth {
-            access_token: "old_access".to_string(),
-            refresh_token: "old_refresh".to_string(),
-            expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
-            refresh_expires_at: None,
-            user_id: None,
-            wallet_address: None,
-            email: Some("agent@example.com".to_string()),
-        }),
-    };
+    let mut config = valid_auth_config("old_access", "old_refresh");
     config.write_to_file(&cli_args).unwrap();
     let input = ApiRequestInput {
         method: HttpMethod::Get,
@@ -1016,29 +1285,13 @@ async fn incident_stats_401_propagates_original_http_error() {
         .expect(1)
         .create_async()
         .await;
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: server.url().parse().unwrap(),
-        allow_unauthenticated: false,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
+    let api = test_api(server.url(), false);
     let temp_dir = tempfile::tempdir().unwrap();
     let cli_args = CliArgs {
         config_dir: Some(temp_dir.path().to_path_buf()),
         ..Default::default()
     };
-    let mut config = CliConfig {
-        auth: Some(UserAuth {
-            access_token: "old_access".to_string(),
-            refresh_token: "old_refresh".to_string(),
-            expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
-            refresh_expires_at: None,
-            user_id: None,
-            wallet_address: None,
-            email: Some("agent@example.com".to_string()),
-        }),
-    };
+    let mut config = valid_auth_config("old_access", "old_refresh");
     config.write_to_file(&cli_args).unwrap();
     let args = IncidentsArgs {
         project_id: Some(project_id.to_string()),
@@ -1066,69 +1319,6 @@ async fn incident_stats_401_propagates_original_http_error() {
     original.assert_async().await;
     refresh.assert_async().await;
 }
-
-#[tokio::test]
-async fn dry_run_projects_and_assertions_do_not_execute_requests() {
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: "https://app.phylax.systems".parse().unwrap(),
-        allow_unauthenticated: false,
-        dry_run: true,
-        refresh_after_401: Cell::new(true),
-    };
-    let mut config = CliConfig::default();
-    let cli_args = CliArgs::default();
-
-    let project_output = api
-        .run_projects(
-            &mut config,
-            &cli_args,
-            &ProjectsArgs {
-                create: true,
-                project_name: Some("Demo".to_string()),
-                chain_id: Some(1),
-                ..projects_args()
-            },
-            test_request_log_path(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(project_output["status"], "ok");
-    assert_eq!(project_output["data"]["dry_run"], true);
-    assert_eq!(project_output["data"]["request"]["method"], "POST");
-    assert_eq!(project_output["data"]["request"]["path"], "/projects");
-    assert_eq!(
-        project_output["data"]["request"]["auth"]["stored_token_present"],
-        false
-    );
-    assert_eq!(
-        project_output["data"]["request"]["auth"]["will_attach_stored_token"],
-        false
-    );
-    assert_eq!(project_output["next_actions"][0], "pcl auth ensure --toon");
-
-    let assertion_output = api
-        .run_assertions(
-            &mut config,
-            &cli_args,
-            &AssertionsArgs {
-                project_id: Some("project-1".to_string()),
-                registered: true,
-                ..assertions_args(None)
-            },
-            test_request_log_path(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(assertion_output["status"], "ok");
-    assert_eq!(assertion_output["data"]["dry_run"], true);
-    assert_eq!(assertion_output["data"]["request"]["method"], "GET");
-    assert_eq!(
-        assertion_output["data"]["request"]["path"],
-        "/projects/project-1/registered-assertions"
-    );
-}
-
 #[test]
 fn builds_project_create_body_from_typed_flags() {
     let request = projects_request(&ProjectsArgs {
@@ -1439,7 +1629,7 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
     let legacy = workflow_alternatives(HttpMethod::Get, "/public/incidents");
     assert!(legacy.iter().any(|alternative| {
         alternative["workflow"] == "incidents"
-            && alternative["example"] == "pcl incidents --limit 5"
+            && alternative["example"] == "pcl incidents --limit 5 --toon"
     }));
 
     let project_detail = workflow_alternatives(HttpMethod::Get, "/projects/{project_id}");
@@ -1448,7 +1638,7 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
     assert_eq!(project_detail[0]["action"], "detail");
     assert_eq!(
         project_detail[0]["example"],
-        "pcl projects show <project-ref>"
+        "pcl projects show <project-ref> --toon"
     );
 
     let saved_delete = workflow_alternatives(HttpMethod::Delete, "/projects/saved");
@@ -1457,7 +1647,7 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
     assert_eq!(saved_delete[0]["action"], "unsave");
     assert_eq!(
         saved_delete[0]["example"],
-        "pcl projects unsave <project-ref>"
+        "pcl projects unsave <project-ref> --toon"
     );
 
     let project_literal = workflow_alternatives(HttpMethod::Get, "/projects/project-1");
@@ -1698,13 +1888,7 @@ async fn workflow_http_errors_include_response_body() {
         .with_body(r#"{"message":"address is required","field":"address"}"#)
         .create_async()
         .await;
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: server.url().parse().unwrap(),
-        allow_unauthenticated: true,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
+    let api = test_api(server.url(), true);
     let mut config = CliConfig::default();
     let request = WorkflowRequest::get("/health", false, Vec::<String>::new());
 
@@ -1752,13 +1936,7 @@ async fn workflow_success_envelopes_include_request_provenance() {
         .with_body(r#"{"ok":true}"#)
         .create_async()
         .await;
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: server.url().parse().unwrap(),
-        allow_unauthenticated: true,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
+    let api = test_api(server.url(), true);
     let request = WorkflowRequest::get("/health", false, vec!["next".to_string()]);
     let mut config = CliConfig::default();
 
@@ -1766,6 +1944,7 @@ async fn workflow_success_envelopes_include_request_provenance() {
         .run_workflow(
             &mut config,
             &CliArgs::default(),
+            "search",
             request,
             test_request_log_path(),
         )
@@ -1798,13 +1977,7 @@ async fn raw_api_call_accepts_inline_query_strings() {
         .with_body(r#"{"ok":true}"#)
         .create_async()
         .await;
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: server.url().parse().unwrap(),
-        allow_unauthenticated: true,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
+    let api = test_api(server.url(), true);
     let mut config = CliConfig::default();
 
     let response = api
@@ -1837,125 +2010,6 @@ async fn raw_api_call_accepts_inline_query_strings() {
     assert_eq!(response["response"]["body"]["ok"], true);
     mock.assert_async().await;
 }
-
-#[test]
-fn parser_accepts_global_dry_run() {
-    let args = ApiArgs::try_parse_from([
-        "api",
-        "--dry-run",
-        "call",
-        "post",
-        "/web/auth/logout",
-        "--body",
-        "{}",
-        "--field",
-        "reason=manual",
-    ])
-    .unwrap();
-
-    assert!(args.dry_run);
-    let ApiCommand::Call { field, .. } = args.command else {
-        panic!("expected raw api call");
-    };
-    assert_eq!(field, vec!["reason=manual".to_string()]);
-}
-
-#[test]
-fn raw_api_dry_run_plans_request_without_auth_or_network() {
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: "https://api.example.com".parse().unwrap(),
-        allow_unauthenticated: false,
-        dry_run: true,
-        refresh_after_401: Cell::new(true),
-    };
-    let query = vec!["force=true".to_string()];
-    let header = vec!["x-test=yes".to_string()];
-    let field = vec!["reason=manual".to_string(), "notify=false".to_string()];
-    let config = CliConfig::default();
-
-    let plan = api
-        .raw_call_plan(
-            ApiRequestInput {
-                method: HttpMethod::Post,
-                path: "/web/auth/logout?reason=test",
-                query: &query,
-                header: &header,
-                body: Some("{}"),
-                body_file: None,
-                field: &field,
-                require_auth: true,
-            },
-            None,
-            &config,
-        )
-        .unwrap();
-
-    assert_eq!(plan["dry_run"], true);
-    assert_eq!(plan["valid"], true);
-    assert_eq!(plan["request"]["method"], "POST");
-    assert_eq!(plan["request"]["path"], "/web/auth/logout");
-    assert_eq!(
-        plan["request"]["query"],
-        json!([
-            {"name": "reason", "value": "test"},
-            {"name": "force", "value": "true"}
-        ])
-    );
-    assert_eq!(
-        plan["request"]["body"],
-        json!({"reason": "manual", "notify": false})
-    );
-    assert_eq!(plan["request"]["auth"]["required"], true);
-    assert_eq!(plan["request"]["auth"]["stored_token_present"], false);
-    assert_eq!(plan["request"]["auth"]["will_attach_stored_token"], false);
-    assert_eq!(plan["request"]["side_effecting"], true);
-    assert_eq!(plan["request"]["destructive"], true);
-}
-
-#[test]
-fn workflow_dry_run_plans_destructive_requests() {
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: "https://api.example.com".parse().unwrap(),
-        allow_unauthenticated: false,
-        dry_run: true,
-        refresh_after_401: Cell::new(true),
-    };
-    let request = WorkflowRequest {
-        method: HttpMethod::Delete,
-        path: "/projects/project-1".to_string(),
-        query: vec![("environment".to_string(), "production".to_string())],
-        body: None,
-        require_auth: true,
-        next_actions: Vec::new(),
-    };
-    let config = CliConfig {
-        auth: Some(UserAuth {
-            access_token: "access-token".to_string(),
-            refresh_token: "refresh-token".to_string(),
-            expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
-            refresh_expires_at: None,
-            user_id: None,
-            wallet_address: None,
-            email: None,
-        }),
-    };
-
-    let plan = api.workflow_request_plan(&request, None, &config);
-
-    assert_eq!(plan["dry_run"], true);
-    assert_eq!(plan["valid"], true);
-    assert_eq!(plan["request"]["method"], "DELETE");
-    assert_eq!(plan["request"]["path"], "/projects/project-1");
-    assert_eq!(plan["request"]["auth"]["stored_token_present"], true);
-    assert_eq!(plan["request"]["auth"]["stored_token_valid"], true);
-    assert_eq!(plan["request"]["auth"]["will_attach_stored_token"], true);
-    assert_eq!(plan["request"]["side_effecting"], true);
-    assert_eq!(plan["request"]["destructive"], true);
-    assert_eq!(plan["request"]["project_resolution"], "not_performed");
-}
-
 #[tokio::test]
 async fn raw_api_call_paginates_any_array_response() {
     let mut server = mockito::Server::new_async().await;
@@ -1983,13 +2037,7 @@ async fn raw_api_call_paginates_any_array_response() {
         .with_body(r#"{"incidents":[{"id":"i3"}]}"#)
         .create_async()
         .await;
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: server.url().parse().unwrap(),
-        allow_unauthenticated: true,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
+    let api = test_api(server.url(), true);
     let mut config = CliConfig::default();
 
     let response = api
@@ -2045,13 +2093,7 @@ async fn raw_api_call_pagination_supports_custom_param_names() {
         .with_body(r#"{"items":[{"id":"i1"}]}"#)
         .create_async()
         .await;
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: server.url().parse().unwrap(),
-        allow_unauthenticated: true,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
+    let api = test_api(server.url(), true);
     let mut config = CliConfig::default();
 
     let response = api
@@ -2089,13 +2131,7 @@ async fn raw_api_call_pagination_supports_custom_param_names() {
 
 #[tokio::test]
 async fn raw_api_call_pagination_rejects_non_get_requests() {
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: "https://api.example.com".parse().unwrap(),
-        allow_unauthenticated: true,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
+    let api = test_api("https://api.example.com", true);
     let mut config = CliConfig::default();
 
     let error = api
@@ -2161,13 +2197,7 @@ async fn raw_api_call_errors_include_request_id() {
         .with_body(r#"{"message":"server failed"}"#)
         .create_async()
         .await;
-    let api = ApiArgs {
-        command: ApiCommand::Manifest,
-        api_url: server.url().parse().unwrap(),
-        allow_unauthenticated: true,
-        dry_run: false,
-        refresh_after_401: Cell::new(true),
-    };
+    let api = test_api(server.url(), true);
     let mut config = CliConfig::default();
 
     let error = api
@@ -2245,6 +2275,15 @@ fn mutating_server_errors_mark_outcome_ambiguous() {
             .first()
             .is_some_and(|action| action.contains("Do not retry immediately"))
     );
+}
+
+#[test]
+fn api_error_envelope_keeps_recoverable_inside_error_object() {
+    let envelope = ApiCommandError::InvalidPath("health".to_string()).json_envelope();
+
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["recoverable"], true);
+    assert!(envelope.get("recoverable").is_none(), "{envelope}");
 }
 
 #[test]
@@ -2379,10 +2418,8 @@ fn default_api_output_is_human_readable() {
     .unwrap();
 
     assert!(output.starts_with("OK\n"));
-    assert!(output.contains("Healthy: yes"));
-    assert!(output.contains("Next:"));
-    assert!(!output.contains("Schema: pcl.envelope.v1"));
-    assert!(!output.contains("Details:"));
+    assert_output_contains(&output, &["Healthy: yes", "Next:"]);
+    assert_output_omits(&output, &["Schema: pcl.envelope.v1", "Details:"]);
 }
 
 #[test]
@@ -2421,18 +2458,21 @@ fn human_api_output_formats_incident_lists_for_people() {
     )
     .unwrap();
 
-    assert!(output.contains("Incidents\n"));
-    assert!(output.contains("Showing 1 of 332 incidents on page 1 (limit 20)"));
-    assert!(output.contains("Updated: 2026-05-09 23:30"));
-    assert!(output.contains("Source: Phylax platform index"));
-    assert!(output.contains("Linea Mainnet (59144)"));
-    assert!(output.contains("Removed invalid transaction"));
-    assert!(output.contains("7dfe71ee-9d69-41bb-b33c-992c0fbd684f"));
-    assert!(output.contains("More results available. Try --page 2 --limit 20."));
-    assert!(output.contains("Request ID: req_123 (HTTP 200)"));
-    assert!(!output.contains("Details:"));
-    assert!(!output.contains("Request:\n"));
-    assert!(!output.contains("Schema:"));
+    assert_output_contains(
+        &output,
+        &[
+            "Incidents\n",
+            "Showing 1 of 332 incidents on page 1 (limit 20)",
+            "Updated: 2026-05-09 23:30",
+            "Source: Phylax platform index",
+            "Linea Mainnet (59144)",
+            "Removed invalid transaction",
+            "7dfe71ee-9d69-41bb-b33c-992c0fbd684f",
+            "More results available. Try --page 2 --limit 20.",
+            "Request ID: req_123 (HTTP 200)",
+        ],
+    );
+    assert_output_omits(&output, &["Details:", "Request:\n", "Schema:"]);
 }
 
 #[test]
@@ -2449,10 +2489,339 @@ fn human_output_formats_empty_workflow_arrays_for_people() {
     )
     .unwrap();
 
-    assert!(output.contains("Releases\n"));
-    assert!(output.contains("Showing 0 releases"));
-    assert!(output.contains("No releases found."));
-    assert!(!output.contains("<release-id>"));
+    assert_output_contains(
+        &output,
+        &["Releases\n", "Showing 0 releases", "No releases found."],
+    );
+    assert_output_omits(&output, &["<release-id>"]);
+}
+
+#[test]
+fn human_output_keeps_placeholder_actions_when_other_collections_are_non_empty() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "projects": [
+                    {"project_id": "project-1", "project_name": "Project 1"}
+                ],
+                "contracts": []
+            },
+            "request": {"method": "GET", "path": "/search"},
+            "response": {"status": 200, "request_id": "req_search"},
+            "next_actions": ["pcl contracts --project <project-ref>"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert_output_contains(&output, &["pcl contracts --project <project-ref>"]);
+}
+
+#[test]
+fn human_output_keeps_safe_remove_calldata_actions() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "assertions": [
+                    {"assertion_id": "assertion-1", "contract_name": "Guard"}
+                ]
+            },
+            "request": {"method": "GET", "path": "/views/projects/project-1/assertions"},
+            "response": {"status": 200, "request_id": "req_assertions"},
+            "next_actions": ["pcl assertions --project-id project-1 --remove-calldata"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert_output_contains(
+        &output,
+        &["pcl assertions --project-id project-1 --remove-calldata"],
+    );
+}
+
+#[test]
+fn release_list_next_actions_use_returned_release_id() {
+    let mut args = release_args();
+    args.project = Some("project-1".to_string());
+    let next_actions = releases_next_actions(
+        &json!([
+            {"id": "release-1", "status": "active"},
+            {"id": "release-2", "status": "inactive"}
+        ]),
+        &args,
+        vec!["pcl releases show project-1 <release-id>".to_string()],
+    );
+
+    assert_eq!(next_actions, vec!["pcl releases show project-1 release-1"]);
+}
+
+#[test]
+fn contract_list_next_actions_use_returned_adopter_id() {
+    let mut args = contracts_args();
+    args.project = Some("project-1".to_string());
+    let next_actions = contracts_next_actions(
+        &json!({
+            "data": {
+                "contracts": [
+                    {"id": "59144_0xabc", "address": "0xabc"},
+                    {"id": "59144_0xdef", "address": "0xdef"}
+                ]
+            }
+        }),
+        &args,
+        vec!["pcl contracts --project project-1 --adopter-id <adopter-id>".to_string()],
+    );
+
+    assert_eq!(
+        next_actions,
+        vec!["pcl contracts --project project-1 --adopter-id 59144_0xabc"]
+    );
+}
+
+#[test]
+fn transfer_list_next_actions_use_returned_transfer_id() {
+    let args = transfers_args();
+    let next_actions = transfers_next_actions(
+        &json!({
+            "incoming": {
+                "project_transfers": [
+                    {"id": "transfer-1", "project_id": "project-1"}
+                ]
+            },
+            "outgoing": {"project_transfers": []}
+        }),
+        &args,
+        vec!["pcl transfers --transfer-id <transfer-id>".to_string()],
+    );
+
+    assert_eq!(next_actions, vec!["pcl transfers --transfer-id transfer-1"]);
+}
+
+#[test]
+fn protocol_manager_pending_next_actions_use_current_manager_address() {
+    let args = protocol_manager_args();
+    let next_actions = protocol_manager_next_actions(
+        &json!({
+            "has_pending_transfer": false,
+            "current_manager_address": "0xmanager",
+            "new_manager_address": null
+        }),
+        &args,
+        vec![
+            concat!(
+                "pcl protocol-manager --project project-1 --nonce ",
+                "--address <manager-address>"
+            )
+            .to_string(),
+        ],
+    );
+
+    assert_eq!(
+        next_actions[0],
+        "pcl protocol-manager --project project-1 --nonce --address 0xmanager"
+    );
+    assert!(
+        next_actions[1].contains("--new-manager <manager-address>"),
+        "{next_actions:?}"
+    );
+}
+
+#[test]
+fn protocol_manager_pending_next_actions_offer_accept_calldata_when_pending() {
+    let args = protocol_manager_args();
+    let next_actions = protocol_manager_next_actions(
+        &json!({
+            "has_pending_transfer": true,
+            "current_manager_address": "0xmanager",
+            "new_manager_address": "0xnew"
+        }),
+        &args,
+        Vec::new(),
+    );
+
+    assert_eq!(
+        next_actions,
+        vec![
+            "pcl protocol-manager --project project-1 --nonce --address 0xmanager",
+            "pcl protocol-manager --project project-1 --accept-calldata",
+        ]
+    );
+}
+
+#[test]
+fn deployment_output_only_redacts_artifacts_for_human_mode() {
+    let deployment_data = json!({
+        "project": {"project_id": "project-1", "project_name": "Demo"},
+        "submitted_assertions": [
+            {
+                "id": "assertion-1",
+                "contract_name": "Guard",
+                "source_code": "contract Guard { function ok() external {} }",
+                "bytecode": "0x6080604052348015600e575f80fd5b50"
+            }
+        ],
+        "staging_assertions": [],
+        "available_contracts": [],
+        "_meta": {"sources": ["offchain"]}
+    });
+
+    let json_data =
+        workflow_data_for_output_mode("deployments", &deployment_data, OutputMode::Json);
+    let toon_data =
+        workflow_data_for_output_mode("deployments", &deployment_data, OutputMode::Toon);
+
+    assert_eq!(
+        json_data["submitted_assertions"][0]["source_code"],
+        "contract Guard { function ok() external {} }"
+    );
+    assert_eq!(
+        json_data["submitted_assertions"][0]["bytecode"],
+        "0x6080604052348015600e575f80fd5b50"
+    );
+    assert_eq!(
+        toon_data["submitted_assertions"][0]["source_code"],
+        "contract Guard { function ok() external {} }"
+    );
+    assert_eq!(
+        toon_data["submitted_assertions"][0]["bytecode"],
+        "0x6080604052348015600e575f80fd5b50"
+    );
+
+    let compact = workflow_data_for_output_mode("deployments", &deployment_data, OutputMode::Human);
+    let rendered = serde_json::to_string(&compact).expect("json render");
+
+    assert!(rendered.contains("\"redacted\":true"), "{rendered}");
+    assert!(!rendered.contains("contract Guard"), "{rendered}");
+    assert!(!rendered.contains("0x608060405234"), "{rendered}");
+    assert_eq!(
+        compact["submitted_assertions"][0]["source_code"]["reason"],
+        "large_artifact"
+    );
+    assert_eq!(
+        compact["submitted_assertions"][0]["bytecode"]["reason"],
+        "large_artifact"
+    );
+}
+
+#[test]
+fn human_output_formats_non_empty_releases_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": [
+                {
+                    "id": "release-1",
+                    "releaseNumber": 2,
+                    "environment": "production",
+                    "status": "active",
+                    "createdAt": "2026-05-18T18:00:00Z"
+                }
+            ],
+            "request": {"method": "GET", "path": "/projects/project-1/releases"},
+            "response": {"status": 200, "request_id": "req_releases"},
+            "next_actions": ["pcl releases show project-1 release-1"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert_output_contains(
+        &output,
+        &[
+            "Releases\n",
+            "Release",
+            "Environment",
+            "Status",
+            "release-1",
+            "production",
+        ],
+    );
+    assert_output_omits(&output, &["Visibility"]);
+}
+
+#[test]
+fn human_output_formats_contract_lists_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "data": {
+                    "contracts": [
+                        {
+                            "id": "59144_0xabc",
+                            "address": "0xabc",
+                            "chain_id": 59144,
+                            "manager": "0xmanager",
+                            "contract_name": "LineaSettler"
+                        }
+                    ]
+                },
+                "_meta": {"sources": ["offchain"], "fetchedAt": "2026-05-18T18:00:00Z"}
+            },
+            "request": {"method": "GET", "path": "/views/projects/project-1/contracts"},
+            "response": {"status": 200, "request_id": "req_contracts"},
+            "next_actions": ["pcl contracts --project project-1 --adopter-id 59144_0xabc"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert_output_contains(
+        &output,
+        &[
+            "Contracts\n",
+            "Contract",
+            "Chain",
+            "Address",
+            "Manager",
+            "LineaSettler",
+            "0xabc",
+        ],
+    );
+}
+
+#[test]
+fn human_output_formats_assertion_lists_for_people() {
+    let output = envelope_output_string(
+        &json!({
+            "status": "ok",
+            "data": {
+                "data": {
+                    "assertions": [
+                        {
+                            "assertion_id": "0xassertion",
+                            "contract_name": "AllowanceAssertion",
+                            "environment": "PRODUCTION",
+                            "lifecycle": "enforced",
+                            "deployment_instances": [{ "id": "one" }, { "id": "two" }]
+                        }
+                    ]
+                },
+                "_meta": {"sources": ["offchain"], "fetchedAt": "2026-05-18T18:00:00Z"}
+            },
+            "request": {"method": "GET", "path": "/views/projects/project-1/assertions"},
+            "response": {"status": 200, "request_id": "req_assertions"},
+            "next_actions": ["pcl assertions --project-id project-1 --assertion-id 0xassertion"],
+        }),
+        false,
+    )
+    .unwrap();
+
+    assert_output_contains(
+        &output,
+        &[
+            "Assertions\n",
+            "Contract",
+            "Lifecycle",
+            "Instances",
+            "AllowanceAssertion",
+            "enforced",
+            "0xassertion",
+        ],
+    );
 }
 
 #[test]
@@ -2484,13 +2853,17 @@ fn human_output_formats_project_details_for_people() {
     )
     .unwrap();
 
-    assert!(output.contains("Project\n"));
-    assert!(output.contains("ID: project-1"));
-    assert!(output.contains("Visibility: private"));
-    assert!(output.contains("Networks: Linea Mainnet"));
-    assert!(output.contains("Submitted assertions: 0 assertions"));
-    assert!(!output.contains("Project Id:"));
-    assert!(!output.contains("item(s)"));
+    assert_output_contains(
+        &output,
+        &[
+            "Project\n",
+            "ID: project-1",
+            "Visibility: private",
+            "Networks: Linea Mainnet",
+            "Submitted assertions: 0 assertions",
+        ],
+    );
+    assert_output_omits(&output, &["Project Id:", "item(s)"]);
 }
 
 #[test]
@@ -2507,8 +2880,8 @@ fn human_output_names_success_only_mutations() {
     )
     .unwrap();
 
-    assert!(output.contains("Project deleted"));
-    assert!(!output.contains("Success: yes"));
+    assert_output_contains(&output, &["Project deleted"]);
+    assert_output_omits(&output, &["Success: yes"]);
 
     let output = envelope_output_string(
         &json!({
@@ -2522,8 +2895,8 @@ fn human_output_names_success_only_mutations() {
     )
     .unwrap();
 
-    assert!(output.contains("Invitation revoked"));
-    assert!(!output.contains("Success: yes"));
+    assert_output_contains(&output, &["Invitation revoked"]);
+    assert_output_omits(&output, &["Success: yes"]);
 }
 
 #[test]
@@ -2558,23 +2931,27 @@ fn human_output_formats_project_home_for_people() {
     )
     .unwrap();
 
-    assert!(output.contains("Your projects\n"));
-    assert!(output.contains("Showing 1 project you belong to"));
-    assert!(output.contains("Updated: 2026-05-10 04:16"));
-    assert!(output.contains("Source: Phylax platform index"));
-    assert!(output.contains("Project"));
-    assert!(output.contains("Slug"));
-    assert!(output.contains("Network"));
-    assert!(output.contains("Visibility"));
-    assert!(output.contains("Private Test"));
-    assert!(output.contains("private-test"));
-    assert!(output.contains("Linea Mainnet"));
-    assert!(output.contains("private"));
-    assert!(output.contains("project-1"));
-    assert!(output.contains("Saved projects: 0 projects"));
-    assert!(output.contains("Contracts without a project: 0 contracts"));
-    assert!(!output.contains("Member projects:"));
-    assert!(!output.contains("Details:"));
+    assert_output_contains(
+        &output,
+        &[
+            "Your projects\n",
+            "Showing 1 project you belong to",
+            "Updated: 2026-05-10 04:16",
+            "Source: Phylax platform index",
+            "Project",
+            "Slug",
+            "Network",
+            "Visibility",
+            "Private Test",
+            "private-test",
+            "Linea Mainnet",
+            "private",
+            "project-1",
+            "Saved projects: 0 projects",
+            "Contracts without a project: 0 contracts",
+        ],
+    );
+    assert_output_omits(&output, &["Member projects:", "Details:"]);
 }
 
 #[test]
@@ -2599,13 +2976,18 @@ fn human_output_formats_invitations_for_people() {
     )
     .unwrap();
 
-    assert!(output.contains("Invitations\n"));
-    assert!(output.contains("Showing 1 invitation"));
-    assert!(output.contains("cli-ux-test@example.invalid"));
-    assert!(output.contains("viewer"));
-    assert!(output.contains("pending"));
-    assert!(output.contains("pcl access invite project-1 --body-template"));
-    assert!(!output.contains("--body '{...}'"));
+    assert_output_contains(
+        &output,
+        &[
+            "Invitations\n",
+            "Showing 1 invitation",
+            "cli-ux-test@example.invalid",
+            "viewer",
+            "pending",
+            "pcl access invite project-1 --body-template",
+        ],
+    );
+    assert_output_omits(&output, &["--body '{...}'"]);
 }
 
 #[test]
@@ -2637,11 +3019,16 @@ fn human_output_formats_mixed_search_results_for_people() {
     )
     .unwrap();
 
-    assert!(output.contains("Search results"));
-    assert!(output.contains("Projects: 0"));
-    assert!(output.contains("Contracts: 1"));
-    assert!(output.contains("LineaSettler"));
-    assert!(!output.contains("Assertions\nShowing 0"));
+    assert_output_contains(
+        &output,
+        &[
+            "Search results",
+            "Projects: 0",
+            "Contracts: 1",
+            "LineaSettler",
+        ],
+    );
+    assert_output_omits(&output, &["Assertions\nShowing 0"]);
 }
 
 #[test]
@@ -2669,10 +3056,14 @@ fn human_errors_include_api_reason_and_hide_internal_actions() {
     )
     .unwrap();
 
-    assert!(output.contains("API reason: System status checks are temporarily disabled"));
-    assert!(output.contains("Request ID: req_forbidden"));
-    assert!(!output.contains("Code: auth.forbidden"));
-    assert!(!output.contains("Read error.http.body"));
+    assert_output_contains(
+        &output,
+        &[
+            "API reason: System status checks are temporarily disabled",
+            "Request ID: req_forbidden",
+        ],
+    );
+    assert_output_omits(&output, &["Code: auth.forbidden", "Read error.http.body"]);
 }
 
 #[test]
@@ -2691,10 +3082,8 @@ fn human_cli_errors_strip_raw_usage_dump() {
     )
     .unwrap();
 
-    assert!(output.contains("unexpected argument '--limit' found"));
-    assert!(!output.contains("error:"));
-    assert!(!output.contains("Usage:"));
-    assert!(!output.contains("--toon"));
+    assert_output_contains(&output, &["unexpected argument '--limit' found"]);
+    assert_output_omits(&output, &["error:", "Usage:", "--toon"]);
 }
 
 #[test]
@@ -2716,8 +3105,7 @@ fn human_llms_guide_keeps_toon_commands() {
     )
     .unwrap();
 
-    assert!(output.contains("pcl doctor --toon"));
-    assert!(output.contains("pcl api manifest --toon"));
+    assert_output_contains(&output, &["pcl doctor --toon", "pcl api manifest --toon"]);
 }
 
 #[test]
@@ -2762,11 +3150,16 @@ fn human_incident_detail_uses_readable_sections() {
     )
     .unwrap();
 
-    assert!(output.contains("Incident\nID: incident-1"));
-    assert!(output.contains("Assertion\nTitle: AllowanceAssertion"));
-    assert!(output.contains("Assertion adopter\nName: LineaSettler"));
-    assert!(output.contains("Invalidating transactions (first 1 of 1)"));
-    assert!(!output.contains("Assertion: Assertion ID="));
+    assert_output_contains(
+        &output,
+        &[
+            "Incident\nID: incident-1",
+            "Assertion\nTitle: AllowanceAssertion",
+            "Assertion adopter\nName: LineaSettler",
+            "Invalidating transactions (first 1 of 1)",
+        ],
+    );
+    assert_output_omits(&output, &["Assertion: Assertion ID="]);
 }
 
 #[test]
@@ -2791,12 +3184,16 @@ fn human_output_formats_surface_lists_for_people() {
     )
     .unwrap();
 
-    assert!(output.contains("Workflows\n"));
-    assert!(output.contains("incident-investigation"));
-    assert!(output.contains("Export incidents and inspect traces."));
-    assert!(output.contains("pcl schema list"));
-    assert!(!output.contains("--toon"));
-    assert!(!output.contains("Details:"));
+    assert_output_contains(
+        &output,
+        &[
+            "Workflows\n",
+            "incident-investigation",
+            "Export incidents and inspect traces.",
+            "pcl schema list",
+        ],
+    );
+    assert_output_omits(&output, &["--toon", "Details:"]);
 }
 
 #[test]
@@ -2821,11 +3218,8 @@ fn human_output_honors_display_metadata_before_shape_detection() {
         "next_actions": []
     })));
 
-    assert!(output.contains("Projects\n"), "{output}");
-    assert!(output.contains("Name"), "{output}");
-    assert!(output.contains("Demo"), "{output}");
-    assert!(output.contains("project-1"), "{output}");
-    assert!(!output.contains("ignored"), "{output}");
+    assert_output_contains(&output, &["Projects\n", "Name", "Demo", "project-1"]);
+    assert_output_omits(&output, &["ignored"]);
 }
 
 #[test]
@@ -2850,122 +3244,17 @@ fn human_output_formats_schema_action_for_people() {
     )
     .unwrap();
 
-    assert!(output.contains("Schema: incidents"));
-    assert!(output.contains("Action: list_public"));
-    assert!(output.contains("Request: GET /views/public/incidents"));
-    assert!(output.contains("Example: pcl incidents --limit 5"));
-    assert!(!output.contains("--toon"));
-}
-
-#[test]
-fn human_output_formats_dry_run_request_plan_for_people() {
-    let output = envelope_output_string(
-        &dry_run_envelope(json!({
-            "dry_run": true,
-            "valid": true,
-            "request": {
-                "method": "GET",
-                "path": "/views/projects",
-                "query": [{"name": "limit", "value": "2"}],
-                "auth": {
-                    "required": false,
-                    "will_attach_stored_token": false,
-                }
-            },
-            "pagination": null,
-        })),
-        false,
-    )
-    .unwrap();
-
-    assert!(output.contains("Dry run"));
-    assert!(output.contains("GET /views/projects"));
-    assert!(output.contains("Query: limit=2"));
-    assert!(output.contains("Auth: not required"));
-    assert!(!output.contains("Use --json"));
-    assert!(!output.contains("Use --body-template when constructing mutation bodies"));
-    assert!(!output.contains("Details:"));
-}
-
-#[test]
-fn human_output_formats_mutation_dry_run_for_people() {
-    let output = envelope_output_string(
-        &dry_run_envelope(json!({
-            "dry_run": true,
-            "valid": true,
-            "request": {
-                "method": "POST",
-                "path": "/projects/project-1/invitations",
-                "auth": {
-                    "required": true,
-                    "will_attach_stored_token": true,
-                    "stored_token_valid": true,
-                },
-                "body": {
-                    "identifier": "user@example.com",
-                    "role": "viewer"
-                }
-            },
-            "pagination": null,
-        })),
-        false,
-    )
-    .unwrap();
-
-    assert!(output.contains("Dry run"));
-    assert!(output.contains("POST /projects/project-1/invitations"));
-    assert!(output.contains("Remove --dry-run to execute this request"));
-    assert!(output.contains("Use --body-template to start from an example request body"));
-    assert!(!output.contains("Use --json"));
-    assert!(!output.contains("Use --body-template when constructing mutation bodies"));
-}
-
-#[test]
-fn dry_run_auth_recovery_only_suggests_body_templates_for_mutations() {
-    let get = dry_run_envelope(json!({
-        "dry_run": true,
-        "valid": true,
-        "request": {
-            "method": "GET",
-            "path": "/views/projects/home",
-            "auth": {
-                "required": true,
-                "allow_unauthenticated": false,
-                "stored_token_valid": false,
-            }
-        }
-    }));
-    assert_eq!(
-        get["next_actions"],
-        json!([
-            "pcl auth ensure --toon",
-            "Authenticate before removing --dry-run"
-        ])
+    assert_output_contains(
+        &output,
+        &[
+            "Schema: incidents",
+            "Action: list_public",
+            "Request: GET /views/public/incidents",
+            "Example: pcl incidents --limit 5",
+        ],
     );
-
-    let post = dry_run_envelope(json!({
-        "dry_run": true,
-        "valid": true,
-        "request": {
-            "method": "POST",
-            "path": "/projects",
-            "auth": {
-                "required": true,
-                "allow_unauthenticated": false,
-                "stored_token_valid": false,
-            }
-        }
-    }));
-    assert_eq!(
-        post["next_actions"],
-        json!([
-            "pcl auth ensure --toon",
-            "Authenticate before removing --dry-run",
-            "Use --body-template when constructing mutation bodies"
-        ])
-    );
+    assert_output_omits(&output, &["--toon"]);
 }
-
 #[test]
 fn human_output_formats_api_discovery_for_people() {
     let output = envelope_output_string(
@@ -2987,11 +3276,16 @@ fn human_output_formats_api_discovery_for_people() {
     )
     .unwrap();
 
-    assert!(output.contains("Operations\n"));
-    assert!(output.contains("GET"));
-    assert!(output.contains("/views/public/incidents"));
-    assert!(output.contains("Prefer workflow"));
-    assert!(!output.contains("--toon"));
+    assert_output_contains(
+        &output,
+        &[
+            "Operations\n",
+            "GET",
+            "/views/public/incidents",
+            "Prefer workflow",
+        ],
+    );
+    assert_output_omits(&output, &["--toon"]);
 }
 
 #[test]
@@ -3015,11 +3309,6 @@ fn machine_envelopes_keep_required_root_contract() {
     let envelopes = [
         ok_envelope(json!({"healthy": true})),
         template_envelope(body_template("empty_object")),
-        dry_run_envelope(json!({
-            "dry_run": true,
-            "valid": true,
-            "request": {"method": "GET", "path": "/health"},
-        })),
         ApiCommandError::InvalidPath("health".to_string()).json_envelope(),
     ];
 
@@ -3093,6 +3382,12 @@ fn manifest_lists_structured_actions_for_every_workflow() {
                 .is_some_and(|value| !value.is_empty()),
             "missing output shape for {command_name}"
         );
+        assert!(
+            command["output_policy"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "missing output policy for {command_name}"
+        );
         let actions = command["actions"].as_array().unwrap_or_else(|| {
             panic!("missing structured actions for manifest command {command_name}")
         });
@@ -3106,6 +3401,12 @@ fn manifest_lists_structured_actions_for_every_workflow() {
                     "missing {field} for {command_name} action {action:?}"
                 );
             }
+            assert!(
+                action["example"]
+                    .as_str()
+                    .is_some_and(|example| example.contains("--toon")),
+                "agent example must include --toon for {command_name} action {action:?}"
+            );
             assert!(
                 action["auth"].as_bool().is_some(),
                 "missing auth for {command_name} action {action:?}"
@@ -3167,6 +3468,14 @@ fn manifest_lists_structured_actions_for_every_workflow() {
             }),
             "preferred examples for {} should use subcommands",
             spec.name
+        );
+    }
+
+    for example in manifest["examples"].as_array().unwrap() {
+        let example = example.as_str().unwrap();
+        assert!(
+            example.contains("--toon"),
+            "top-level manifest example must include --toon: {example}"
         );
     }
 
@@ -3236,6 +3545,41 @@ fn manifest_lists_structured_actions_for_every_workflow() {
             .iter()
             .all(|surface| surface["command"] != "pcl completions <shell> --toon"),
         "manifest should not advertise envelope mode as the default completions install path"
+    );
+}
+
+#[test]
+fn workflow_definitions_are_the_manifest_source_of_truth() {
+    let manifest = api_manifest();
+    let commands = manifest["commands"].as_array().unwrap();
+    let workflow_definitions = definitions::workflow_definitions();
+
+    for definition in workflow_definitions {
+        let command = commands
+            .iter()
+            .find(|command| command["command"] == definition.command)
+            .unwrap_or_else(|| panic!("missing manifest command {}", definition.command));
+        assert_eq!(
+            command["output_policy"],
+            definition.output_policy.as_str(),
+            "manifest should expose output policy from workflow definition {}",
+            definition.name
+        );
+        assert_eq!(
+            command["actions"].as_array().unwrap().len(),
+            definition.actions.len(),
+            "manifest action count should come from workflow definition {}",
+            definition.name
+        );
+    }
+
+    assert_eq!(
+        definitions::workflow_output_policy("deployments"),
+        definitions::WorkflowOutputPolicy::MachineRawHumanCompactArtifacts
+    );
+    assert_eq!(
+        definitions::workflow_output_policy("projects"),
+        definitions::WorkflowOutputPolicy::MachineRaw
     );
 }
 

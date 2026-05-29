@@ -61,11 +61,10 @@ For mutations:
 
 ```bash
 pcl <workflow> --body-template
-pcl <workflow> --dry-run ...
 pcl <workflow> --body-file body.json
 ```
 
-Use typed flags first. Use `--field key=value` for simple payload fields. Use `--body-file` for nested payloads. Avoid constructing opaque inline JSON unless the command has no typed surface yet.
+Use typed flags first. Use `--field key=value` for simple payload fields. Use `--body-file` for nested payloads. Use `--body-template` before nested mutation payloads. Avoid constructing opaque inline JSON unless the command has no typed surface yet.
 
 ## Raw API Calls
 
