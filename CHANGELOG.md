@@ -4,6 +4,30 @@ All notable user-facing changes should be recorded here.
 
 ## Unreleased
 
+## 1.5.0 - 2026-05-29
+
+### Breaking changes
+
+- Removed the top-level `pcl transfers` command. Use the per-project workflow commands instead.
+- Removed the hidden legacy `--format json` / `--format toon` parser aliases. Use `--json` or `--toon` directly.
+
+### Added
+
+- Routed projects, releases, incidents, and outer workflows through generated OpenAPI operations instead of hand-built request paths, so workflow definitions stay tied to operation IDs.
+- Split per-surface workflow modules (incidents, projects, releases, access, integrations, protocol-manager, events, search, and related surfaces) so adding a new API-backed workflow now has an obvious file and pattern.
+- Added a build-time OpenAPI spec transform that prunes the generated client surface before progenitor runs.
+
+### Changed
+
+- Improved default human-mode CLI output without changing the `--toon` / `--json` machine contracts; help, parse, auth, workflow, and destructive-command output now stay mode-aware.
+- Split the raw `pcl api` command internals by concern (list, inspect, call, coverage, manifest) and refactored CLI output contracts and workflow subcommands on top of the human-output work.
+- Refactored workflow/action metadata into clearer contract definitions, keeping schema and manifest output aligned with top-level workflow commands.
+- Preserved structured `ErrorResponse` / `UnexpectedResponse` payloads from the generated client in `apply` preview, release, and download paths instead of stringifying errors.
+
+### Removed
+
+- Removed stale raw API aliases, the old manual workflow request constructors, and workflow surface that no longer belongs in the product path.
+
 ## 1.4.4 - 2026-05-12
 
 - Fixed expired-auth recovery guidance so human output recommends `pcl auth refresh` before forcing a new login, while TOON/JSON next actions keep their explicit output modes.
