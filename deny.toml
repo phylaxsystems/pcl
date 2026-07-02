@@ -17,4 +17,7 @@ ignore = [
     { id = "RUSTSEC-2026-0098", reason = "Transitive through credible-sdk assertion-executor -> reth/rustls; rustls-webpki upgrade is blocked by reth-mdbx-sys pinning cc 1.2.15 via aws-lc-rs." },
     { id = "RUSTSEC-2026-0099", reason = "Transitive through credible-sdk assertion-executor -> reth/rustls; rustls-webpki upgrade is blocked by reth-mdbx-sys pinning cc 1.2.15 via aws-lc-rs." },
     { id = "RUSTSEC-2026-0104", reason = "Transitive through credible-sdk assertion-executor -> reth/rustls; rustls-webpki upgrade is blocked by reth-mdbx-sys pinning cc 1.2.15 via aws-lc-rs." },
+    { id = "RUSTSEC-2026-0173", reason = "Transitive build-time-only proc-macro via alloy-sol-macro; proc-macro-error2 unmaintained, no safe upgrade per advisory. Same ignore as credible-sdk/phoundry." },
+    { id = "RUSTSEC-2026-0194", reason = "Transitive through phoundry forge -> quick-junit/inferno; quick-xml DoS-class fix requires >=0.41.0, blocked until upstream dependents bump their semver reqs." },
+    { id = "RUSTSEC-2026-0195", reason = "Transitive through phoundry forge -> quick-junit/inferno; quick-xml DoS-class fix requires >=0.41.0, blocked until upstream dependents bump their semver reqs." },
 ]
