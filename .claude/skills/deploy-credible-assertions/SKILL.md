@@ -45,11 +45,12 @@ No two contract labels may share an address.
 ### 1. Authenticate (device-code flow; human verifies in browser once)
 
 ```bash
-PCL_API_URL=<platform-url> pcl auth login --no-wait --force --json
+PCL_API_URL=<platform-url> pcl auth ensure --json
 ```
 
-The envelope (`status: action_required`) contains `device_url`, `code`,
-`session_id`, `device_secret`, `expires_at`, and a ready-to-run `poll_command`.
+Valid token → `status: ok`, nothing to do. Otherwise the envelope
+(`status: action_required`) contains `device_url`, `code`, `session_id`,
+`device_secret`, `expires_at`, and a ready-to-run `poll_command`.
 **Show `device_url` and `code` to the human** and ask them to open the URL and
 enter the code. Then run the `poll_command` verbatim (or):
 
@@ -79,10 +80,13 @@ signing.
 ### 3. Wallet
 
 Either `export PCL_PRIVATE_KEY=<hex-key>`, or a foundry keystore:
-`--account <name>` (from `~/.foundry/keystores`) + `PCL_KEYSTORE_PASSWORD`.
-Machine mode cannot prompt for the password — the env var is required.
-The wallet becomes the project's protocol manager, so use the same wallet on
-every run for a given project.
+`--account <name>` (from `~/.foundry/keystores`) plus its password. Machine
+mode cannot prompt for the password — supply it via
+`--keystore-password-file <path>` / `PCL_KEYSTORE_PASSWORD_FILE` (foundry
+`--password-file` style; trailing newline is trimmed — **preferred**, since an
+env var leaks into every child process) or `--keystore-password` /
+`PCL_KEYSTORE_PASSWORD`. The wallet becomes the project's protocol manager,
+so use the same wallet on every run for a given project.
 
 ## Every run: ensure auth freshness
 
@@ -142,8 +146,10 @@ One command runs the whole chain, observing state first at each step:
    address → hard error (see recovery below).
 3. **Build + verify** — forge-builds each assertion in credible.toml, runs
    local trigger-detection verification.
-4. **Release** — preview against the platform; diff → create release; no diff
-   and newest release inactive → resume it; active → exit `up_to_date`.
+4. **Release** — an *inactive* release with identical contents exists →
+   resume it (checked first: preview only diffs against the *active* release,
+   so this is what makes reruns duplicate-safe); otherwise preview shows a
+   diff → create a release; no diff and nothing pending → exit `up_to_date`.
 5. **Checks** — polls the release until
    `checkSummary.deployBlockingStatus == "all_passed"`. `no_checks`/missing
    passes with a warning (dev/local). `has_failed` errors — inspect with
