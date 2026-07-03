@@ -81,12 +81,29 @@ pub struct WalletArgs {
     /// Directory containing foundry keystores (defaults to ~/.foundry/keystores)
     #[arg(long, hide = true)]
     pub keystores_dir: Option<PathBuf>,
+
+    /// Signer resolved ahead of time, set programmatically (never from the
+    /// CLI). Lets an orchestrator decrypt a keystore once — prompting for the
+    /// password a single time — and reuse the signer across sub-flows.
+    #[arg(skip)]
+    pub resolved: Option<PrivateKeySigner>,
+}
+
+impl WalletArgs {
+    /// Wraps an already-resolved signer so downstream flows skip keystore
+    /// decryption and password prompts entirely.
+    pub fn from_signer(signer: PrivateKeySigner) -> Self {
+        Self {
+            resolved: Some(signer),
+            ..Self::default()
+        }
+    }
 }
 
 impl WalletArgs {
     /// Whether the user supplied any wallet source.
     pub fn is_configured(&self) -> bool {
-        self.private_key.is_some() || self.account.is_some()
+        self.private_key.is_some() || self.account.is_some() || self.resolved.is_some()
     }
 
     /// Resolves the configured wallet into a signer.
@@ -94,6 +111,10 @@ impl WalletArgs {
     /// `interactive` controls whether a missing keystore password may be
     /// prompted for on the terminal; machine-output callers must pass `false`.
     pub async fn signer(&self, interactive: bool) -> Result<PrivateKeySigner, WalletError> {
+        if let Some(signer) = &self.resolved {
+            return Ok(signer.clone());
+        }
+
         if let Some(key) = &self.private_key {
             return key
                 .trim()
@@ -292,6 +313,21 @@ mod tests {
             keystores_dir: Some(dir.path().to_path_buf()),
             ..Default::default()
         };
+        let signer = args.signer(false).await.unwrap();
+        assert_eq!(signer.address(), ANVIL_ADDR_0);
+    }
+
+    #[tokio::test]
+    async fn resolved_signer_short_circuits_keystore_and_password() {
+        let secret = key_args(ANVIL_KEY_0).signer(false).await.unwrap();
+        // Account points at a keystore that doesn't exist and no password is
+        // available anywhere: proves the resolved signer wins outright.
+        let args = WalletArgs {
+            account: Some("missing".to_string()),
+            keystores_dir: Some(PathBuf::from("/nonexistent")),
+            ..WalletArgs::from_signer(secret)
+        };
+        assert!(args.is_configured());
         let signer = args.signer(false).await.unwrap();
         assert_eq!(signer.address(), ANVIL_ADDR_0);
     }

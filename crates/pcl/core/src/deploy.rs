@@ -235,10 +235,13 @@ fn release_step(has_changes: bool, releases: &[ReleaseSummary], environment: &st
     }
 }
 
-/// The (address, file, args, bytecode) set describing a release's contents,
-/// extracted from either a release payload or a release detail's
-/// `configSnapshot` — the two share the `contracts` record shape.
-fn assertion_set(contracts: &Value) -> Option<Vec<(String, String, Vec<String>, String)>> {
+/// One assertion's identity within a release: (address, file, args, bytecode).
+type AssertionKey = (String, String, Vec<String>, String);
+
+/// The [`AssertionKey`] set describing a release's contents, extracted from
+/// either a release payload or a release detail's `configSnapshot` — the two
+/// share the `contracts` record shape.
+fn assertion_set(contracts: &Value) -> Option<Vec<AssertionKey>> {
     let mut set = Vec::new();
     for contract in contracts.as_object()?.values() {
         let address = contract.get("address")?.as_str()?.to_ascii_lowercase();
@@ -411,6 +414,8 @@ impl DeployArgs {
             let plan = self.dry_run_plan(&credible, &root, output_mode, signer.as_ref())?;
             return self.finish_dry_run(plan, output_mode);
         }
+        // Past the dry-run return a signer was always resolved above.
+        let signer = signer.ok_or(crate::wallet::WalletError::NoWallet)?;
 
         let api = ApiArgs::headless(self.api_url.clone());
         ApplyArgs::ensure_fresh_auth(config, cli_args, &self.api_url).await?;
@@ -489,44 +494,38 @@ impl DeployArgs {
             .get("protocol_manager_address")
             .and_then(Value::as_str)
             .and_then(|address| address.parse::<Address>().ok());
-        let wallet_address = signer
-            .as_ref()
-            .map(alloy_signer_local::PrivateKeySigner::address);
+        let wallet_address = signer.address();
 
-        let manager_action = match wallet_address {
-            None => "unknown_no_wallet".to_string(),
-            Some(wallet_address) => {
-                match manager_step(self.skip_protocol_manager, current_manager, wallet_address) {
-                    ManagerStep::Skipped => "skipped".to_string(),
-                    ManagerStep::AlreadySet => {
-                        progress(human, "Protocol manager already set to this wallet");
-                        "already_set".to_string()
-                    }
-                    ManagerStep::Mismatch { current } => {
-                        return Err(DeployError::ManagerMismatch {
-                            project_id,
-                            current: current.to_string(),
-                            wallet: wallet_address.to_string(),
-                        });
-                    }
-                    ManagerStep::NeedsSet => {
-                        progress(
-                            human,
-                            "Setting protocol manager (signed challenge, no transaction)",
-                        );
-                        api.protocol_manager_set_signed_flow(
-                            config,
-                            cli_args,
-                            &project_id.to_string(),
-                            project_chain_id,
-                            self.broadcast_args(),
-                        )
-                        .await?;
-                        "set".to_string()
-                    }
+        let manager_action =
+            match manager_step(self.skip_protocol_manager, current_manager, wallet_address) {
+                ManagerStep::Skipped => "skipped".to_string(),
+                ManagerStep::AlreadySet => {
+                    progress(human, "Protocol manager already set to this wallet");
+                    "already_set".to_string()
                 }
-            }
-        };
+                ManagerStep::Mismatch { current } => {
+                    return Err(DeployError::ManagerMismatch {
+                        project_id,
+                        current: current.to_string(),
+                        wallet: wallet_address.to_string(),
+                    });
+                }
+                ManagerStep::NeedsSet => {
+                    progress(
+                        human,
+                        "Setting protocol manager (signed challenge, no transaction)",
+                    );
+                    api.protocol_manager_set_signed_flow(
+                        config,
+                        cli_args,
+                        &project_id.to_string(),
+                        project_chain_id,
+                        self.broadcast_args(&signer),
+                    )
+                    .await?;
+                    "set".to_string()
+                }
+            };
 
         // ------------------------------------------------------------------
         // Step 3: build + verify + preview + create/resume release
@@ -656,7 +655,7 @@ impl DeployArgs {
                 cli_args,
                 &project_ref,
                 &release_id,
-                self.broadcast_args(),
+                self.broadcast_args(&signer),
             )
             .await?;
         let deploy_data = deploy_envelope.get("data").cloned().unwrap_or(Value::Null);
@@ -686,11 +685,13 @@ impl DeployArgs {
         )
     }
 
-    fn broadcast_args(&self) -> BroadcastArgs {
+    /// Sub-flows receive the already-resolved signer so a keystore is
+    /// decrypted (and its password prompted for) exactly once per run.
+    fn broadcast_args(&self, signer: &alloy_signer_local::PrivateKeySigner) -> BroadcastArgs {
         BroadcastArgs {
             broadcast: true,
             yes: self.yes,
-            wallet: self.wallet.clone(),
+            wallet: crate::wallet::WalletArgs::from_signer(signer.clone()),
             tx: self.tx.clone(),
         }
     }

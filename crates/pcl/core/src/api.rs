@@ -966,7 +966,7 @@ enum ReleasesSubcommand {
     #[command(about = "Confirm release removal")]
     Remove(ReleaseBodyArgs),
     #[command(about = "Build release calldata")]
-    Calldata(ReleaseCalldataArgs),
+    Calldata(Box<ReleaseCalldataArgs>),
     #[command(
         name = "backtest-progress",
         about = "Show release backtest/check progress"
