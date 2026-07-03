@@ -35,6 +35,8 @@ pub struct CredibleToml {
     pub environment: String,
     #[serde(default)]
     pub project_id: Option<Uuid>,
+    #[serde(default)]
+    pub project_name: Option<String>,
     pub contracts: BTreeMap<String, CredibleContract>,
 }
 
@@ -145,6 +147,7 @@ mod tests {
 
     const VALID_CREDIBLE_TOML: &str = r#"
         environment = "production"
+        project_name = "mock-protocol"
         [contracts.my_contract]
         address = "0x1234567890abcdef1234567890abcdef12345678"
         name = "MockProtocol"
@@ -241,10 +244,25 @@ mod tests {
 
         let credible = CredibleToml::from_path(&root.join("assertions/credible.toml")).unwrap();
         assert_eq!(credible.environment, "production");
+        assert_eq!(credible.project_name.as_deref(), Some("mock-protocol"));
         assert_eq!(
             credible.contracts.get("my_contract").unwrap().name,
             "MockProtocol"
         );
+    }
+
+    #[test]
+    fn project_name_defaults_to_none() {
+        let toml_str = r#"
+            environment = "staging"
+            [contracts.ownable]
+            address = "0xD1f444eA1D2d9fA567F8fD73b15199F90e630074"
+            name = "Ownable"
+            [[contracts.ownable.assertions]]
+            file = "src/OwnableAssertion.a.sol"
+        "#;
+        let credible = toml::from_str::<CredibleToml>(toml_str).unwrap();
+        assert_eq!(credible.project_name, None);
     }
 
     #[test]

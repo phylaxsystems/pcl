@@ -37,6 +37,25 @@ pcl apply --dry-run
 pcl apply
 ```
 
+To go all the way to an active on-chain deployment in one command — create/resolve the
+project, set the protocol manager (wallet-signed challenge), create the release, wait for
+checks, broadcast `StateOracle.batch`, and confirm — use `pcl deploy`:
+
+```bash
+# one-time: store an RPC endpoint for the chain
+pcl config set-rpc <chain-id> <rpc-url> [--confirmations N]
+
+pcl deploy --dry-run
+pcl deploy --private-key $PCL_PRIVATE_KEY            # or --account <foundry-keystore>
+pcl deploy --project-name my-protocol --chain-id <id> --private-key ... --yes --toon
+```
+
+`pcl deploy` is resumable: every step observes current state first, so re-running after a
+failure (network, gas, interrupted confirmation) picks up where it left off instead of
+duplicating work. Individual on-chain steps are also available on the underlying commands
+via `--broadcast` (`pcl releases calldata deploy|remove`, `pcl protocol-manager
+--transfer-calldata|--accept-calldata`) and `--sign` (`pcl protocol-manager --set`).
+
 For platform work, prefer the natural workflow commands:
 
 ```bash
@@ -72,6 +91,7 @@ pcl api coverage --json
 |---------|-------------|
 | `pcl build`, `pcl test` | Developer pass-through commands using native Phorge/Foundry output in human mode |
 | `pcl apply`, `pcl verify` | Structured assertion workflow commands for dry-runs, verification, and deployment prep |
+| `pcl deploy` | End-to-end deploy: project, protocol manager, release, on-chain activation, confirmation |
 | `pcl incidents`, `pcl projects`, `pcl assertions` | Natural platform workflow commands |
 | `pcl account`, `pcl contracts`, `pcl releases`, `pcl deployments` | Account, contract, release, and deployment workflows |
 | `pcl access`, `pcl integrations`, `pcl protocol-manager`, `pcl events`, `pcl search` | Access control, integrations, protocol manager transfer, audit, and search workflows |

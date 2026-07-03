@@ -125,6 +125,7 @@ mod tests {
             ..CliArgs::default()
         };
         let mut config = CliConfig {
+            rpc: Default::default(),
             auth: Some(UserAuth {
                 access_token: "expired-token".to_string(),
                 refresh_token: "old-refresh".to_string(),
@@ -213,6 +214,7 @@ mod tests {
     #[test]
     fn authorization_header_rejects_expired_tokens() {
         let config = CliConfig {
+            rpc: Default::default(),
             auth: Some(UserAuth {
                 access_token: "expired-token".to_string(),
                 refresh_token: String::new(),

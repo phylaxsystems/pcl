@@ -1590,6 +1590,7 @@ mod tests {
 
     fn create_test_config() -> CliConfig {
         CliConfig {
+            rpc: Default::default(),
             auth: Some(UserAuth {
                 access_token: "test_token".to_string(),
                 refresh_token: "test_refresh".to_string(),
@@ -1620,6 +1621,7 @@ mod tests {
 
     fn expired_refreshable_config() -> CliConfig {
         CliConfig {
+            rpc: Default::default(),
             auth: Some(UserAuth {
                 access_token: "old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),

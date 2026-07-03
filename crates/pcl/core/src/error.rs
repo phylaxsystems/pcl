@@ -120,6 +120,70 @@ pub enum VerifyError {
     Output(#[from] crate::output::OutputError),
 }
 
+/// Errors that can occur during the end-to-end `pcl deploy` orchestration.
+#[derive(Error, Debug)]
+pub enum DeployError {
+    #[error(transparent)]
+    Apply(#[from] ApplyError),
+
+    #[error(transparent)]
+    Api(#[from] crate::api::ApiCommandError),
+
+    #[error(transparent)]
+    Wallet(#[from] crate::wallet::WalletError),
+
+    #[error(
+        "Project {project_id} protocol manager is {current}, but the wallet is {wallet}. The deploy transaction must come from the manager wallet. Transfer it with `pcl protocol-manager --project {project_id} --transfer-calldata --new-manager {wallet} --broadcast`, or pass the manager's key."
+    )]
+    ManagerMismatch {
+        project_id: uuid::Uuid,
+        current: String,
+        wallet: String,
+    },
+
+    #[error(
+        "credible.toml has no project_id and no project can be created without a project name (set project_name in credible.toml or pass --project-name) and --chain-id"
+    )]
+    MissingProjectInfo,
+
+    #[error("Unexpected {endpoint} response: {reason}")]
+    UnexpectedResponse {
+        endpoint: &'static str,
+        reason: String,
+    },
+
+    #[error(
+        "Release checks did not reach `all_passed` within {timeout_secs}s (last deploy-blocking status: {status}). Re-run `pcl deploy` to resume once checks finish."
+    )]
+    ChecksTimeout { timeout_secs: u64, status: String },
+
+    #[error(
+        "Release deploy-blocking checks failed (status: {status}). Inspect with `pcl releases show {project_id} {release_id}` and retry with `pcl releases retry-check`."
+    )]
+    ChecksFailed {
+        project_id: uuid::Uuid,
+        release_id: String,
+        status: String,
+    },
+
+    #[error("Failed to write project_id back to {path}: {reason}")]
+    TomlWriteBack { path: String, reason: String },
+
+    #[error(
+        "Machine output requires `--yes` (pcl deploy mutates the project and broadcasts transactions)"
+    )]
+    MachineYesRequired,
+
+    #[error("Deploy cancelled")]
+    Cancelled,
+
+    #[error("Failed to encode JSON output: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("Failed to write structured output: {0}")]
+    Output(#[from] crate::output::OutputError),
+}
+
 /// Errors that can occur during configuration operations
 #[derive(Error, Debug)]
 pub enum ConfigError {
@@ -147,6 +211,10 @@ pub enum ConfigError {
     /// but no authentication token is present in the config
     #[error("No Authentication Token Found")]
     NotAuthenticated,
+
+    /// Error when a config value supplied on the command line is invalid
+    #[error("Invalid config value: {0}")]
+    InvalidValue(String),
 }
 
 /// Errors that can occur during authentication operations

@@ -165,6 +165,8 @@ async fn run_command(
         }
         #[cfg(feature = "credible")]
         Commands::Apply(apply) => apply.run(cli_args, config).await?,
+        #[cfg(feature = "credible")]
+        Commands::Deploy(deploy) => deploy.run(cli_args, config).await?,
         Commands::Api(api) => api.run(config, cli_args, json_output).await?,
         Commands::Incidents(command) => command.run(config, cli_args, json_output).await?,
         Commands::Projects(command) => command.run(config, cli_args, json_output).await?,
@@ -817,6 +819,7 @@ fn config_error_code(err: &ConfigError) -> &'static str {
         ConfigError::SerializeError(_) => "config.serialize_failed",
         ConfigError::JsonError(_) => "config.json_failed",
         ConfigError::NotAuthenticated => "config.not_authenticated",
+        ConfigError::InvalidValue(_) => "config.invalid_value",
     }
 }
 

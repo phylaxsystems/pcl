@@ -73,6 +73,7 @@ fn auth_config(
     email: Option<&str>,
 ) -> CliConfig {
     CliConfig {
+        rpc: Default::default(),
         auth: Some(UserAuth {
             access_token: access_token.to_string(),
             refresh_token: refresh_token.to_string(),
@@ -168,6 +169,8 @@ fn protocol_manager_args() -> ProtocolManagerArgs {
         new_manager: None,
         address: None,
         chain_id: None,
+        sign: false,
+        broadcast: BroadcastArgs::default(),
         body: None,
         field: Vec::new(),
         body_file: None,
@@ -233,6 +236,8 @@ fn release_args() -> ReleasesArgs {
         remove_calldata: false,
         backtest_progress: false,
         retry_check: false,
+        chain_id: None,
+        broadcast: BroadcastArgs::default(),
         body: None,
         field: Vec::new(),
         body_file: None,

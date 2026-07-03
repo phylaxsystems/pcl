@@ -185,8 +185,8 @@ workflow_definition!(
         action!("nonce", true, "get_projects_project_id_protocol_manager_nonce", "pcl protocol-manager --project <project-ref> --nonce --address 0x...", required: ["--project", "--address"], optional: ["--chain-id"], query: {"address" => "<address>", "chain_id" => "<chain-id>"}),
         action!("set", true, "post_projects_project_id_protocol_manager", "pcl protocol-manager --project <project-ref> --set --body-template", required: ["--project"], body_template: "protocol_manager_set"),
         action!("clear", true, "delete_projects_project_id_protocol_manager", "pcl protocol-manager --project <project-ref> --clear", required: ["--project"], body_template: "empty_object"),
-        action!("transfer_calldata", true, "get_projects_project_id_protocol_manager_transfer_calldata", "pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...", required: ["--project", "--new-manager"], query: {"new_manager" => "<address>"}),
-        action!("accept_calldata", true, "get_projects_project_id_protocol_manager_accept_calldata", "pcl protocol-manager --project <project-ref> --accept-calldata", required: ["--project"]),
+        action!("transfer_calldata", true, "get_projects_project_id_protocol_manager_transfer_calldata", "pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x... --broadcast", required: ["--project", "--new-manager"], query: {"new_manager" => "<address>"}),
+        action!("accept_calldata", true, "get_projects_project_id_protocol_manager_accept_calldata", "pcl protocol-manager --project <project-ref> --accept-calldata --broadcast", required: ["--project"]),
         action!("confirm_transfer", true, "post_projects_project_id_protocol_manager_confirm_transfer", "pcl protocol-manager --project <project-ref> --confirm-transfer --body-template", required: ["--project"], body_template: "protocol_manager_confirm"),
     ],
 );

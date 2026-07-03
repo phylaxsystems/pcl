@@ -213,9 +213,9 @@ workflow_definition!(
         action!("create", true, "post_projects_project_id_releases", "pcl releases create <project-ref> --body-file release.json", required: ["<project-ref>"], body_template: "release"),
         action!("backtest_progress", true, "get_projects_project_id_releases_release_id_backtest_progress", "pcl releases backtest-progress <project-ref> <release-id>", required: ["<project-ref>", "<release-id>"]),
         action!("retry_check", true, "post_projects_project_id_releases_release_id_checks_check_id_retry", "pcl releases retry-check <project-ref> <release-id> <check-id>", required: ["<project-ref>", "<release-id>", "<check-id>"], body_template: "empty_object"),
-        action!("deploy_calldata", true, "get_projects_project_id_releases_release_id_deploy_calldata", "pcl releases calldata deploy <project-ref> <release-id> --signer-address 0x...", required: ["<project-ref>", "<release-id>", "--signer-address"], query: {"signerAddress" => "<signer-address>"}),
+        action!("deploy_calldata", true, "get_projects_project_id_releases_release_id_deploy_calldata", "pcl releases calldata deploy <project-ref> <release-id> --broadcast", required: ["<project-ref>", "<release-id>", "--signer-address"], query: {"signerAddress" => "<signer-address>"}),
         action!("deploy", true, "post_projects_project_id_releases_release_id_deploy", "pcl releases deploy <project-ref> <release-id> --body-template", required: ["<project-ref>", "<release-id>"], body_template: "release_deploy"),
-        action!("remove_calldata", true, "get_projects_project_id_releases_release_id_remove_calldata", "pcl releases calldata remove <project-ref> <release-id>", required: ["<project-ref>", "<release-id>"]),
+        action!("remove_calldata", true, "get_projects_project_id_releases_release_id_remove_calldata", "pcl releases calldata remove <project-ref> <release-id> --broadcast", required: ["<project-ref>", "<release-id>"]),
         action!("remove", true, "post_projects_project_id_releases_release_id_remove", "pcl releases remove <project-ref> <release-id> --body-template", required: ["<project-ref>", "<release-id>"], body_template: "release_remove"),
     ],
 );

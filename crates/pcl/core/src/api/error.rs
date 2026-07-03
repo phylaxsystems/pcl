@@ -101,6 +101,30 @@ pub enum ApiCommandError {
         message: String,
         next_actions: Vec<String>,
     },
+
+    #[error(transparent)]
+    Wallet(#[from] crate::wallet::WalletError),
+
+    #[error(transparent)]
+    Onchain(#[from] crate::onchain::OnchainError),
+
+    #[error("Broadcast cancelled")]
+    BroadcastCancelled,
+
+    #[error(
+        "Transaction {tx_hash} confirmed on-chain but the follow-up API confirmation failed: {source}. The chain state is updated; re-run the command to reconcile the platform."
+    )]
+    ConfirmAfterTx {
+        tx_hash: alloy_primitives::B256,
+        #[source]
+        source: Box<ApiCommandError>,
+    },
+
+    #[error("Unexpected {endpoint} response shape: {reason}")]
+    UnexpectedResponse {
+        endpoint: &'static str,
+        reason: String,
+    },
 }
 
 impl ApiCommandError {
@@ -147,6 +171,21 @@ impl ApiCommandError {
             Self::InvalidWorkflow { .. } | Self::InvalidWorkflowWithActions { .. } => {
                 "workflow.invalid_arguments"
             }
+            Self::Wallet(_) => "wallet.failed",
+            Self::Onchain(source) => {
+                match source {
+                    crate::onchain::OnchainError::RpcUrlMissing { .. }
+                    | crate::onchain::OnchainError::InvalidRpcUrl { .. } => "onchain.rpc_missing",
+                    crate::onchain::OnchainError::ChainIdMismatch { .. } => {
+                        "onchain.chain_mismatch"
+                    }
+                    crate::onchain::OnchainError::Reverted { .. } => "onchain.tx_reverted",
+                    _ => "onchain.failed",
+                }
+            }
+            Self::BroadcastCancelled => "broadcast.cancelled",
+            Self::ConfirmAfterTx { .. } => "broadcast.confirm_failed",
+            Self::UnexpectedResponse { .. } => "api.unexpected_response",
         }
     }
 
@@ -318,6 +357,38 @@ impl ApiCommandError {
             Self::MissingPaths => {
                 vec!["Check that /api/v1/openapi returns an OpenAPI document".to_string()]
             }
+            Self::Wallet(_) => {
+                vec![
+                    "Pass --private-key or set PCL_PRIVATE_KEY".to_string(),
+                    "Or pass --account <keystore-name> with PCL_KEYSTORE_PASSWORD".to_string(),
+                ]
+            }
+            Self::Onchain(crate::onchain::OnchainError::RpcUrlMissing { chain_id }) => {
+                vec![
+                    format!("pcl config set-rpc {chain_id} <rpc-url>"),
+                    "Or pass --rpc-url / set PCL_RPC_URL".to_string(),
+                ]
+            }
+            Self::Onchain(_) => {
+                vec![
+                    "Check --rpc-url, the target chain id, and wallet funds, then retry"
+                        .to_string(),
+                ]
+            }
+            Self::BroadcastCancelled => {
+                vec!["Re-run with --yes to skip the confirmation prompt".to_string()]
+            }
+            Self::ConfirmAfterTx { tx_hash, .. } => {
+                vec![
+                    format!(
+                        "Re-run the same command to reconcile; transaction {tx_hash} already landed on-chain"
+                    ),
+                    "pcl requests list --toon".to_string(),
+                ]
+            }
+            Self::UnexpectedResponse { endpoint, .. } => {
+                vec![format!("pcl api inspect get {endpoint} --toon")]
+            }
         }
     }
 
@@ -368,6 +439,11 @@ impl ApiCommandError {
                 ]
             }
             Self::HttpStatus { .. } => vec!["inspect_response_body", "retry"],
+            Self::Wallet(_) => vec!["fix_wallet", "retry"],
+            Self::Onchain(_) => vec!["check_chain_config", "retry"],
+            Self::BroadcastCancelled => vec!["rerun_with_yes"],
+            Self::ConfirmAfterTx { .. } => vec!["reconcile_mutation", "retry"],
+            Self::UnexpectedResponse { .. } => vec!["inspect_response_body"],
         }
     }
 

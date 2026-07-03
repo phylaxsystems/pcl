@@ -11,6 +11,8 @@ use pcl_common::args::{
 #[cfg(feature = "credible")]
 use pcl_core::apply::ApplyArgs;
 #[cfg(feature = "credible")]
+use pcl_core::deploy::DeployArgs;
+#[cfg(feature = "credible")]
 use pcl_core::verify::VerifyArgs;
 use pcl_core::{
     DEFAULT_PLATFORM_URL,
@@ -136,6 +138,9 @@ pub enum Commands {
     #[cfg(feature = "credible")]
     #[command(name = "apply")]
     Apply(ApplyArgs),
+    #[cfg(feature = "credible")]
+    #[command(name = "deploy")]
+    Deploy(DeployArgs),
     #[cfg(feature = "credible")]
     #[command(name = "verify")]
     Verify(VerifyArgs),
