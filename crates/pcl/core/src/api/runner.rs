@@ -381,8 +381,8 @@ impl ApiArgs {
             }
             ApiCommand::Coverage { records, markdown } => {
                 let spec = self.fetch_openapi(config).await?;
-                let coverage =
-                    api_coverage(&spec, &request_log_path, *records, self.api_url.as_str())?;
+                let api_url = config.resolve_platform_url(self.api_url.as_ref());
+                let coverage = api_coverage(&spec, &request_log_path, *records, api_url.as_str())?;
                 if let Some(path) = markdown {
                     write_api_coverage_markdown(path, &coverage)?;
                 }
@@ -506,7 +506,7 @@ impl ApiArgs {
 
         let (path, mut base_query) = split_path_and_inline_query(input.path)?;
         base_query.extend(parse_key_values("query", input.query)?);
-        let url = self.api_url(&path)?;
+        let url = self.api_url(config, &path)?;
         let headers = parse_headers(input.header)?;
         let operation_id = self.resolve_operation_id(config, input.method, &path).await;
         self.ensure_request_auth(config, cli_args, input.require_auth)
@@ -898,7 +898,8 @@ impl ApiArgs {
             return Ok(false);
         }
 
-        match refresh_stored_auth(config, &self.api_url, cli_args, true).await {
+        let api_url = config.resolve_platform_url(self.api_url.as_ref());
+        match refresh_stored_auth(config, &api_url, cli_args, true).await {
             Ok(_) => Ok(true),
             Err(AuthError::RefreshEndpointNotFound { .. }) => {
                 self.refresh_after_401.set(false);
@@ -917,7 +918,7 @@ impl ApiArgs {
     ) -> Result<Value, ApiCommandError> {
         let (path, mut query) = split_path_and_inline_query(input.path)?;
         query.extend(parse_key_values("query", input.query)?);
-        let url = self.api_url(&path)?;
+        let url = self.api_url(config, &path)?;
         let headers = parse_headers(input.header)?;
         let body = request_body(input.body, input.body_file, input.field)?;
         let operation_id = self.resolve_operation_id(config, input.method, &path).await;
@@ -1055,7 +1056,7 @@ impl ApiArgs {
             )
             .await?;
         let path = resolved_request.path.clone();
-        let url = self.api_url(&path)?;
+        let url = self.api_url(config, &path)?;
         let json_body = if let Some(body) = &request.body {
             Some(
                 self.normalize_request_body(
@@ -1340,7 +1341,8 @@ impl ApiArgs {
         let now = chrono::Utc::now();
         let seconds_remaining = (auth.expires_at - now).num_seconds();
         if auth.expires_at <= now || seconds_remaining <= crate::config::AUTH_EXPIRES_SOON_SECONDS {
-            refresh_stored_auth(config, &self.api_url, cli_args, false)
+            let api_url = config.resolve_platform_url(self.api_url.as_ref());
+            refresh_stored_auth(config, &api_url, cli_args, false)
                 .await
                 .map_err(ApiCommandError::AuthRefresh)?;
         }
@@ -1443,7 +1445,7 @@ impl ApiArgs {
         attach_auth: bool,
         require_auth: bool,
     ) -> Result<GeneratedClient, ApiCommandError> {
-        let mut base = self.api_url.clone();
+        let mut base = config.resolve_platform_url(self.api_url.as_ref());
         base.set_path("/api/v1");
         let http_client = self.http_client(config, attach_auth, require_auth)?;
         Ok(GeneratedClient::new_with_client(base.as_str(), http_client))
@@ -1463,12 +1465,16 @@ impl ApiArgs {
             .map(|operation| operation.operation_id)
     }
 
-    pub(in crate::api) fn api_url(&self, path: &str) -> Result<url::Url, ApiCommandError> {
+    pub(in crate::api) fn api_url(
+        &self,
+        config: &CliConfig,
+        path: &str,
+    ) -> Result<url::Url, ApiCommandError> {
         if !path.starts_with('/') {
             return Err(ApiCommandError::InvalidPath(path.to_string()));
         }
 
-        let mut url = self.api_url.clone();
+        let mut url = config.resolve_platform_url(self.api_url.as_ref());
         url.set_path(&format!("/api/v1{path}"));
         Ok(url)
     }

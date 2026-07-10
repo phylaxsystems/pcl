@@ -549,6 +549,13 @@ fn auth_login_json_fresh_flow_outputs_pending_and_terminal_events() {
         )
         .expect(1)
         .create();
+    let health = server
+        .mock("GET", "/api/v1/health")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"healthy":true}"#)
+        .expect(1)
+        .create();
 
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
         .env("PCL_AUTH_NO_BROWSER", "1")
@@ -591,8 +598,32 @@ fn auth_login_json_fresh_flow_outputs_pending_and_terminal_events() {
     assert_eq!(terminal["data"]["email"], "agent@example.com");
     let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
     assert!(config.contains("access_token = \"test-token\""));
+    assert!(config.contains(&format!("platform_url = \"{}/\"", server.url())));
+
+    let api_output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env_remove("PCL_API_URL")
+        .env_remove("PCL_AUTH_URL")
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "api",
+            "--allow-unauthenticated",
+            "call",
+            "get",
+            "/health",
+        ])
+        .output()
+        .expect("run pcl api call with remembered login URL");
+
+    assert!(
+        api_output.status.success(),
+        "api call failed: {}",
+        String::from_utf8_lossy(&api_output.stderr)
+    );
     auth_code.assert();
     auth_status.assert();
+    health.assert();
 }
 
 #[test]

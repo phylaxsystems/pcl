@@ -1,5 +1,4 @@
 use crate::{
-    DEFAULT_PLATFORM_URL,
     api::{
         envelope_output_string,
         generated_operation_path,
@@ -104,7 +103,7 @@ pub struct AuthCommand {
         short = 'u',
         long = "auth-url",
         env = "PCL_AUTH_URL",
-        help = "Base URL for authentication service. Defaults to PCL_AUTH_URL, then PCL_API_URL, then the production app URL"
+        help = "Base URL for authentication service. Defaults to PCL_AUTH_URL, PCL_API_URL, the current login URL, then production"
     )]
     pub auth_url: Option<url::Url>,
 }
@@ -125,7 +124,7 @@ pub enum AuthSubcommands {
 
     /// Login to PCL
     #[command(
-        long_about = "Initiates the login process. Opens a browser window for authentication.",
+        long_about = "Initiates the login process. Opens a browser window for authentication and remembers the selected platform URL for the authenticated session.",
         after_help = "Examples:\n  pcl auth login\n  pcl auth login --force\n  pcl auth login --no-wait --toon"
     )]
     Login {
@@ -220,7 +219,7 @@ impl AuthCommand {
         )
     }
 
-    fn effective_auth_url(&self) -> url::Url {
+    fn effective_auth_url(&self, config: &CliConfig) -> url::Url {
         if let Some(auth_url) = &self.auth_url {
             return auth_url.clone();
         }
@@ -229,9 +228,7 @@ impl AuthCommand {
         {
             return parsed;
         }
-        DEFAULT_PLATFORM_URL
-            .parse()
-            .expect("default platform URL is valid")
+        config.resolve_platform_url(None)
     }
 
     /// Execute the authentication command
@@ -266,6 +263,7 @@ impl AuthCommand {
                 self.refresh(config, cli_args, json_output, *force).await
             }
             AuthSubcommands::Logout { local } => {
+                let platform_url = self.effective_auth_url(config);
                 let logout = self.remote_logout(config, *local).await;
                 Self::logout(config);
                 Self::print_output(
@@ -273,7 +271,7 @@ impl AuthCommand {
                         "status": "ok",
                         "data": {
                             "authenticated": false,
-                            "platform_url": self.effective_auth_url().as_str(),
+                            "platform_url": platform_url.as_str(),
                             "local_credentials_removed": true,
                             "remote_logout": logout,
                         },
@@ -309,7 +307,8 @@ impl AuthCommand {
             .as_ref()
             .is_some_and(|auth| !auth.refresh_token.trim().is_empty())
         {
-            match refresh_stored_auth(config, &self.effective_auth_url(), cli_args, force).await {
+            let auth_url = self.effective_auth_url(config);
+            match refresh_stored_auth(config, &auth_url, cli_args, force).await {
                 Ok(outcome) => {
                     Self::print_output(&Self::refresh_envelope(config, &outcome), json_output)?;
                     return Ok(());
@@ -327,9 +326,9 @@ impl AuthCommand {
 
         let reason =
             refresh_challenge_reason.unwrap_or_else(|| auth_challenge_reason(config, force));
-        let auth_response = Self::request_auth_code(&self.api_client()).await?;
+        let auth_response = Self::request_auth_code(&self.api_client(config)).await?;
         Self::print_output(
-            &self.login_challenge_envelope(&auth_response, reason, json_output),
+            &self.login_challenge_envelope(config, &auth_response, reason, json_output),
             json_output,
         )
     }
@@ -368,7 +367,8 @@ impl AuthCommand {
         }
 
         let mut refresh_challenge_reason = None;
-        match refresh_stored_auth(config, &self.effective_auth_url(), cli_args, force).await {
+        let auth_url = self.effective_auth_url(config);
+        match refresh_stored_auth(config, &auth_url, cli_args, force).await {
             Ok(outcome) => {
                 Self::print_output(&Self::refresh_envelope(config, &outcome), json_output)?;
                 return Ok(());
@@ -380,10 +380,10 @@ impl AuthCommand {
             Err(error) => return Err(error),
         }
 
-        let auth_response = Self::request_auth_code(&self.api_client()).await?;
+        let auth_response = Self::request_auth_code(&self.api_client(config)).await?;
         let reason = refresh_challenge_reason.unwrap_or(AuthChallengeReason::Missing);
         Self::print_output(
-            &self.login_challenge_envelope(&auth_response, reason, json_output),
+            &self.login_challenge_envelope(config, &auth_response, reason, json_output),
             json_output,
         )
     }
@@ -417,11 +417,12 @@ impl AuthCommand {
             }
         }
 
-        let client = self.api_client();
+        let client = self.api_client(config);
         let auth_response = Self::request_auth_code(&client).await?;
         if no_wait || (!json_output && current_output_mode() == OutputMode::Toon) {
             Self::print_output(
                 &self.login_challenge_envelope(
+                    config,
                     &auth_response,
                     if force {
                         AuthChallengeReason::Forced
@@ -435,9 +436,11 @@ impl AuthCommand {
             return Ok(());
         }
         if json_output {
-            Self::print_json_event(
-                &self.login_instructions_envelope(&auth_response, expired_auth),
-            )?;
+            Self::print_json_event(&self.login_instructions_envelope(
+                config,
+                &auth_response,
+                expired_auth,
+            ))?;
             self.wait_for_verification(config, &client, &auth_response, true)
                 .await?;
             let mut output = self.status_envelope(config);
@@ -450,14 +453,14 @@ impl AuthCommand {
             return Ok(());
         }
 
-        self.display_login_instructions(&auth_response);
+        self.display_login_instructions(config, &auth_response);
         self.wait_for_verification(config, &client, &auth_response, json_output)
             .await
     }
 
     // Helper to create a new API client with the base URL set
-    fn api_client(&self) -> GeneratedClient {
-        Self::api_client_for_url(&self.effective_auth_url())
+    fn api_client(&self, config: &CliConfig) -> GeneratedClient {
+        Self::api_client_for_url(&self.effective_auth_url(config))
     }
 
     fn api_client_for_url(auth_url: &url::Url) -> GeneratedClient {
@@ -466,8 +469,12 @@ impl AuthCommand {
         GeneratedClient::new(base.as_str())
     }
 
-    fn authenticated_api_client(&self, access_token: &str) -> Result<GeneratedClient, String> {
-        let mut base = self.effective_auth_url();
+    fn authenticated_api_client(
+        &self,
+        config: &CliConfig,
+        access_token: &str,
+    ) -> Result<GeneratedClient, String> {
+        let mut base = self.effective_auth_url(config);
         base.set_path("/api/v1");
 
         let mut headers = HeaderMap::new();
@@ -496,8 +503,12 @@ impl AuthCommand {
     }
 
     /// Display login URL and code to the user, attempting to open the browser automatically
-    fn display_login_instructions(&self, auth_response: &GetCliAuthCodeResponse) {
-        let mut device_url = self.effective_auth_url();
+    fn display_login_instructions(
+        &self,
+        config: &CliConfig,
+        auth_response: &GetCliAuthCodeResponse,
+    ) {
+        let mut device_url = self.effective_auth_url(config);
         device_url.set_path("/device");
         device_url
             .query_pairs_mut()
@@ -522,10 +533,11 @@ impl AuthCommand {
 
     fn login_instructions_envelope(
         &self,
+        config: &CliConfig,
         auth_response: &GetCliAuthCodeResponse,
         previous_token_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Value {
-        let mut device_url = self.effective_auth_url();
+        let mut device_url = self.effective_auth_url(config);
         device_url.set_path("/device");
         device_url
             .query_pairs_mut()
@@ -545,7 +557,7 @@ impl AuthCommand {
                 "previous_token_expired_at": previous_token_expires_at.map(|expires_at| expires_at.to_rfc3339()),
                 "browser_opened": false,
                 "waiting_for_verification": true,
-                "poll_command": self.poll_command(auth_response, true),
+                "poll_command": self.poll_command(config, auth_response, true),
             },
             "next_actions": [
                 "Open data.device_url and enter data.code",
@@ -556,12 +568,13 @@ impl AuthCommand {
 
     fn login_challenge_envelope(
         &self,
+        config: &CliConfig,
         auth_response: &GetCliAuthCodeResponse,
         reason: AuthChallengeReason,
         json_output: bool,
     ) -> Value {
-        let poll_command = self.poll_command(auth_response, json_output);
-        let mut device_url = self.effective_auth_url();
+        let poll_command = self.poll_command(config, auth_response, json_output);
+        let mut device_url = self.effective_auth_url(config);
         device_url.set_path("/device");
         device_url
             .query_pairs_mut()
@@ -583,7 +596,7 @@ impl AuthCommand {
                 "wait_command": if json_output {
                     "pcl auth login --force --json".to_string()
                 } else {
-                    self.poll_command(auth_response, false)
+                    self.poll_command(config, auth_response, false)
                 },
             },
             "next_actions": [
@@ -638,9 +651,14 @@ impl AuthCommand {
         }))
     }
 
-    fn poll_command(&self, auth_response: &GetCliAuthCodeResponse, json_output: bool) -> String {
+    fn poll_command(
+        &self,
+        config: &CliConfig,
+        auth_response: &GetCliAuthCodeResponse,
+        json_output: bool,
+    ) -> String {
         let output_flag = if json_output { " --json" } else { " --toon" };
-        let auth_url = self.effective_auth_url();
+        let auth_url = self.effective_auth_url(config);
         format!(
             "pcl auth --auth-url={} poll --session-id={} --device-secret={} --expires-at={}{}",
             shell_quote(auth_url.as_str()),
@@ -728,7 +746,13 @@ impl AuthCommand {
                 } else {
                     spinner.finish_with_message("✅ Authentication successful!");
                 }
-                update_config_from_verified_status(config, status, auth_response.expires_at)?;
+                let platform_url = self.effective_auth_url(config);
+                update_config_from_verified_status(
+                    config,
+                    status,
+                    auth_response.expires_at,
+                    platform_url,
+                )?;
                 if !json_output {
                     Self::display_success_message(config)?;
                 }
@@ -752,12 +776,15 @@ impl AuthCommand {
         device_secret: &str,
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AuthError> {
-        let status = Self::check_auth_status(&self.api_client(), device_secret, session_id).await?;
+        let status =
+            Self::check_auth_status(&self.api_client(config), device_secret, session_id).await?;
         if status.verified {
+            let platform_url = self.effective_auth_url(config);
             update_config_from_verified_status(
                 config,
                 status,
                 expires_at.unwrap_or_else(default_poll_fallback_expires_at),
+                platform_url,
             )?;
             let mut output = self.status_envelope(config);
             if let Some(object) = output.as_object_mut() {
@@ -819,7 +846,7 @@ impl AuthCommand {
             });
         };
 
-        let client = match self.authenticated_api_client(&auth.access_token) {
+        let client = match self.authenticated_api_client(config, &auth.access_token) {
             Ok(client) => client,
             Err(error) => {
                 let endpoint = generated_api_endpoint("post_web_auth_logout");
@@ -907,7 +934,7 @@ impl AuthCommand {
             return Err(AuthError::StoredTokenExpired {
                 user: auth.display_name(),
                 expires_at: auth.expires_at,
-                platform_url: self.effective_auth_url().as_str().to_string(),
+                platform_url: self.effective_auth_url(config).as_str().to_string(),
             });
         }
 
@@ -930,7 +957,7 @@ impl AuthCommand {
                     "expired": false,
                     "seconds_remaining": null,
                     "expires_in_seconds": null,
-                    "platform_url": self.effective_auth_url().as_str(),
+                    "platform_url": self.effective_auth_url(config).as_str(),
                 },
                 "next_actions": ["pcl auth login"],
             }));
@@ -962,7 +989,7 @@ impl AuthCommand {
                 "expires_at": auth.expires_at.to_rfc3339(),
                 "seconds_remaining": seconds_remaining,
                 "expires_in_seconds": seconds_remaining,
-                "platform_url": self.effective_auth_url().as_str(),
+                "platform_url": self.effective_auth_url(config).as_str(),
             },
             "next_actions": if token_expired {
                 json!(["pcl auth refresh --toon", "pcl auth login --force", "pcl auth logout"])
@@ -1121,11 +1148,16 @@ fn persist_refreshed_auth(
     email: Option<String>,
     request_id: Option<String>,
 ) -> Result<RefreshOutcome, AuthError> {
+    let platform_url = config
+        .auth
+        .as_ref()
+        .and_then(|auth| auth.platform_url.clone());
     config.auth = Some(UserAuth {
         access_token: body.token,
         refresh_token: body.refresh_token,
         expires_at: body.expires_at,
         refresh_expires_at: Some(body.refresh_expires_at),
+        platform_url,
         user_id,
         wallet_address,
         email,
@@ -1403,6 +1435,7 @@ fn update_config_from_verified_status(
     config: &mut CliConfig,
     status: GetCliAuthStatusResponse,
     fallback_expires_at: chrono::DateTime<chrono::Utc>,
+    platform_url: url::Url,
 ) -> Result<(), AuthError> {
     let token = status.token.ok_or_else(|| {
         AuthError::InvalidAuthData("Verified but missing access token".to_string())
@@ -1423,6 +1456,7 @@ fn update_config_from_verified_status(
         refresh_token,
         expires_at: token_expires_at.unwrap_or(fallback_expires_at),
         refresh_expires_at: None,
+        platform_url: Some(platform_url),
         user_id: Some(user_id),
         wallet_address,
         email: status.email,
@@ -1462,6 +1496,7 @@ mod tests {
                 refresh_token: "test_refresh".to_string(),
                 expires_at: Utc.with_ymd_and_hms(2099, 12, 31, 0, 0, 0).unwrap(),
                 refresh_expires_at: None,
+                platform_url: None,
                 user_id: Some(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()),
                 wallet_address: Some(
                     "0x1234567890123456789012345678901234567890"
@@ -1491,6 +1526,7 @@ mod tests {
                 refresh_token: "old_refresh".to_string(),
                 expires_at: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
                 refresh_expires_at: None,
+                platform_url: None,
                 user_id: Some(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()),
                 wallet_address: None,
                 email: Some("agent@example.com".to_string()),
@@ -1509,7 +1545,7 @@ mod tests {
         };
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
-        cmd.display_login_instructions(&auth_response);
+        cmd.display_login_instructions(&CliConfig::default(), &auth_response);
     }
 
     #[test]
@@ -1530,6 +1566,7 @@ mod tests {
             serde_json::from_str(test_auth_response_json()).unwrap();
 
         let output = cmd.login_instructions_envelope(
+            &CliConfig::default(),
             &auth_response,
             Some(Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap()),
         );
@@ -1572,8 +1609,12 @@ mod tests {
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
-        let toon =
-            cmd.login_challenge_envelope(&auth_response, AuthChallengeReason::Missing, false);
+        let toon = cmd.login_challenge_envelope(
+            &CliConfig::default(),
+            &auth_response,
+            AuthChallengeReason::Missing,
+            false,
+        );
         assert!(
             toon["data"]["poll_command"]
                 .as_str()
@@ -1581,7 +1622,12 @@ mod tests {
         );
         assert_eq!(toon["data"]["wait_command"], toon["data"]["poll_command"]);
 
-        let json = cmd.login_challenge_envelope(&auth_response, AuthChallengeReason::Missing, true);
+        let json = cmd.login_challenge_envelope(
+            &CliConfig::default(),
+            &auth_response,
+            AuthChallengeReason::Missing,
+            true,
+        );
         assert!(
             json["data"]["poll_command"]
                 .as_str()
@@ -1606,7 +1652,7 @@ mod tests {
             serde_json::from_str(test_auth_response_json()).unwrap();
         auth_response.device_secret = "-dash_secret".to_string();
 
-        let command = cmd.poll_command(&auth_response, false);
+        let command = cmd.poll_command(&CliConfig::default(), &auth_response, false);
 
         assert!(command.contains("--device-secret=-dash_secret"));
         assert!(!command.contains("--device-secret -dash_secret"));
@@ -1632,7 +1678,7 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
 
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let result = AuthCommand::request_auth_code(&client).await;
 
         assert!(result.is_ok());
@@ -1661,6 +1707,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let cli_args = test_cli_args(temp_dir.path());
         let mut config = expired_refreshable_config();
+        config.auth.as_mut().unwrap().platform_url = Some(server.url().parse().unwrap());
         config.write_to_file(&cli_args).unwrap();
 
         let outcome = refresh_stored_auth(
@@ -1678,6 +1725,11 @@ mod tests {
         assert_eq!(auth.access_token, "new_access");
         assert_eq!(auth.refresh_token, "new_refresh");
         assert_eq!(auth.email.as_deref(), Some("agent@example.com"));
+        let expected_platform_url: url::Url = server.url().parse().unwrap();
+        assert_eq!(
+            auth.platform_url.as_ref().map(url::Url::as_str),
+            Some(expected_platform_url.as_str())
+        );
         assert_eq!(
             auth.refresh_expires_at.unwrap(),
             Utc.with_ymd_and_hms(2030, 2, 1, 0, 0, 0).unwrap()
@@ -1792,7 +1844,7 @@ mod tests {
 
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
@@ -1835,7 +1887,7 @@ mod tests {
 
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
@@ -1870,7 +1922,7 @@ mod tests {
 
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
@@ -2028,7 +2080,7 @@ mod tests {
 
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
@@ -2055,7 +2107,7 @@ mod tests {
 
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let mut config = CliConfig::default();
 
         // Build an auth response with expiresAt in the past
@@ -2100,7 +2152,7 @@ mod tests {
 
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
@@ -2138,7 +2190,7 @@ mod tests {
 
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
@@ -2176,7 +2228,7 @@ mod tests {
 
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
@@ -2214,7 +2266,7 @@ mod tests {
 
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
@@ -2268,7 +2320,7 @@ mod tests {
 
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let mut config = CliConfig::default();
 
         // Use a far-future expiresAt so the client-side check doesn't trigger
@@ -2327,7 +2379,7 @@ mod tests {
 
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let mut config = CliConfig::default();
 
         let auth_response: GetCliAuthCodeResponse = serde_json::from_str(
@@ -2368,7 +2420,7 @@ mod tests {
 
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
@@ -2405,7 +2457,7 @@ mod tests {
 
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
-        let client = cmd.api_client();
+        let client = cmd.api_client(&CliConfig::default());
         let mut config = CliConfig::default();
 
         let auth_response: GetCliAuthCodeResponse = serde_json::from_str(

@@ -133,8 +133,10 @@ or one `status: action_required` envelope with `device_url`, `code`, `device_sec
 when user login is needed. `pcl auth refresh --toon` is safe to call and rotates the stored CLI
 refresh token when available; if the refresh token is missing or rejected,
 it returns the same login challenge shape.
-Auth commands use `--auth-url`/`PCL_AUTH_URL` when set, otherwise they follow `PCL_API_URL`
-before falling back to the production app URL.
+Auth commands use `--auth-url`/`PCL_AUTH_URL` when set, then `PCL_API_URL`, the URL stored
+with the current login, and finally the production app URL. A completed login remembers its
+platform URL until logout. Other platform commands use `--api-url`/`PCL_API_URL` when set,
+then the remembered login URL, so the URL does not need to be repeated on every command.
 When `expires_soon` is true, renew before long-running work with `pcl auth ensure --force --toon`
 or `pcl auth login --no-wait --toon`.
 `pcl auth logout` attempts remote logout first, then clears local credentials. Use

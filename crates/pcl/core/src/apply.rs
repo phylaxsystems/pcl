@@ -112,16 +112,16 @@ pub struct ApplyArgs {
         long = "api-url",
         env = "PCL_API_URL",
         value_hint = ValueHint::Url,
-        default_value = DEFAULT_PLATFORM_URL,
-        help = "Base URL for the platform API"
+        help = "Base URL for the platform API. Defaults to the current login URL, then production"
     )]
-    pub api_url: url::Url,
+    pub api_url: Option<url::Url>,
 }
 
 impl ApplyArgs {
     #[allow(clippy::too_many_lines)]
     pub async fn run(&self, cli_args: &CliArgs, config: &mut CliConfig) -> Result<(), ApplyError> {
         let output_mode = cli_args.output_mode();
+        let api_url = config.resolve_platform_url(self.api_url.as_ref());
         let root = canonicalize_root(&self.root)?;
         let config_path = root.join(&self.config);
         let credible = CredibleToml::from_path(&config_path)?;
@@ -134,8 +134,8 @@ impl ApplyArgs {
                 ));
             }
             None => {
-                Self::ensure_fresh_auth(config, cli_args, &self.api_url).await?;
-                self.select_project(config).await?
+                Self::ensure_fresh_auth(config, cli_args, &api_url).await?;
+                self.select_project(config, &api_url).await?
             }
         };
         let (payload, verification_inputs) = Self::build_payload(&credible, &root)?;
@@ -152,8 +152,8 @@ impl ApplyArgs {
             return Ok(());
         }
 
-        Self::ensure_fresh_auth(config, cli_args, &self.api_url).await?;
-        let client = self.build_client(config)?;
+        Self::ensure_fresh_auth(config, cli_args, &api_url).await?;
+        let client = Self::build_client(config, &api_url)?;
         let preview = Self::call_preview(&client, &project_id, &payload).await?;
 
         if !preview.has_changes() {
@@ -214,7 +214,7 @@ impl ApplyArgs {
             return Ok(());
         }
 
-        Self::print_release_success(self.api_url.as_str(), &project_id, &release);
+        Self::print_release_success(api_url.as_str(), &project_id, &release);
         Ok(())
     }
 
@@ -233,15 +233,17 @@ impl ApplyArgs {
         if dry_run {
             parts.push("--dry-run".to_string());
         }
-        if self.api_url.as_str().trim_end_matches('/') != DEFAULT_PLATFORM_URL {
+        if let Some(api_url) = &self.api_url
+            && api_url.as_str().trim_end_matches('/') != DEFAULT_PLATFORM_URL
+        {
             parts.push("--api-url".to_string());
-            parts.push(shell_word(self.api_url.as_str()));
+            parts.push(shell_word(api_url.as_str()));
         }
         parts.join(" ")
     }
 
-    fn build_client(&self, config: &CliConfig) -> Result<GeneratedClient, ApplyError> {
-        authenticated_client(config, &self.api_url).map_err(client_error_to_apply)
+    fn build_client(config: &CliConfig, api_url: &Url) -> Result<GeneratedClient, ApplyError> {
+        authenticated_client(config, api_url).map_err(client_error_to_apply)
     }
 
     async fn ensure_fresh_auth(
@@ -445,7 +447,7 @@ impl ApplyArgs {
         Ok(summary)
     }
 
-    async fn select_project(&self, config: &CliConfig) -> Result<Uuid, ApplyError> {
+    async fn select_project(&self, config: &CliConfig, api_url: &Url) -> Result<Uuid, ApplyError> {
         let auth = config.auth.as_ref().ok_or(ApplyError::NoAuthToken)?;
         let user_id = auth.user_id.as_ref().ok_or_else(|| {
             ApplyError::InvalidConfig(
@@ -454,7 +456,7 @@ impl ApplyArgs {
             )
         })?;
 
-        let client = self.build_client(config)?;
+        let client = Self::build_client(config, api_url)?;
         let projects: Vec<GetProjectsResponseItem> =
             match client.get_projects(None, Some(user_id), None).await {
                 Ok(response) => response.into_inner(),

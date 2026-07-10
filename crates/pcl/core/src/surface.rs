@@ -5,7 +5,6 @@
 )]
 
 use crate::{
-    DEFAULT_PLATFORM_URL,
     api::{
         api_manifest,
         envelope_output_string,
@@ -293,10 +292,9 @@ pub struct DoctorArgs {
     #[arg(
         long = "api-url",
         env = "PCL_API_URL",
-        default_value = DEFAULT_PLATFORM_URL,
-        help = "Base URL for the platform API"
+        help = "Base URL for the platform API. Defaults to the current login URL, then production"
     )]
-    api_url: url::Url,
+    api_url: Option<url::Url>,
     #[arg(long, help = "Skip network health checks")]
     offline: bool,
 }
@@ -461,10 +459,9 @@ struct ExportIncidentsArgs {
     #[arg(
         long = "api-url",
         env = "PCL_API_URL",
-        default_value = DEFAULT_PLATFORM_URL,
-        help = "Base URL for the platform API"
+        help = "Base URL for the platform API. Defaults to the current login URL, then production"
     )]
-    api_url: url::Url,
+    api_url: Option<url::Url>,
     #[arg(long, help = "Do not attach a stored bearer token")]
     allow_unauthenticated: bool,
 }
@@ -476,6 +473,7 @@ impl DoctorArgs {
         cli_args: &CliArgs,
         json_output: bool,
     ) -> Result<(), ProductSurfaceError> {
+        let api_url = config.resolve_platform_url(self.api_url.as_ref());
         let mut checks = vec![
             json!({
                 "name": "config",
@@ -501,8 +499,8 @@ impl DoctorArgs {
         ];
 
         if !self.offline {
-            checks.push(health_check(&self.api_url).await);
-            checks.push(auth_capability_check(&self.api_url).await);
+            checks.push(health_check(&api_url).await);
+            checks.push(auth_capability_check(&api_url).await);
         }
 
         let status = if checks
@@ -529,7 +527,7 @@ impl DoctorArgs {
                     "default_output": "human",
                     "toon_output_flag": "--toon",
                     "json_output_flag": "--json",
-                    "api_url": self.api_url.as_str(),
+                    "api_url": api_url.as_str(),
                 },
                 "next_actions": next_actions,
             }),
@@ -839,6 +837,7 @@ async fn export_incidents(
     cli_args: &CliArgs,
     json_output: bool,
 ) -> Result<(), ProductSurfaceError> {
+    let api_url = config.resolve_platform_url(args.api_url.as_ref());
     if args.limit == 0 {
         return Err(ProductSurfaceError::InvalidInput(
             "--limit must be greater than zero".to_string(),
@@ -897,7 +896,7 @@ async fn export_incidents(
     ensure_export_auth(
         config,
         cli_args,
-        &args.api_url,
+        &api_url,
         args.project_id.is_some(),
         args.allow_unauthenticated,
     )
@@ -953,7 +952,7 @@ async fn export_incidents(
             args.allow_unauthenticated,
         )?)
         .build()?;
-    let client = generated_client_with_http_client(&args.api_url, http_client);
+    let client = generated_client_with_http_client(&api_url, http_client);
     let project_id = match args.project_id.as_deref() {
         Some(project_ref) => Some(resolve_export_project_id(&client, project_ref).await?),
         None => None,
@@ -1442,9 +1441,12 @@ fn incident_export_resume_command(
         args.max_pages.to_string(),
         "--max-retries".to_string(),
         args.max_retries.to_string(),
-        "--api-url".to_string(),
-        shell_word(args.api_url.as_str()),
     ];
+
+    if let Some(api_url) = &args.api_url {
+        parts.push("--api-url".to_string());
+        parts.push(shell_word(api_url.as_str()));
+    }
 
     if let Some(project_id) = &args.project_id {
         parts.push("--project-id".to_string());
@@ -1562,6 +1564,7 @@ fn llms_guide() -> Value {
         },
         "auth_behavior": {
             "expiry_source": "Stored token expiry is normalized from the access-token JWT exp claim when available.",
+            "platform_url": "A completed login remembers its platform URL until logout. Platform commands use --api-url/PCL_API_URL when set, then the remembered login URL, then production.",
             "ensure_command": "pcl auth ensure --toon",
             "expires_soon": "true when five minutes or less remain; renew before long-running work.",
             "renew_command": "pcl auth ensure --force --toon",
@@ -2412,6 +2415,7 @@ mod tests {
                 refresh_token: "refresh-token".to_string(),
                 expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
                 refresh_expires_at: None,
+                platform_url: None,
                 user_id: None,
                 wallet_address: None,
                 email: Some("agent@example.com".to_string()),
@@ -2463,6 +2467,7 @@ mod tests {
             refresh_token: "refresh-token".to_string(),
             expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
             refresh_expires_at: None,
+            platform_url: None,
             user_id: None,
             wallet_address: None,
             email: Some("agent@example.com".to_string()),
@@ -2614,7 +2619,7 @@ mod tests {
             continue_on_error: true,
             max_retries: 3,
             dry_run: false,
-            api_url: DEFAULT_PLATFORM_URL.parse().unwrap(),
+            api_url: Some(crate::DEFAULT_PLATFORM_URL.parse().unwrap()),
             allow_unauthenticated: false,
         };
 
@@ -2689,7 +2694,7 @@ mod tests {
             continue_on_error: false,
             max_retries: 1,
             dry_run: false,
-            api_url: server.url().parse().unwrap(),
+            api_url: Some(server.url().parse().unwrap()),
             allow_unauthenticated: true,
         };
 
@@ -2750,6 +2755,7 @@ mod tests {
                 refresh_token: "old_refresh".to_string(),
                 expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
                 refresh_expires_at: None,
+                platform_url: None,
                 user_id: None,
                 wallet_address: None,
                 email: Some("agent@example.com".to_string()),
@@ -2772,7 +2778,7 @@ mod tests {
             continue_on_error: false,
             max_retries: 0,
             dry_run: false,
-            api_url: server.url().parse().unwrap(),
+            api_url: Some(server.url().parse().unwrap()),
             allow_unauthenticated: false,
         };
 
@@ -2816,7 +2822,7 @@ mod tests {
             continue_on_error: false,
             max_retries: 0,
             dry_run: false,
-            api_url,
+            api_url: Some(api_url),
             allow_unauthenticated: true,
         };
 
@@ -2885,7 +2891,7 @@ mod tests {
             continue_on_error: true,
             max_retries: 0,
             dry_run: false,
-            api_url: server.url().parse().unwrap(),
+            api_url: Some(server.url().parse().unwrap()),
             allow_unauthenticated: true,
         };
 

@@ -1,4 +1,5 @@
 use crate::{
+    DEFAULT_PLATFORM_URL,
     api::{
         envelope_output_string,
         with_envelope_metadata,
@@ -118,6 +119,27 @@ impl ConfigArgs {
 }
 
 impl CliConfig {
+    /// Resolves the platform URL using a command-line/environment override,
+    /// then the URL associated with the current login, then production.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the compile-time production platform URL is invalid.
+    pub fn resolve_platform_url(&self, override_url: Option<&url::Url>) -> url::Url {
+        override_url
+            .cloned()
+            .or_else(|| {
+                self.auth
+                    .as_ref()
+                    .and_then(|auth| auth.platform_url.clone())
+            })
+            .unwrap_or_else(|| {
+                DEFAULT_PLATFORM_URL
+                    .parse()
+                    .expect("default platform URL is valid")
+            })
+    }
+
     /// Updates stored auth expiry from the JWT `exp` claim when available.
     ///
     /// Older CLI versions stored the short device-login session expiry here,
@@ -456,6 +478,7 @@ fn config_auth_value(config: &CliConfig) -> Value {
         .map(|expires_at| (expires_at - now).num_seconds());
     json!({
         "authenticated": true,
+        "platform_url": auth.platform_url.as_ref().map(url::Url::as_str),
         "user": auth.display_name(),
         "user_id": auth.user_id.map(|id| id.to_string()),
         "wallet_address": auth.wallet_address.map(|address| address.to_string()),
@@ -516,6 +539,9 @@ pub struct UserAuth {
         skip_serializing_if = "Option::is_none"
     )]
     pub refresh_expires_at: Option<DateTime<Utc>>,
+    /// Platform URL selected when this authenticated session was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform_url: Option<url::Url>,
     /// Platform user ID (UUID), used for API calls that require it
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_id: Option<Uuid>,
@@ -594,6 +620,9 @@ impl fmt::Display for UserAuth {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Authentication:")?;
         writeln!(f, "  User: {}", self.display_name())?;
+        if let Some(platform_url) = &self.platform_url {
+            writeln!(f, "  Platform URL: {platform_url}")?;
+        }
         let now = Utc::now();
         let expired = self.expires_at < now;
         let expiry_text = self.expires_at.format("%Y-%m-%d %H:%M:%S UTC").to_string();
@@ -663,6 +692,7 @@ mod tests {
                 refresh_token: "test_refresh".to_string(),
                 expires_at: fixed_timestamp,
                 refresh_expires_at: None,
+                platform_url: None,
                 user_id: None,
                 wallet_address: None,
                 email: None,
@@ -710,6 +740,7 @@ mod tests {
                 refresh_token: "old_refresh".to_string(),
                 expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
                 refresh_expires_at: None,
+                platform_url: None,
                 user_id: None,
                 wallet_address: None,
                 email: None,
@@ -721,6 +752,7 @@ mod tests {
                 refresh_token: "old_refresh".to_string(),
                 expires_at: DateTime::from_timestamp(4102444800, 0).unwrap(),
                 refresh_expires_at: None,
+                platform_url: None,
                 user_id: None,
                 wallet_address: None,
                 email: None,
@@ -732,6 +764,7 @@ mod tests {
                 refresh_token: "new_refresh".to_string(),
                 expires_at: DateTime::from_timestamp(4102444800, 0).unwrap(),
                 refresh_expires_at: Some(DateTime::from_timestamp(4105036800, 0).unwrap()),
+                platform_url: None,
                 user_id: None,
                 wallet_address: None,
                 email: None,
@@ -763,12 +796,31 @@ mod tests {
     }
 
     #[test]
+    fn platform_url_uses_login_url_and_honors_command_override() {
+        let stored_url: url::Url = "https://stored.example".parse().unwrap();
+        let override_url: url::Url = "https://override.example".parse().unwrap();
+        let config = CliConfig {
+            auth: Some(UserAuth {
+                platform_url: Some(stored_url.clone()),
+                ..UserAuth::default()
+            }),
+        };
+
+        assert_eq!(config.resolve_platform_url(None), stored_url);
+        assert_eq!(
+            config.resolve_platform_url(Some(&override_url)),
+            override_url
+        );
+    }
+
+    #[test]
     fn test_user_auth_display() {
         let auth = UserAuth {
             access_token: "test_access".to_string(),
             refresh_token: "test_refresh".to_string(),
             expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(), // 2022-12-31 16:00:00 UTC
             refresh_expires_at: None,
+            platform_url: None,
             user_id: None,
             wallet_address: None,
             email: Some("test@example.com".to_string()),
@@ -791,6 +843,7 @@ mod tests {
             refresh_token: String::new(),
             expires_at: expires,
             refresh_expires_at: None,
+            platform_url: None,
             wallet_address: Some(Address::from_slice(&[1; 20])),
             email: Some("test@example.com".to_string()),
             user_id: Some(Uuid::nil()),
@@ -806,6 +859,7 @@ mod tests {
             refresh_token: String::new(),
             expires_at: expires,
             refresh_expires_at: None,
+            platform_url: None,
             wallet_address: None,
             email: Some("test@example.com".to_string()),
             user_id: Some(Uuid::nil()),
@@ -818,6 +872,7 @@ mod tests {
             refresh_token: String::new(),
             expires_at: expires,
             refresh_expires_at: None,
+            platform_url: None,
             wallet_address: None,
             email: None,
             user_id: Some(Uuid::nil()),
@@ -833,6 +888,7 @@ mod tests {
             refresh_token: String::new(),
             expires_at: expires,
             refresh_expires_at: None,
+            platform_url: None,
             wallet_address: None,
             email: None,
             user_id: None,
@@ -847,6 +903,7 @@ mod tests {
             refresh_token: String::new(),
             expires_at: DateTime::from_timestamp(0, 0).unwrap(),
             refresh_expires_at: None,
+            platform_url: None,
             wallet_address: None,
             email: None,
             user_id: None,
@@ -866,6 +923,7 @@ mod tests {
                 refresh_token: "refresh".to_string(),
                 expires_at: DateTime::from_timestamp(1, 0).unwrap(),
                 refresh_expires_at: None,
+                platform_url: None,
                 wallet_address: None,
                 email: None,
                 user_id: None,
@@ -896,6 +954,7 @@ mod tests {
                 refresh_token: "test".to_string(),
                 expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
                 refresh_expires_at: None,
+                platform_url: None,
                 user_id: None,
                 wallet_address: None,
                 email: None,
@@ -920,6 +979,7 @@ mod tests {
                 refresh_token: "secret-refresh".to_string(),
                 expires_at: Utc::now() + chrono::Duration::minutes(10),
                 refresh_expires_at: None,
+                platform_url: None,
                 user_id: Some(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()),
                 wallet_address: None,
                 email: Some("test@example.com".to_string()),
@@ -991,6 +1051,7 @@ mod tests {
             refresh_token: "test_refresh".to_string(),
             expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
             refresh_expires_at: Some(DateTime::from_timestamp(1675094400, 0).unwrap()),
+            platform_url: None,
             user_id: Some(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()),
             wallet_address: Some(Address::from_slice(&[0; 20])),
             email: Some("test@example.com".to_string()),
