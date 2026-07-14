@@ -526,7 +526,7 @@ impl AuthCommand {
         let stdin = io::stdin();
         let mut input = stdin.lock();
         let mut output = io::stdout();
-        match Self::prompt_for_browser(&mut input, &mut output) {
+        match prompt_for_browser(&mut input, &mut output) {
             Ok(true) => {
                 match open::that(url) {
                     Ok(()) => println!("\n{} Browser opened for authentication.\n", "🌐".green()),
@@ -540,14 +540,6 @@ impl AuthCommand {
                 println!("\nUnable to read input ({error}). Open the URL above when ready.\n");
             }
         }
-    }
-
-    fn prompt_for_browser(input: &mut impl BufRead, output: &mut impl Write) -> io::Result<bool> {
-        write!(output, "Press Enter to open the URL in your browser... ")?;
-        output.flush()?;
-        let mut line = String::new();
-        input.read_line(&mut line)?;
-        Ok(matches!(line.as_str(), "\n" | "\r\n"))
     }
 
     fn login_instructions_envelope(
@@ -1463,6 +1455,14 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+fn prompt_for_browser(input: &mut impl BufRead, output: &mut impl Write) -> io::Result<bool> {
+    write!(output, "Press Enter to open the URL in your browser... ")?;
+    output.flush()?;
+    let mut line = String::new();
+    input.read_line(&mut line)?;
+    Ok(matches!(line.as_str(), "\n" | "\r\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1540,24 +1540,15 @@ mod tests {
     #[test]
     fn browser_prompt_requires_enter_and_is_copyable() {
         let mut output = Vec::new();
-        assert!(
-            AuthCommand::prompt_for_browser(&mut std::io::Cursor::new("\n"), &mut output).unwrap()
-        );
+        assert!(prompt_for_browser(&mut std::io::Cursor::new("\n"), &mut output).unwrap());
         assert_eq!(
             String::from_utf8(output).unwrap(),
             "Press Enter to open the URL in your browser... "
         );
         assert!(
-            !AuthCommand::prompt_for_browser(
-                &mut std::io::Cursor::new("not enter\n"),
-                &mut Vec::new()
-            )
-            .unwrap()
+            !prompt_for_browser(&mut std::io::Cursor::new("not enter\n"), &mut Vec::new()).unwrap()
         );
-        assert!(
-            !AuthCommand::prompt_for_browser(&mut std::io::Cursor::new(" \n"), &mut Vec::new())
-                .unwrap()
-        );
+        assert!(!prompt_for_browser(&mut std::io::Cursor::new(" \n"), &mut Vec::new()).unwrap());
     }
 
     #[test]
