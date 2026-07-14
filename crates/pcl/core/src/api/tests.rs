@@ -82,6 +82,7 @@ fn auth_config(
             wallet_address: None,
             email: email.map(ToString::to_string),
         }),
+        platform_url: None,
     }
 }
 

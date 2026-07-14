@@ -6,7 +6,6 @@
 //! output directory.
 
 use crate::{
-    DEFAULT_PLATFORM_URL,
     api::generated_operation_path,
     client::{
         ClientBuildError,
@@ -63,8 +62,8 @@ pub struct DownloadArgs {
         long = "api-url",
         env = "PCL_API_URL",
         value_hint = clap::ValueHint::Url,
-        default_value = DEFAULT_PLATFORM_URL,
-        help = "Base URL for the platform API"
+        default_value = crate::config::default_platform_url(),
+        help = "Base URL for the platform API. Defaults to the URL remembered from the last login"
     )]
     pub api_url: url::Url,
 }

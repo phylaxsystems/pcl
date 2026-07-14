@@ -125,6 +125,7 @@ mod tests {
                 wallet_address: None,
                 email: Some("agent@example.com".to_string()),
             }),
+            platform_url: None,
         };
         let auth_url = url::Url::parse(&server.url()).expect("mock url");
 
@@ -151,6 +152,7 @@ mod tests {
                 wallet_address: None,
                 email: Some("agent@example.com".to_string()),
             }),
+            platform_url: None,
         };
 
         let error = authorization_header(&config).expect_err("expired auth rejected");

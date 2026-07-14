@@ -1,4 +1,5 @@
 use crate::{
+    DEFAULT_PLATFORM_URL,
     api::{
         envelope_output_string,
         with_envelope_metadata,
@@ -34,6 +35,7 @@ use std::{
         Path,
         PathBuf,
     },
+    sync::OnceLock,
 };
 use uuid::Uuid;
 
@@ -53,6 +55,13 @@ pub const AUTH_EXPIRES_SOON_SECONDS: i64 = 300;
 pub struct CliConfig {
     /// Optional authentication details
     pub auth: Option<UserAuth>,
+    /// Platform URL remembered from `pcl auth login --auth-url <url>`.
+    ///
+    /// Only set when the login URL differs from the production default, and
+    /// cleared on `pcl auth logout`. Used as the default for `--api-url` and
+    /// `--auth-url` so a custom platform only has to be specified once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform_url: Option<String>,
 }
 
 /// Command-line arguments for configuration management
@@ -414,11 +423,65 @@ impl CliConfig {
     }
 }
 
+/// Returns the platform URL remembered from the last `pcl auth login` against
+/// a custom platform, if any.
+///
+/// The value is read once per process from the config file on disk (honoring
+/// `--config-dir` from the process arguments) so it can be used as a clap
+/// `default_value` before the config is otherwise loaded. Unit-test builds
+/// always return `None` to keep parsing deterministic.
+pub fn remembered_platform_url() -> Option<&'static str> {
+    static REMEMBERED: OnceLock<Option<String>> = OnceLock::new();
+    REMEMBERED
+        .get_or_init(|| {
+            if cfg!(test) {
+                return None;
+            }
+            let config_dir =
+                config_dir_from_process_args().unwrap_or_else(CliConfig::get_config_dir);
+            CliConfig::read_from_file_at_dir(&config_dir)
+                .ok()?
+                .platform_url
+                .filter(|url| url.parse::<url::Url>().is_ok())
+        })
+        .as_deref()
+}
+
+/// Default platform URL for `--api-url`/`--auth-url` arguments: the URL
+/// remembered from the last `pcl auth login`, falling back to production.
+pub fn default_platform_url() -> &'static str {
+    remembered_platform_url().unwrap_or(DEFAULT_PLATFORM_URL)
+}
+
+/// Extracts `--config-dir <path>` (or `--config-dir=<path>`) from the process
+/// arguments without a full clap parse.
+fn config_dir_from_process_args() -> Option<PathBuf> {
+    config_dir_from_args(std::env::args_os().skip(1))
+}
+
+fn config_dir_from_args<I>(args: I) -> Option<PathBuf>
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        let value = arg.to_string_lossy();
+        if value == "--config-dir" {
+            return iter.next().map(PathBuf::from);
+        }
+        if let Some(path) = value.strip_prefix("--config-dir=") {
+            return Some(PathBuf::from(path.to_string()));
+        }
+    }
+    None
+}
+
 fn config_show_envelope(config: &CliConfig, cli_args: &CliArgs) -> Value {
     with_envelope_metadata(json!({
         "status": "ok",
         "data": {
             "config_path": CliConfig::config_file_path(cli_args).display().to_string(),
+            "platform_url": config.platform_url.as_deref(),
             "auth": config_auth_value(config),
         },
         "next_actions": if config.auth.is_some() {
@@ -489,6 +552,9 @@ impl fmt::Display for CliConfig {
         writeln!(f, "PCL Configuration")?;
         writeln!(f, "==================")?;
         writeln!(f, "Config path: {}", config_path.display())?;
+        if let Some(platform_url) = &self.platform_url {
+            writeln!(f, "Platform URL: {platform_url}")?;
+        }
 
         match &self.auth {
             Some(auth) => writeln!(f, "{auth}")?,
@@ -667,6 +733,7 @@ mod tests {
                 wallet_address: None,
                 email: None,
             }),
+            platform_url: None,
         };
 
         // Test writing
@@ -714,6 +781,7 @@ mod tests {
                 wallet_address: None,
                 email: None,
             }),
+            platform_url: None,
         };
         let stale_process_config = CliConfig {
             auth: Some(UserAuth {
@@ -725,6 +793,7 @@ mod tests {
                 wallet_address: None,
                 email: None,
             }),
+            platform_url: None,
         };
         let newer_config = CliConfig {
             auth: Some(UserAuth {
@@ -736,6 +805,7 @@ mod tests {
                 wallet_address: None,
                 email: None,
             }),
+            platform_url: None,
         };
 
         old_config.write_to_file(&cli_args).unwrap();
@@ -751,6 +821,63 @@ mod tests {
             persisted.auth.as_ref().unwrap().refresh_token,
             "new_refresh"
         );
+    }
+
+    #[test]
+    fn platform_url_round_trips_and_is_omitted_when_unset() {
+        let (config_dir, _temp_dir) = setup_config_dir();
+
+        let config = CliConfig {
+            auth: None,
+            platform_url: Some("https://custom.phylax.example".to_string()),
+        };
+        config.write_to_file_at_dir(&config_dir).unwrap();
+        let read_config = CliConfig::read_from_file_at_dir(&config_dir).unwrap();
+        assert_eq!(
+            read_config.platform_url.as_deref(),
+            Some("https://custom.phylax.example")
+        );
+
+        CliConfig::default()
+            .write_to_file_at_dir(&config_dir)
+            .unwrap();
+        let raw = fs::read_to_string(config_dir.join(CONFIG_FILE)).unwrap();
+        assert!(!raw.contains("platform_url"));
+    }
+
+    #[test]
+    fn config_without_platform_url_parses_as_none() {
+        let (config_dir, _temp_dir) = setup_config_dir();
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(config_dir.join(CONFIG_FILE), "").unwrap();
+
+        let config = CliConfig::read_from_file_at_dir(&config_dir).unwrap();
+        assert!(config.platform_url.is_none());
+    }
+
+    #[test]
+    fn extracts_config_dir_from_args() {
+        use std::ffi::OsString;
+
+        let args = ["--json", "--config-dir", "/tmp/pcl-conf", "auth"].map(OsString::from);
+        assert_eq!(
+            config_dir_from_args(args),
+            Some(PathBuf::from("/tmp/pcl-conf"))
+        );
+
+        let args = ["auth", "--config-dir=/tmp/pcl-conf2"].map(OsString::from);
+        assert_eq!(
+            config_dir_from_args(args),
+            Some(PathBuf::from("/tmp/pcl-conf2"))
+        );
+
+        let args = ["auth", "login"].map(OsString::from);
+        assert_eq!(config_dir_from_args(args), None);
+    }
+
+    #[test]
+    fn default_platform_url_falls_back_to_production_in_tests() {
+        assert_eq!(default_platform_url(), DEFAULT_PLATFORM_URL);
     }
 
     #[test]
@@ -870,6 +997,7 @@ mod tests {
                 email: None,
                 user_id: None,
             }),
+            platform_url: None,
         };
 
         assert!(config.normalize_auth_expiry_from_access_token());
@@ -900,6 +1028,7 @@ mod tests {
                 wallet_address: None,
                 email: None,
             }),
+            platform_url: None,
         };
         let args = ConfigArgs {
             command: ConfigCommand::Delete,
@@ -924,6 +1053,7 @@ mod tests {
                 wallet_address: None,
                 email: Some("test@example.com".to_string()),
             }),
+            platform_url: None,
         };
 
         let envelope = config_show_envelope(&config, &args);

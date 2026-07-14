@@ -108,7 +108,7 @@ pub struct AuthCommand {
         short = 'u',
         long = "auth-url",
         env = "PCL_AUTH_URL",
-        help = "Base URL for authentication service. Defaults to PCL_AUTH_URL, then PCL_API_URL, then the production app URL"
+        help = "Base URL for authentication service. Defaults to PCL_AUTH_URL, then PCL_API_URL, then the URL remembered from the last login, then the production app URL"
     )]
     pub auth_url: Option<url::Url>,
 }
@@ -233,9 +233,17 @@ impl AuthCommand {
         {
             return parsed;
         }
-        DEFAULT_PLATFORM_URL
+        crate::config::default_platform_url()
             .parse()
             .expect("default platform URL is valid")
+    }
+
+    /// Remembers a custom login URL in the config so later commands default to
+    /// it, or clears the remembered URL when logging in against production.
+    fn remember_platform_url(&self, config: &mut CliConfig) {
+        let auth_url = self.effective_auth_url();
+        config.platform_url = (auth_url.as_str().trim_end_matches('/') != DEFAULT_PLATFORM_URL)
+            .then(|| auth_url.as_str().trim_end_matches('/').to_string());
     }
 
     /// Execute the authentication command
@@ -743,6 +751,7 @@ impl AuthCommand {
                     spinner.finish_with_message("✅ Authentication successful!");
                 }
                 update_config_from_verified_status(config, status, auth_response.expires_at)?;
+                self.remember_platform_url(config);
                 if !json_output {
                     Self::display_success_message(config)?;
                 }
@@ -773,6 +782,7 @@ impl AuthCommand {
                 status,
                 expires_at.unwrap_or_else(default_poll_fallback_expires_at),
             )?;
+            self.remember_platform_url(config);
             let mut output = self.status_envelope(config);
             if let Some(object) = output.as_object_mut() {
                 object.insert("event".to_string(), json!("auth.login_complete"));
@@ -904,9 +914,10 @@ impl AuthCommand {
         Ok(())
     }
 
-    /// Remove authentication data from configuration
+    /// Remove authentication data and any remembered platform URL from configuration
     fn logout(config: &mut CliConfig) {
         config.auth = None;
+        config.platform_url = None;
     }
 
     /// Display current authentication status
@@ -1492,6 +1503,7 @@ mod tests {
                 ),
                 email: None,
             }),
+            platform_url: None,
         }
     }
 
@@ -1517,7 +1529,47 @@ mod tests {
                 wallet_address: None,
                 email: Some("agent@example.com".to_string()),
             }),
+            platform_url: None,
         }
+    }
+
+    #[test]
+    fn remember_platform_url_stores_custom_url_and_clears_default() {
+        let mut config = CliConfig::default();
+
+        let cmd = AuthCommand {
+            command: AuthSubcommands::Login {
+                force: false,
+                no_wait: false,
+            },
+            auth_url: Some("https://custom.phylax.example/".parse().unwrap()),
+        };
+        cmd.remember_platform_url(&mut config);
+        assert_eq!(
+            config.platform_url.as_deref(),
+            Some("https://custom.phylax.example")
+        );
+
+        let cmd = AuthCommand {
+            command: AuthSubcommands::Login {
+                force: false,
+                no_wait: false,
+            },
+            auth_url: Some(DEFAULT_PLATFORM_URL.parse().unwrap()),
+        };
+        cmd.remember_platform_url(&mut config);
+        assert!(config.platform_url.is_none());
+    }
+
+    #[test]
+    fn logout_clears_remembered_platform_url() {
+        let mut config = create_test_config();
+        config.platform_url = Some("https://custom.phylax.example".to_string());
+
+        AuthCommand::logout(&mut config);
+
+        assert!(config.auth.is_none());
+        assert!(config.platform_url.is_none());
     }
 
     #[test]

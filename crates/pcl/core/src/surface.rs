@@ -5,7 +5,6 @@
 )]
 
 use crate::{
-    DEFAULT_PLATFORM_URL,
     api::{
         api_manifest,
         envelope_output_string,
@@ -293,8 +292,8 @@ pub struct DoctorArgs {
     #[arg(
         long = "api-url",
         env = "PCL_API_URL",
-        default_value = DEFAULT_PLATFORM_URL,
-        help = "Base URL for the platform API"
+        default_value = crate::config::default_platform_url(),
+        help = "Base URL for the platform API. Defaults to the URL remembered from the last login"
     )]
     api_url: url::Url,
     #[arg(long, help = "Skip network health checks")]
@@ -461,8 +460,8 @@ struct ExportIncidentsArgs {
     #[arg(
         long = "api-url",
         env = "PCL_API_URL",
-        default_value = DEFAULT_PLATFORM_URL,
-        help = "Base URL for the platform API"
+        default_value = crate::config::default_platform_url(),
+        help = "Base URL for the platform API. Defaults to the URL remembered from the last login"
     )]
     api_url: url::Url,
     #[arg(long, help = "Do not attach a stored bearer token")]
@@ -2320,6 +2319,7 @@ fn log_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DEFAULT_PLATFORM_URL;
     use mockito::Matcher;
     use pcl_common::args::CliArgs;
     use std::net::TcpListener;
@@ -2411,6 +2411,7 @@ mod tests {
                 wallet_address: None,
                 email: Some("agent@example.com".to_string()),
             }),
+            platform_url: None,
         };
 
         let error = args.run(&config, true).unwrap_err();
@@ -2749,6 +2750,7 @@ mod tests {
                 wallet_address: None,
                 email: Some("agent@example.com".to_string()),
             }),
+            platform_url: None,
         };
         config.write_to_file(&cli_args).unwrap();
         let out = temp.path().join("incidents.jsonl");
