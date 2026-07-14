@@ -54,7 +54,11 @@ use serde_json::{
 };
 use std::{
     fs::OpenOptions,
-    io::Write,
+    io::{
+        self,
+        BufRead,
+        Write,
+    },
     path::PathBuf,
 };
 use tokio::time::{
@@ -125,7 +129,7 @@ pub enum AuthSubcommands {
 
     /// Login to PCL
     #[command(
-        long_about = "Initiates the login process. Opens a browser window for authentication.",
+        long_about = "Initiates the login process. Displays a device code, then opens a browser after you press Enter.",
         after_help = "Examples:\n  pcl auth login\n  pcl auth login --force\n  pcl auth login --no-wait --toon"
     )]
     Login {
@@ -495,28 +499,46 @@ impl AuthCommand {
             .map_err(|e| AuthError::AuthRequestFailed(e.to_string()))
     }
 
-    /// Display login URL and code to the user, attempting to open the browser automatically
+    /// Display the device-login details, then open the browser after confirmation.
     fn display_login_instructions(&self, auth_response: &GetCliAuthCodeResponse) {
+        let device_url = self.device_url(auth_response);
+        println!(
+            "\nTo authenticate:\n\n📝 {}\n🔗 {}\n",
+            format!("Code: {}", *auth_response.code).green().bold(),
+            device_url.as_str().white(),
+        );
+
+        if Self::should_open_browser() {
+            Self::open_browser_after_confirmation(device_url.as_str());
+        }
+    }
+
+    fn device_url(&self, auth_response: &GetCliAuthCodeResponse) -> url::Url {
         let mut device_url = self.effective_auth_url();
         device_url.set_path("/device");
         device_url
             .query_pairs_mut()
             .append_pair("session_id", &auth_response.session_id.to_string());
-        let url = device_url.as_str();
+        device_url
+    }
 
-        if Self::should_open_browser() && open::that(url).is_ok() {
-            println!(
-                "\n{} Opening browser for authentication...\n\n🔗 {}\n📝 {}\n",
-                "🌐".green(),
-                url.white(),
-                format!("Code: {}", *auth_response.code).green().bold()
-            );
-        } else {
-            println!(
-                "\nTo authenticate, please visit:\n\n🔗 {}\n📝 {}\n",
-                url.white(),
-                format!("Code: {}", *auth_response.code).green().bold()
-            );
+    fn open_browser_after_confirmation(url: &str) {
+        let stdin = io::stdin();
+        let mut input = stdin.lock();
+        let mut output = io::stdout();
+        match prompt_for_browser(&mut input, &mut output) {
+            Ok(true) => {
+                match open::that(url) {
+                    Ok(()) => println!("\n{} Browser opened for authentication.\n", "🌐".green()),
+                    Err(_) => {
+                        println!("\nUnable to open a browser. Open the URL above when ready.\n");
+                    }
+                }
+            }
+            Ok(false) => println!("\nBrowser not opened. Open the URL above when ready.\n"),
+            Err(error) => {
+                println!("\nUnable to read input ({error}). Open the URL above when ready.\n");
+            }
         }
     }
 
@@ -525,11 +547,7 @@ impl AuthCommand {
         auth_response: &GetCliAuthCodeResponse,
         previous_token_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Value {
-        let mut device_url = self.effective_auth_url();
-        device_url.set_path("/device");
-        device_url
-            .query_pairs_mut()
-            .append_pair("session_id", &auth_response.session_id.to_string());
+        let device_url = self.device_url(auth_response);
         with_envelope_metadata(json!({
             "status": "pending",
             "event": "auth.login_instructions",
@@ -561,11 +579,7 @@ impl AuthCommand {
         json_output: bool,
     ) -> Value {
         let poll_command = self.poll_command(auth_response, json_output);
-        let mut device_url = self.effective_auth_url();
-        device_url.set_path("/device");
-        device_url
-            .query_pairs_mut()
-            .append_pair("session_id", &auth_response.session_id.to_string());
+        let device_url = self.device_url(auth_response);
         with_envelope_metadata(json!({
             "status": "action_required",
             "data": {
@@ -1441,6 +1455,14 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+fn prompt_for_browser(input: &mut impl BufRead, output: &mut impl Write) -> io::Result<bool> {
+    write!(output, "Press Enter to open the URL in your browser... ")?;
+    output.flush()?;
+    let mut line = String::new();
+    input.read_line(&mut line)?;
+    Ok(matches!(line.as_str(), "\n" | "\r\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1499,7 +1521,7 @@ mod tests {
     }
 
     #[test]
-    fn test_display_login_instructions() {
+    fn device_url_includes_the_login_session_id() {
         let cmd = AuthCommand {
             command: AuthSubcommands::Login {
                 force: false,
@@ -1509,7 +1531,24 @@ mod tests {
         };
         let auth_response: GetCliAuthCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
-        cmd.display_login_instructions(&auth_response);
+        assert_eq!(
+            cmd.device_url(&auth_response).as_str(),
+            "https://app.phylax.systems/device?session_id=550e8400-e29b-41d4-a716-446655440000"
+        );
+    }
+
+    #[test]
+    fn browser_prompt_requires_enter_and_is_copyable() {
+        let mut output = Vec::new();
+        assert!(prompt_for_browser(&mut std::io::Cursor::new("\n"), &mut output).unwrap());
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "Press Enter to open the URL in your browser... "
+        );
+        assert!(
+            !prompt_for_browser(&mut std::io::Cursor::new("not enter\n"), &mut Vec::new()).unwrap()
+        );
+        assert!(!prompt_for_browser(&mut std::io::Cursor::new(" \n"), &mut Vec::new()).unwrap());
     }
 
     #[test]
