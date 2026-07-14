@@ -231,14 +231,14 @@ fn workflow_body_templates_cover_access_manager_families() {
 }
 
 #[test]
-fn workflow_body_template_toon_flag_emits_toon_envelope() {
+fn workflow_body_template_json_flag_emits_json_envelope() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     write_valid_auth_config(temp_dir.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
         .arg("--config-dir")
         .arg(temp_dir.path())
-        .arg("--toon")
+        .arg("--json")
         .args([
             "projects",
             "--api-url",
@@ -256,12 +256,10 @@ fn workflow_body_template_toon_flag_emits_toon_envelope() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
-    assert!(stdout.starts_with("status: ok\n"), "{stdout}");
-    assert!(
-        stdout.contains("schema_version: pcl.envelope.v1"),
-        "{stdout}"
-    );
-    assert!(stdout.contains("project_name:"), "{stdout}");
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok", "{envelope}");
+    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+    assert!(stdout.contains("project_name"), "{stdout}");
 }
 
 #[test]

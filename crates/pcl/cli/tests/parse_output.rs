@@ -39,12 +39,14 @@ fn run_pcl(args: &[&str]) -> PclOutput {
     }
 }
 
-fn assert_toon_error(output: &PclOutput, code: &str) {
+fn assert_json_error(output: &PclOutput, code: &str) {
     output.assert_failure();
     assert!(output.stdout.is_empty());
-    assert!(output.stderr.starts_with("status: error\n"));
-    assert!(output.stderr.contains(&format!("code: {code}")));
-    assert!(output.stderr.contains("schema_version: pcl.envelope.v1"));
+    let envelope: serde_json::Value =
+        serde_json::from_str(&output.stderr).expect("json error envelope");
+    assert_eq!(envelope["status"], "error", "{envelope}");
+    assert_eq!(envelope["error"]["code"], code, "{envelope}");
+    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
 }
 
 #[test]
@@ -76,12 +78,23 @@ fn bare_human_invocation_prints_clap_help() {
 }
 
 #[test]
+fn removed_toon_flag_is_rejected() {
+    let output = run_pcl(&["--toon", "api", "manifest"]);
+    output.assert_failure();
+    assert!(
+        output.stderr.contains("--toon") || output.stderr.contains("unexpected argument"),
+        "{}",
+        output.stderr
+    );
+
+    let format_toon = run_pcl(&["--format", "toon", "api", "manifest"]);
+    format_toon.assert_failure();
+}
+
+#[test]
 fn pass_through_developer_commands_reject_machine_modes_structurally() {
     for args in [
-        ["--toon", "build"].as_slice(),
         ["--json", "build"].as_slice(),
-        #[cfg(feature = "credible")]
-        ["--toon", "test"].as_slice(),
         #[cfg(feature = "credible")]
         ["--json", "test"].as_slice(),
     ] {
@@ -115,11 +128,6 @@ fn subcommand_help_advertises_global_json_mode() {
             output.stdout
         );
         assert!(
-            output.stdout.contains("--toon"),
-            "{command} help should show global --toon:\n{}",
-            output.stdout
-        );
-        assert!(
             !output.stdout.contains("Deprecated; use global --json"),
             "{command} help should not show stale compatibility help:\n{}",
             output.stdout
@@ -145,35 +153,22 @@ fn subcommand_help_advertises_global_json_mode() {
 
 #[test]
 fn machine_help_requests_stay_structured() {
-    let toon = run_pcl(&["projects", "--help", "--toon"]);
-    toon.assert_success();
-    assert!(toon.stderr.is_empty(), "{}", toon.stderr);
-    assert!(toon.stdout.starts_with("status: ok\n"), "{}", toon.stdout);
-    assert!(toon.stdout.contains("kind: cli.help"), "{}", toon.stdout);
-    assert!(
-        toon.stdout.contains("schema_version: pcl.envelope.v1"),
-        "{}",
-        toon.stdout
-    );
+    let help = run_pcl(&["projects", "--help", "--json"]);
+    help.assert_success();
+    assert!(help.stderr.is_empty(), "{}", help.stderr);
+    let envelope: serde_json::Value = serde_json::from_str(&help.stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok", "{envelope}");
+    assert_eq!(envelope["data"]["kind"], "cli.help", "{envelope}");
+    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
 
-    let root_toon = run_pcl(&["--help", "--toon"]);
-    root_toon.assert_success();
-    assert!(root_toon.stderr.is_empty(), "{}", root_toon.stderr);
-    assert!(
-        root_toon.stdout.starts_with("status: ok\n"),
-        "{}",
-        root_toon.stdout
-    );
-    assert!(
-        root_toon.stdout.contains("kind: cli.help"),
-        "{}",
-        root_toon.stdout
-    );
-    assert!(
-        root_toon.stdout.contains("schema_version: pcl.envelope.v1"),
-        "{}",
-        root_toon.stdout
-    );
+    let root_help = run_pcl(&["--help", "--json"]);
+    root_help.assert_success();
+    assert!(root_help.stderr.is_empty(), "{}", root_help.stderr);
+    let envelope: serde_json::Value =
+        serde_json::from_str(&root_help.stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok", "{envelope}");
+    assert_eq!(envelope["data"]["kind"], "cli.help", "{envelope}");
+    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
 }
 
 #[test]
@@ -243,19 +238,6 @@ fn human_parse_errors_use_clap_diagnostics() {
 
 #[test]
 fn machine_parse_errors_stay_structured() {
-    let toon = run_pcl(&[
-        "--toon",
-        "api",
-        "call",
-        "get",
-        "/health",
-        "--body",
-        "{}",
-        "--body-file",
-        "body.json",
-    ]);
-    assert_toon_error(&toon, "cli.argument_conflict");
-
     let json = run_pcl(&[
         "--json",
         "api",
@@ -267,24 +249,12 @@ fn machine_parse_errors_stay_structured() {
         "--body-file",
         "body.json",
     ]);
-    json.assert_failure();
-    assert!(json.stdout.is_empty());
+    assert_json_error(&json, "cli.argument_conflict");
     let envelope: serde_json::Value =
         serde_json::from_str(&json.stderr).expect("json error envelope");
-    assert_eq!(envelope["status"], "error");
-    assert_eq!(envelope["error"]["code"], "cli.argument_conflict");
-    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
     let next_actions = envelope["next_actions"]
         .as_array()
         .expect("next actions array");
-    assert!(
-        next_actions.iter().all(|action| {
-            action
-                .as_str()
-                .is_none_or(|action| !action.contains("--toon"))
-        }),
-        "{envelope}"
-    );
     assert!(
         next_actions.iter().any(|action| {
             action
@@ -294,7 +264,7 @@ fn machine_parse_errors_stay_structured() {
         "{envelope}"
     );
 
-    let toon_at_end = run_pcl(&[
+    let json_at_end = run_pcl(&[
         "api",
         "call",
         "get",
@@ -303,9 +273,9 @@ fn machine_parse_errors_stay_structured() {
         "{}",
         "--body-file",
         "body.json",
-        "--toon",
+        "--json",
     ]);
-    assert_toon_error(&toon_at_end, "cli.argument_conflict");
+    assert_json_error(&json_at_end, "cli.argument_conflict");
 }
 
 #[test]
@@ -338,18 +308,18 @@ fn api_manifest_defaults_to_human_output() {
 }
 
 #[test]
-fn documented_agent_leaf_commands_accept_toon_after_subcommands() {
+fn documented_agent_leaf_commands_accept_json_after_subcommands() {
     for args in [
-        ["--toon", "--llms"].as_slice(),
-        ["api", "manifest", "--toon"].as_slice(),
-        ["doctor", "--offline", "--toon"].as_slice(),
-        ["whoami", "--offline", "--toon"].as_slice(),
-        ["llms", "--toon"].as_slice(),
-        ["workflows", "--toon"].as_slice(),
-        ["schema", "list", "--toon"].as_slice(),
-        ["jobs", "list", "--toon"].as_slice(),
-        ["artifacts", "list", "--toon"].as_slice(),
-        ["requests", "list", "--toon"].as_slice(),
+        ["--json", "--llms"].as_slice(),
+        ["api", "manifest", "--json"].as_slice(),
+        ["doctor", "--offline", "--json"].as_slice(),
+        ["whoami", "--offline", "--json"].as_slice(),
+        ["llms", "--json"].as_slice(),
+        ["workflows", "--json"].as_slice(),
+        ["schema", "list", "--json"].as_slice(),
+        ["jobs", "list", "--json"].as_slice(),
+        ["artifacts", "list", "--json"].as_slice(),
+        ["requests", "list", "--json"].as_slice(),
     ] {
         let output = run_pcl(args);
 
@@ -360,12 +330,10 @@ fn documented_agent_leaf_commands_accept_toon_after_subcommands() {
             output.stderr
         );
 
-        assert!(output.stdout.starts_with("status: "), "{}", output.stdout);
-        assert!(
-            output.stdout.contains("schema_version: pcl.envelope.v1"),
-            "{}",
-            output.stdout
-        );
+        let envelope: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("json envelope");
+        assert!(envelope["status"].as_str().is_some(), "{envelope}");
+        assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
     }
 }
 
@@ -411,17 +379,6 @@ fn llms_machine_next_actions_leave_completion_redirect_raw() {
     let completion_install =
         "pcl completions bash > ~/.local/share/bash-completion/completions/pcl";
 
-    let toon = run_pcl(&["--toon", "--llms"]);
-    toon.assert_success();
-    assert!(toon.stdout.contains(completion_install), "{}", toon.stdout);
-    assert!(
-        !toon
-            .stdout
-            .contains(&format!("{completion_install} --toon")),
-        "{}",
-        toon.stdout
-    );
-
     let json = run_pcl(&["--json", "--llms"]);
     json.assert_success();
     let envelope: serde_json::Value = serde_json::from_str(&json.stdout).expect("json envelope");
@@ -445,28 +402,6 @@ fn llms_machine_next_actions_leave_completion_redirect_raw() {
 
 #[test]
 fn completions_machine_next_action_is_raw_redirect() {
-    let output = run_pcl(&["--toon", "completions", "bash"]);
-    output.assert_success();
-    assert!(
-        output.stdout.contains("script_omitted: true"),
-        "{}",
-        output.stdout
-    );
-    assert!(output.stdout.contains("script_bytes:"), "{}", output.stdout);
-    assert!(!output.stdout.contains("_pcl()"), "{}", output.stdout);
-    assert!(
-        output
-            .stdout
-            .contains("pcl completions bash > <completion-file>"),
-        "{}",
-        output.stdout
-    );
-    assert!(
-        !output.stdout.contains("pcl completions bash --toon"),
-        "{}",
-        output.stdout
-    );
-
     let json = run_pcl(&["--json", "completions", "bash"]);
     json.assert_success();
     let envelope: serde_json::Value = serde_json::from_str(&json.stdout).expect("json envelope");

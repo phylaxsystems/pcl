@@ -26,7 +26,7 @@ Auth-related tests should run with `PCL_AUTH_NO_BROWSER=1`; `make test` already 
 
 PCL is a CLI-first interface for humans and agents. Preserve these compatibility rules:
 
-- Default command output is structured TOON.
+- Default command output is human-readable.
 - `--json` output is a stable envelope with `status`, `data` or `error`, `next_actions`, `schema_version`, and `pcl_version`.
 - Parser, auth, config, validation, network, and API errors should use the same envelope shape as successful commands.
 - Do not remove or rename existing JSON fields without a compatibility plan.
@@ -54,7 +54,7 @@ Generated code should stay formatted and marked with `@generated`. Review genera
 
 For large CLI/API changes, include tests for:
 
-- JSON and default TOON output.
+- JSON and default human output.
 - Error envelopes and nonzero exits.
 - Dry-run behavior for mutations.
 - Request builders for required path, query, and body fields.

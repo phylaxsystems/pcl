@@ -209,7 +209,7 @@ fn ensure_human_pass_through(
         return Ok(());
     }
     Err(ProductSurfaceError::InvalidInput(format!(
-        "{command} is a developer pass-through command and does not support --toon/--json yet. Use human output, or use pcl verify/apply from a credible-enabled build for structured assertion workflows."
+        "{command} is a developer pass-through command and does not support --json yet. Use human output, or use pcl verify/apply from a credible-enabled build for structured assertion workflows."
     )))
 }
 
@@ -285,14 +285,14 @@ fn apply_error_envelope(err: &ApplyError) -> Value {
             (
                 "auth.expired_token",
                 err.to_string(),
-                &["pcl auth refresh --toon", "pcl auth login --force"],
+                &["pcl auth refresh --json", "pcl auth login --force"],
             )
         }
         ApplyError::AuthRefresh(_) => {
             (
                 "auth.refresh_failed",
                 err.to_string(),
-                &["pcl auth refresh --toon", "pcl auth login --force"],
+                &["pcl auth refresh --json", "pcl auth login --force"],
             )
         }
         ApplyError::InvalidConfig(message) if message.contains("credible.toml not found") => {
@@ -375,14 +375,14 @@ fn download_error_envelope(err: &DownloadError) -> Value {
             (
                 "auth.expired_token",
                 err.to_string(),
-                &["pcl auth refresh --toon", "pcl auth login --force"],
+                &["pcl auth refresh --json", "pcl auth login --force"],
             )
         }
         DownloadError::AuthRefresh(_) => {
             (
                 "auth.refresh_failed",
                 err.to_string(),
-                &["pcl auth refresh --toon", "pcl auth login --force"],
+                &["pcl auth refresh --json", "pcl auth login --force"],
             )
         }
         DownloadError::MissingIdentifier => {
@@ -477,7 +477,7 @@ fn verify_error_envelope(err: &VerifyError) -> Value {
             (
                 "output.failed",
                 err.to_string(),
-                &["Retry without --toon/--json to inspect human output"],
+                &["Retry without --json to inspect human output"],
             )
         }
         VerifyError::AssertionsFailed(_) => unreachable!("handled above"),
@@ -791,22 +791,13 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut saw_json = false;
-    let mut saw_toon = false;
-
-    for arg in args {
+    let saw_json = args.into_iter().any(|arg| {
         let arg = arg.as_ref();
-        if arg == OsStr::new("--json") || arg == OsStr::new("-j") {
-            saw_json = true;
-        } else if arg == OsStr::new("--toon") {
-            saw_toon = true;
-        }
-    }
+        arg == OsStr::new("--json") || arg == OsStr::new("-j")
+    });
 
     if saw_json {
         OutputMode::Json
-    } else if saw_toon {
-        OutputMode::Toon
     } else {
         OutputMode::Human
     }
@@ -964,7 +955,7 @@ fn parsed_command_name(args: &[OsString]) -> Option<String> {
     while let Some(arg) = iter.next() {
         let value = arg.to_string_lossy();
         match value.as_ref() {
-            "--json" | "-j" | "--toon" | "--llms" | "--help" | "-h" | "--version" | "-V" => {}
+            "--json" | "-j" | "--llms" | "--help" | "-h" | "--version" | "-V" => {}
             "--config-dir" => {
                 let _ = iter.next();
             }
@@ -996,7 +987,7 @@ fn clap_error_code(kind: ErrorKind) -> &'static str {
 mod tests {
     use super::*;
     use clap::CommandFactory;
-    use pcl_core::api::toon_string;
+    use pcl_core::api::envelope_output_string;
 
     #[test]
     fn detects_output_mode_before_successful_parse() {
@@ -1010,7 +1001,7 @@ mod tests {
         );
         assert_eq!(
             wants_output_mode(["pcl", "--toon", "api"]),
-            OutputMode::Toon
+            OutputMode::Human
         );
         assert_eq!(wants_output_mode(["pcl", "api"]), OutputMode::Human);
     }
@@ -1067,7 +1058,7 @@ mod tests {
     }
 
     #[test]
-    fn wraps_clap_conflicts_as_toon_errors() {
+    fn renders_clap_conflicts_as_machine_errors() {
         let err = Cli::command()
             .try_get_matches_from([
                 "pcl",
@@ -1092,14 +1083,13 @@ mod tests {
             OsString::from("--body-file"),
             OsString::from("body.json"),
         ];
-        let output = toon_string(&clap_error_envelope(&err, &args));
+        let output = envelope_output_string(&clap_error_envelope(&err, &args), true).unwrap();
 
-        assert!(output.contains("status: error"));
-        assert!(output.contains("code: cli.argument_conflict"));
-        assert!(output.contains("message:"));
+        assert!(output.contains("\"status\": \"error\""));
+        assert!(output.contains("cli.argument_conflict"));
+        assert!(output.contains("\"message\""));
         assert!(output.contains("Usage: pcl api call --body"));
-        assert!(output.contains("recoverable: true"));
-        assert!(output.contains("next_actions[2]:"));
+        assert!(output.contains("\"recoverable\": true"));
         assert!(!output.contains("Location:"));
         assert!(!output.contains('\u{1b}'));
     }
@@ -1118,13 +1108,13 @@ mod tests {
     }
 
     #[test]
-    fn wraps_runtime_errors_as_toon_errors() {
+    fn renders_runtime_errors_as_machine_errors() {
         let err = Report::new(ApiCommandError::NoAuthToken);
-        let output = toon_string(&error_envelope(&err));
+        let output = envelope_output_string(&error_envelope(&err), true).unwrap();
 
-        assert!(output.contains("status: error"));
-        assert!(output.contains("code: auth.no_token"));
-        assert!(output.contains("recoverable: true"));
+        assert!(output.contains("\"status\": \"error\""));
+        assert!(output.contains("auth.no_token"));
+        assert!(output.contains("\"recoverable\": true"));
         assert!(output.contains("pcl auth login"));
         assert!(!output.contains("Location:"));
         assert!(!output.contains('\u{1b}'));

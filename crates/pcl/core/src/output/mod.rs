@@ -1,7 +1,6 @@
 pub mod actions;
 mod envelope;
 mod human;
-mod toon;
 
 pub use actions::{
     NextAction,
@@ -21,4 +20,3 @@ pub use envelope::{
     with_envelope_metadata,
 };
 pub use human::human_string;
-pub use toon::toon_string;

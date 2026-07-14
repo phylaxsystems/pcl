@@ -366,7 +366,7 @@ fn openapi_call_commands_include_required_inputs() {
     assert_eq!(
         next_actions_for_operations(&operations),
         vec![
-            "pcl api inspect post_project_widgets --toon".to_string(),
+            "pcl api inspect post_project_widgets --json".to_string(),
             "Inspect the operation, then fill the placeholders in the example call".to_string()
         ]
     );
@@ -406,8 +406,8 @@ fn openapi_next_actions_prefer_runnable_safe_workflow_examples() {
     assert_eq!(
         next_actions_for_operations(&operations),
         vec![
-            "pcl incidents --limit 5 --toon".to_string(),
-            "pcl api inspect get_views_public_incidents --toon".to_string(),
+            "pcl incidents --limit 5 --json".to_string(),
+            "pcl api inspect get_views_public_incidents --json".to_string(),
         ]
     );
 }
@@ -449,8 +449,8 @@ fn openapi_next_actions_skip_destructive_workflow_examples() {
     assert_eq!(
         next_actions_for_operations(&operations),
         vec![
-            "pcl protocol-manager --project <project-ref> --set --body-template --toon".to_string(),
-            "pcl api inspect post_projects_project_id_protocol_manager --toon".to_string(),
+            "pcl protocol-manager --project <project-ref> --set --body-template --json".to_string(),
+            "pcl api inspect post_projects_project_id_protocol_manager --json".to_string(),
         ]
     );
 
@@ -1678,7 +1678,7 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
     let legacy = workflow_alternatives(HttpMethod::Get, "/public/incidents");
     assert!(legacy.iter().any(|alternative| {
         alternative["workflow"] == "incidents"
-            && alternative["example"] == "pcl incidents --limit 5 --toon"
+            && alternative["example"] == "pcl incidents --limit 5 --json"
     }));
 
     let project_detail = workflow_alternatives(HttpMethod::Get, "/projects/{project_id}");
@@ -1687,7 +1687,7 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
     assert_eq!(project_detail[0]["action"], "detail");
     assert_eq!(
         project_detail[0]["example"],
-        "pcl projects show <project-ref> --toon"
+        "pcl projects show <project-ref> --json"
     );
 
     let saved_delete = workflow_alternatives(HttpMethod::Delete, "/projects/saved");
@@ -1696,7 +1696,7 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
     assert_eq!(saved_delete[0]["action"], "unsave");
     assert_eq!(
         saved_delete[0]["example"],
-        "pcl projects unsave <project-ref> --toon"
+        "pcl projects unsave <project-ref> --json"
     );
 
     let project_literal = workflow_alternatives(HttpMethod::Get, "/projects/project-1");
@@ -2365,7 +2365,7 @@ fn forbidden_errors_preserve_permission_context() {
         !error
             .next_actions()
             .iter()
-            .any(|action| action == "pcl auth refresh --toon")
+            .any(|action| action == "pcl auth refresh --json")
     );
 }
 
@@ -2705,8 +2705,6 @@ fn deployment_output_only_redacts_artifacts_for_human_mode() {
 
     let json_data =
         workflow_data_for_output_mode("deployments", &deployment_data, OutputMode::Json);
-    let toon_data =
-        workflow_data_for_output_mode("deployments", &deployment_data, OutputMode::Toon);
 
     assert_eq!(
         json_data["submitted_assertions"][0]["source_code"],
@@ -2714,14 +2712,6 @@ fn deployment_output_only_redacts_artifacts_for_human_mode() {
     );
     assert_eq!(
         json_data["submitted_assertions"][0]["bytecode"],
-        "0x6080604052348015600e575f80fd5b50"
-    );
-    assert_eq!(
-        toon_data["submitted_assertions"][0]["source_code"],
-        "contract Guard { function ok() external {} }"
-    );
-    assert_eq!(
-        toon_data["submitted_assertions"][0]["bytecode"],
         "0x6080604052348015600e575f80fd5b50"
     );
 
@@ -3111,36 +3101,36 @@ fn human_cli_errors_strip_raw_usage_dump() {
                 "message": "error: unexpected argument '--limit' found\n\nUsage: pcl api list [OPTIONS]\n\nFor more information, try '--help'.",
                 "recoverable": true
             },
-            "next_actions": ["pcl --help", "pcl api manifest --toon"],
+            "next_actions": ["pcl --help", "pcl api manifest --json"],
         }),
         false,
     )
     .unwrap();
 
     assert_output_contains(&output, &["unexpected argument '--limit' found"]);
-    assert_output_omits(&output, &["error:", "Usage:", "--toon"]);
+    assert_output_omits(&output, &["error:", "Usage:", "--json"]);
 }
 
 #[test]
-fn human_llms_guide_keeps_toon_commands() {
+fn human_llms_guide_keeps_machine_commands() {
     let output = envelope_output_string(
         &json!({
             "status": "ok",
             "data": {
                 "purpose": "CLI-native control surface.",
                 "consumption_order": [
-                    "pcl doctor --toon",
-                    "pcl auth ensure --toon",
-                    "pcl api manifest --toon"
+                    "pcl doctor --json",
+                    "pcl auth ensure --json",
+                    "pcl api manifest --json"
                 ]
             },
-            "next_actions": ["pcl doctor --toon", "pcl api manifest --toon"],
+            "next_actions": ["pcl doctor --json", "pcl api manifest --json"],
         }),
         false,
     )
     .unwrap();
 
-    assert_output_contains(&output, &["pcl doctor --toon", "pcl api manifest --toon"]);
+    assert_output_contains(&output, &["pcl doctor --json", "pcl api manifest --json"]);
 }
 
 #[test]
@@ -3208,12 +3198,12 @@ fn human_output_formats_surface_lists_for_people() {
                         "name": "incident-investigation",
                         "description": "Export incidents and inspect traces.",
                         "steps": [
-                            {"command": "pcl doctor --toon", "output": "environment readiness"}
+                            {"command": "pcl doctor --json", "output": "environment readiness"}
                         ]
                     }
                 ]
             },
-            "next_actions": ["pcl schema list --toon"],
+            "next_actions": ["pcl schema list --json"],
         }),
         false,
     )
@@ -3228,7 +3218,7 @@ fn human_output_formats_surface_lists_for_people() {
             "pcl schema list",
         ],
     );
-    assert_output_omits(&output, &["--toon", "Details:"]);
+    assert_output_omits(&output, &["--json", "Details:"]);
 }
 
 #[test]
@@ -3244,10 +3234,10 @@ fn human_output_formats_schema_action_for_people() {
                     "method": "GET",
                     "path": "/views/public/incidents",
                     "optional_flags": ["--page", "--limit"],
-                    "example": "pcl incidents --limit 5 --toon"
+                    "example": "pcl incidents --limit 5 --json"
                 }
             },
-            "next_actions": ["pcl workflows --toon"],
+            "next_actions": ["pcl workflows --json"],
         }),
         false,
     )
@@ -3262,7 +3252,7 @@ fn human_output_formats_schema_action_for_people() {
             "Example: pcl incidents --limit 5",
         ],
     );
-    assert_output_omits(&output, &["--toon"]);
+    assert_output_omits(&output, &["--json"]);
 }
 #[test]
 fn human_output_formats_api_discovery_for_people() {
@@ -3279,7 +3269,7 @@ fn human_output_formats_api_discovery_for_people() {
                     }
                 ]
             },
-            "next_actions": ["pcl api inspect get_views_public_incidents --toon"],
+            "next_actions": ["pcl api inspect get_views_public_incidents --json"],
         }),
         false,
     )
@@ -3294,23 +3284,7 @@ fn human_output_formats_api_discovery_for_people() {
             "Prefer workflow",
         ],
     );
-    assert_output_omits(&output, &["--toon"]);
-}
-
-#[test]
-fn toon_output_round_trips_comma_containing_strings() {
-    let value = json!({
-        "items": [
-            {
-                "id": "project-1",
-                "name": "Alpha, Beta"
-            }
-        ]
-    });
-    let output = toon_string(&value);
-    let decoded: Value = toon_format::decode_default(&output).unwrap();
-
-    assert_eq!(decoded, value);
+    assert_output_omits(&output, &["--json"]);
 }
 
 #[test]
@@ -3362,10 +3336,7 @@ fn variant_body_templates_return_variant_specific_next_actions() {
 fn manifest_lists_structured_actions_for_every_workflow() {
     let manifest = api_manifest();
     assert_eq!(manifest["default_output"], "human");
-    assert_eq!(
-        manifest["output_modes"]["toon"],
-        "Pass --toon for compact machine-readable envelopes."
-    );
+    assert!(manifest["output_modes"]["toon"].is_null());
     assert!(
         manifest["output_modes"]["json"]
             .as_str()
@@ -3413,8 +3384,8 @@ fn manifest_lists_structured_actions_for_every_workflow() {
             assert!(
                 action["example"]
                     .as_str()
-                    .is_some_and(|example| example.contains("--toon")),
-                "agent example must include --toon for {command_name} action {action:?}"
+                    .is_some_and(|example| example.contains("--json")),
+                "agent example must include --json for {command_name} action {action:?}"
             );
             assert!(
                 action["auth"].as_bool().is_some(),
@@ -3494,8 +3465,8 @@ fn manifest_lists_structured_actions_for_every_workflow() {
     for example in manifest["examples"].as_array().unwrap() {
         let example = example.as_str().unwrap();
         assert!(
-            example.contains("--toon"),
-            "top-level manifest example must include --toon: {example}"
+            example.contains("--json"),
+            "top-level manifest example must include --json: {example}"
         );
     }
 
@@ -3563,7 +3534,7 @@ fn manifest_lists_structured_actions_for_every_workflow() {
             .as_array()
             .unwrap()
             .iter()
-            .all(|surface| surface["command"] != "pcl completions <shell> --toon"),
+            .all(|surface| surface["command"] != "pcl completions <shell> --json"),
         "manifest should not advertise envelope mode as the default completions install path"
     );
 }

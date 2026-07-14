@@ -391,8 +391,8 @@ impl ApiArgs {
                         "status": "ok",
                         "data": coverage,
                         "next_actions": [
-                            "pcl requests list --toon",
-                            "pcl api list --toon",
+                            "pcl requests list --json",
+                            "pcl api list --json",
                             "pcl api coverage --markdown api-coverage.md",
                         ],
                     }),
@@ -435,7 +435,7 @@ impl ApiArgs {
                             "Adjust --limit or --max-pages if the result set was truncated"
                                 .to_string(),
                             "Use --output results.json to save paginated data".to_string(),
-                            "pcl api manifest --toon".to_string(),
+                            "pcl api manifest --json".to_string(),
                         ],
                     )
                 } else {
@@ -445,8 +445,8 @@ impl ApiArgs {
                     (
                         response,
                         vec![
-                            "pcl api list --toon".to_string(),
-                            "pcl api manifest --toon".to_string(),
+                            "pcl api list --json".to_string(),
+                            "pcl api manifest --json".to_string(),
                         ],
                     )
                 };

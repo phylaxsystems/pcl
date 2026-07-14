@@ -36,55 +36,59 @@ assert doc.get("status") in {"ok", "warning", "pending", "action_required"}, doc
 ' >/dev/null
 }
 
-toon_envelope() {
-  "$bin" --config-dir "$config_dir" --toon "$@" | grep -q "schema_version: pcl.envelope.v1"
+json_ok() {
+  "$bin" --config-dir "$config_dir" --json "$@" | python3 -c 'import json, sys
+doc = json.load(sys.stdin)
+assert doc.get("schema_version") == "pcl.envelope.v1", doc
+assert doc.get("status") == "ok", doc
+' >/dev/null
 }
 
-toon_ok() {
-  output="$("$bin" --config-dir "$config_dir" --toon "$@")"
-  grep -q "schema_version: pcl.envelope.v1" <<<"$output"
-  grep -q "status: ok" <<<"$output"
-}
-
-toon_error() {
+json_error() {
   set +e
-  output="$("$bin" --config-dir "$config_dir" --toon "$@" 2>&1 >/dev/null)"
+  output="$("$bin" --config-dir "$config_dir" --json "$@" 2>&1 >/dev/null)"
   status=$?
   set -e
   test "$status" -ne 0
-  grep -q "schema_version: pcl.envelope.v1" <<<"$output"
-  grep -q "status: error" <<<"$output"
+  python3 -c 'import json, sys
+doc = json.loads(sys.argv[1])
+assert doc.get("schema_version") == "pcl.envelope.v1", doc
+assert doc.get("status") == "error", doc
+' "$output"
 }
 
-toon_error_starts_with_envelope() {
+json_error_envelope() {
   set +e
-  output="$("$bin" --config-dir "$1" --toon "${@:2}" 2>&1)"
+  output="$("$bin" --config-dir "$1" --json "${@:2}" 2>&1)"
   status=$?
   set -e
   test "$status" -ne 0
-  test "$(head -n 1 <<<"$output")" = "status: error"
-  grep -q "schema_version: pcl.envelope.v1" <<<"$output"
+  python3 -c 'import json, sys
+doc = json.loads(sys.argv[1])
+assert doc.get("schema_version") == "pcl.envelope.v1", doc
+assert doc.get("status") == "error", doc
+' "$output"
 }
 
-toon_envelope --llms
-toon_ok --help
-toon_envelope llms
-toon_envelope doctor --offline
-missing_auth_doctor="$("$bin" --config-dir "$missing_auth_config_dir" --toon doctor --offline)"
-grep -q "pcl auth ensure --toon" <<<"$missing_auth_doctor"
-PCL_AUTH_URL=http://127.0.0.1:9 toon_error_starts_with_envelope "$expired_auth_config_dir" auth login
-toon_envelope auth ensure
-toon_envelope whoami
-toon_envelope workflows
-toon_envelope workflows show incident-investigation
-toon_envelope schema list
-toon_envelope schema get incidents --action list_public
-toon_envelope api manifest
-toon_envelope projects create --body-template
-toon_envelope releases preview project-1 --body-template
-toon_envelope access invite project-1 --body-template
-toon_envelope completions bash
-toon_error build
+json_envelope --llms
+json_ok --help
+json_envelope llms
+json_envelope doctor --offline
+missing_auth_doctor="$("$bin" --config-dir "$missing_auth_config_dir" --json doctor --offline)"
+grep -q "pcl auth ensure --json" <<<"$missing_auth_doctor"
+PCL_AUTH_URL=http://127.0.0.1:9 json_error_envelope "$expired_auth_config_dir" auth login
+json_envelope auth ensure
+json_envelope whoami
+json_envelope workflows
+json_envelope workflows show incident-investigation
+json_envelope schema list
+json_envelope schema get incidents --action list_public
+json_envelope api manifest
+json_envelope projects create --body-template
+json_envelope releases preview project-1 --body-template
+json_envelope access invite project-1 --body-template
+json_envelope completions bash
+json_error build
 
 "$bin" verify --help >/dev/null
 cp -R "$repo_root/crates/pcl/cli/tests/fixtures/verify-project/." "$verify_project_dir/"

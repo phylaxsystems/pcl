@@ -31,7 +31,6 @@ pub fn command_for_mode(command: &str, mode: OutputMode) -> String {
     let command = strip_mode_flags(command);
     match mode {
         OutputMode::Human => command,
-        OutputMode::Toon => format!("{command} --toon"),
         OutputMode::Json => format!("{command} --json"),
     }
 }
@@ -66,11 +65,7 @@ pub fn shell_word(value: impl AsRef<str>) -> String {
 }
 
 fn strip_mode_flags(command: &str) -> String {
-    command
-        .replace(" --toon", "")
-        .replace(" --json", "")
-        .replace("--toon ", "")
-        .replace("--json ", "")
+    command.replace(" --json", "").replace("--json ", "")
 }
 
 fn contains_shell_syntax(command: &str) -> bool {
@@ -130,11 +125,7 @@ mod tests {
     #[test]
     fn command_for_mode_updates_plain_pcl_commands() {
         assert_eq!(
-            command_for_mode("pcl doctor", OutputMode::Toon),
-            "pcl doctor --toon"
-        );
-        assert_eq!(
-            command_for_mode("pcl doctor --toon", OutputMode::Json),
+            command_for_mode("pcl doctor", OutputMode::Json),
             "pcl doctor --json"
         );
         assert_eq!(
@@ -149,11 +140,11 @@ mod tests {
             "pcl completions bash > ~/.local/share/bash-completion/completions/pcl";
 
         assert_eq!(
-            command_for_mode(install_command, OutputMode::Toon),
+            command_for_mode(install_command, OutputMode::Json),
             install_command
         );
         assert_eq!(
-            command_for_mode(install_command, OutputMode::Json),
+            command_for_mode(install_command, OutputMode::Human),
             install_command
         );
     }
@@ -161,8 +152,8 @@ mod tests {
     #[test]
     fn command_for_mode_ignores_quoted_shell_characters() {
         assert_eq!(
-            command_for_mode("pcl api call get '/health?scope=a&b=c'", OutputMode::Toon),
-            "pcl api call get '/health?scope=a&b=c' --toon"
+            command_for_mode("pcl api call get '/health?scope=a&b=c'", OutputMode::Json),
+            "pcl api call get '/health?scope=a&b=c' --json"
         );
     }
 
@@ -171,9 +162,9 @@ mod tests {
         assert_eq!(
             command_for_mode(
                 "pcl incidents --project <project-ref> --all --limit 50 --output incidents.json",
-                OutputMode::Toon
+                OutputMode::Json
             ),
-            "pcl incidents --project <project-ref> --all --limit 50 --output incidents.json --toon"
+            "pcl incidents --project <project-ref> --all --limit 50 --output incidents.json --json"
         );
         assert_eq!(
             command_for_mode(
@@ -194,12 +185,12 @@ mod tests {
             ]
         });
 
-        normalize_next_actions_for_mode(&mut envelope, OutputMode::Toon);
+        normalize_next_actions_for_mode(&mut envelope, OutputMode::Json);
 
         assert_eq!(
             envelope["next_actions"],
             Value::Array(vec![
-                Value::String("pcl doctor --toon".to_string()),
+                Value::String("pcl doctor --json".to_string()),
                 Value::String(
                     "pcl completions bash > ~/.local/share/bash-completion/completions/pcl"
                         .to_string()

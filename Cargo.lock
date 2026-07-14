@@ -7495,7 +7495,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "toml 0.8.23",
- "toon-format",
  "url",
  "uuid 1.23.1",
 ]
@@ -11850,18 +11849,6 @@ dependencies = [
  "bytes",
  "prost",
  "tonic",
-]
-
-[[package]]
-name = "toon-format"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af1dae994fe9adfb44bdc74fc17546651604a59af32136256515bc1218850832"
-dependencies = [
- "indexmap 2.14.0",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
 ]
 
 [[package]]

@@ -4,6 +4,10 @@ All notable user-facing changes should be recorded here.
 
 ## Unreleased
 
+### Breaking changes
+
+- Removed TOON output entirely: the `--toon` flag, the `--format toon` alias, and the TOON envelope renderer are gone. `--json` is the only machine output mode; agent guidance, manifest examples, and `next_actions` hints now use `--json`.
+
 ## 1.5.0 - 2026-05-29
 
 ### Breaking changes

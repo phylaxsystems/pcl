@@ -30,7 +30,4 @@ fn output_error_to_json(error: OutputError) -> serde_json::Error {
     }
 }
 
-pub use crate::output::{
-    human_string,
-    toon_string,
-};
+pub use crate::output::human_string;

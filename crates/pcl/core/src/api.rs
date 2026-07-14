@@ -47,7 +47,6 @@ pub use manifest::api_manifest;
 pub use render::{
     envelope_output_string,
     human_string,
-    toon_string,
 };
 
 use envelopes::{
@@ -153,7 +152,7 @@ use workflows::{
 #[derive(clap::Parser, Debug)]
 #[command(
     about = "Discover and call the platform API",
-    long_about = "Discover and call the Credible Layer platform API. Commands use human-readable output by default. Pass --toon for compact agent envelopes or --json for strict JSON envelopes."
+    long_about = "Discover and call the Credible Layer platform API. Commands use human-readable output by default. Pass --json for strict JSON envelopes."
 )]
 pub struct ApiArgs {
     #[command(subcommand)]
@@ -230,13 +229,13 @@ enum WorkflowCommand {
 enum ApiCommand {
     #[command(
         about = "Print an agent-readable command manifest",
-        after_help = "Examples:\n  pcl api manifest\n  pcl api manifest --toon\n  pcl api manifest --json"
+        after_help = "Examples:\n  pcl api manifest\n  pcl api manifest --json"
     )]
     Manifest,
 
     #[command(
         about = "List OpenAPI operations",
-        after_help = "Examples:\n  pcl api list\n  pcl api list --filter incidents\n  pcl api list --method get\n  pcl api list --toon\n  pcl api list --json"
+        after_help = "Examples:\n  pcl api list\n  pcl api list --filter incidents\n  pcl api list --method get\n  pcl api list --json"
     )]
     List {
         #[arg(long, help = "Filter operation id, summary, tags, or path")]
@@ -247,7 +246,7 @@ enum ApiCommand {
 
     #[command(
         about = "Inspect one OpenAPI operation",
-        after_help = "Examples:\n  pcl api inspect get_views_projects_project_id_incidents\n  pcl api inspect get /views/public/incidents\n  pcl api inspect get_views_projects_project_id_incidents --toon\n  pcl api inspect get_views_projects_project_id_incidents --json"
+        after_help = "Examples:\n  pcl api inspect get_views_projects_project_id_incidents\n  pcl api inspect get /views/public/incidents\n  pcl api inspect get_views_projects_project_id_incidents --json"
     )]
     Inspect {
         #[arg(help = "Operation id, or HTTP method when PATH is also provided")]
@@ -262,7 +261,7 @@ enum ApiCommand {
         name = "coverage",
         alias = "audit",
         about = "Compare the local request log against the live OpenAPI surface",
-        after_help = "Examples:\n  pcl api coverage --toon\n  pcl api coverage --json\n  pcl api coverage --records 5000 --markdown /tmp/pcl-api-coverage.md"
+        after_help = "Examples:\n  pcl api coverage --json\n  pcl api coverage --records 5000 --markdown /tmp/pcl-api-coverage.md"
     )]
     Coverage {
         #[arg(
@@ -277,7 +276,7 @@ enum ApiCommand {
 
     #[command(
         about = "Call any platform API endpoint",
-        after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --toon"
+        after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json"
     )]
     Call(Box<ApiCallArgs>),
 }

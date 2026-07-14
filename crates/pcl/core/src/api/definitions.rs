@@ -244,7 +244,7 @@ fn query_object(values: &[(&str, &str)]) -> Value {
 }
 
 fn agent_command(command: &str) -> Value {
-    json!(command_for_mode(command, OutputMode::Toon))
+    json!(command_for_mode(command, OutputMode::Json))
 }
 
 const WORKFLOW_DEFINITIONS: &[WorkflowDefinition] = &[
