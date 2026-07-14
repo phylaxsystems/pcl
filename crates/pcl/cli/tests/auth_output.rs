@@ -29,6 +29,26 @@ email = "agent@example.com"
     .expect("write legacy test config");
 }
 
+fn write_expired_refreshable_auth_config_for_platform(
+    config_dir: &std::path::Path,
+    platform_url: &str,
+) {
+    fs::write(
+        config_dir.join("config.toml"),
+        format!(
+            r#"platform_url = "{platform_url}"
+
+[auth]
+access_token = "expired-token"
+refresh_token = "refresh-token"
+expires_at = 1
+email = "agent@example.com"
+"#
+        ),
+    )
+    .expect("write expired test config");
+}
+
 fn write_expired_refreshable_auth_config(config_dir: &std::path::Path) {
     fs::write(
         config_dir.join("config.toml"),
@@ -256,8 +276,8 @@ fn auth_ensure_json_without_auth_outputs_login_challenge() {
 #[test]
 fn auth_ensure_json_falls_back_to_login_when_refresh_endpoint_is_missing() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
-    write_expired_refreshable_auth_config(temp_dir.path());
     let mut server = mockito::Server::new();
+    write_expired_refreshable_auth_config_for_platform(temp_dir.path(), &server.url());
     let refresh = server
         .mock("POST", "/api/v1/auth/refresh")
         .with_status(404)
