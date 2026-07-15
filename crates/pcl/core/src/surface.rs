@@ -244,7 +244,7 @@ impl ProductSurfaceError {
             }
             Self::InvalidInput(message) if message.contains("developer pass-through command") => {
                 vec![
-                    "Run the command again without --toon/--json".to_string(),
+                    "Run the command again without --json".to_string(),
                     "pcl verify".to_string(),
                     "pcl apply --dry-run".to_string(),
                 ]
@@ -527,7 +527,6 @@ impl DoctorArgs {
                 "data": {
                     "checks": checks,
                     "default_output": "human",
-                    "toon_output_flag": "--toon",
                     "json_output_flag": "--json",
                     "api_url": self.api_url.as_str(),
                 },
@@ -1462,7 +1461,6 @@ fn incident_export_resume_command(
     }
     match output_mode {
         OutputMode::Human => {}
-        OutputMode::Toon => parts.push("--toon".to_string()),
         OutputMode::Json => parts.push("--json".to_string()),
     }
 
@@ -1475,10 +1473,10 @@ pub fn print_llms_guide(json_output: bool) -> Result<(), ProductSurfaceError> {
             "status": "ok",
             "data": llms_guide(),
             "next_actions": [
-                "pcl doctor --toon",
-                "pcl api manifest --toon",
+                "pcl doctor --json",
+                "pcl api manifest --json",
                 "pcl completions bash > ~/.local/share/bash-completion/completions/pcl",
-                "pcl jobs list --toon",
+                "pcl jobs list --json",
             ],
         }),
         json_output,
@@ -1490,12 +1488,10 @@ fn llms_guide() -> Value {
         "name": "pcl",
         "purpose": "CLI-native control surface for Credible Layer API investigation and assertion workflows.",
         "default_output": "human",
-        "toon_flag": "--toon",
         "json_flag": "--json",
         "output_modes": {
             "default": "Human-readable output optimized for people using the CLI directly.",
-            "toon": "Use --toon for compact machine-readable envelopes; preferred for agent context efficiency.",
-            "json": "Use --json when strict JSON tooling is required."
+            "json": "Use --json for machine-readable envelopes; preferred for agents and strict tooling."
         },
         "no_mcp_required": true,
         "principles": [
@@ -1507,53 +1503,52 @@ fn llms_guide() -> Value {
             "Prefer CLI contracts over MCP, browser automation, or scraped help text."
         ],
         "consumption_order": [
-            "pcl --toon --llms",
-            "pcl doctor --toon",
-            "pcl auth ensure --toon",
-            "pcl whoami --toon",
-            "pcl workflows --toon",
-            "pcl schema list --toon",
-            "pcl api manifest --toon",
+            "pcl --json --llms",
+            "pcl doctor --json",
+            "pcl auth ensure --json",
+            "pcl whoami --json",
+            "pcl workflows --json",
+            "pcl schema list --json",
+            "pcl api manifest --json",
             "top-level workflow commands",
-            "pcl api inspect <operation-id> --toon when debugging",
-            "pcl api call <method> <path> --toon only after checking workflow_alternatives",
-            "pcl api coverage --toon"
+            "pcl api inspect <operation-id> --json when debugging",
+            "pcl api call <method> <path> --json only after checking workflow_alternatives",
+            "pcl api coverage --json"
         ],
         "orientation": [
             {
                 "goal": "Check local readiness and auth truthfulness",
-                "commands": ["pcl doctor --toon", "pcl auth ensure --toon", "pcl whoami --toon", "pcl auth status --toon"]
+                "commands": ["pcl doctor --json", "pcl auth ensure --json", "pcl whoami --json", "pcl auth status --json"]
             },
             {
                 "goal": "Discover available workflows",
-                "commands": ["pcl workflows --toon", "pcl schema list --toon", "pcl api manifest --toon"]
+                "commands": ["pcl workflows --json", "pcl schema list --json", "pcl api manifest --json"]
             },
             {
                 "goal": "Debug raw API shape",
-                "commands": ["pcl api list --filter incidents --toon", "pcl api inspect <operation-id> --toon"]
+                "commands": ["pcl api list --filter incidents --json", "pcl api inspect <operation-id> --json"]
             },
             {
                 "goal": "Run raw calls only for debugging or unsupported/internal endpoints",
-                "commands": ["pcl api call get /health --allow-unauthenticated --toon", "pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated --toon"]
+                "commands": ["pcl api call get /health --allow-unauthenticated --json", "pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated --json"]
             },
             {
                 "goal": "Export resumable incident data",
-                "commands": ["pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --resume --toon", "pcl jobs list --toon"]
+                "commands": ["pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --resume --json", "pcl jobs list --json"]
             }
         ],
         "command_surfaces": {
             "workflows": ["pcl incidents", "pcl projects", "pcl assertions", "pcl account", "pcl contracts", "pcl releases", "pcl deployments", "pcl access", "pcl integrations", "pcl protocol-manager", "pcl events", "pcl search"],
-            "discovery": ["pcl --toon --llms", "pcl llms --toon", "pcl workflows --toon", "pcl schema --toon", "pcl api manifest --toon", "pcl api list --toon", "pcl api inspect --toon"],
+            "discovery": ["pcl --json --llms", "pcl llms --json", "pcl workflows --json", "pcl schema --json", "pcl api manifest --json", "pcl api list --json", "pcl api inspect --json"],
             "execution": ["pcl api call", "pcl export incidents"],
             "state": ["pcl artifacts", "pcl requests", "pcl jobs"],
             "shell": ["pcl completions bash", "pcl completions zsh", "pcl completions fish"]
         },
         "output_contract": {
             "default": "Human-readable output for people.",
-            "toon": "Pass --toon for compact agent envelopes.",
             "json": "Pass --json for pretty JSON envelopes.",
             "jsonl_exceptions": {
-                "pcl auth login --json": "Fresh login emits JSONL progress events and a final event with terminal=true. Already-authenticated login, including --no-wait, returns one auth-status envelope instead of a challenge. Use pcl auth ensure --toon or pcl auth login --no-wait --force --toon for normal agent flows; use --json only when JSONL is required."
+                "pcl auth login --json": "Fresh login emits JSONL progress events and a final event with terminal=true. Already-authenticated login, including --no-wait, returns one auth-status envelope instead of a challenge. Use pcl auth ensure --json or pcl auth login --no-wait --force --json for normal agent flows when JSONL is not required."
             },
             "envelope_fields": ["status", "data", "error", "next_actions", "schema_version", "pcl_version"],
             "errors": "Parser, auth, config, validation, network, and API failures return structured envelopes and nonzero exit codes.",
@@ -1562,12 +1557,12 @@ fn llms_guide() -> Value {
         },
         "auth_behavior": {
             "expiry_source": "Stored token expiry is normalized from the access-token JWT exp claim when available.",
-            "ensure_command": "pcl auth ensure --toon",
+            "ensure_command": "pcl auth ensure --json",
             "expires_soon": "true when five minutes or less remain; renew before long-running work.",
-            "renew_command": "pcl auth ensure --force --toon",
-            "single_envelope_login": "pcl auth login --no-wait --force --toon returns status=action_required with device_url, code, device_secret, expires_at, and poll_command.",
-            "poll_command": "pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --toon",
-            "refresh_command": "pcl auth refresh --toon rotates the stored refresh token when available; if the refresh token is missing or rejected, it returns a login challenge.",
+            "renew_command": "pcl auth ensure --force --json",
+            "single_envelope_login": "pcl auth login --no-wait --force --json returns status=action_required with device_url, code, device_secret, expires_at, and poll_command.",
+            "poll_command": "pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --json",
+            "refresh_command": "pcl auth refresh --json rotates the stored refresh token when available; if the refresh token is missing or rejected, it returns a login challenge.",
             "logout": "pcl auth logout attempts remote logout first, then clears local credentials; pass --local to skip the remote request."
         },
         "mutation_safety": {
@@ -1577,21 +1572,21 @@ fn llms_guide() -> Value {
         },
         "raw_api": {
             "policy": "For normal product work, use workflow_alternatives from pcl api list/inspect or a top-level workflow command. Raw api call is for debugging, OpenAPI parity checks, internal/service endpoints, browser-session bridge investigation, or new endpoint exploration before promotion.",
-            "inspect_first": "Use pcl api inspect <operation-id> --toon before unfamiliar raw calls and check data.workflow_alternatives first.",
+            "inspect_first": "Use pcl api inspect <operation-id> --json before unfamiliar raw calls and check data.workflow_alternatives first.",
             "query_strings": "pcl api call accepts both /path?key=value and repeated --query key=value.",
             "fields": "pcl api call accepts repeated --field key=value for simple JSON object bodies; use --body-file for nested payloads.",
             "public_endpoints": "Known public raw calls do not attach stored tokens; --allow-unauthenticated remains the explicit opt-out for other public endpoints.",
             "pagination": "Use --paginate <array-field> --limit <n> --max-pages <n> and optionally --jsonl --output <file> for generic GET pagination.",
-            "coverage": "Use pcl api coverage --toon after exploration to find no-hit, hit-without-2xx, side-effecting-without-2xx, and unmatched request-log records."
+            "coverage": "Use pcl api coverage --json after exploration to find no-hit, hit-without-2xx, side-effecting-without-2xx, and unmatched request-log records."
         },
         "jobs_and_artifacts": {
-            "export": "pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --checkpoint checkpoint.json --resume --continue-on-error --toon",
-            "inspect": ["pcl jobs list --toon", "pcl jobs status <job-id> --toon", "pcl jobs resume <job-id> --toon", "pcl artifacts list --toon"],
+            "export": "pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --checkpoint checkpoint.json --resume --continue-on-error --json",
+            "inspect": ["pcl jobs list --json", "pcl jobs status <job-id> --json", "pcl jobs resume <job-id> --json", "pcl artifacts list --json"],
             "state_fields": ["job_id", "resume_command", "artifacts.out", "artifacts.errors", "artifacts.checkpoint"]
         },
         "provenance": {
             "preserve": ["request_id", "project_id", "incident_id", "transaction_hash", "trace_id", "artifact_path", "command"],
-            "request_log": "pcl requests list --toon"
+            "request_log": "pcl requests list --json"
         },
         "agent_files": {
             "repo_instructions": "AGENTS.md",
@@ -1925,9 +1920,9 @@ async fn auth_capability_check(api_url: &url::Url) -> Value {
             "verify": "/api/v1/cli/auth/verify",
         },
         "commands": [
-            "pcl auth refresh --toon",
-            "pcl auth login --no-wait --toon",
-            "pcl auth status --toon",
+            "pcl auth refresh --json",
+            "pcl auth login --no-wait --json",
+            "pcl auth status --json",
         ],
     })
 }
@@ -1946,40 +1941,40 @@ fn workflow_recipes() -> Vec<Value> {
             "name": "incident-investigation",
             "description": "Export incidents, inspect failing detail/trace records, and preserve request IDs.",
             "steps": [
-                {"command": "pcl doctor --toon", "output": "environment readiness"},
-                {"command": "pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --resume --toon", "output": "incident JSONL artifact"},
-                {"command": "pcl incidents --incident-id <incident-id> --toon", "output": "incident detail"},
-                {"command": "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --toon", "output": "transaction trace"},
-                {"command": "pcl requests list --limit 20 --toon", "output": "API request IDs and status history"}
+                {"command": "pcl doctor --json", "output": "environment readiness"},
+                {"command": "pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --resume --json", "output": "incident JSONL artifact"},
+                {"command": "pcl incidents --incident-id <incident-id> --json", "output": "incident detail"},
+                {"command": "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --json", "output": "transaction trace"},
+                {"command": "pcl requests list --limit 20 --json", "output": "API request IDs and status history"}
             ],
         }),
         json!({
             "name": "deploy-release",
             "description": "Create release payloads, preview, create, and fetch deploy calldata.",
             "steps": [
-                {"command": "pcl releases preview <project-id> --body-template --toon", "output": "release body contract"},
-                {"command": "pcl releases preview <project-id> --body-file release.json --toon", "output": "release preview"},
-                {"command": "pcl releases create <project-id> --body-file release.json --toon", "output": "created release"},
-                {"command": "pcl releases calldata deploy <project-id> <release-id> --signer-address <address> --toon", "output": "deployment calldata"}
+                {"command": "pcl releases preview <project-id> --body-template --json", "output": "release body contract"},
+                {"command": "pcl releases preview <project-id> --body-file release.json --json", "output": "release preview"},
+                {"command": "pcl releases create <project-id> --body-file release.json --json", "output": "created release"},
+                {"command": "pcl releases calldata deploy <project-id> <release-id> --signer-address <address> --json", "output": "deployment calldata"}
             ],
         }),
         json!({
             "name": "invite-member",
             "description": "Invite a project member and inspect pending invitations.",
             "steps": [
-                {"command": "pcl access invite <project-id> --body-template --toon", "output": "invite body contract"},
-                {"command": "pcl access invite <project-id> --body-file invite.json --toon", "output": "invitation result"},
-                {"command": "pcl access invitations <project-id> --toon", "output": "project invitations"}
+                {"command": "pcl access invite <project-id> --body-template --json", "output": "invite body contract"},
+                {"command": "pcl access invite <project-id> --body-file invite.json --json", "output": "invitation result"},
+                {"command": "pcl access invitations <project-id> --json", "output": "project invitations"}
             ],
         }),
         json!({
             "name": "protocol-manager-transfer",
             "description": "Inspect manager state, produce transfer calldata, and confirm transfer variants.",
             "steps": [
-                {"command": "pcl protocol-manager --project <project-id> --pending-transfer --toon", "output": "pending transfer"},
-                {"command": "pcl protocol-manager --project <project-id> --nonce --address <manager-address> --toon", "output": "manager nonce"},
-                {"command": "pcl protocol-manager --project <project-id> --transfer-calldata --new-manager <address> --toon", "output": "transfer calldata"},
-                {"command": "pcl protocol-manager --confirm-transfer --body-template --toon", "output": "direct/onchain confirm variants"}
+                {"command": "pcl protocol-manager --project <project-id> --pending-transfer --json", "output": "pending transfer"},
+                {"command": "pcl protocol-manager --project <project-id> --nonce --address <manager-address> --json", "output": "manager nonce"},
+                {"command": "pcl protocol-manager --project <project-id> --transfer-calldata --new-manager <address> --json", "output": "transfer calldata"},
+                {"command": "pcl protocol-manager --confirm-transfer --body-template --json", "output": "direct/onchain confirm variants"}
             ],
         }),
     ]
@@ -2482,7 +2477,7 @@ mod tests {
         let commands = api_manifest()["commands"].as_array().cloned().unwrap();
         let schema = find_workflow_schema(&commands, "incidents").unwrap();
         assert!(schema["actions"].as_array().unwrap().iter().any(|action| {
-            action["name"] == "list_public" && action["example"] == "pcl incidents --limit 5 --toon"
+            action["name"] == "list_public" && action["example"] == "pcl incidents --limit 5 --json"
         }));
     }
 
@@ -2501,7 +2496,7 @@ mod tests {
         let guide = llms_guide();
 
         assert_eq!(guide["default_output"], "human");
-        assert_eq!(guide["toon_flag"], "--toon");
+        assert_eq!(guide["json_flag"], "--json");
         assert_eq!(guide["no_mcp_required"], true);
         assert_eq!(guide["agent_files"]["repo_instructions"], "AGENTS.md");
         assert!(
@@ -2509,23 +2504,23 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|command| command == "pcl --toon --llms")
+                .any(|command| command == "pcl --json --llms")
         );
         assert!(
             guide["consumption_order"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|command| command == "pcl api manifest --toon")
+                .any(|command| command == "pcl api manifest --json")
         );
         let consumption_order = guide["consumption_order"].as_array().unwrap();
         let auth_ensure_position = consumption_order
             .iter()
-            .position(|command| command == "pcl auth ensure --toon")
+            .position(|command| command == "pcl auth ensure --json")
             .expect("auth ensure in consumption order");
         let whoami_position = consumption_order
             .iter()
-            .position(|command| command == "pcl whoami --toon")
+            .position(|command| command == "pcl whoami --json")
             .expect("whoami in consumption order");
         assert!(auth_ensure_position < whoami_position);
         assert!(
@@ -2630,16 +2625,16 @@ mod tests {
         assert!(command.contains("'project one'"));
         assert!(command.contains("'/tmp/pcl artifacts/incidents.jsonl'"));
         assert!(command.contains("--continue-on-error"));
-        assert!(!command.contains("--toon"));
+        assert!(!command.contains("--json"));
         assert!(
             incident_export_resume_command(
                 &args,
                 Path::new("/tmp/pcl artifacts/incidents.jsonl"),
                 Path::new("/tmp/pcl artifacts/errors.jsonl"),
                 Path::new("/tmp/pcl artifacts/checkpoint.json"),
-                OutputMode::Toon,
+                OutputMode::Json,
             )
-            .contains("--toon")
+            .contains("--json")
         );
     }
 

@@ -75,7 +75,7 @@ pub enum DownloadError {
     NoAuthToken,
 
     #[error(
-        "Stored auth token expired at {0}. Run `pcl auth refresh --toon` or `pcl auth login` again."
+        "Stored auth token expired at {0}. Run `pcl auth refresh --json` or `pcl auth login` again."
     )]
     ExpiredAuthToken(chrono::DateTime<chrono::Utc>),
 

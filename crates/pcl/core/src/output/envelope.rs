@@ -1,7 +1,6 @@
 use crate::output::{
     actions::normalize_next_actions_for_mode,
     human::human_string,
-    toon::toon_string,
 };
 use pcl_common::args::OutputMode;
 use serde_json::{
@@ -115,7 +114,6 @@ pub fn envelope_output_string(
     normalize_next_actions_for_mode(&mut value, output_mode);
     match output_mode {
         OutputMode::Json => Ok(format!("{}\n", serde_json::to_string_pretty(&value)?)),
-        OutputMode::Toon => Ok(toon_string(&value)),
         OutputMode::Human => Ok(human_string(&value)),
     }
 }

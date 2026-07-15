@@ -18,12 +18,11 @@ pub fn api_manifest() -> serde_json::Value {
             "allowed_uses": ["debugging", "OpenAPI parity checks", "service/internal endpoint investigation", "browser-session bridge investigation", "new endpoint exploration before promotion"],
             "not_normal_path": "Agents should not call raw endpoints for incidents, projects, assertions, releases, integrations, access, protocol-manager, events, search, or auth when a workflow alternative is advertised."
         },
-        "llms": "pcl --toon --llms | pcl llms --toon",
+        "llms": "pcl --json --llms | pcl llms --json",
         "default_output": "human",
         "output_modes": {
             "default": "Human-readable output optimized for people.",
-            "toon": "Pass --toon for compact machine-readable envelopes.",
-            "json": "Pass --json for the same {status,data,error,next_actions} envelope as JSON."
+            "json": "Pass --json for the {status,data,error,next_actions} envelope as JSON."
         },
         "body_input": {
             "preferred": "Use typed flags when available, then --field key=value, then --body-file for nested payloads.",
@@ -46,16 +45,16 @@ pub fn api_manifest() -> serde_json::Value {
             "execution": "Workflow commands execute when invoked. Use typed flags first, then --field key=value or --body-file body.json for request bodies."
         },
         "product_surfaces": [
-            {"command": "pcl --toon --llms | pcl llms --toon", "description": "Print the CLI-native LLM usage guide for agents."},
-            {"command": "pcl doctor --toon", "description": "Diagnose config, auth, request-log, artifact, and API health state."},
-            {"command": "pcl whoami --toon", "description": "Print local identity, token validity, and expiry."},
-            {"command": "pcl workflows [show <name>] --toon", "description": "List agent-friendly workflow recipes with concrete command steps."},
-            {"command": "pcl export incidents --toon", "description": "Export incident list data as resumable JSONL artifacts with checkpoint and error files."},
-            {"command": "pcl artifacts [path|init|list] --toon", "description": "Find and inspect generated artifacts."},
-            {"command": "pcl jobs [path|list|status|resume|cancel] --toon", "description": "Inspect resumable local job records from export workflows."},
-            {"command": "pcl requests|logs [path|list|clear] --toon", "description": "Inspect the local API request log with status and request IDs."},
-            {"command": "pcl api coverage [--records <n>] [--markdown <path>] --toon", "description": "Compare the local request log with the live OpenAPI manifest and report hit/no-hit/no-2xx coverage."},
-            {"command": "pcl schema [list|get <workflow>] --toon", "description": "Inspect workflow/action schemas from the command manifest."},
+            {"command": "pcl --json --llms | pcl llms --json", "description": "Print the CLI-native LLM usage guide for agents."},
+            {"command": "pcl doctor --json", "description": "Diagnose config, auth, request-log, artifact, and API health state."},
+            {"command": "pcl whoami --json", "description": "Print local identity, token validity, and expiry."},
+            {"command": "pcl workflows [show <name>] --json", "description": "List agent-friendly workflow recipes with concrete command steps."},
+            {"command": "pcl export incidents --json", "description": "Export incident list data as resumable JSONL artifacts with checkpoint and error files."},
+            {"command": "pcl artifacts [path|init|list] --json", "description": "Find and inspect generated artifacts."},
+            {"command": "pcl jobs [path|list|status|resume|cancel] --json", "description": "Inspect resumable local job records from export workflows."},
+            {"command": "pcl requests|logs [path|list|clear] --json", "description": "Inspect the local API request log with status and request IDs."},
+            {"command": "pcl api coverage [--records <n>] [--markdown <path>] --json", "description": "Compare the local request log with the live OpenAPI manifest and report hit/no-hit/no-2xx coverage."},
+            {"command": "pcl schema [list|get <workflow>] --json", "description": "Inspect workflow/action schemas from the command manifest."},
             {"command": "pcl completions <shell>", "description": "Print raw shell completion scripts for bash, zsh, fish, powershell, and elvish. Use --json only when an installer expects the script inside an envelope."}
         ],
         "commands": command_manifests(),

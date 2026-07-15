@@ -7,31 +7,33 @@ This repository ships a CLI-first interface for agents. Do not rely on MCP, brow
 Run these first:
 
 ```bash
-pcl --toon --llms
-pcl doctor --toon
-pcl auth ensure --toon
-pcl whoami --toon
-pcl workflows --toon
-pcl schema list --toon
-pcl api manifest --toon
+pcl --json --llms
+pcl doctor --json
+pcl auth ensure --json
+pcl whoami --json
+pcl workflows --json
+pcl schema list --json
+pcl api manifest --json
 ```
 
 When changing this repository, run `make ci` before handing work back. It sets `PCL_AUTH_NO_BROWSER=1` for tests so auth flows do not open a browser, and it runs `make agent-smoke` to verify the documented agent discovery path.
 
-Use TOON as the normal machine interface. Default CLI output is optimized for humans, so agent examples must pass `--toon`. Use `--json` only when a downstream tool needs strict JSON.
+Use JSON as the machine interface. Default CLI output is optimized for humans, so agent examples must pass `--json`.
 
-`pcl build` and `pcl test` are developer pass-through commands. Use human mode for their native Phorge/Foundry output. In machine mode they return a structured unsupported-pass-through error; use `pcl verify --toon` and `pcl apply --dry-run --toon` for structured assertion workflows.
+`pcl build` and `pcl test` are developer pass-through commands. Use human mode for their native Phorge/Foundry output. In machine mode they return a structured unsupported-pass-through error; use `pcl verify --json` and `pcl apply --dry-run --json` for structured assertion workflows.
 
 ## Output Contract
 
-Every agent-facing command should be treated as an envelope. With `--toon` this is shaped like:
+Every agent-facing command should be treated as an envelope. With `--json` this is shaped like:
 
-```toon
-status: ok
-data: {}
-next_actions: []
-schema_version: pcl.envelope.v1
-pcl_version: "..."
+```json
+{
+  "status": "ok",
+  "data": {},
+  "next_actions": [],
+  "schema_version": "pcl.envelope.v1",
+  "pcl_version": "..."
+}
 ```
 
 Errors use the same shape with `status: "error"` and an `error` object. Do not parse prose diagnostics. Check `error.code`, `error.recoverable`, `error.http.status`, `error.request_id`, and `next_actions`.
@@ -39,7 +41,6 @@ Errors use the same shape with `status: "error"` and an `error` object. Do not p
 Output mode rules:
 
 - default: human-readable output for people
-- TOON: `--toon`
 - JSON: `--json`
 - JSONL exception: fresh `pcl auth login --json` streams events and marks the final event with `terminal: true`
 
@@ -49,9 +50,9 @@ Fresh `pcl auth login --json` emits JSONL progress events: first `event: auth.lo
 
 Prefer the surfaces in this order:
 
-1. `pcl --toon --llms` or `pcl llms --toon` for the current agent guide.
-2. `pcl workflows --toon` for task recipes.
-3. `pcl schema list --toon` and `pcl schema get <workflow> --action <action> --toon` for workflow action contracts.
+1. `pcl --json --llms` or `pcl llms --json` for the current agent guide.
+2. `pcl workflows --json` for task recipes.
+3. `pcl schema list --json` and `pcl schema get <workflow> --action <action> --json` for workflow action contracts.
 4. Top-level workflow commands like `pcl incidents`, `pcl projects`, `pcl assertions`, `pcl account`, `pcl releases`, and `pcl protocol-manager`.
 5. `pcl api list`, `pcl api inspect`, `pcl api call`, and `pcl api coverage` only for debugging, API parity checks, internal/service endpoints, or endpoints without `workflow_alternatives`.
 
@@ -73,19 +74,19 @@ Raw calls are not the normal product path. Use them for debugging, API parity ch
 Both query forms are valid:
 
 ```bash
-pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated --toon
-pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --toon
+pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated --json
+pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json
 ```
 
 For simple raw request bodies, `pcl api call` accepts repeated `--field key=value` and merges those fields into a JSON object, matching workflow command behavior. Use `--body-file` for nested payloads.
 
-Use `pcl api inspect <operation-id> --toon` before calling unfamiliar endpoints. Inspect includes `workflow_alternatives`, `raw_api_use`, auth metadata, and required header placeholders; preserve required `--header` values in generated examples. For required request bodies, inspect the operation and prefer `--body-file`.
+Use `pcl api inspect <operation-id> --json` before calling unfamiliar endpoints. Inspect includes `workflow_alternatives`, `raw_api_use`, auth metadata, and required header placeholders; preserve required `--header` values in generated examples. For required request bodies, inspect the operation and prefer `--body-file`.
 
 Raw API calls persist `operation_id` in request history when the live OpenAPI manifest can resolve the method/path. After exploratory testing, run:
 
 ```bash
-pcl api coverage --toon
-pcl api coverage --markdown api-coverage.md --toon
+pcl api coverage --json
+pcl api coverage --markdown api-coverage.md --json
 ```
 
 Use `no_hit`, `no_2xx`, `write_no_2xx`, and `unmatched_records` to decide what still needs manual reconciliation.
@@ -95,11 +96,11 @@ Use `no_hit`, `no_2xx`, `write_no_2xx`, and `unmatched_records` to decide what s
 For investigations, prefer JSONL exports and local job records:
 
 ```bash
-pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --checkpoint checkpoint.json --resume --continue-on-error --toon
-pcl jobs list --toon
-pcl jobs status <job-id> --toon
-pcl jobs resume <job-id> --toon
-pcl artifacts list --toon
+pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --checkpoint checkpoint.json --resume --continue-on-error --json
+pcl jobs list --json
+pcl jobs status <job-id> --json
+pcl jobs resume <job-id> --json
+pcl artifacts list --json
 ```
 
 Export commands record `job_id`, `resume_command`, checkpoint path, output path, and error path. Use those fields instead of rebuilding pagination state manually.
@@ -109,16 +110,16 @@ Export commands record `job_id`, `resume_command`, checkpoint path, output path,
 Use:
 
 ```bash
-pcl auth status --toon
-pcl auth ensure --toon
-pcl whoami --toon
+pcl auth status --json
+pcl auth ensure --json
+pcl whoami --json
 ```
 
-Do not treat a stored token as valid unless `token_valid` is true and `expired` is false. `pcl doctor --toon` also checks whether the target API advertises CLI login, refresh, and remote logout/revocation endpoints. Public endpoints should be called with `--allow-unauthenticated` when using raw `pcl api call`.
+Do not treat a stored token as valid unless `token_valid` is true and `expired` is false. `pcl doctor --json` also checks whether the target API advertises CLI login, refresh, and remote logout/revocation endpoints. Public endpoints should be called with `--allow-unauthenticated` when using raw `pcl api call`.
 
-Use `pcl auth ensure --toon` before long workflows. It returns `status: ok` when auth is usable, or one `status: action_required` envelope with `device_url`, `code`, `device_secret`, and `poll_command` when user login is needed. Run `poll_command` until it returns `status: ok` or `status: error`.
+Use `pcl auth ensure --json` before long workflows. It returns `status: ok` when auth is usable, or one `status: action_required` envelope with `device_url`, `code`, `device_secret`, and `poll_command` when user login is needed. Run `poll_command` until it returns `status: ok` or `status: error`.
 
-`expires_soon: true` means the access token has five minutes or less remaining. `pcl auth refresh --toon` is safe to call and rotates the stored CLI refresh token when available; if the refresh token is missing or rejected, it returns the same login challenge shape. `pcl auth login --no-wait --toon` also returns a single challenge envelope. Use `pcl auth login --json` only when you specifically want the JSONL streaming login contract. `pcl auth logout` attempts remote logout first, then clears local credentials; use `pcl auth logout --local` only when you explicitly want local cleanup.
+`expires_soon: true` means the access token has five minutes or less remaining. `pcl auth refresh --json` is safe to call and rotates the stored CLI refresh token when available; if the refresh token is missing or rejected, it returns the same login challenge shape. `pcl auth login --no-wait --json` also returns a single challenge envelope. Use `pcl auth login --json` only when you specifically want the JSONL streaming login contract. `pcl auth logout` attempts remote logout first, then clears local credentials; use `pcl auth logout --local` only when you explicitly want local cleanup.
 
 Auth commands use `--auth-url`/`PCL_AUTH_URL` when set, otherwise they follow `PCL_API_URL` before falling back to the production app URL.
 
@@ -130,7 +131,7 @@ When reporting results, preserve:
 - Incident IDs, transaction hashes, trace IDs, project IDs, and artifact paths.
 - The exact command used, especially for exports and mutations.
 
-Use `pcl requests list --toon` to recover recent request metadata.
+Use `pcl requests list --json` to recover recent request metadata.
 
 ## Shell Completions
 

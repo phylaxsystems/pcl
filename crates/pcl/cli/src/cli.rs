@@ -72,7 +72,7 @@ fn version_message() -> &'static str {
     version = version_message(),
     long_version = version_message(),
     about = "The Credible CLI for the Credible Layer",
-    long_about = "The Credible CLI for the Credible Layer.\n\nUse workflow commands for normal project, assertion, incident, release, and access work. Use --toon for agents and --json for strict parsers. Use `pcl --toon --llms` for agent guidance. Use `pcl api` only when a workflow command does not exist or when debugging the raw API."
+    long_about = "The Credible CLI for the Credible Layer.\n\nUse workflow commands for normal project, assertion, incident, release, and access work. Use --json for agents and strict parsers. Use `pcl --json --llms` for agent guidance. Use `pcl api` only when a workflow command does not exist or when debugging the raw API."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -198,20 +198,11 @@ impl CompletionsArgs {
         if output_mode == OutputMode::Human {
             print!("{script}");
         } else {
-            let data = if output_mode == OutputMode::Json {
-                json!({
-                    "shell": self.shell.to_string(),
-                    "script": script,
-                    "install_note": "Run without --toon/--json and redirect stdout into your shell completion directory.",
-                })
-            } else {
-                json!({
-                    "shell": self.shell.to_string(),
-                    "script_omitted": true,
-                    "script_bytes": script.len(),
-                    "install_note": "Run without --toon/--json and redirect stdout into your shell completion directory, or use --json only when an installer expects the script inside an envelope.",
-                })
-            };
+            let data = json!({
+                "shell": self.shell.to_string(),
+                "script": script,
+                "install_note": "Run without --json and redirect stdout into your shell completion directory.",
+            });
             let envelope = with_envelope_metadata(json!({
                 "status": "ok",
                 "data": data,
@@ -442,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn every_visible_command_accepts_toon_before_help() {
+    fn every_visible_command_accepts_json_before_help() {
         let mut command_paths = Vec::new();
         let command = Cli::command();
         collect_command_paths(&command, &[], &mut command_paths);
@@ -451,7 +442,7 @@ mod tests {
         for path in command_paths {
             let mut argv = vec!["pcl".to_string()];
             argv.extend(path.iter().cloned());
-            argv.push("--toon".to_string());
+            argv.push("--json".to_string());
             argv.push("--help".to_string());
 
             let Err(err) = Cli::try_parse_from(argv.clone()) else {
@@ -460,7 +451,7 @@ mod tests {
             assert_eq!(
                 err.kind(),
                 ErrorKind::DisplayHelp,
-                "`{}` should accept --toon and then display help; got {err}",
+                "`{}` should accept --json and then display help; got {err}",
                 argv.join(" ")
             );
         }

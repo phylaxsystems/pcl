@@ -699,7 +699,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "auth",
                 "login_challenge",
-                "pcl auth login --no-wait --force --toon",
+                "pcl auth login --no-wait --force --json",
                 "Device-login challenge is exposed as a structured auth command.",
             )
         }
@@ -707,7 +707,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "auth",
                 "poll",
-                "pcl auth poll --session-id <session-id> --device-secret <secret> --expires-at <rfc3339> --toon",
+                "pcl auth poll --session-id <session-id> --device-secret <secret> --expires-at <rfc3339> --json",
                 "Polling is handled by the auth command returned in data.poll_command.",
             )
         }
@@ -715,7 +715,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "auth",
                 "verify",
-                "pcl auth login --force --toon",
+                "pcl auth login --force --json",
                 "The login command owns verification and stores the resulting credentials.",
             )
         }
@@ -723,7 +723,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "auth",
                 "refresh",
-                "pcl auth refresh --toon",
+                "pcl auth refresh --json",
                 "Refresh rotation is exposed as a structured auth command.",
             )
         }
@@ -731,7 +731,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "api",
                 "manifest",
-                "pcl api manifest --toon",
+                "pcl api manifest --json",
                 "Use the CLI manifest/list/inspect surfaces for discovery instead of raw OpenAPI retrieval.",
             )
         }
@@ -784,7 +784,7 @@ fn single_special_workflow(workflow: &str, action: &str, example: &str, note: &s
 }
 
 fn special_workflow(workflow: &str, action: &str, example: &str, note: &str) -> Value {
-    let example = command_for_mode(example, OutputMode::Toon);
+    let example = command_for_mode(example, OutputMode::Json);
     json!({
         "workflow": workflow,
         "action": action,
@@ -1266,7 +1266,7 @@ pub(super) fn next_actions_for_operations(operations: &[OperationSummary]) -> Ve
             {
                 return vec![
                     example,
-                    format!("{} --toon", safe_operation.inspect_command),
+                    format!("{} --json", safe_operation.inspect_command),
                 ];
             }
             if let Some((safe_operation, example)) =
@@ -1274,12 +1274,12 @@ pub(super) fn next_actions_for_operations(operations: &[OperationSummary]) -> Ve
             {
                 return vec![
                     example,
-                    format!("{} --toon", safe_operation.inspect_command),
+                    format!("{} --json", safe_operation.inspect_command),
                 ];
             }
             if operation.requires_input {
                 vec![
-                    format!("{} --toon", operation.inspect_command),
+                    format!("{} --json", operation.inspect_command),
                     "Inspect the operation, then fill the placeholders in the example call"
                         .to_string(),
                 ]

@@ -486,7 +486,7 @@ fn render_doctor(output: &mut String, data: &Value) -> bool {
     if let Some(api_url) = data.get("api_url").and_then(Value::as_str) {
         writeln!(output, "\nAPI: {api_url}").expect("write to string");
     }
-    output.push_str("Default output: human. Agents should pass --toon; scripts can pass --json.\n");
+    output.push_str("Default output: human. Agents and scripts should pass --json.\n");
     true
 }
 
@@ -2031,11 +2031,7 @@ fn human_cell(value: &Value) -> String {
 fn human_action_str(value: &str) -> String {
     if value.trim_start().starts_with("pcl ") {
         humanize_command(value)
-    } else if matches!(
-        value,
-        "Use --toon for agent consumption or --json for strict JSON parsing"
-            | "Use --json for strict JSON parsing"
-    ) {
+    } else if value == "Use --json for strict JSON parsing" {
         String::new()
     } else if value == "Use --body-template when constructing mutation bodies" {
         "Use --body-template to start from an example request body".to_string()
@@ -2045,11 +2041,7 @@ fn human_action_str(value: &str) -> String {
 }
 
 fn humanize_command(command: &str) -> String {
-    command
-        .replace(" --toon", "")
-        .replace(" --json", "")
-        .replace("--toon ", "")
-        .replace("--json ", "")
+    command.replace(" --json", "").replace("--json ", "")
 }
 
 fn is_body_template_key(key: &str) -> bool {

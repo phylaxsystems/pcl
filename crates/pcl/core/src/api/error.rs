@@ -15,7 +15,7 @@ pub enum ApiCommandError {
     NoAuthToken,
 
     #[error(
-        "Stored auth token expired at {0}. Run `pcl auth refresh --toon` or `pcl auth login` again, or pass `--allow-unauthenticated` for public endpoints."
+        "Stored auth token expired at {0}. Run `pcl auth refresh --json` or `pcl auth login` again, or pass `--allow-unauthenticated` for public endpoints."
     )]
     ExpiredAuthToken(chrono::DateTime<chrono::Utc>),
 
@@ -154,15 +154,15 @@ impl ApiCommandError {
         match self {
             Self::NoAuthToken | Self::ExpiredAuthToken(_) | Self::AuthRefresh(_) => {
                 vec![
-                    "pcl auth refresh --toon".to_string(),
+                    "pcl auth refresh --json".to_string(),
                     "pcl auth login".to_string(),
-                    "pcl api list --allow-unauthenticated --toon".to_string(),
+                    "pcl api list --allow-unauthenticated --json".to_string(),
                 ]
             }
             Self::InvalidPath(_) => {
                 vec![
-                    "pcl api list --toon".to_string(),
-                    "pcl api call get /views/public/incidents --allow-unauthenticated --toon"
+                    "pcl api list --json".to_string(),
+                    "pcl api call get /views/public/incidents --allow-unauthenticated --json"
                         .to_string(),
                 ]
             }
@@ -184,8 +184,8 @@ impl ApiCommandError {
             }
             Self::OperationNotFound(_) => {
                 vec![
-                    "pcl api list --toon".to_string(),
-                    "pcl api inspect get /views/public/incidents --toon".to_string(),
+                    "pcl api list --json".to_string(),
+                    "pcl api inspect get /views/public/incidents --json".to_string(),
                 ]
             }
             Self::InvalidWorkflowWithActions { next_actions, .. } => next_actions.clone(),
@@ -209,7 +209,7 @@ impl ApiCommandError {
             }
             Self::HttpStatus { status: 401, .. } => {
                 vec![
-                    "pcl auth refresh --toon".to_string(),
+                    "pcl auth refresh --json".to_string(),
                     "pcl auth login".to_string(),
                     "Use --allow-unauthenticated only for public endpoints".to_string(),
                 ]
@@ -231,11 +231,11 @@ impl ApiCommandError {
             } => {
                 vec![
                     format!(
-                        "pcl api inspect {} {} --toon",
+                        "pcl api inspect {} {} --json",
                         method.to_ascii_lowercase(),
                         path
                     ),
-                    "pcl api manifest --toon".to_string(),
+                    "pcl api manifest --json".to_string(),
                     "Read error.http.body for the rejected field details".to_string(),
                 ]
             }
@@ -259,13 +259,13 @@ impl ApiCommandError {
                             method.to_ascii_lowercase(),
                             path
                         ),
-                        "pcl requests list --toon".to_string(),
+                        "pcl requests list --json".to_string(),
                         "Read error.http.body for API-provided failure details".to_string(),
                     ]
                 } else {
                     vec![
                         "Retry the same command once; server errors can be transient".to_string(),
-                        "pcl api manifest --toon".to_string(),
+                        "pcl api manifest --json".to_string(),
                         "Read error.http.body for API-provided failure details".to_string(),
                     ]
                 };
@@ -278,7 +278,7 @@ impl ApiCommandError {
             }
             Self::HttpStatus { .. } => {
                 vec![
-                    "pcl api manifest --toon".to_string(),
+                    "pcl api manifest --json".to_string(),
                     "Read error.http.body for API-provided failure details".to_string(),
                 ]
             }
@@ -296,7 +296,7 @@ impl ApiCommandError {
             }
             Self::RequestLog { .. } => {
                 vec![
-                    "pcl requests path --toon".to_string(),
+                    "pcl requests path --json".to_string(),
                     "Check request log permissions or move the PCL state directory".to_string(),
                 ]
             }
