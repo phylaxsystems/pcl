@@ -112,6 +112,9 @@ pub enum ProductSurfaceError {
     #[error("Failed to refresh stored auth before running the command: {0}")]
     AuthRefresh(#[source] AuthError),
 
+    #[error(transparent)]
+    PlatformMismatch(AuthError),
+
     #[error("{0}")]
     InvalidInput(String),
 
@@ -153,6 +156,7 @@ impl ProductSurfaceError {
             Self::NoAuthToken => "auth.no_token",
             Self::ExpiredAuthToken(_) => "auth.expired_token",
             Self::AuthRefresh(_) => "auth.refresh_failed",
+            Self::PlatformMismatch(_) => "auth.platform_mismatch",
             Self::InvalidInput(_) => "input.invalid",
             Self::Io { .. } => "io.failed",
             Self::Json(_) => "json.failed",
@@ -233,6 +237,13 @@ impl ProductSurfaceError {
                     "pcl auth refresh".to_string(),
                     "pcl auth login --force".to_string(),
                     "pcl doctor".to_string(),
+                ]
+            }
+            Self::PlatformMismatch(_) => {
+                vec![
+                    "pcl auth login --auth-url <platform-url>".to_string(),
+                    "pcl auth status --json".to_string(),
+                    "Use --allow-unauthenticated only for public endpoints".to_string(),
                 ]
             }
             Self::InvalidInput(message) if message.starts_with("Unknown job") => {
@@ -2019,6 +2030,12 @@ async fn ensure_export_auth(
     if allow_unauthenticated || !require_auth {
         return Ok(());
     }
+    // Stored credentials may only ever reach the platform that issued them.
+    // This guards both the refresh POST below and the bearer header attached
+    // right after in `default_headers` — an export pointed at a foreign
+    // --api-url/PCL_API_URL must not leak either token.
+    crate::auth::ensure_credential_platform(config, api_url)
+        .map_err(ProductSurfaceError::PlatformMismatch)?;
     let Some(auth) = &config.auth else {
         return Err(ProductSurfaceError::NoAuthToken);
     };
@@ -2750,7 +2767,7 @@ mod tests {
                 wallet_address: None,
                 email: Some("agent@example.com".to_string()),
             }),
-            platform_url: None,
+            platform_url: Some(server.url()),
         };
         config.write_to_file(&cli_args).unwrap();
         let out = temp.path().join("incidents.jsonl");
@@ -2782,6 +2799,114 @@ mod tests {
         let auth = config.auth.as_ref().expect("refreshed auth");
         assert_eq!(auth.access_token, "new_access");
         assert_eq!(auth.refresh_token, "new_refresh");
+    }
+
+    #[tokio::test]
+    async fn incident_export_refuses_a_foreign_platform_with_a_valid_token() {
+        // Valid production-issued credentials (no remembered platform), export
+        // pointed at a different --api-url: neither the bearer token nor any
+        // request may reach that platform.
+        let mut server = mockito::Server::new_async().await;
+        let no_requests = server
+            .mock("GET", Matcher::Any)
+            .expect(0)
+            .create_async()
+            .await;
+
+        let temp = tempdir().unwrap();
+        let cli_args = CliArgs {
+            config_dir: Some(temp.path().join("config")),
+            ..Default::default()
+        };
+        let mut config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "valid_access".to_string(),
+                refresh_token: "valid_refresh".to_string(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(2),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: Some("agent@example.com".to_string()),
+            }),
+            platform_url: None,
+        };
+        let args = ExportIncidentsArgs {
+            project_id: Some("11111111-1111-4111-8111-111111111111".to_string()),
+            environment: None,
+            page: 1,
+            limit: 50,
+            max_pages: 1,
+            out: Some(temp.path().join("incidents.jsonl")),
+            errors: Some(temp.path().join("errors.jsonl")),
+            checkpoint: Some(temp.path().join("checkpoint.json")),
+            resume: false,
+            continue_on_error: false,
+            max_retries: 0,
+            dry_run: false,
+            api_url: server.url().parse().unwrap(),
+            allow_unauthenticated: false,
+        };
+
+        let error = export_incidents(&args, &mut config, &cli_args, true)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, ProductSurfaceError::PlatformMismatch(_)));
+        assert_eq!(error.code(), "auth.platform_mismatch");
+        no_requests.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn incident_export_refuses_to_refresh_against_a_foreign_platform() {
+        // Expiring production-issued credentials: the pre-request refresh must
+        // not post the stored refresh token to a foreign --api-url either.
+        let mut server = mockito::Server::new_async().await;
+        let no_requests = server
+            .mock("POST", Matcher::Any)
+            .expect(0)
+            .create_async()
+            .await;
+
+        let temp = tempdir().unwrap();
+        let cli_args = CliArgs {
+            config_dir: Some(temp.path().join("config")),
+            ..Default::default()
+        };
+        let mut config = CliConfig {
+            auth: Some(UserAuth {
+                access_token: "old_access".to_string(),
+                refresh_token: "old_refresh".to_string(),
+                expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: Some("agent@example.com".to_string()),
+            }),
+            platform_url: None,
+        };
+        let args = ExportIncidentsArgs {
+            project_id: Some("11111111-1111-4111-8111-111111111111".to_string()),
+            environment: None,
+            page: 1,
+            limit: 50,
+            max_pages: 1,
+            out: Some(temp.path().join("incidents.jsonl")),
+            errors: Some(temp.path().join("errors.jsonl")),
+            checkpoint: Some(temp.path().join("checkpoint.json")),
+            resume: false,
+            continue_on_error: false,
+            max_retries: 0,
+            dry_run: false,
+            api_url: server.url().parse().unwrap(),
+            allow_unauthenticated: false,
+        };
+
+        let error = export_incidents(&args, &mut config, &cli_args, true)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, ProductSurfaceError::PlatformMismatch(_)));
+        no_requests.assert_async().await;
     }
 
     #[tokio::test]

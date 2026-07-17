@@ -1121,6 +1121,14 @@ pub async fn refresh_stored_auth(
         *config = disk_config;
     }
 
+    // The disk reload can swap in credentials issued by a *different*
+    // platform: another process may have logged into platform B while this
+    // A-targeted refresh waited on the lock, and any boundary check the
+    // caller performed covered only the pre-lock config. Re-check the
+    // credentials that will actually be sent, before any short-circuit or
+    // request.
+    ensure_credential_platform(config, auth_url)?;
+
     let auth = config
         .auth
         .as_ref()
@@ -1844,6 +1852,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let cli_args = test_cli_args(temp_dir.path());
         let mut config = expired_refreshable_config();
+        config.platform_url = Some(server.url());
         config.write_to_file(&cli_args).unwrap();
 
         let outcome = refresh_stored_auth(
@@ -1874,6 +1883,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refresh_refuses_credentials_swapped_in_from_disk_for_another_platform() {
+        // Race the boundary check: the in-memory config holds credentials
+        // for platform A (the refresh target), but while this refresh waited
+        // on the lock another process re-logged into platform B — the disk
+        // reload swaps B's credentials in. B's refresh token must never be
+        // posted to A.
+        let mut server_a = Server::new_async().await;
+        let no_requests = server_a
+            .mock("POST", Matcher::Any)
+            .expect(0)
+            .create_async()
+            .await;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cli_args = test_cli_args(temp_dir.path());
+
+        let mut disk_config = expired_refreshable_config();
+        disk_config.auth.as_mut().unwrap().refresh_token = "platform_b_refresh".to_string();
+        disk_config.platform_url = Some("https://platform-b.example".to_string());
+        disk_config.write_to_file(&cli_args).unwrap();
+
+        let mut config = expired_refreshable_config();
+        config.platform_url = Some(server_a.url());
+
+        let error = refresh_stored_auth(
+            &mut config,
+            &server_a.url().parse().unwrap(),
+            &cli_args,
+            true,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, AuthError::PlatformMismatch { .. }));
+        no_requests.assert_async().await;
+    }
+
+    #[tokio::test]
     async fn invalid_refresh_token_clears_local_credentials() {
         let mut server = Server::new_async().await;
         let mock = server
@@ -1888,6 +1934,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let cli_args = test_cli_args(temp_dir.path());
         let mut config = expired_refreshable_config();
+        config.platform_url = Some(server.url());
         config.write_to_file(&cli_args).unwrap();
 
         let error = refresh_stored_auth(
@@ -1932,6 +1979,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let cli_args = test_cli_args(temp_dir.path());
         let mut config = expired_refreshable_config();
+        config.platform_url = Some(server.url());
         config.write_to_file(&cli_args).unwrap();
 
         let error = refresh_stored_auth(
