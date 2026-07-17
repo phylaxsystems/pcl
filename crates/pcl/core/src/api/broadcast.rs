@@ -270,15 +270,10 @@ impl ApiArgs {
         let result = self
             .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
-        result
-            .body
-            .get("chain_id")
-            .or_else(|| result.body.get("chainId"))
-            .and_then(Value::as_u64)
-            .ok_or(ApiCommandError::UnexpectedResponse {
-                endpoint: "/projects/{project_id}",
-                reason: "missing chain_id".to_string(),
-            })
+        crate::deploy::project_chain_id(&result.body).ok_or(ApiCommandError::UnexpectedResponse {
+            endpoint: "/projects/{project_id}",
+            reason: "missing chain_id/project_networks".to_string(),
+        })
     }
 }
 
@@ -547,6 +542,7 @@ impl ApiArgs {
         args: &ProtocolManagerArgs,
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
+        validate_manager_consent(args)?;
         let project = args
             .project
             .clone()
@@ -711,15 +707,13 @@ impl ApiArgs {
             ));
         }
 
-        let (chain_id, to, data) = match (calldata.chain_id, calldata.to, calldata.calldata.clone())
-        {
-            (Some(chain_id), Some(to), Some(data)) => (chain_id, to, data),
-            _ => {
-                return Err(ApiCommandError::UnexpectedResponse {
-                    endpoint: "protocol-manager/transfer-calldata",
-                    reason: "onchain mode without chain_id/to/calldata".to_string(),
-                });
-            }
+        let (Some(chain_id), Some(to), Some(data)) =
+            (calldata.chain_id, calldata.to, calldata.calldata.clone())
+        else {
+            return Err(ApiCommandError::UnexpectedResponse {
+                endpoint: "protocol-manager/transfer-calldata",
+                reason: "onchain mode without chain_id/to/calldata".to_string(),
+            });
         };
 
         confirm_send(
@@ -820,6 +814,26 @@ impl ApiArgs {
             )],
         ))
     }
+}
+
+/// Each mutating protocol-manager action must carry its own consent flag:
+/// `--sign` consents to the off-chain signed challenge (`--set`), and
+/// `--broadcast` consents to an on-chain transaction (`--transfer-calldata` /
+/// `--accept-calldata`). Checked before any wallet resolution or mutation so
+/// one flag never authorizes the other kind of action.
+fn validate_manager_consent(args: &ProtocolManagerArgs) -> Result<(), ApiCommandError> {
+    if args.set && !args.sign {
+        return Err(ApiCommandError::InvalidWorkflow {
+            message: "--set requires --sign to submit the signed challenge".to_string(),
+        });
+    }
+    if (args.transfer_calldata || args.accept_calldata) && !args.broadcast.broadcast {
+        return Err(ApiCommandError::InvalidWorkflow {
+            message: "--transfer-calldata and --accept-calldata require --broadcast to submit the transaction"
+                .to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Whether an API error indicates the signed challenge expired and a fresh
@@ -967,6 +981,37 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn manager_consent_requires_the_exact_flag_pair() {
+        let args = |set: bool, transfer: bool, accept: bool, sign: bool, broadcast: bool| {
+            ProtocolManagerArgs {
+                set,
+                transfer_calldata: transfer,
+                accept_calldata: accept,
+                sign,
+                broadcast: BroadcastArgs {
+                    broadcast,
+                    ..BroadcastArgs::default()
+                },
+                ..ProtocolManagerArgs::default()
+            }
+        };
+
+        // Exact pairs pass.
+        assert!(validate_manager_consent(&args(true, false, false, true, false)).is_ok());
+        assert!(validate_manager_consent(&args(false, true, false, false, true)).is_ok());
+        assert!(validate_manager_consent(&args(false, false, true, false, true)).is_ok());
+        // The deploy flow passes set+sign with broadcast consent also on.
+        assert!(validate_manager_consent(&args(true, false, false, true, true)).is_ok());
+
+        // --set --broadcast must not perform the signed set without --sign.
+        assert!(validate_manager_consent(&args(true, false, false, false, true)).is_err());
+        // --transfer-calldata/--accept-calldata --sign must not broadcast
+        // without --broadcast.
+        assert!(validate_manager_consent(&args(false, true, false, true, false)).is_err());
+        assert!(validate_manager_consent(&args(false, false, true, true, false)).is_err());
     }
 
     #[test]

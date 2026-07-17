@@ -118,7 +118,7 @@ pub struct DeployArgs {
 
     #[arg(
         long,
-        help = "Chain ID used when creating a project (with --project-name)"
+        help = "Chain ID used when creating a project (with --project-name); an existing project's chain is read from the platform"
     )]
     pub chain_id: Option<u64>,
 
@@ -286,7 +286,8 @@ fn snapshot_matches_payload(release_detail: &Value, payload: &Value) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CheckVerdict {
     Passed,
-    /// No check rows exist (e.g. local/dev platforms without a check engine).
+    /// The platform explicitly reported that no check rows exist
+    /// (e.g. local/dev platforms without a check engine).
     NoChecks,
     Pending(String),
     Failed(String),
@@ -298,7 +299,11 @@ fn check_verdict(release_detail: &Value) -> CheckVerdict {
         .and_then(|summary| summary.get("deployBlockingStatus"))
         .and_then(Value::as_str)
     else {
-        return CheckVerdict::NoChecks;
+        // Right after release creation the summary may not have materialized
+        // yet. Fail closed: only an explicit `no_checks` bypasses the deploy
+        // gates, an absent/malformed summary keeps polling until it appears
+        // (or the check timeout errors out).
+        return CheckVerdict::Pending("check_summary_missing".to_string());
     };
     match status {
         "all_passed" => CheckVerdict::Passed,
@@ -352,10 +357,38 @@ fn write_project_id(config_path: &Path, project_id: Uuid) -> Result<(), DeployEr
     })
 }
 
+/// Chain id the deploy binds to (manager challenge, RPC selection).
+/// `--chain-id` is authoritative only for a project created this run, where
+/// it was the create input; an existing project's chain comes from the
+/// platform record, and a contradicting flag is an error rather than an
+/// override.
+fn resolve_chain_id(
+    flag: Option<u64>,
+    created_chain_id: Option<u64>,
+    project: &Value,
+) -> Result<u64, DeployError> {
+    if let Some(chain_id) = created_chain_id {
+        return Ok(chain_id);
+    }
+    let recorded = project_chain_id(project).ok_or(DeployError::UnexpectedResponse {
+        endpoint: "/projects/{project_id}",
+        reason: "missing chain_id/project_networks".to_string(),
+    })?;
+    if let Some(flag) = flag
+        && flag != recorded
+    {
+        return Err(DeployError::ChainIdMismatch {
+            flag,
+            project: recorded,
+        });
+    }
+    Ok(recorded)
+}
+
 /// Extracts the chain id from a project response. The live API exposes it as
 /// `project_networks: ["8453"]` (strings); older/other shapes may use
 /// `chain_id`.
-fn project_chain_id(project: &Value) -> Option<u64> {
+pub(crate) fn project_chain_id(project: &Value) -> Option<u64> {
     project
         .get("chain_id")
         .or_else(|| project.get("chainId"))
@@ -411,8 +444,8 @@ impl DeployArgs {
 
         if self.dry_run {
             // Plan only: build and verify locally, touch nothing remote.
-            let plan = self.dry_run_plan(&credible, &root, output_mode, signer.as_ref())?;
-            return self.finish_dry_run(plan, output_mode);
+            let plan = Self::dry_run_plan(&credible, &root, output_mode, signer.as_ref())?;
+            return Self::finish_dry_run(plan, output_mode);
         }
         // Past the dry-run return a signer was always resolved above.
         let signer = signer.ok_or(crate::wallet::WalletError::NoWallet)?;
@@ -423,69 +456,67 @@ impl DeployArgs {
         // ------------------------------------------------------------------
         // Step 1: resolve or create the project
         // ------------------------------------------------------------------
-        let (project_id, project, project_created) = match credible.project_id {
-            Some(project_id) => {
-                progress(human, &format!("Using project {project_id}"));
-                let project_id_string = project_id.to_string();
-                let project = api
-                    .workflow_json(
-                        config,
-                        cli_args,
-                        HttpMethod::Get,
-                        "get_projects_project_id",
-                        &[("project_id", project_id_string.as_str())],
-                        None,
-                    )
-                    .await?;
-                (project_id, project, false)
-            }
-            None => {
-                let name = self
-                    .project_name
-                    .clone()
-                    .or_else(|| credible.project_name.clone())
-                    .ok_or(DeployError::MissingProjectInfo)?;
-                let chain_id = self.chain_id.ok_or(DeployError::MissingProjectInfo)?;
-                progress(
-                    human,
-                    &format!("Creating project {name:?} on chain {chain_id}"),
-                );
-                let body = json!({ "project_name": name, "chain_id": chain_id });
-                let project = api
-                    .workflow_json(
-                        config,
-                        cli_args,
-                        HttpMethod::Post,
-                        "post_projects",
-                        &[],
-                        Some(&body),
-                    )
-                    .await?;
-                let project_id = project
-                    .get("id")
-                    .or_else(|| project.get("project_id"))
-                    .and_then(Value::as_str)
-                    .and_then(|id| Uuid::parse_str(id).ok())
-                    .ok_or(DeployError::UnexpectedResponse {
-                        endpoint: "/projects",
-                        reason: "missing project id in create response".to_string(),
-                    })?;
-                write_project_id(&config_path, project_id)?;
-                credible.project_id = Some(project_id);
-                progress(
-                    human,
-                    &format!("Created project {project_id} and recorded it in credible.toml"),
-                );
-                (project_id, project, true)
-            }
+        let (project_id, project, created_chain_id) = if let Some(project_id) = credible.project_id
+        {
+            progress(human, &format!("Using project {project_id}"));
+            let project_id_string = project_id.to_string();
+            let project = api
+                .workflow_json(
+                    config,
+                    cli_args,
+                    HttpMethod::Get,
+                    "get_projects_project_id",
+                    &[("project_id", project_id_string.as_str())],
+                    None,
+                )
+                .await?;
+            (project_id, project, None)
+        } else {
+            let name = self
+                .project_name
+                .clone()
+                .or_else(|| credible.project_name.clone())
+                .ok_or(DeployError::MissingProjectInfo)?;
+            let chain_id = self.chain_id.ok_or(DeployError::MissingProjectInfo)?;
+            self.confirm_step(
+                human,
+                &format!("Create project {name:?} on chain {chain_id} on the platform?"),
+            )?;
+            progress(
+                human,
+                &format!("Creating project {name:?} on chain {chain_id}"),
+            );
+            let body = json!({ "project_name": name, "chain_id": chain_id });
+            let project = api
+                .workflow_json(
+                    config,
+                    cli_args,
+                    HttpMethod::Post,
+                    "post_projects",
+                    &[],
+                    Some(&body),
+                )
+                .await?;
+            let project_id = project
+                .get("id")
+                .or_else(|| project.get("project_id"))
+                .and_then(Value::as_str)
+                .and_then(|id| Uuid::parse_str(id).ok())
+                .ok_or(DeployError::UnexpectedResponse {
+                    endpoint: "/projects",
+                    reason: "missing project id in create response".to_string(),
+                })?;
+            write_project_id(&config_path, project_id)?;
+            credible.project_id = Some(project_id);
+            progress(
+                human,
+                &format!("Created project {project_id} and recorded it in credible.toml"),
+            );
+            (project_id, project, Some(chain_id))
         };
+        let project_created = created_chain_id.is_some();
 
-        let project_chain_id = self.chain_id.or_else(|| project_chain_id(&project)).ok_or(
-            DeployError::UnexpectedResponse {
-                endpoint: "/projects/{project_id}",
-                reason: "missing chain_id/project_networks".to_string(),
-            },
-        )?;
+        let project_chain_id = resolve_chain_id(self.chain_id, created_chain_id, &project)?;
 
         // ------------------------------------------------------------------
         // Step 2: protocol manager
@@ -511,6 +542,12 @@ impl DeployArgs {
                     });
                 }
                 ManagerStep::NeedsSet => {
+                    self.confirm_step(
+                        human,
+                        &format!(
+                            "Set the protocol manager of project {project_id} to {wallet_address}?"
+                        ),
+                    )?;
                     progress(
                         human,
                         "Setting protocol manager (signed challenge, no transaction)",
@@ -601,7 +638,7 @@ impl DeployArgs {
                 });
                 #[cfg(feature = "credible")]
                 insert_field(&mut data, "verification", json!(verification));
-                return self.finish(
+                return Self::finish(
                     output_mode,
                     data,
                     vec![
@@ -675,7 +712,7 @@ impl DeployArgs {
         });
         #[cfg(feature = "credible")]
         insert_field(&mut data, "verification", json!(verification));
-        self.finish(
+        Self::finish(
             output_mode,
             data,
             vec![
@@ -683,6 +720,24 @@ impl DeployArgs {
                 format!("pcl deployments --project {project_id}"),
             ],
         )
+    }
+
+    /// Interactive gate before a mutating step; cancelling is side-effect
+    /// free because the prompt always precedes the mutation it guards.
+    /// `--yes` skips prompting (machine output already requires `--yes`).
+    fn confirm_step(&self, human: bool, prompt: &str) -> Result<(), DeployError> {
+        if !human || self.yes {
+            return Ok(());
+        }
+        let confirmed = inquire::Confirm::new(prompt)
+            .with_default(false)
+            .prompt()
+            .map_err(|_| DeployError::Cancelled)?;
+        if confirmed {
+            Ok(())
+        } else {
+            Err(DeployError::Cancelled)
+        }
     }
 
     /// Sub-flows receive the already-resolved signer so a keystore is
@@ -735,7 +790,7 @@ impl DeployArgs {
                 CheckVerdict::NoChecks => {
                     progress(
                         human,
-                        "No deploy-gating checks reported; continuing (dev/local platform)",
+                        "Platform reports no deploy-gating checks; continuing (dev/local platform)",
                     );
                     return Ok("no_checks".to_string());
                 }
@@ -762,7 +817,6 @@ impl DeployArgs {
     }
 
     fn dry_run_plan(
-        &self,
         credible: &CredibleToml,
         root: &Path,
         output_mode: OutputMode,
@@ -787,7 +841,7 @@ impl DeployArgs {
         Ok(data)
     }
 
-    fn finish_dry_run(&self, data: Value, output_mode: OutputMode) -> Result<(), DeployError> {
+    fn finish_dry_run(data: Value, output_mode: OutputMode) -> Result<(), DeployError> {
         if output_mode == OutputMode::Human {
             println!(
                 "Dry run complete. Built and verified the release payload; no project or release was created."
@@ -800,7 +854,6 @@ impl DeployArgs {
     }
 
     fn finish(
-        &self,
         output_mode: OutputMode,
         data: Value,
         next_actions: Vec<String>,
@@ -937,8 +990,20 @@ mod tests {
             check_verdict(&detail("in_progress")),
             CheckVerdict::Pending("in_progress".to_string())
         );
-        // Missing checkSummary (older platforms / local dev) → NoChecks.
-        assert_eq!(check_verdict(&json!({ "id": "x" })), CheckVerdict::NoChecks);
+        // Missing/malformed checkSummary fails closed: keep polling instead
+        // of skipping the deploy gates.
+        assert_eq!(
+            check_verdict(&json!({ "id": "x" })),
+            CheckVerdict::Pending("check_summary_missing".to_string())
+        );
+        assert_eq!(
+            check_verdict(&json!({ "checkSummary": null })),
+            CheckVerdict::Pending("check_summary_missing".to_string())
+        );
+        assert_eq!(
+            check_verdict(&json!({ "checkSummary": { "deployBlockingStatus": 3 } })),
+            CheckVerdict::Pending("check_summary_missing".to_string())
+        );
     }
 
     #[test]
@@ -1013,6 +1078,34 @@ mod tests {
         assert!(!snapshot_matches_payload(
             &json!({ "configSnapshot": null }),
             &payload(contracts("0x6080", vec![]))
+        ));
+    }
+
+    #[test]
+    fn resolve_chain_id_uses_the_flag_only_for_created_projects() {
+        let networks = json!({ "project_networks": ["8453"] });
+
+        // Created this run: the create input is authoritative.
+        assert_eq!(resolve_chain_id(Some(1), Some(1), &json!({})).unwrap(), 1);
+
+        // Existing project: the platform record wins; a matching flag is fine.
+        assert_eq!(resolve_chain_id(None, None, &networks).unwrap(), 8453);
+        assert_eq!(resolve_chain_id(Some(8453), None, &networks).unwrap(), 8453);
+
+        // A contradicting flag is rejected instead of rebinding the deploy.
+        assert!(matches!(
+            resolve_chain_id(Some(1), None, &networks),
+            Err(DeployError::ChainIdMismatch {
+                flag: 1,
+                project: 8453
+            })
+        ));
+
+        // An existing project without chain info is an error, not a fallback
+        // to the flag.
+        assert!(matches!(
+            resolve_chain_id(Some(1), None, &json!({})),
+            Err(DeployError::UnexpectedResponse { .. })
         ));
     }
 

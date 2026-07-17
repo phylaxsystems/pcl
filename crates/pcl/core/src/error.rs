@@ -146,6 +146,11 @@ pub enum DeployError {
     )]
     MissingProjectInfo,
 
+    #[error(
+        "--chain-id {flag} does not match the project's chain {project}. --chain-id only applies when creating a project; omit it to deploy to an existing project."
+    )]
+    ChainIdMismatch { flag: u64, project: u64 },
+
     #[error("Unexpected {endpoint} response: {reason}")]
     UnexpectedResponse {
         endpoint: &'static str,
