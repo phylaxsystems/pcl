@@ -19,6 +19,7 @@ use serde_json::{
 };
 use std::{
     cell::Cell,
+    collections::BTreeMap,
     fs,
     path::Path,
 };
@@ -73,7 +74,7 @@ fn auth_config(
     email: Option<&str>,
 ) -> CliConfig {
     CliConfig {
-        rpc: Default::default(),
+        rpc: BTreeMap::default(),
         auth: Some(UserAuth {
             access_token: access_token.to_string(),
             refresh_token: refresh_token.to_string(),

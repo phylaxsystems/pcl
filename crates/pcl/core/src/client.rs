@@ -103,6 +103,7 @@ fn validate_auth(config: &CliConfig) -> Result<&crate::config::UserAuth, ClientB
 mod tests {
     use super::*;
     use crate::config::UserAuth;
+    use std::collections::BTreeMap;
 
     #[tokio::test]
     async fn ensure_fresh_auth_refreshes_expired_token_before_header_use() {
@@ -125,7 +126,7 @@ mod tests {
             ..CliArgs::default()
         };
         let mut config = CliConfig {
-            rpc: Default::default(),
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "expired-token".to_string(),
                 refresh_token: "old-refresh".to_string(),
@@ -214,7 +215,7 @@ mod tests {
     #[test]
     fn authorization_header_rejects_expired_tokens() {
         let config = CliConfig {
-            rpc: Default::default(),
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "expired-token".to_string(),
                 refresh_token: String::new(),

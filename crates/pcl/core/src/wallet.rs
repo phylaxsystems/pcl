@@ -29,7 +29,7 @@ pub enum WalletError {
     KeystoreNotFound(PathBuf),
 
     #[error(
-        "Keystore password required. Pass --keystore-password / --keystore-password-file, or set PCL_KEYSTORE_PASSWORD / PCL_KEYSTORE_PASSWORD_FILE (interactive prompt is unavailable in --json/--toon mode or without a TTY)."
+        "Keystore password required. Pass --keystore-password / --keystore-password-file, or set PCL_KEYSTORE_PASSWORD / PCL_KEYSTORE_PASSWORD_FILE (interactive prompt is unavailable in --json mode or without a TTY)."
     )]
     PasswordRequired,
 

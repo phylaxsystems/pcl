@@ -2356,7 +2356,10 @@ mod tests {
     use crate::DEFAULT_PLATFORM_URL;
     use mockito::Matcher;
     use pcl_common::args::CliArgs;
-    use std::net::TcpListener;
+    use std::{
+        collections::BTreeMap,
+        net::TcpListener,
+    };
     use tempfile::tempdir;
 
     fn public_incidents_body(ids: &[&str], page: u64, limit: u64) -> String {
@@ -2436,7 +2439,7 @@ mod tests {
     fn whoami_errors_on_expired_auth() {
         let args = WhoamiArgs { offline: false };
         let config = CliConfig {
-            rpc: Default::default(),
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "expired-token".to_string(),
                 refresh_token: "refresh-token".to_string(),
@@ -2776,7 +2779,7 @@ mod tests {
             ..Default::default()
         };
         let mut config = CliConfig {
-            rpc: Default::default(),
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),

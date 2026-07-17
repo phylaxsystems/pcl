@@ -826,7 +826,7 @@ mod tests {
         let fixed_timestamp = DateTime::from_timestamp(1672502400, 0).unwrap(); // 2022-12-31 16:00:00 UTC
 
         let config = CliConfig {
-            rpc: Default::default(),
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "test_access".to_string(),
                 refresh_token: "test_refresh".to_string(),
@@ -978,7 +978,7 @@ expires_at = 1672502400
             ..Default::default()
         };
         let old_config = CliConfig {
-            rpc: Default::default(),
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
@@ -991,7 +991,7 @@ expires_at = 1672502400
             platform_url: None,
         };
         let stale_process_config = CliConfig {
-            rpc: Default::default(),
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "normalized_old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
@@ -1004,7 +1004,7 @@ expires_at = 1672502400
             platform_url: None,
         };
         let newer_config = CliConfig {
-            rpc: Default::default(),
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "new_access".to_string(),
                 refresh_token: "new_refresh".to_string(),
@@ -1197,7 +1197,7 @@ expires_at = 1672502400
     #[test]
     fn normalizes_legacy_device_session_expiry_from_access_token_exp() {
         let mut config = CliConfig {
-            rpc: Default::default(),
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig".to_string(),
                 refresh_token: "refresh".to_string(),
@@ -1229,7 +1229,7 @@ expires_at = 1672502400
     #[test]
     fn test_config_args_delete() {
         let mut config = CliConfig {
-            rpc: Default::default(),
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "test".to_string(),
                 refresh_token: "test".to_string(),
@@ -1255,7 +1255,7 @@ expires_at = 1672502400
             ..Default::default()
         };
         let config = CliConfig {
-            rpc: Default::default(),
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "secret-access".to_string(),
                 refresh_token: "secret-refresh".to_string(),

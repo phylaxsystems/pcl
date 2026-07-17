@@ -29,7 +29,7 @@ use thiserror::Error;
 use url::Url;
 
 sol! {
-    /// StateOracle's batch entrypoint; the only function pcl encodes locally.
+    /// `StateOracle`'s batch entrypoint; the only function pcl encodes locally.
     function batch(bytes[] calldata data) external;
 }
 
@@ -118,7 +118,7 @@ impl TxArgs {
     }
 
     /// Resolves how many confirmations to wait for: flag first, then the
-    /// per-chain config, then [`DEFAULT_CONFIRMATIONS`].
+    /// per-chain config, then `DEFAULT_CONFIRMATIONS`.
     pub fn resolve_confirmations(&self, config: &CliConfig, chain_id: u64) -> u64 {
         self.confirmations
             .or_else(|| config.rpc_endpoint(chain_id).and_then(|e| e.confirmations))
