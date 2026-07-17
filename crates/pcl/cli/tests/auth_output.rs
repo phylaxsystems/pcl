@@ -16,6 +16,27 @@ email = "agent@example.com"
     .expect("write test config");
 }
 
+/// Like [`write_valid_auth_config`], but records the platform that issued the
+/// credentials, so commands aimed at that URL pass the platform-boundary
+/// check.
+fn write_valid_auth_config_for_platform(config_dir: &std::path::Path, platform_url: &str) {
+    fs::write(
+        config_dir.join("config.toml"),
+        format!(
+            r#"platform_url = "{}"
+
+[auth]
+access_token = "test-token"
+refresh_token = "refresh-token"
+expires_at = 4102444800
+email = "agent@example.com"
+"#,
+            platform_url.trim_end_matches('/')
+        ),
+    )
+    .expect("write test config");
+}
+
 fn write_legacy_short_expiry_jwt_config(config_dir: &std::path::Path) {
     fs::write(
         config_dir.join("config.toml"),
@@ -778,8 +799,10 @@ fn auth_poll_json_pending_returns_pending_envelope_without_writing_auth() {
 #[test]
 fn auth_logout_json_clears_local_config_after_remote_logout() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
-    write_valid_auth_config(temp_dir.path());
     let mut server = mockito::Server::new();
+    // The credentials must belong to the mock platform for the remote logout
+    // to send the token there.
+    write_valid_auth_config_for_platform(temp_dir.path(), &server.url());
     let logout = server
         .mock("POST", "/api/v1/web/auth/logout")
         .match_header("authorization", "Bearer test-token")
