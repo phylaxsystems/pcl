@@ -178,6 +178,7 @@ mod tests {
                 email: Some("agent@example.com".to_string()),
             }),
             platform_url: None,
+            rpc: BTreeMap::default(),
         };
         let auth_url = url::Url::parse(&server.url()).expect("mock url");
 
@@ -204,6 +205,7 @@ mod tests {
                 email: None,
             }),
             platform_url: None,
+            rpc: BTreeMap::default(),
         };
         let api_url = url::Url::parse("https://other.phylax.example").expect("url");
 

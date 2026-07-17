@@ -662,7 +662,7 @@ fn redacted_rpc_endpoints(config: &CliConfig) -> Value {
 
 /// Scheme, host, and explicit port of an RPC URL; everything else (userinfo,
 /// path, query) may carry credentials and is dropped.
-fn redacted_rpc_host(url: &str) -> String {
+pub(crate) fn redacted_rpc_host(url: &str) -> String {
     let Ok(parsed) = url::Url::parse(url) else {
         return "<unparseable-url>".to_string();
     };

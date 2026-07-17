@@ -175,6 +175,15 @@ pub enum DeployError {
     TomlWriteBack { path: String, reason: String },
 
     #[error(
+        "Created project {project_id} on the platform, but failed to record it in {path}: {reason}. Add `project_id = \"{project_id}\"` at the top of credible.toml, then re-run `pcl deploy` to resume with the existing project instead of creating another."
+    )]
+    TomlWriteBackAfterCreate {
+        path: String,
+        project_id: uuid::Uuid,
+        reason: String,
+    },
+
+    #[error(
         "Machine output requires `--yes` (pcl deploy mutates the project and broadcasts transactions)"
     )]
     MachineYesRequired,

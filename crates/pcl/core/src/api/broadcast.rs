@@ -206,7 +206,7 @@ async fn send_tx(
     data: Bytes,
 ) -> Result<TxOutcome, ApiCommandError> {
     let rpc = tx_args.resolve_rpc(config, chain_id)?;
-    let confirmations = tx_args.resolve_confirmations(config, chain_id);
+    let confirmations = tx_args.resolve_confirmations(config, chain_id)?;
     let sender = TxSender::connect(rpc, signer, chain_id).await?;
     Ok(sender
         .send_and_confirm(to, data, confirmations, tx_args.timeout())

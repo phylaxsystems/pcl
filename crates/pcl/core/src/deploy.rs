@@ -340,19 +340,44 @@ fn upsert_project_id(contents: &str, project_id: Uuid) -> String {
     result
 }
 
+/// Verifies credible.toml can be read and written *before* the project is
+/// created remotely, so a read-only file or missing path fails while
+/// cancellation is still side-effect free.
+fn preflight_project_id_write(config_path: &Path) -> Result<(), DeployError> {
+    let toml_write_back = |reason: String| {
+        DeployError::TomlWriteBack {
+            path: config_path.display().to_string(),
+            reason,
+        }
+    };
+    std::fs::read_to_string(config_path)
+        .map_err(|e| toml_write_back(format!("not readable: {e}")))?;
+    // Opening for append verifies writability without touching the contents.
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(config_path)
+        .map(drop)
+        .map_err(|e| toml_write_back(format!("not writable: {e}")))
+}
+
+/// Writes the updated credible.toml atomically (temp file + rename in the
+/// same directory) so an interrupted write can never truncate the config.
 fn write_project_id(config_path: &Path, project_id: Uuid) -> Result<(), DeployError> {
-    let contents = std::fs::read_to_string(config_path).map_err(|e| {
+    let toml_write_back = |reason: String| {
         DeployError::TomlWriteBack {
             path: config_path.display().to_string(),
-            reason: e.to_string(),
+            reason,
         }
-    })?;
+    };
+    let contents =
+        std::fs::read_to_string(config_path).map_err(|e| toml_write_back(e.to_string()))?;
     let updated = upsert_project_id(&contents, project_id);
-    std::fs::write(config_path, updated).map_err(|e| {
-        DeployError::TomlWriteBack {
-            path: config_path.display().to_string(),
-            reason: e.to_string(),
-        }
+    let parent = config_path.parent().unwrap_or(Path::new("."));
+    let temp = parent.join(format!(".credible.toml.{}.tmp", std::process::id()));
+    std::fs::write(&temp, &updated).map_err(|e| toml_write_back(e.to_string()))?;
+    std::fs::rename(&temp, config_path).map_err(|e| {
+        let _ = std::fs::remove_file(&temp);
+        toml_write_back(e.to_string())
     })
 }
 
@@ -477,6 +502,10 @@ impl DeployArgs {
                 .or_else(|| credible.project_name.clone())
                 .ok_or(DeployError::MissingProjectInfo)?;
             let chain_id = self.chain_id.ok_or(DeployError::MissingProjectInfo)?;
+            // The created project's id must be persisted right after the
+            // POST; verify that write can succeed while nothing has been
+            // mutated yet.
+            preflight_project_id_write(&config_path)?;
             self.confirm_step(
                 human,
                 &format!("Create project {name:?} on chain {chain_id} on the platform?"),
@@ -505,7 +534,19 @@ impl DeployArgs {
                     endpoint: "/projects",
                     reason: "missing project id in create response".to_string(),
                 })?;
-            write_project_id(&config_path, project_id)?;
+            // The remote project now exists; a failure here must carry its id
+            // and a resume path so the next run adopts it instead of creating
+            // a duplicate.
+            write_project_id(&config_path, project_id).map_err(|error| {
+                DeployError::TomlWriteBackAfterCreate {
+                    path: config_path.display().to_string(),
+                    project_id,
+                    reason: match error {
+                        DeployError::TomlWriteBack { reason, .. } => reason,
+                        other => other.to_string(),
+                    },
+                }
+            })?;
             credible.project_id = Some(project_id);
             progress(
                 human,
@@ -1078,6 +1119,69 @@ mod tests {
             &json!({ "configSnapshot": null }),
             &payload(contracts("0x6080", vec![]))
         ));
+    }
+
+    #[test]
+    fn preflight_rejects_missing_or_readonly_credible_toml() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Missing file fails before any remote mutation.
+        let missing = dir.path().join("credible.toml");
+        assert!(matches!(
+            preflight_project_id_write(&missing),
+            Err(DeployError::TomlWriteBack { .. })
+        ));
+
+        // A read-only file fails the writability probe without being changed.
+        std::fs::write(&missing, "environment = \"staging\"\n").unwrap();
+        let mut permissions = std::fs::metadata(&missing).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&missing, permissions.clone()).unwrap();
+        assert!(matches!(
+            preflight_project_id_write(&missing),
+            Err(DeployError::TomlWriteBack { .. })
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&missing).unwrap(),
+            "environment = \"staging\"\n"
+        );
+
+        // Restore writability: preflight passes and still changes nothing.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&missing, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        #[cfg(not(unix))]
+        {
+            permissions.set_readonly(false);
+            std::fs::set_permissions(&missing, permissions).unwrap();
+        }
+        preflight_project_id_write(&missing).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&missing).unwrap(),
+            "environment = \"staging\"\n"
+        );
+    }
+
+    #[test]
+    fn write_project_id_replaces_the_file_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credible.toml");
+        std::fs::write(&path, "environment = \"staging\"\n").unwrap();
+
+        let id = Uuid::nil();
+        write_project_id(&path, id).unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(contents.starts_with(&format!("project_id = \"{id}\"")));
+        // No temp file is left behind.
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty());
     }
 
     #[test]

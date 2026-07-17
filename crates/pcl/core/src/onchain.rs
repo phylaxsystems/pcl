@@ -33,12 +33,26 @@ sol! {
     function batch(bytes[] calldata data) external;
 }
 
-/// Default confirmations to wait for when neither the flag nor the per-chain
-/// config specifies one. The dapp uses 1 for local chains, 3 for testnets and
-/// 12 for mainnets; pcl stays conservative-but-fast and lets users raise it.
-const DEFAULT_CONFIRMATIONS: u64 = 1;
+/// Minimum confirmations the platform verifier accepts before a deploy
+/// confirmation, mirroring the dapp's `getRequiredConfirmations` profile:
+/// 1 for local devnets, 3 for known testnets, and 12 for mainnets. Chains
+/// not listed here get the mainnet value — conservative rather than below
+/// the platform gate.
+pub fn required_confirmations(chain_id: u64) -> u64 {
+    match chain_id {
+        // Local devnets (anvil/hardhat).
+        1337 | 31337 => 1,
+        // Sepolia, Base Sepolia, Linea Sepolia, Arbitrum Sepolia, OP Sepolia.
+        11_155_111 | 84532 | 59141 | 421_614 | 11_155_420 => 3,
+        _ => 12,
+    }
+}
 
 /// Errors that can occur while broadcasting transactions.
+///
+/// RPC endpoints in these messages are redacted to their scheme/host/port
+/// origin: stored provider URLs commonly embed API keys, and error envelopes
+/// end up in logs and transcripts.
 #[derive(Error, Debug)]
 pub enum OnchainError {
     #[error(
@@ -46,30 +60,42 @@ pub enum OnchainError {
     )]
     RpcUrlMissing { chain_id: u64 },
 
-    #[error("Invalid RPC URL {url:?} configured for chain {chain_id}: {reason}")]
+    #[error("Invalid RPC URL ({redacted_url}) configured for chain {chain_id}: {reason}")]
     InvalidRpcUrl {
         chain_id: u64,
-        url: String,
+        redacted_url: String,
         reason: String,
     },
 
     #[error(
-        "RPC endpoint {url} serves chain {actual}, but this transaction targets chain {expected}. Refusing to broadcast."
+        "{requested} confirmation(s) is below the {required} the platform requires on chain {chain_id}; a deploy confirmation would be rejected with INSUFFICIENT_CONFIRMATIONS. Raise --confirmations (or the stored per-chain value) to at least {required}."
+    )]
+    InsufficientConfirmations {
+        chain_id: u64,
+        requested: u64,
+        required: u64,
+    },
+
+    #[error(
+        "RPC endpoint {redacted_url} serves chain {actual}, but this transaction targets chain {expected}. Refusing to broadcast."
     )]
     ChainIdMismatch {
-        url: Url,
+        redacted_url: String,
         expected: u64,
         actual: u64,
     },
 
-    #[error("RPC transport error: {0}")]
-    Transport(#[source] alloy_provider::transport::TransportError),
+    #[error("RPC transport error communicating with {redacted_url}: {message}")]
+    Transport {
+        redacted_url: String,
+        message: String,
+    },
 
-    #[error("Failed to send transaction: {0}")]
-    Send(
-        #[source]
-        alloy_provider::transport::RpcError<alloy_provider::transport::TransportErrorKind>,
-    ),
+    #[error("Failed to send transaction via {redacted_url}: {message}")]
+    Send {
+        redacted_url: String,
+        message: String,
+    },
 
     #[error("Transaction {tx_hash} was not confirmed: {source}")]
     Confirmation {
@@ -89,7 +115,7 @@ pub struct TxArgs {
     #[arg(long, env = "PCL_RPC_URL")]
     pub rpc_url: Option<Url>,
 
-    /// Confirmations to wait for after broadcasting (default: per-chain config, else 1)
+    /// Confirmations to wait for after broadcasting (default: what the platform requires for the chain; lower values are rejected)
     #[arg(long)]
     pub confirmations: Option<u64>,
 
@@ -111,18 +137,36 @@ impl TxArgs {
         endpoint.url.parse().map_err(|e: url::ParseError| {
             OnchainError::InvalidRpcUrl {
                 chain_id,
-                url: endpoint.url.clone(),
+                redacted_url: crate::config::redacted_rpc_host(&endpoint.url),
                 reason: e.to_string(),
             }
         })
     }
 
     /// Resolves how many confirmations to wait for: flag first, then the
-    /// per-chain config, then `DEFAULT_CONFIRMATIONS`.
-    pub fn resolve_confirmations(&self, config: &CliConfig, chain_id: u64) -> u64 {
-        self.confirmations
-            .or_else(|| config.rpc_endpoint(chain_id).and_then(|e| e.confirmations))
-            .unwrap_or(DEFAULT_CONFIRMATIONS)
+    /// per-chain config, then the platform requirement for the chain. A flag
+    /// or stored value below [`required_confirmations`] is rejected up front —
+    /// the platform verifier would refuse the receipt after gas was spent.
+    pub fn resolve_confirmations(
+        &self,
+        config: &CliConfig,
+        chain_id: u64,
+    ) -> Result<u64, OnchainError> {
+        let required = required_confirmations(chain_id);
+        let requested = self
+            .confirmations
+            .or_else(|| config.rpc_endpoint(chain_id).and_then(|e| e.confirmations));
+        match requested {
+            Some(requested) if requested < required => {
+                Err(OnchainError::InsufficientConfirmations {
+                    chain_id,
+                    requested,
+                    required,
+                })
+            }
+            Some(requested) => Ok(requested),
+            None => Ok(required),
+        }
     }
 
     /// Transaction confirmation timeout.
@@ -148,10 +192,20 @@ pub struct TxOutcome {
     pub confirmations_waited: u64,
 }
 
+/// Scrubs a provider/transport error display before it reaches an error
+/// envelope: any occurrence of the RPC URL (which may embed API keys in
+/// userinfo, path, or query) is replaced with its redacted origin.
+fn scrub_rpc_error(text: &str, rpc: &Url) -> String {
+    let redacted = crate::config::redacted_rpc_host(rpc.as_str());
+    text.replace(rpc.as_str().trim_end_matches('/'), &redacted)
+        .replace(rpc.as_str(), &redacted)
+}
+
 /// A connected, chain-checked transaction sender.
 pub struct TxSender {
     provider: DynProvider,
     chain_id: u64,
+    rpc: Url,
 }
 
 impl TxSender {
@@ -165,13 +219,15 @@ impl TxSender {
         let provider = ProviderBuilder::new()
             .wallet(EthereumWallet::from(signer))
             .connect_http(rpc.clone());
-        let actual = provider
-            .get_chain_id()
-            .await
-            .map_err(OnchainError::Transport)?;
+        let actual = provider.get_chain_id().await.map_err(|error| {
+            OnchainError::Transport {
+                redacted_url: crate::config::redacted_rpc_host(rpc.as_str()),
+                message: scrub_rpc_error(&error.to_string(), &rpc),
+            }
+        })?;
         if actual != expected_chain_id {
             return Err(OnchainError::ChainIdMismatch {
-                url: rpc,
+                redacted_url: crate::config::redacted_rpc_host(rpc.as_str()),
                 expected: expected_chain_id,
                 actual,
             });
@@ -179,6 +235,7 @@ impl TxSender {
         Ok(Self {
             provider: provider.erased(),
             chain_id: expected_chain_id,
+            rpc,
         })
     }
 
@@ -203,7 +260,12 @@ impl TxSender {
             .provider
             .send_transaction(request)
             .await
-            .map_err(OnchainError::Send)?;
+            .map_err(|error| {
+                OnchainError::Send {
+                    redacted_url: crate::config::redacted_rpc_host(self.rpc.as_str()),
+                    message: scrub_rpc_error(&error.to_string(), &self.rpc),
+                }
+            })?;
         let tx_hash = *pending.tx_hash();
 
         let receipt = pending
@@ -313,34 +375,101 @@ mod tests {
     }
 
     #[test]
-    fn resolve_rpc_reports_invalid_stored_url() {
-        let config = config_with_rpc(1, "not a url", None);
+    fn resolve_rpc_reports_invalid_stored_url_without_leaking_it() {
+        let config = config_with_rpc(1, "not a url with secret_key_123", None);
         let err = TxArgs::default().resolve_rpc(&config, 1).unwrap_err();
         assert!(matches!(err, OnchainError::InvalidRpcUrl { .. }));
+        assert!(!err.to_string().contains("secret_key_123"));
     }
 
     #[test]
-    fn resolve_confirmations_precedence() {
-        let config = config_with_rpc(1, "https://x.example", Some(5));
+    fn resolve_confirmations_precedence_and_platform_floor() {
+        // Chain 1 (mainnet) requires 12.
+        let config = config_with_rpc(1, "https://x.example", Some(15));
 
-        // flag wins
+        // A flag at or above the requirement wins.
         let flag = TxArgs {
-            confirmations: Some(9),
+            confirmations: Some(20),
             ..Default::default()
         };
-        assert_eq!(flag.resolve_confirmations(&config, 1), 9);
+        assert_eq!(flag.resolve_confirmations(&config, 1).unwrap(), 20);
 
-        // then config
-        assert_eq!(TxArgs::default().resolve_confirmations(&config, 1), 5);
-
-        // then default
+        // Then the stored per-chain value.
         assert_eq!(
-            TxArgs::default().resolve_confirmations(&CliConfig::default(), 1),
-            DEFAULT_CONFIRMATIONS
+            TxArgs::default().resolve_confirmations(&config, 1).unwrap(),
+            15
         );
 
-        // config entry without confirmations also falls back to default
-        let bare = config_with_rpc(2, "https://y.example", None);
-        assert_eq!(TxArgs::default().resolve_confirmations(&bare, 2), 1);
+        // Then the platform requirement itself.
+        assert_eq!(
+            TxArgs::default()
+                .resolve_confirmations(&CliConfig::default(), 1)
+                .unwrap(),
+            12
+        );
+
+        // Values below the platform requirement are rejected up front,
+        // whether they come from the flag or the stored config.
+        let low_flag = TxArgs {
+            confirmations: Some(1),
+            ..Default::default()
+        };
+        assert!(matches!(
+            low_flag.resolve_confirmations(&config, 1),
+            Err(OnchainError::InsufficientConfirmations {
+                chain_id: 1,
+                requested: 1,
+                required: 12,
+            })
+        ));
+        let low_config = config_with_rpc(1, "https://x.example", Some(3));
+        assert!(matches!(
+            TxArgs::default().resolve_confirmations(&low_config, 1),
+            Err(OnchainError::InsufficientConfirmations { .. })
+        ));
+
+        // Local devnets and testnets have lower floors.
+        assert_eq!(
+            TxArgs::default()
+                .resolve_confirmations(&CliConfig::default(), 31337)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            TxArgs::default()
+                .resolve_confirmations(&CliConfig::default(), 84532)
+                .unwrap(),
+            3
+        );
+        // Unknown chains get the conservative mainnet floor.
+        assert_eq!(
+            TxArgs::default()
+                .resolve_confirmations(&CliConfig::default(), 999_999)
+                .unwrap(),
+            12
+        );
+    }
+
+    #[test]
+    fn rpc_errors_never_contain_the_stored_url_secrets() {
+        let rpc: Url = "https://user:hunter2@rpc.example.com/v2/apikey123?token=sekrit"
+            .parse()
+            .unwrap();
+
+        let scrubbed = scrub_rpc_error(&format!("connection refused connecting to {rpc}"), &rpc);
+        assert!(!scrubbed.contains("hunter2"));
+        assert!(!scrubbed.contains("apikey123"));
+        assert!(!scrubbed.contains("sekrit"));
+        assert!(scrubbed.contains("https://rpc.example.com"));
+
+        let mismatch = OnchainError::ChainIdMismatch {
+            redacted_url: crate::config::redacted_rpc_host(rpc.as_str()),
+            expected: 1,
+            actual: 2,
+        };
+        let rendered = mismatch.to_string();
+        assert!(!rendered.contains("hunter2"));
+        assert!(!rendered.contains("apikey123"));
+        assert!(rendered.contains("https://rpc.example.com"));
     }
 }

@@ -1151,6 +1151,43 @@ async fn public_workflows_do_not_attach_expired_stored_tokens() {
     mock.assert_async().await;
 }
 
+#[test]
+fn confirm_after_tx_envelope_preserves_chain_and_api_provenance() {
+    let tx_hash = alloy_primitives::B256::repeat_byte(0xab);
+    let error = ApiCommandError::ConfirmAfterTx {
+        tx_hash,
+        source: Box::new(ApiCommandError::HttpStatus {
+            method: "POST",
+            path: "/projects/x/releases/y/deploy".to_string(),
+            status: 502,
+            request_id: Some("req-42".to_string()),
+            body: Box::new(serde_json::json!({ "error": "bad gateway" })),
+        }),
+    };
+
+    let envelope = error.json_envelope();
+
+    assert_eq!(envelope["error"]["code"], "broadcast.confirm_failed");
+    // The landed transaction survives structurally, not only in prose.
+    assert_eq!(
+        envelope["error"]["tx_hash"],
+        serde_json::json!(tx_hash),
+        "{envelope}"
+    );
+    assert_eq!(envelope["tx_hash"], serde_json::json!(tx_hash));
+    // The nested API provenance survives too.
+    assert_eq!(envelope["error"]["request_id"], "req-42");
+    let source = &envelope["error"]["source"];
+    assert_eq!(source["error"]["http"]["status"], 502);
+    assert_eq!(
+        source["error"]["http"]["path"],
+        "/projects/x/releases/y/deploy"
+    );
+    assert_eq!(source["error"]["request_id"], "req-42");
+    assert_eq!(envelope["error"]["mutation"]["onchain_landed"], true);
+    assert_eq!(envelope["error"]["mutation"]["platform_confirmed"], false);
+}
+
 #[tokio::test]
 async fn authenticated_workflow_refuses_a_foreign_platform_with_a_valid_token() {
     let mut server = mockito::Server::new_async().await;

@@ -484,6 +484,29 @@ impl ApiCommandError {
             );
         }
 
+        // A landed transaction whose follow-up API confirmation failed needs
+        // both chain and API provenance: the structured tx hash plus the
+        // nested source's full envelope (HTTP status/path/body, request id).
+        if let Self::ConfirmAfterTx { tx_hash, source } = self {
+            error.insert("tx_hash".to_string(), json!(tx_hash));
+            if let Self::HttpStatus {
+                request_id: Some(request_id),
+                ..
+            } = source.as_ref()
+            {
+                error.insert("request_id".to_string(), json!(request_id));
+            }
+            error.insert(
+                "mutation".to_string(),
+                json!({
+                    "side_effecting": true,
+                    "onchain_landed": true,
+                    "platform_confirmed": false,
+                }),
+            );
+            error.insert("source".to_string(), source.json_envelope());
+        }
+
         let mut envelope = json!({
             "status": "error",
             "error": error,
@@ -508,6 +531,12 @@ impl ApiCommandError {
                 "outcome_ambiguous".to_string(),
                 json!(mutation_outcome_ambiguous(method, *status)),
             );
+        }
+
+        if let Self::ConfirmAfterTx { tx_hash, .. } = self
+            && let Some(object) = envelope.as_object_mut()
+        {
+            object.insert("tx_hash".to_string(), json!(tx_hash));
         }
 
         with_envelope_metadata(envelope)
