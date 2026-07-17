@@ -29,6 +29,9 @@ pub enum ApplyError {
     #[error("Failed to refresh stored auth before applying release changes: {0}")]
     AuthRefresh(#[source] AuthError),
 
+    #[error(transparent)]
+    PlatformMismatch(AuthError),
+
     #[error("{message}: {source}")]
     Io {
         message: String,
@@ -224,6 +227,16 @@ pub enum AuthError {
     /// Error when another local process is holding the refresh lock too long.
     #[error("Timed out waiting for another PCL process to finish refreshing auth.")]
     RefreshLockTimeout,
+
+    /// Error when a command would send stored credentials to a platform
+    /// that did not issue them.
+    #[error(
+        "Stored credentials belong to {credential_platform}, but this command targets {requested}. Run `pcl auth login --auth-url {requested}` to log into that platform, or pass --allow-unauthenticated where supported."
+    )]
+    PlatformMismatch {
+        credential_platform: String,
+        requested: String,
+    },
 
     /// Error when the session has expired server-side
     #[error("Session expired. Please run `pcl auth login` to start a new session.")]

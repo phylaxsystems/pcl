@@ -22,6 +22,9 @@ pub enum ApiCommandError {
     #[error("Failed to refresh stored auth before retrying the API request: {0}")]
     AuthRefresh(#[source] AuthError),
 
+    #[error(transparent)]
+    PlatformMismatch(AuthError),
+
     #[error("Invalid {kind} `{input}`. Expected KEY=VALUE.")]
     InvalidKeyValue { kind: &'static str, input: String },
 
@@ -106,6 +109,7 @@ impl ApiCommandError {
             Self::NoAuthToken => "auth.no_token",
             Self::ExpiredAuthToken(_) => "auth.expired_token",
             Self::AuthRefresh(_) => "auth.refresh_failed",
+            Self::PlatformMismatch(_) => "auth.platform_mismatch",
             Self::InvalidKeyValue { .. } => "input.invalid_key_value",
             Self::InvalidHeaderName { .. } => "input.invalid_header_name",
             Self::InvalidHeaderValue { .. } => "input.invalid_header_value",
@@ -156,6 +160,13 @@ impl ApiCommandError {
                 vec![
                     "pcl auth refresh --json".to_string(),
                     "pcl auth login".to_string(),
+                    "pcl api list --allow-unauthenticated --json".to_string(),
+                ]
+            }
+            Self::PlatformMismatch(_) => {
+                vec![
+                    "pcl auth login --auth-url <platform-url>".to_string(),
+                    "pcl auth status --json".to_string(),
                     "pcl api list --allow-unauthenticated --json".to_string(),
                 ]
             }
@@ -315,6 +326,7 @@ impl ApiCommandError {
             Self::NoAuthToken | Self::ExpiredAuthToken(_) | Self::AuthRefresh(_) => {
                 vec!["refresh_or_login", "retry"]
             }
+            Self::PlatformMismatch(_) => vec!["refresh_or_login"],
             Self::InvalidKeyValue { .. }
             | Self::InvalidHeaderName { .. }
             | Self::InvalidHeaderValue { .. }

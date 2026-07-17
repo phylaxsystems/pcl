@@ -295,6 +295,16 @@ fn apply_error_envelope(err: &ApplyError) -> Value {
                 &["pcl auth refresh --json", "pcl auth login --force"],
             )
         }
+        ApplyError::PlatformMismatch(_) => {
+            (
+                "auth.platform_mismatch",
+                err.to_string(),
+                &[
+                    "pcl auth login --auth-url <platform-url>",
+                    "pcl auth status --json",
+                ],
+            )
+        }
         ApplyError::InvalidConfig(message) if message.contains("credible.toml not found") => {
             (
                 "config.credible_toml_not_found",
@@ -383,6 +393,16 @@ fn download_error_envelope(err: &DownloadError) -> Value {
                 "auth.refresh_failed",
                 err.to_string(),
                 &["pcl auth refresh --json", "pcl auth login --force"],
+            )
+        }
+        DownloadError::PlatformMismatch(_) => {
+            (
+                "auth.platform_mismatch",
+                err.to_string(),
+                &[
+                    "pcl auth login --auth-url <platform-url>",
+                    "pcl auth status --json",
+                ],
             )
         }
         DownloadError::MissingIdentifier => {
@@ -598,6 +618,20 @@ fn auth_error_envelope(err: &AuthError) -> Value {
                 true,
                 &["pcl auth login"],
             ))
+        }
+        AuthError::PlatformMismatch { requested, .. } => {
+            with_envelope_metadata(json!({
+                "status": "error",
+                "error": {
+                    "code": "auth.platform_mismatch",
+                    "message": err.to_string(),
+                    "recoverable": true,
+                },
+                "next_actions": [
+                    format!("pcl auth login --auth-url {requested}"),
+                    "pcl auth status --json".to_string(),
+                ],
+            }))
         }
         AuthError::AuthRequestFailed(_)
         | AuthError::StatusRequestFailed(_)

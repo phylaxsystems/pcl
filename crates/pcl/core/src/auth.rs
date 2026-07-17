@@ -1094,6 +1094,20 @@ fn platform_switch(resolved: &url::Url, config: &CliConfig) -> bool {
     resolved.as_str().trim_end_matches('/') != credential_platform(config).trim_end_matches('/')
 }
 
+/// Guard for any code about to attach stored credentials to — or refresh
+/// them against — `target`: errors when the credentials were issued by a
+/// different platform. Without stored credentials there is nothing to
+/// protect, so the check passes.
+pub fn ensure_credential_platform(config: &CliConfig, target: &url::Url) -> Result<(), AuthError> {
+    if !platform_switch(target, config) {
+        return Ok(());
+    }
+    Err(AuthError::PlatformMismatch {
+        credential_platform: credential_platform(config).to_string(),
+        requested: target.as_str().trim_end_matches('/').to_string(),
+    })
+}
+
 pub async fn refresh_stored_auth(
     config: &mut CliConfig,
     auth_url: &url::Url,

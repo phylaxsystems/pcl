@@ -655,6 +655,7 @@ fn client_error_to_apply(error: ClientBuildError) -> ApplyError {
         ClientBuildError::NoAuthToken => ApplyError::NoAuthToken,
         ClientBuildError::ExpiredAuthToken(expires_at) => ApplyError::ExpiredAuthToken(expires_at),
         ClientBuildError::AuthRefresh(error) => ApplyError::AuthRefresh(error),
+        ClientBuildError::PlatformMismatch(error) => ApplyError::PlatformMismatch(error),
         ClientBuildError::InvalidConfig(message) => ApplyError::InvalidConfig(message),
     }
 }

@@ -17,6 +17,27 @@ email = "agent@example.com"
     .expect("write test config");
 }
 
+/// Like [`write_valid_auth_config`], but records the platform that issued the
+/// credentials so authenticated requests to that URL pass the
+/// platform-boundary check.
+fn write_valid_auth_config_for_platform(config_dir: &std::path::Path, platform_url: &str) {
+    fs::write(
+        config_dir.join("config.toml"),
+        format!(
+            r#"platform_url = "{}"
+
+[auth]
+access_token = "test-token"
+refresh_token = "refresh-token"
+expires_at = 4102444800
+email = "agent@example.com"
+"#,
+            platform_url.trim_end_matches('/')
+        ),
+    )
+    .expect("write test config");
+}
+
 fn run_pcl(config_dir: &std::path::Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_pcl"))
         .arg("--config-dir")
@@ -265,8 +286,8 @@ fn workflow_body_template_json_flag_emits_json_envelope() {
 #[test]
 fn workflow_mutating_server_error_preserves_request_provenance() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
-    write_valid_auth_config(temp_dir.path());
     let mut server = mockito::Server::new();
+    write_valid_auth_config_for_platform(temp_dir.path(), &server.url());
     let create = server
         .mock("POST", "/api/v1/projects")
         .match_header("authorization", "Bearer test-token")

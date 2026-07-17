@@ -81,6 +81,9 @@ pub enum DownloadError {
     #[error("Failed to refresh stored auth before downloading assertions: {0}")]
     AuthRefresh(#[source] AuthError),
 
+    #[error(transparent)]
+    PlatformMismatch(AuthError),
+
     #[error("--project-id is required")]
     MissingIdentifier,
 
@@ -493,6 +496,7 @@ fn client_error_to_download(error: ClientBuildError) -> DownloadError {
             DownloadError::ExpiredAuthToken(expires_at)
         }
         ClientBuildError::AuthRefresh(error) => DownloadError::AuthRefresh(error),
+        ClientBuildError::PlatformMismatch(error) => DownloadError::PlatformMismatch(error),
         ClientBuildError::InvalidConfig(message) => DownloadError::InvalidConfig(message),
     }
 }
