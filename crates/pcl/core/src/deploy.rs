@@ -11,7 +11,6 @@
 //! failure resumes instead of duplicating work.
 
 use crate::{
-    DEFAULT_PLATFORM_URL,
     api::{
         ApiArgs,
         BroadcastArgs,
@@ -99,8 +98,8 @@ pub struct DeployArgs {
         long = "api-url",
         env = "PCL_API_URL",
         value_hint = ValueHint::Url,
-        default_value = DEFAULT_PLATFORM_URL,
-        help = "Base URL for the platform API"
+        default_value = crate::config::default_platform_url(),
+        help = "Base URL for the platform API. Defaults to the URL remembered from the last login, then production"
     )]
     pub api_url: Url,
 

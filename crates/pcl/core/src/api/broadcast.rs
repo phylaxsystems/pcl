@@ -171,6 +171,26 @@ fn confirm_send(
     Ok(())
 }
 
+/// Interactive guard before a mutating platform call that involves no
+/// transaction (noop deploy confirmation, direct manager transfer). Machine
+/// mode treats `--broadcast` itself as consent; human mode prompts unless
+/// `--yes`.
+fn confirm_mutation(cli_args: &CliArgs, yes: bool, summary: &str) -> Result<(), ApiCommandError> {
+    if !cli_args.human_output() || yes {
+        return Ok(());
+    }
+    eprintln!("{}", "About to confirm a platform mutation".bold());
+    eprintln!("  action: {summary}");
+    let confirmed = inquire::Confirm::new("Proceed?")
+        .with_default(false)
+        .prompt()
+        .map_err(|_| ApiCommandError::BroadcastCancelled)?;
+    if !confirmed {
+        return Err(ApiCommandError::BroadcastCancelled);
+    }
+    Ok(())
+}
+
 fn progress(cli_args: &CliArgs, message: &str) {
     if cli_args.human_output() {
         eprintln!("{} {message}", "→".cyan());
@@ -377,6 +397,13 @@ impl ApiArgs {
         ];
 
         if calldata.is_noop {
+            confirm_mutation(
+                cli_args,
+                args.broadcast.yes,
+                &format!(
+                    "confirm noop deploy of release {release_id} (no on-chain changes, marks the release deployed)"
+                ),
+            )?;
             progress(
                 cli_args,
                 "No on-chain changes needed; confirming noop deploy",
@@ -474,14 +501,22 @@ impl ApiArgs {
         let calldata: ReleaseRemoveCalldataResponse =
             parse_response("remove-calldata", &calldata_result.body)?;
 
-        // The remove-calldata response carries no chain id; the project does.
-        let chain_id = match args.chain_id {
-            Some(chain_id) => chain_id,
-            None => {
-                self.project_chain_id(config, cli_args, project, request_log_path)
-                    .await?
-            }
-        };
+        // The remove-calldata response carries no chain id and its `{to,
+        // data}` would look valid on any network, so the project record is
+        // authoritative. An explicit --chain-id may only confirm it, never
+        // rebind the broadcast to another chain.
+        let chain_id = self
+            .project_chain_id(config, cli_args, project, request_log_path)
+            .await?;
+        if let Some(explicit) = args.chain_id
+            && explicit != chain_id
+        {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "--chain-id {explicit} does not match the project's chain {chain_id}; omit --chain-id to broadcast the removal"
+                ),
+            });
+        }
 
         confirm_send(
             cli_args,
@@ -685,6 +720,11 @@ impl ApiArgs {
 
         if calldata.mode == "direct" {
             // Nothing on-chain to move; confirm directly.
+            confirm_mutation(
+                cli_args,
+                args.broadcast.yes,
+                &format!("transfer the protocol manager to {new_manager} (no transaction needed)"),
+            )?;
             progress(cli_args, "No on-chain transfer needed; confirming directly");
             let confirm_request = post_operation(
                 "post_projects_project_id_protocol_manager_confirm_transfer",
@@ -731,22 +771,15 @@ impl ApiArgs {
         progress(cli_args, "Broadcasting manager transfer transaction");
         let outcome = send_tx(config, &args.broadcast.tx, signer, chain_id, to, data).await?;
 
-        progress(cli_args, "Confirming transfer with the platform");
-        let confirm_request = post_operation(
-            "post_projects_project_id_protocol_manager_confirm_transfer",
-            project,
-            None,
-            &json!({
-                "mode": "onchain",
-                "tx_hash": outcome.tx_hash,
-                "chain_id": chain_id,
-                "new_manager_address": new_manager,
-            }),
-        )?;
-        let confirm = self
-            .call_workflow_result(config, cli_args, &confirm_request, request_log_path)
-            .await
-            .map_err(|e| confirm_after_tx(&outcome, e))?;
+        // The on-chain transfer is a two-transaction flow: this initiation tx
+        // only marks the transfer pending. The `ManagerTransferred` logs the
+        // platform verifier requires are emitted by the new manager's
+        // acceptance tx, so the confirm-transfer POST happens on the
+        // acceptance path, not here.
+        progress(
+            cli_args,
+            "Transfer initiated; the new manager must accept it to complete the handover",
+        );
 
         Ok(broadcast_envelope(
             "protocol_manager_transfer_broadcast",
@@ -754,9 +787,14 @@ impl ApiArgs {
                 "mode": "onchain",
                 "calldata": calldata_result.body,
                 "tx": tx_value(&outcome),
-                "confirm": confirm.body,
+                "pending_acceptance": true,
             }),
-            next_actions,
+            vec![
+                format!("pcl protocol-manager --project {project} --pending-transfer"),
+                format!(
+                    "pcl protocol-manager --project {project} --accept-calldata --broadcast (with the new manager's wallet)"
+                ),
+            ],
         ))
     }
 
@@ -793,6 +831,7 @@ impl ApiArgs {
         )?;
 
         progress(cli_args, "Broadcasting manager acceptance transaction");
+        let signer_address = signer.address();
         let outcome = send_tx(
             config,
             &args.broadcast.tx,
@@ -803,15 +842,34 @@ impl ApiArgs {
         )
         .await?;
 
+        // The acceptance tx emits the `ManagerTransferred` logs the platform
+        // verifier requires, so this — not the initiation tx — is the receipt
+        // to confirm with, and the accepting signer is the new manager.
+        progress(cli_args, "Confirming transfer with the platform");
+        let confirm_request = post_operation(
+            "post_projects_project_id_protocol_manager_confirm_transfer",
+            project,
+            None,
+            &json!({
+                "mode": "onchain",
+                "tx_hash": outcome.tx_hash,
+                "chain_id": calldata.chain_id,
+                "new_manager_address": signer_address,
+            }),
+        )?;
+        let confirm = self
+            .call_workflow_result(config, cli_args, &confirm_request, request_log_path)
+            .await
+            .map_err(|e| confirm_after_tx(&outcome, e))?;
+
         Ok(broadcast_envelope(
             "protocol_manager_accept_broadcast",
             json!({
                 "calldata": calldata_result.body,
                 "tx": tx_value(&outcome),
+                "confirm": confirm.body,
             }),
-            vec![format!(
-                "pcl protocol-manager --project {project} --pending-transfer"
-            )],
+            vec![format!("pcl protocol-manager --project {project}")],
         ))
     }
 }

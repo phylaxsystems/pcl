@@ -47,7 +47,7 @@ pcl config set-rpc <chain-id> <rpc-url> [--confirmations N]
 
 pcl deploy --dry-run
 pcl deploy --private-key $PCL_PRIVATE_KEY            # or --account <foundry-keystore>
-pcl deploy --project-name my-protocol --chain-id <id> --private-key ... --yes --toon
+pcl deploy --project-name my-protocol --chain-id <id> --private-key ... --yes --json
 ```
 
 `pcl deploy` is resumable: every step observes current state first, so re-running after a

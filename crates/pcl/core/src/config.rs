@@ -162,12 +162,17 @@ impl ConfigArgs {
                         confirmations: *confirmations,
                     },
                 );
+                // Echo only non-secret metadata; the URL may embed an API key.
                 print_config_output(
                     &with_envelope_metadata(json!({
                         "status": "ok",
                         "data": {
                             "chain_id": chain_id,
-                            "rpc": config.rpc_endpoint(*chain_id),
+                            "rpc": {
+                                "configured": true,
+                                "host": redacted_rpc_host(url),
+                                "confirmations": confirmations,
+                            },
                         },
                         "next_actions": ["pcl config show"],
                     })),
@@ -573,7 +578,7 @@ fn config_show_envelope(config: &CliConfig, cli_args: &CliArgs) -> Value {
             "config_path": CliConfig::config_file_path(cli_args).display().to_string(),
             "platform_url": config.platform_url.as_deref(),
             "auth": config_auth_value(config),
-            "rpc": config.rpc,
+            "rpc": redacted_rpc_endpoints(config),
         },
         "next_actions": if config.auth.is_some() {
             json!(["pcl auth status", "pcl account", "pcl doctor"])
@@ -636,6 +641,38 @@ fn print_config_output(value: &Value, json_output: bool) -> Result<(), ConfigErr
     Ok(())
 }
 
+/// Non-secret view of the stored RPC endpoints for `pcl config show`.
+/// Provider URLs commonly carry API keys in userinfo, path, or query
+/// parameters, so only chain id, host, and confirmations are exposed; the
+/// full URL never leaves config storage.
+fn redacted_rpc_endpoints(config: &CliConfig) -> Value {
+    let mut endpoints = serde_json::Map::new();
+    for (chain_id, endpoint) in &config.rpc {
+        endpoints.insert(
+            chain_id.clone(),
+            json!({
+                "configured": true,
+                "host": redacted_rpc_host(&endpoint.url),
+                "confirmations": endpoint.confirmations,
+            }),
+        );
+    }
+    Value::Object(endpoints)
+}
+
+/// Scheme, host, and explicit port of an RPC URL; everything else (userinfo,
+/// path, query) may carry credentials and is dropped.
+fn redacted_rpc_host(url: &str) -> String {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return "<unparseable-url>".to_string();
+    };
+    let host = parsed.host_str().unwrap_or("<unknown-host>");
+    match parsed.port() {
+        Some(port) => format!("{}://{host}:{port}", parsed.scheme()),
+        None => format!("{}://{host}", parsed.scheme()),
+    }
+}
+
 impl fmt::Display for CliConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let config_path = Self::get_config_dir().join(CONFIG_FILE);
@@ -655,7 +692,12 @@ impl fmt::Display for CliConfig {
         if !self.rpc.is_empty() {
             writeln!(f, "RPC endpoints:")?;
             for (chain_id, endpoint) in &self.rpc {
-                write!(f, "  chain {chain_id}: {}", endpoint.url)?;
+                // Redacted: provider URLs commonly embed API keys.
+                write!(
+                    f,
+                    "  chain {chain_id}: {}",
+                    redacted_rpc_host(&endpoint.url)
+                )?;
                 match endpoint.confirmations {
                     Some(confirmations) => writeln!(f, " ({confirmations} confirmations)")?,
                     None => writeln!(f)?,
@@ -922,6 +964,49 @@ expires_at = 1672502400
     }
 
     #[test]
+    fn config_show_redacts_rpc_urls() {
+        let mut config = CliConfig::default();
+        config.rpc.insert(
+            "84532".to_string(),
+            RpcEndpoint {
+                url: "https://user:hunter2@rpc.example.com/v2/apikey123?token=sekrit".to_string(),
+                confirmations: Some(3),
+            },
+        );
+
+        let envelope = config_show_envelope(&config, &CliArgs::default());
+        let rendered = envelope.to_string();
+        assert!(!rendered.contains("hunter2"));
+        assert!(!rendered.contains("apikey123"));
+        assert!(!rendered.contains("sekrit"));
+        assert_eq!(
+            envelope["data"]["rpc"]["84532"]["host"],
+            "https://rpc.example.com"
+        );
+        assert_eq!(envelope["data"]["rpc"]["84532"]["configured"], true);
+        assert_eq!(envelope["data"]["rpc"]["84532"]["confirmations"], 3);
+
+        // The human formatter is redacted the same way.
+        let display = config.to_string();
+        assert!(display.contains("https://rpc.example.com"));
+        assert!(!display.contains("hunter2"));
+        assert!(!display.contains("apikey123"));
+    }
+
+    #[test]
+    fn redacted_rpc_host_keeps_scheme_host_and_port() {
+        assert_eq!(
+            redacted_rpc_host("http://127.0.0.1:8545"),
+            "http://127.0.0.1:8545"
+        );
+        assert_eq!(
+            redacted_rpc_host("https://mainnet.infura.io/v3/SECRET"),
+            "https://mainnet.infura.io"
+        );
+        assert_eq!(redacted_rpc_host("not a url"), "<unparseable-url>");
+    }
+
+    #[test]
     fn set_rpc_rejects_invalid_urls() {
         let mut config = CliConfig::default();
         let args = ConfigArgs {
@@ -1039,6 +1124,7 @@ expires_at = 1672502400
         let config = CliConfig {
             auth: None,
             platform_url: Some("https://custom.phylax.example".to_string()),
+            rpc: BTreeMap::default(),
         };
         config.write_to_file_at_dir(&config_dir).unwrap();
         let read_config = CliConfig::read_from_file_at_dir(&config_dir).unwrap();
