@@ -7,10 +7,7 @@
     clippy::unused_self
 )]
 
-use crate::{
-    DEFAULT_PLATFORM_URL,
-    config::CliConfig,
-};
+use crate::config::CliConfig;
 use clap::{
     ArgGroup,
     ValueEnum,
@@ -161,9 +158,9 @@ pub struct ApiArgs {
     #[arg(
         long = "api-url",
         env = "PCL_API_URL",
-        default_value = DEFAULT_PLATFORM_URL,
+        default_value = crate::config::default_platform_url(),
         global = true,
-        help = "Base URL for the platform API"
+        help = "Base URL for the platform API. Defaults to the URL remembered from the last login"
     )]
     api_url: url::Url,
 

@@ -82,6 +82,7 @@ fn auth_config(
             wallet_address: None,
             email: email.map(ToString::to_string),
         }),
+        platform_url: None,
     }
 }
 
@@ -989,6 +990,8 @@ async fn authenticated_project_slug_resolution_attaches_auth() {
         .await;
     let api = test_api(server.url(), false);
     let mut config = valid_auth_config("access-token", "refresh-token");
+    // The credentials were issued by the mock platform.
+    config.platform_url = Some(server.url());
     let request = test_workflow_request_for_operation(
         WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id")
             .path_param("project_id", "private-slug"),
@@ -1027,6 +1030,8 @@ async fn project_slug_resolution_errors_preserve_http_metadata() {
         .await;
     let api = test_api(server.url(), false);
     let mut config = valid_auth_config("access-token", "refresh-token");
+    // The credentials were issued by the mock platform.
+    config.platform_url = Some(server.url());
     let request = test_workflow_request_for_operation(
         WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id")
             .path_param("project_id", "missing-slug"),
@@ -1141,6 +1146,64 @@ async fn public_workflows_do_not_attach_expired_stored_tokens() {
 }
 
 #[tokio::test]
+async fn authenticated_workflow_refuses_a_foreign_platform_with_a_valid_token() {
+    let mut server = mockito::Server::new_async().await;
+    let any_request = server
+        .mock("GET", Matcher::Any)
+        .expect(0)
+        .create_async()
+        .await;
+    let api = test_api(server.url(), false);
+    // Valid production credentials (no remembered platform): nothing may be
+    // sent to the mock platform, token or otherwise.
+    let mut config = valid_auth_config("access-token", "refresh-token");
+
+    let error = api
+        .run_workflow(
+            &mut config,
+            &CliArgs::default(),
+            "search",
+            test_workflow_request(HttpMethod::Get, "get_health", true, Vec::<String>::new()),
+            test_request_log_path(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, ApiCommandError::PlatformMismatch(_)));
+    assert_eq!(error.code(), "auth.platform_mismatch");
+    any_request.assert_async().await;
+}
+
+#[tokio::test]
+async fn authenticated_workflow_refuses_to_refresh_against_a_foreign_platform() {
+    let mut server = mockito::Server::new_async().await;
+    let any_request = server
+        .mock("POST", Matcher::Any)
+        .expect(0)
+        .create_async()
+        .await;
+    let api = test_api(server.url(), false);
+    // An expiring token would normally trigger a refresh first; the stored
+    // refresh token must not be posted to a platform that did not issue it.
+    let mut config = expired_auth_config("expired-token", "refresh-token");
+
+    let error = api
+        .run_workflow(
+            &mut config,
+            &CliArgs::default(),
+            "search",
+            test_workflow_request(HttpMethod::Get, "get_health", true, Vec::<String>::new()),
+            test_request_log_path(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, ApiCommandError::PlatformMismatch(_)));
+    assert_eq!(config.auth.unwrap().refresh_token, "refresh-token");
+    any_request.assert_async().await;
+}
+
+#[tokio::test]
 async fn public_raw_calls_do_not_attach_expired_stored_tokens() {
     let mut server = mockito::Server::new_async().await;
     let mock = server
@@ -1220,6 +1283,8 @@ async fn authenticated_workflow_retries_once_after_refresh_on_401() {
         ..Default::default()
     };
     let mut config = valid_auth_config("old_access", "old_refresh");
+    // The credentials were issued by the mock platform.
+    config.platform_url = Some(server.url());
     config.write_to_file(&cli_args).unwrap();
     let request = test_workflow_request(
         HttpMethod::Get,
@@ -1274,6 +1339,8 @@ async fn raw_401_preserves_original_error_when_refresh_endpoint_is_missing() {
         ..Default::default()
     };
     let mut config = valid_auth_config("old_access", "old_refresh");
+    // The credentials were issued by the mock platform.
+    config.platform_url = Some(server.url());
     config.write_to_file(&cli_args).unwrap();
     let input = ApiRequestInput {
         method: HttpMethod::Get,
@@ -1342,6 +1409,8 @@ async fn incident_stats_401_propagates_original_http_error() {
         ..Default::default()
     };
     let mut config = valid_auth_config("old_access", "old_refresh");
+    // The credentials were issued by the mock platform.
+    config.platform_url = Some(server.url());
     config.write_to_file(&cli_args).unwrap();
     let args = IncidentsArgs {
         project_id: Some(project_id.to_string()),

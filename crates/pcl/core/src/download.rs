@@ -6,7 +6,6 @@
 //! output directory.
 
 use crate::{
-    DEFAULT_PLATFORM_URL,
     api::generated_operation_path,
     client::{
         ClientBuildError,
@@ -63,8 +62,8 @@ pub struct DownloadArgs {
         long = "api-url",
         env = "PCL_API_URL",
         value_hint = clap::ValueHint::Url,
-        default_value = DEFAULT_PLATFORM_URL,
-        help = "Base URL for the platform API"
+        default_value = crate::config::default_platform_url(),
+        help = "Base URL for the platform API. Defaults to the URL remembered from the last login"
     )]
     pub api_url: url::Url,
 }
@@ -81,6 +80,9 @@ pub enum DownloadError {
 
     #[error("Failed to refresh stored auth before downloading assertions: {0}")]
     AuthRefresh(#[source] AuthError),
+
+    #[error(transparent)]
+    PlatformMismatch(AuthError),
 
     #[error("--project-id is required")]
     MissingIdentifier,
@@ -494,6 +496,7 @@ fn client_error_to_download(error: ClientBuildError) -> DownloadError {
             DownloadError::ExpiredAuthToken(expires_at)
         }
         ClientBuildError::AuthRefresh(error) => DownloadError::AuthRefresh(error),
+        ClientBuildError::PlatformMismatch(error) => DownloadError::PlatformMismatch(error),
         ClientBuildError::InvalidConfig(message) => DownloadError::InvalidConfig(message),
     }
 }

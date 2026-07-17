@@ -1337,6 +1337,10 @@ impl ApiArgs {
         let Some(auth) = &config.auth else {
             return Err(ApiCommandError::NoAuthToken);
         };
+        // Never refresh against — or later authenticate to — a platform the
+        // stored credentials were not issued by.
+        crate::auth::ensure_credential_platform(config, &self.api_url)
+            .map_err(ApiCommandError::PlatformMismatch)?;
         let now = chrono::Utc::now();
         let seconds_remaining = (auth.expires_at - now).num_seconds();
         if auth.expires_at <= now || seconds_remaining <= crate::config::AUTH_EXPIRES_SOON_SECONDS {
@@ -1415,18 +1419,30 @@ impl ApiArgs {
         );
 
         if attach_auth && let Some(auth) = &config.auth {
-            if auth.expires_at <= chrono::Utc::now() {
-                return Err(ApiCommandError::ExpiredAuthToken(auth.expires_at));
-            }
-
-            let value = format!("Bearer {}", auth.access_token);
-            let value = HeaderValue::from_str(&value).map_err(|source| {
-                ApiCommandError::InvalidHeaderValue {
-                    name: "authorization".to_string(),
-                    source,
+            match crate::auth::ensure_credential_platform(config, &self.api_url) {
+                Err(error) if require_auth => {
+                    return Err(ApiCommandError::PlatformMismatch(error));
                 }
-            })?;
-            headers.insert(reqwest::header::AUTHORIZATION, value);
+                Err(_) => {
+                    // Opportunistic auth against a platform that did not
+                    // issue the stored token: send unauthenticated instead
+                    // of leaking the token.
+                }
+                Ok(()) => {
+                    if auth.expires_at <= chrono::Utc::now() {
+                        return Err(ApiCommandError::ExpiredAuthToken(auth.expires_at));
+                    }
+
+                    let value = format!("Bearer {}", auth.access_token);
+                    let value = HeaderValue::from_str(&value).map_err(|source| {
+                        ApiCommandError::InvalidHeaderValue {
+                            name: "authorization".to_string(),
+                            source,
+                        }
+                    })?;
+                    headers.insert(reqwest::header::AUTHORIZATION, value);
+                }
+            }
         } else if require_auth {
             return Err(ApiCommandError::NoAuthToken);
         }

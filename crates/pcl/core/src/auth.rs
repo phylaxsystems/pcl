@@ -108,7 +108,7 @@ pub struct AuthCommand {
         short = 'u',
         long = "auth-url",
         env = "PCL_AUTH_URL",
-        help = "Base URL for authentication service. Defaults to PCL_AUTH_URL, then PCL_API_URL, then the production app URL"
+        help = "Base URL for authentication service. Defaults to PCL_AUTH_URL, then PCL_API_URL, then the URL remembered from the last login, then the production app URL"
     )]
     pub auth_url: Option<url::Url>,
 }
@@ -233,9 +233,28 @@ impl AuthCommand {
         {
             return parsed;
         }
-        DEFAULT_PLATFORM_URL
+        crate::config::default_platform_url()
             .parse()
             .expect("default platform URL is valid")
+    }
+
+    /// Remembers a custom login URL in the config so later commands default to
+    /// it, or clears the remembered URL when logging in against production.
+    fn remember_platform_url(&self, config: &mut CliConfig) {
+        let auth_url = self.effective_auth_url();
+        config.platform_url = (auth_url.as_str().trim_end_matches('/') != DEFAULT_PLATFORM_URL)
+            .then(|| auth_url.as_str().trim_end_matches('/').to_string());
+    }
+
+    /// Returns true when the *resolved* auth URL (explicit flag, then
+    /// `PCL_AUTH_URL`/`PCL_API_URL`, then the remembered default) targets a
+    /// different platform than the one the stored credentials were issued by.
+    ///
+    /// This is the single platform-boundary check: a still-valid token must
+    /// not short-circuit login, be refreshed against, or be sent to (remote
+    /// logout) a platform it does not belong to.
+    fn switching_platform(&self, config: &CliConfig) -> bool {
+        platform_switch(&self.effective_auth_url(), config)
     }
 
     /// Execute the authentication command
@@ -298,8 +317,15 @@ impl AuthCommand {
         json_output: bool,
         force: bool,
     ) -> Result<(), AuthError> {
+        // Stored credentials belong to a different platform than the
+        // explicitly requested URL: neither the valid-token short-circuit nor
+        // a refresh attempt applies, only a fresh login challenge.
+        let switching_platform = self.switching_platform(config);
         let mut refresh_challenge_reason = None;
-        if !force && let Some(auth) = &config.auth {
+        if !force
+            && !switching_platform
+            && let Some(auth) = &config.auth
+        {
             let now = chrono::Utc::now();
             let seconds_remaining = (auth.expires_at - now).num_seconds();
             if auth.expires_at > now && seconds_remaining > AUTH_EXPIRES_SOON_SECONDS {
@@ -308,10 +334,11 @@ impl AuthCommand {
             }
         }
 
-        if config
-            .auth
-            .as_ref()
-            .is_some_and(|auth| !auth.refresh_token.trim().is_empty())
+        if !switching_platform
+            && config
+                .auth
+                .as_ref()
+                .is_some_and(|auth| !auth.refresh_token.trim().is_empty())
         {
             match refresh_stored_auth(config, &self.effective_auth_url(), cli_args, force).await {
                 Ok(outcome) => {
@@ -329,8 +356,11 @@ impl AuthCommand {
             }
         }
 
-        let reason =
-            refresh_challenge_reason.unwrap_or_else(|| auth_challenge_reason(config, force));
+        let reason = if switching_platform {
+            AuthChallengeReason::PlatformChanged
+        } else {
+            refresh_challenge_reason.unwrap_or_else(|| auth_challenge_reason(config, force))
+        };
         let auth_response = Self::request_auth_code(&self.api_client()).await?;
         Self::print_output(
             &self.login_challenge_envelope(&auth_response, reason, json_output),
@@ -345,6 +375,21 @@ impl AuthCommand {
         json_output: bool,
         force: bool,
     ) -> Result<(), AuthError> {
+        // The stored refresh token was issued by another platform: neither
+        // the still-valid short-circuit nor a refresh request against the
+        // resolved URL applies — only a fresh login challenge.
+        if self.switching_platform(config) {
+            let auth_response = Self::request_auth_code(&self.api_client()).await?;
+            return Self::print_output(
+                &self.login_challenge_envelope(
+                    &auth_response,
+                    AuthChallengeReason::PlatformChanged,
+                    json_output,
+                ),
+                json_output,
+            );
+        }
+
         if !force && let Some(auth) = &config.auth {
             let now = chrono::Utc::now();
             let seconds_remaining = (auth.expires_at - now).num_seconds();
@@ -400,6 +445,10 @@ impl AuthCommand {
         force: bool,
         no_wait: bool,
     ) -> Result<(), AuthError> {
+        // An explicit auth URL for a different platform always starts a fresh
+        // login: the stored token belongs to the old platform and must not
+        // short-circuit the switch.
+        let force = force || self.switching_platform(config);
         let mut expired_auth = None;
         if let Some(auth) = &config.auth {
             if auth.expires_at > chrono::Utc::now() && !force {
@@ -743,6 +792,7 @@ impl AuthCommand {
                     spinner.finish_with_message("✅ Authentication successful!");
                 }
                 update_config_from_verified_status(config, status, auth_response.expires_at)?;
+                self.remember_platform_url(config);
                 if !json_output {
                     Self::display_success_message(config)?;
                 }
@@ -773,6 +823,7 @@ impl AuthCommand {
                 status,
                 expires_at.unwrap_or_else(default_poll_fallback_expires_at),
             )?;
+            self.remember_platform_url(config);
             let mut output = self.status_envelope(config);
             if let Some(object) = output.as_object_mut() {
                 object.insert("event".to_string(), json!("auth.login_complete"));
@@ -832,6 +883,19 @@ impl AuthCommand {
                 "reason": "no_stored_auth",
             });
         };
+
+        // Never send the stored access token to a platform it was not issued
+        // by; fall back to local-only cleanup.
+        if self.switching_platform(config) {
+            return json!({
+                "attempted": false,
+                "success": null,
+                "mode": "local",
+                "reason": "platform_mismatch",
+                "credential_platform": credential_platform(config),
+                "requested_platform": self.effective_auth_url().as_str(),
+            });
+        }
 
         let client = match self.authenticated_api_client(&auth.access_token) {
             Ok(client) => client,
@@ -904,9 +968,10 @@ impl AuthCommand {
         Ok(())
     }
 
-    /// Remove authentication data from configuration
+    /// Remove authentication data and any remembered platform URL from configuration
     fn logout(config: &mut CliConfig) {
         config.auth = None;
+        config.platform_url = None;
     }
 
     /// Display current authentication status
@@ -1007,6 +1072,42 @@ impl AuthCommand {
     }
 }
 
+/// The platform the stored credentials were issued by: the remembered custom
+/// platform, or production when none is recorded.
+fn credential_platform(config: &CliConfig) -> &str {
+    config
+        .platform_url
+        .as_deref()
+        .unwrap_or(DEFAULT_PLATFORM_URL)
+}
+
+/// Core of the platform-boundary check (split from
+/// [`AuthCommand::switching_platform`] so the resolution paths — explicit
+/// flag, `PCL_API_URL`, remembered default — can be tested without touching
+/// process environment): stored credentials may only be used against the
+/// platform that issued them.
+fn platform_switch(resolved: &url::Url, config: &CliConfig) -> bool {
+    // Without stored credentials there is nothing to switch from.
+    if config.auth.is_none() {
+        return false;
+    }
+    resolved.as_str().trim_end_matches('/') != credential_platform(config).trim_end_matches('/')
+}
+
+/// Guard for any code about to attach stored credentials to — or refresh
+/// them against — `target`: errors when the credentials were issued by a
+/// different platform. Without stored credentials there is nothing to
+/// protect, so the check passes.
+pub fn ensure_credential_platform(config: &CliConfig, target: &url::Url) -> Result<(), AuthError> {
+    if !platform_switch(target, config) {
+        return Ok(());
+    }
+    Err(AuthError::PlatformMismatch {
+        credential_platform: credential_platform(config).to_string(),
+        requested: target.as_str().trim_end_matches('/').to_string(),
+    })
+}
+
 pub async fn refresh_stored_auth(
     config: &mut CliConfig,
     auth_url: &url::Url,
@@ -1019,6 +1120,14 @@ pub async fn refresh_stored_auth(
     if disk_config.auth.is_some() || config.auth.is_none() {
         *config = disk_config;
     }
+
+    // The disk reload can swap in credentials issued by a *different*
+    // platform: another process may have logged into platform B while this
+    // A-targeted refresh waited on the lock, and any boundary check the
+    // caller performed covered only the pre-lock config. Re-check the
+    // credentials that will actually be sent, before any short-circuit or
+    // request.
+    ensure_credential_platform(config, auth_url)?;
 
     let auth = config
         .auth
@@ -1372,6 +1481,7 @@ enum AuthChallengeReason {
     Forced,
     InvalidRefresh,
     RefreshUnavailable,
+    PlatformChanged,
 }
 
 impl AuthChallengeReason {
@@ -1383,6 +1493,7 @@ impl AuthChallengeReason {
             Self::Forced => "forced_login",
             Self::InvalidRefresh => "invalid_refresh_token",
             Self::RefreshUnavailable => "refresh_unavailable",
+            Self::PlatformChanged => "platform_changed",
         }
     }
 
@@ -1492,6 +1603,7 @@ mod tests {
                 ),
                 email: None,
             }),
+            platform_url: None,
         }
     }
 
@@ -1517,7 +1629,47 @@ mod tests {
                 wallet_address: None,
                 email: Some("agent@example.com".to_string()),
             }),
+            platform_url: None,
         }
+    }
+
+    #[test]
+    fn remember_platform_url_stores_custom_url_and_clears_default() {
+        let mut config = CliConfig::default();
+
+        let cmd = AuthCommand {
+            command: AuthSubcommands::Login {
+                force: false,
+                no_wait: false,
+            },
+            auth_url: Some("https://custom.phylax.example/".parse().unwrap()),
+        };
+        cmd.remember_platform_url(&mut config);
+        assert_eq!(
+            config.platform_url.as_deref(),
+            Some("https://custom.phylax.example")
+        );
+
+        let cmd = AuthCommand {
+            command: AuthSubcommands::Login {
+                force: false,
+                no_wait: false,
+            },
+            auth_url: Some(DEFAULT_PLATFORM_URL.parse().unwrap()),
+        };
+        cmd.remember_platform_url(&mut config);
+        assert!(config.platform_url.is_none());
+    }
+
+    #[test]
+    fn logout_clears_remembered_platform_url() {
+        let mut config = create_test_config();
+        config.platform_url = Some("https://custom.phylax.example".to_string());
+
+        AuthCommand::logout(&mut config);
+
+        assert!(config.auth.is_none());
+        assert!(config.platform_url.is_none());
     }
 
     #[test]
@@ -1700,6 +1852,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let cli_args = test_cli_args(temp_dir.path());
         let mut config = expired_refreshable_config();
+        config.platform_url = Some(server.url());
         config.write_to_file(&cli_args).unwrap();
 
         let outcome = refresh_stored_auth(
@@ -1730,6 +1883,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refresh_refuses_credentials_swapped_in_from_disk_for_another_platform() {
+        // Race the boundary check: the in-memory config holds credentials
+        // for platform A (the refresh target), but while this refresh waited
+        // on the lock another process re-logged into platform B — the disk
+        // reload swaps B's credentials in. B's refresh token must never be
+        // posted to A.
+        let mut server_a = Server::new_async().await;
+        let no_requests = server_a
+            .mock("POST", Matcher::Any)
+            .expect(0)
+            .create_async()
+            .await;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cli_args = test_cli_args(temp_dir.path());
+
+        let mut disk_config = expired_refreshable_config();
+        disk_config.auth.as_mut().unwrap().refresh_token = "platform_b_refresh".to_string();
+        disk_config.platform_url = Some("https://platform-b.example".to_string());
+        disk_config.write_to_file(&cli_args).unwrap();
+
+        let mut config = expired_refreshable_config();
+        config.platform_url = Some(server_a.url());
+
+        let error = refresh_stored_auth(
+            &mut config,
+            &server_a.url().parse().unwrap(),
+            &cli_args,
+            true,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, AuthError::PlatformMismatch { .. }));
+        no_requests.assert_async().await;
+    }
+
+    #[tokio::test]
     async fn invalid_refresh_token_clears_local_credentials() {
         let mut server = Server::new_async().await;
         let mock = server
@@ -1744,6 +1934,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let cli_args = test_cli_args(temp_dir.path());
         let mut config = expired_refreshable_config();
+        config.platform_url = Some(server.url());
         config.write_to_file(&cli_args).unwrap();
 
         let error = refresh_stored_auth(
@@ -1788,6 +1979,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let cli_args = test_cli_args(temp_dir.path());
         let mut config = expired_refreshable_config();
+        config.platform_url = Some(server.url());
         config.write_to_file(&cli_args).unwrap();
 
         let error = refresh_stored_auth(
@@ -1951,8 +2143,11 @@ mod tests {
             .expect(1)
             .create_async()
             .await;
-        let config = create_test_config();
+        let mut config = create_test_config();
         let auth_url = server.url();
+        // The credentials belong to the mock platform, so the remote logout
+        // may send the token there.
+        config.platform_url = Some(auth_url.clone());
         let cmd =
             AuthCommand::try_parse_from(vec!["auth", "--auth-url", auth_url.as_str(), "logout"])
                 .unwrap();
@@ -1965,6 +2160,61 @@ mod tests {
         assert_eq!(logout["http_status"], 200);
         assert_eq!(logout["request_id"], "req_logout_ok");
         mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn remote_logout_refuses_to_send_token_to_a_different_platform() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/v1/web/auth/logout")
+            .expect(0)
+            .create_async()
+            .await;
+        // Production credentials, logout requested against another platform:
+        // the stored token must not leave the platform that issued it.
+        let config = create_test_config();
+        let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "logout"])
+            .unwrap();
+
+        let logout = cmd.remote_logout(&config, false).await;
+
+        assert_eq!(logout["attempted"], false);
+        assert_eq!(logout["mode"], "local");
+        assert_eq!(logout["reason"], "platform_mismatch");
+        assert_eq!(logout["credential_platform"], DEFAULT_PLATFORM_URL);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn refresh_with_explicit_custom_url_returns_platform_changed_challenge() {
+        let mut server = Server::new_async().await;
+        let refresh_mock = server
+            .mock("POST", "/api/v1/auth/refresh")
+            .expect(0)
+            .create_async()
+            .await;
+        let code_mock = server
+            .mock("GET", "/api/v1/cli/auth/code")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(test_auth_response_json())
+            .expect(1)
+            .create_async()
+            .await;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cli_args = test_cli_args(temp_dir.path());
+        // The stored refresh token belongs to production; it must not be
+        // posted to the explicitly requested platform.
+        let mut config = create_test_config();
+
+        let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "refresh"])
+            .unwrap();
+        let result = cmd.refresh(&mut config, &cli_args, false, false).await;
+
+        assert!(result.is_ok());
+        assert_eq!(config.auth.as_ref().unwrap().refresh_token, "test_refresh");
+        refresh_mock.assert_async().await;
+        code_mock.assert_async().await;
     }
 
     #[test]
@@ -2020,6 +2270,112 @@ mod tests {
         assert_eq!(output["data"]["authenticated"], true);
         assert_eq!(output["data"]["token_valid"], false);
         assert_eq!(output["data"]["token_expired"], true);
+    }
+
+    #[test]
+    fn switching_platform_detects_explicit_url_changes() {
+        let base_cmd = |auth_url: Option<&str>| {
+            AuthCommand {
+                command: AuthSubcommands::Login {
+                    force: false,
+                    no_wait: false,
+                },
+                auth_url: auth_url.map(|url| url.parse().unwrap()),
+            }
+        };
+        // Without stored credentials there is nothing to switch from.
+        let config = CliConfig::default();
+        assert!(!base_cmd(Some("https://custom.phylax.example")).switching_platform(&config));
+
+        let mut config = create_test_config();
+
+        // No explicit URL resolves to the credential platform (production
+        // here, since unit-test builds never remember a platform).
+        assert!(!base_cmd(None).switching_platform(&config));
+
+        // Explicit URL matching the credential platform does not switch.
+        config.platform_url = Some("https://custom.phylax.example".to_string());
+        assert!(!base_cmd(Some("https://custom.phylax.example/")).switching_platform(&config));
+
+        // Explicit URL for another platform (including back to production) switches.
+        assert!(base_cmd(Some("https://other.phylax.example")).switching_platform(&config));
+        assert!(base_cmd(Some(DEFAULT_PLATFORM_URL)).switching_platform(&config));
+
+        // The check compares the *resolved* URL, so a default resolution that
+        // lands on production also switches away from custom credentials.
+        assert!(base_cmd(None).switching_platform(&config));
+
+        // Without a remembered platform, production is the current platform.
+        config.platform_url = None;
+        assert!(!base_cmd(Some(DEFAULT_PLATFORM_URL)).switching_platform(&config));
+        assert!(base_cmd(Some("https://custom.phylax.example")).switching_platform(&config));
+    }
+
+    #[test]
+    fn platform_switch_compares_resolved_url_with_credential_platform() {
+        // The resolved URL may come from PCL_API_URL/PCL_AUTH_URL rather than
+        // the explicit flag; the boundary check treats every resolution path
+        // the same.
+        let resolved: url::Url = "https://env-selected.phylax.example".parse().unwrap();
+
+        let mut config = create_test_config();
+        assert!(platform_switch(&resolved, &config));
+
+        config.platform_url = Some("https://env-selected.phylax.example".to_string());
+        assert!(!platform_switch(&resolved, &config));
+
+        // Without stored credentials there is no boundary to enforce.
+        assert!(!platform_switch(&resolved, &CliConfig::default()));
+    }
+
+    #[tokio::test]
+    async fn login_with_explicit_custom_url_starts_fresh_login_despite_valid_token() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/v1/cli/auth/code")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(test_auth_response_json())
+            .create();
+
+        // Token is still valid, but it belongs to production, not the
+        // explicitly requested platform: login must not short-circuit.
+        let mut config = create_test_config();
+        let cmd = AuthCommand::try_parse_from(vec![
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "login",
+            "--no-wait",
+        ])
+        .unwrap();
+
+        let result = cmd.login(&mut config, false, false, true).await;
+
+        assert!(result.is_ok());
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn ensure_with_explicit_custom_url_returns_platform_changed_challenge() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/v1/cli/auth/code")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(test_auth_response_json())
+            .create();
+
+        let mut config = create_test_config();
+        let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "ensure"])
+            .unwrap();
+
+        let result = cmd
+            .ensure(&mut config, &CliArgs::default(), false, false)
+            .await;
+
+        assert!(result.is_ok());
+        mock.assert();
     }
 
     #[tokio::test]

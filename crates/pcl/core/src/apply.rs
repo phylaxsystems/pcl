@@ -112,8 +112,8 @@ pub struct ApplyArgs {
         long = "api-url",
         env = "PCL_API_URL",
         value_hint = ValueHint::Url,
-        default_value = DEFAULT_PLATFORM_URL,
-        help = "Base URL for the platform API"
+        default_value = crate::config::default_platform_url(),
+        help = "Base URL for the platform API. Defaults to the URL remembered from the last login"
     )]
     pub api_url: url::Url,
 }
@@ -655,6 +655,7 @@ fn client_error_to_apply(error: ClientBuildError) -> ApplyError {
         ClientBuildError::NoAuthToken => ApplyError::NoAuthToken,
         ClientBuildError::ExpiredAuthToken(expires_at) => ApplyError::ExpiredAuthToken(expires_at),
         ClientBuildError::AuthRefresh(error) => ApplyError::AuthRefresh(error),
+        ClientBuildError::PlatformMismatch(error) => ApplyError::PlatformMismatch(error),
         ClientBuildError::InvalidConfig(message) => ApplyError::InvalidConfig(message),
     }
 }
