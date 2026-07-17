@@ -216,20 +216,23 @@ fn newest_release<'a>(
         .max_by(|a, b| a.created_at.cmp(&b.created_at))
 }
 
-/// Resume decision: when the preview reports no diff, the config already
-/// matches the newest release for this environment — resume it if it was
-/// never activated, otherwise everything is already deployed.
-fn release_step(has_changes: bool, releases: &[ReleaseSummary], environment: &str) -> ReleaseStep {
-    if has_changes {
-        return ReleaseStep::Create;
-    }
-    match newest_release(releases, environment) {
-        Some(release) if release.status == "inactive" => {
+/// Resume decision. The preview diffs against the *active* release only, so
+/// an inactive release left by an interrupted earlier run is invisible to it
+/// in both directions: with a diff it reads as "changes" (risking a duplicate
+/// release), without one it can be a stale leftover whose contents differ
+/// from the config. Either way an inactive release is resumed only when its
+/// snapshot matched the payload ([`snapshot_matches_payload`]).
+fn release_step(has_changes: bool, inactive: Option<(&ReleaseSummary, bool)>) -> ReleaseStep {
+    match inactive {
+        Some((candidate, true)) => {
             ReleaseStep::Resume {
-                release_id: release.id.clone(),
-                release_number: release.release_number,
+                release_id: candidate.id.clone(),
+                release_number: candidate.release_number,
             }
         }
+        _ if has_changes => ReleaseStep::Create,
+        // A mismatching inactive release is not ours to broadcast: with no
+        // diff the active release already matches the config.
         _ => ReleaseStep::UpToDate,
     }
 }
@@ -416,8 +419,19 @@ fn clear_create_intent(path: &Path) {
 /// wrongly adopted project is still caught by [`resolve_chain_id`] before
 /// anything is mutated.
 fn matching_project_ids(projects: &Value, name: &str, chain_id: u64) -> Vec<String> {
+    // `/views/projects/home` nests the caller's own projects at
+    // `data.member_projects`; only those count as evidence that an earlier
+    // create landed (`saved_projects` are other people's projects). Simpler
+    // endpoints return a bare array or wrap it in projects/data/items.
     let items = projects
         .as_array()
+        .or_else(|| {
+            projects
+                .get("data")
+                .unwrap_or(projects)
+                .get("member_projects")
+                .and_then(Value::as_array)
+        })
         .or_else(|| {
             ["projects", "data", "items"]
                 .iter()
@@ -815,40 +829,33 @@ impl DeployArgs {
             )
             .await?;
         let summaries = release_summaries(&releases);
-        let step = if preview.has_changes() {
-            // The preview diffs against the *active* release, so a release
-            // created by an interrupted earlier run still shows as "changes".
-            // Resume the newest inactive release when its snapshot matches
-            // what we would create, instead of stacking duplicates.
-            match newest_release(&summaries, &credible.environment) {
-                Some(candidate) if candidate.status == "inactive" => {
-                    let detail = api
-                        .workflow_json(
-                            config,
-                            cli_args,
-                            HttpMethod::Get,
-                            "get_projects_project_id_releases_release_id",
-                            &[
-                                ("project_id", project_ref.as_str()),
-                                ("release_id", candidate.id.as_str()),
-                            ],
-                            None,
-                        )
-                        .await?;
-                    if snapshot_matches_payload(&detail, &serde_json::to_value(&payload)?) {
-                        ReleaseStep::Resume {
-                            release_id: candidate.id.clone(),
-                            release_number: candidate.release_number,
-                        }
-                    } else {
-                        ReleaseStep::Create
-                    }
-                }
-                _ => ReleaseStep::Create,
+        // An inactive release is a resume candidate only after its snapshot
+        // is compared against the payload — the preview cannot vouch for it
+        // (it diffs against the active release), so fetch the detail whether
+        // or not the preview reports changes.
+        let inactive_candidate = match newest_release(&summaries, &credible.environment) {
+            Some(candidate) if candidate.status == "inactive" => {
+                let detail = api
+                    .workflow_json(
+                        config,
+                        cli_args,
+                        HttpMethod::Get,
+                        "get_projects_project_id_releases_release_id",
+                        &[
+                            ("project_id", project_ref.as_str()),
+                            ("release_id", candidate.id.as_str()),
+                        ],
+                        None,
+                    )
+                    .await?;
+                Some((
+                    candidate,
+                    snapshot_matches_payload(&detail, &serde_json::to_value(&payload)?),
+                ))
             }
-        } else {
-            release_step(false, &summaries, &credible.environment)
+            _ => None,
         };
+        let step = release_step(preview.has_changes(), inactive_candidate);
 
         let (release_id, release_number, resumed) = match step {
             ReleaseStep::UpToDate => {
@@ -1223,40 +1230,34 @@ mod tests {
 
     #[test]
     fn release_step_decision_table() {
-        // Diff present → always create.
-        assert_eq!(release_step(true, &[], "staging"), ReleaseStep::Create);
+        let candidate = &summaries(&[("new", "staging", "inactive", "2026-02-01T00:00:00Z")])[0];
 
-        // No diff, no releases → up to date (nothing to deploy).
-        assert_eq!(release_step(false, &[], "staging"), ReleaseStep::UpToDate);
+        // No inactive candidate: diff → create, no diff → up to date.
+        assert_eq!(release_step(true, None), ReleaseStep::Create);
+        assert_eq!(release_step(false, None), ReleaseStep::UpToDate);
 
-        // No diff, newest matching-env release inactive → resume it
-        // (created earlier, tx never landed).
-        let releases = summaries(&[
-            ("old", "staging", "active", "2026-01-01T00:00:00Z"),
-            ("new", "staging", "inactive", "2026-02-01T00:00:00Z"),
-        ]);
+        // A snapshot-matching inactive release is resumed regardless of the
+        // preview: the preview only diffs against the active release, so it
+        // cannot see a release created by an interrupted earlier run.
+        for has_changes in [true, false] {
+            assert_eq!(
+                release_step(has_changes, Some((candidate, true))),
+                ReleaseStep::Resume {
+                    release_id: "new".to_string(),
+                    release_number: Some(1),
+                }
+            );
+        }
+
+        // A mismatching inactive release is never broadcast: with a diff a
+        // fresh release is created, without one the active release already
+        // matches the config and the stale leftover is ignored.
         assert_eq!(
-            release_step(false, &releases, "staging"),
-            ReleaseStep::Resume {
-                release_id: "new".to_string(),
-                release_number: Some(2),
-            }
+            release_step(true, Some((candidate, false))),
+            ReleaseStep::Create
         );
-
-        // No diff, newest matching-env release active → fully deployed.
-        let releases = summaries(&[
-            ("old", "staging", "inactive", "2026-01-01T00:00:00Z"),
-            ("new", "staging", "active", "2026-02-01T00:00:00Z"),
-        ]);
         assert_eq!(
-            release_step(false, &releases, "staging"),
-            ReleaseStep::UpToDate
-        );
-
-        // Other environments don't influence the decision.
-        let releases = summaries(&[("prod", "production", "inactive", "2026-03-01T00:00:00Z")]);
-        assert_eq!(
-            release_step(false, &releases, "staging"),
+            release_step(false, Some((candidate, false))),
             ReleaseStep::UpToDate
         );
     }
@@ -1477,6 +1478,35 @@ mod tests {
         let chainless =
             json!([{ "id": "dddddddd-dddd-dddd-dddd-dddddddddddd", "project_name": "demo" }]);
         assert_eq!(matching_project_ids(&chainless, "demo", 84532).len(), 1);
+
+        // The exact `/views/projects/home` response shape: the caller's own
+        // projects live at data.member_projects (with project_id/project_name
+        // keys and chain *names*, not ids). Only member_projects count —
+        // saved_projects are other people's projects, never proof that our
+        // create landed.
+        let home = json!({
+            "data": {
+                "member_projects": [
+                    {
+                        "project_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                        "project_name": "demo",
+                        "slug": "demo",
+                        "chain_names": ["Base Sepolia"],
+                        "is_private": true
+                    }
+                ],
+                "saved_projects": [
+                    { "project_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "project_name": "demo" }
+                ],
+                "no_project_adopters": []
+            },
+            "_meta": { "sources": ["offchain"], "fetchedAt": "2026-05-10T04:16:00Z" }
+        });
+        assert_eq!(
+            matching_project_ids(&home, "demo", 84532),
+            vec!["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".to_string()]
+        );
+        assert!(matching_project_ids(&home, "missing", 84532).is_empty());
     }
 
     #[test]
