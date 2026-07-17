@@ -112,10 +112,14 @@ pub enum ApiCommandError {
     BroadcastCancelled,
 
     #[error(
-        "Transaction {tx_hash} confirmed on-chain but the follow-up API confirmation failed: {source}. The chain state is updated; re-run the command to reconcile the platform."
+        "Transaction {tx_hash} confirmed on-chain but the follow-up API confirmation failed: {source}. The on-chain mutation already applied — do not broadcast again; retry only the platform confirmation: {confirm_command}"
     )]
     ConfirmAfterTx {
         tx_hash: alloy_primitives::B256,
+        /// Exact confirm-only command (with the landed hash inlined) that
+        /// retries the platform confirmation without re-entering the
+        /// broadcast path.
+        confirm_command: String,
         #[source]
         source: Box<ApiCommandError>,
     },
@@ -180,6 +184,9 @@ impl ApiCommandError {
                         "onchain.chain_mismatch"
                     }
                     crate::onchain::OnchainError::Reverted { .. } => "onchain.tx_reverted",
+                    crate::onchain::OnchainError::ConfirmationUnknown { .. } => {
+                        "onchain.tx_submitted_confirmation_unknown"
+                    }
                     _ => "onchain.failed",
                 }
             }
@@ -369,6 +376,22 @@ impl ApiCommandError {
                     "Or pass --rpc-url / set PCL_RPC_URL".to_string(),
                 ]
             }
+            Self::Onchain(crate::onchain::OnchainError::ConfirmationUnknown {
+                tx_hash,
+                chain_id,
+                ..
+            }) => {
+                // The transaction was accepted by the RPC; only the receipt
+                // poll failed. Re-running immediately could broadcast a
+                // duplicate mutation while the first is still pending.
+                vec![
+                    format!(
+                        "Check transaction {tx_hash} on chain {chain_id} first (e.g. cast receipt {tx_hash} --rpc-url <url>, or a block explorer)"
+                    ),
+                    "If it confirmed, re-run the command — landed state reconciles without a new transaction; if it is still pending, wait — do not re-broadcast"
+                        .to_string(),
+                ]
+            }
             Self::Onchain(_) => {
                 vec![
                     "Check --rpc-url, the target chain id, and wallet funds, then retry"
@@ -378,16 +401,19 @@ impl ApiCommandError {
             Self::BroadcastCancelled => {
                 vec!["Re-run with --yes to skip the confirmation prompt".to_string()]
             }
-            Self::ConfirmAfterTx { tx_hash, .. } => {
+            Self::ConfirmAfterTx {
+                confirm_command, ..
+            } => {
+                // The transaction landed; the only failed step is the
+                // platform confirmation. Never point back at the broadcast
+                // command — that re-enters the on-chain path.
                 vec![
-                    format!(
-                        "Re-run the same command to reconcile; transaction {tx_hash} already landed on-chain"
-                    ),
-                    "pcl requests list --toon".to_string(),
+                    confirm_command.clone(),
+                    "pcl requests list --json".to_string(),
                 ]
             }
             Self::UnexpectedResponse { endpoint, .. } => {
-                vec![format!("pcl api inspect get {endpoint} --toon")]
+                vec![format!("pcl api inspect get {endpoint} --json")]
             }
         }
     }
@@ -440,9 +466,16 @@ impl ApiCommandError {
             }
             Self::HttpStatus { .. } => vec!["inspect_response_body", "retry"],
             Self::Wallet(_) => vec!["fix_wallet", "retry"],
+            Self::Onchain(crate::onchain::OnchainError::ConfirmationUnknown { .. }) => {
+                vec![
+                    "check_tx_status",
+                    "wait_for_confirmation",
+                    "reconcile_mutation",
+                ]
+            }
             Self::Onchain(_) => vec!["check_chain_config", "retry"],
             Self::BroadcastCancelled => vec!["rerun_with_yes"],
-            Self::ConfirmAfterTx { .. } => vec!["reconcile_mutation", "retry"],
+            Self::ConfirmAfterTx { .. } => vec!["confirm_platform_only", "reconcile_mutation"],
             Self::UnexpectedResponse { .. } => vec!["inspect_response_body"],
         }
     }
@@ -486,9 +519,16 @@ impl ApiCommandError {
 
         // A landed transaction whose follow-up API confirmation failed needs
         // both chain and API provenance: the structured tx hash plus the
-        // nested source's full envelope (HTTP status/path/body, request id).
-        if let Self::ConfirmAfterTx { tx_hash, source } = self {
+        // nested source's full envelope (HTTP status/path/body, request id),
+        // and the confirm-only command that retries just the platform step.
+        if let Self::ConfirmAfterTx {
+            tx_hash,
+            confirm_command,
+            source,
+        } = self
+        {
             error.insert("tx_hash".to_string(), json!(tx_hash));
+            error.insert("confirm_command".to_string(), json!(confirm_command));
             if let Self::HttpStatus {
                 request_id: Some(request_id),
                 ..
@@ -505,6 +545,28 @@ impl ApiCommandError {
                 }),
             );
             error.insert("source".to_string(), source.json_envelope());
+        }
+
+        // A transaction that was submitted but whose receipt could not be
+        // observed (timeout, transport failure while polling) is an ambiguous
+        // mutation: the hash exists, the outcome does not — a retry could
+        // double-broadcast.
+        if let Self::Onchain(crate::onchain::OnchainError::ConfirmationUnknown {
+            tx_hash,
+            chain_id,
+            ..
+        }) = self
+        {
+            error.insert("tx_hash".to_string(), json!(tx_hash));
+            error.insert("chain_id".to_string(), json!(chain_id));
+            error.insert(
+                "mutation".to_string(),
+                json!({
+                    "side_effecting": true,
+                    "onchain_landed": "unknown",
+                    "platform_confirmed": false,
+                }),
+            );
         }
 
         let mut envelope = json!({
@@ -533,7 +595,8 @@ impl ApiCommandError {
             );
         }
 
-        if let Self::ConfirmAfterTx { tx_hash, .. } = self
+        if let Self::ConfirmAfterTx { tx_hash, .. }
+        | Self::Onchain(crate::onchain::OnchainError::ConfirmationUnknown { tx_hash, .. }) = self
             && let Some(object) = envelope.as_object_mut()
         {
             object.insert("tx_hash".to_string(), json!(tx_hash));

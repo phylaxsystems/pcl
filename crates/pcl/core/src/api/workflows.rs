@@ -6,6 +6,7 @@ macro_rules! action {
         $(, body_template: $body_template:literal)?
         $(, required_body: [$($required_body:literal),* $(,)?])?
         $(, query: {$($query_key:literal => $query_value:literal),* $(,)?})?
+        $(, side_effect: $side_effect:literal)?
         $(,)?
     ) => {
         super::super::definitions::WorkflowActionDefinition {
@@ -18,6 +19,7 @@ macro_rules! action {
             body_template: optional_literal!($($body_template)?),
             query: &[$($(($query_key, $query_value)),*)?],
             example: $example,
+            side_effect: optional_literal!($($side_effect)?),
         }
     };
 }

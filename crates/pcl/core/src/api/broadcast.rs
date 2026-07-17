@@ -14,7 +14,10 @@ use super::{
     ProtocolManagerArgs,
     ReleasesArgs,
     WorkflowOperation,
-    runtime_types::WorkflowRequest,
+    runtime_types::{
+        WorkflowCallResult,
+        WorkflowRequest,
+    },
 };
 use crate::{
     config::CliConfig,
@@ -78,6 +81,11 @@ struct ReleaseDeployCalldataResponse {
     message: Option<String>,
     #[serde(default)]
     operations: Vec<Value>,
+    /// The confirmation count the platform's chain profile requires before
+    /// it accepts the deploy confirmation. Authoritative when present; the
+    /// static per-chain fallback applies otherwise.
+    #[serde(default, alias = "required_confirmations")]
+    required_confirmations: Option<u64>,
 }
 
 /// `GET /projects/{id}/releases/{rid}/remove-calldata`
@@ -87,6 +95,8 @@ struct ReleaseRemoveCalldataResponse {
     data: Bytes,
     #[serde(default)]
     assertions: Vec<Value>,
+    #[serde(default, alias = "requiredConfirmations")]
+    required_confirmations: Option<u64>,
 }
 
 /// `GET /projects/{id}/protocol-manager/nonce`
@@ -110,6 +120,8 @@ struct TransferCalldataResponse {
     calldata: Option<Bytes>,
     #[serde(default)]
     total_contracts: Option<u64>,
+    #[serde(default, alias = "requiredConfirmations")]
+    required_confirmations: Option<u64>,
 }
 
 /// `GET /projects/{id}/protocol-manager/accept-calldata`
@@ -118,6 +130,8 @@ struct AcceptCalldataResponse {
     chain_id: u64,
     to: Address,
     calldata: Bytes,
+    #[serde(default, alias = "requiredConfirmations")]
+    required_confirmations: Option<u64>,
 }
 
 fn parse_response<T: serde::de::DeserializeOwned>(
@@ -197,6 +211,9 @@ fn progress(cli_args: &CliArgs, message: &str) {
     }
 }
 
+/// `platform_required` is the confirmation requirement stated by the platform
+/// in the calldata response, when it carries one; it overrides the static
+/// per-chain fallback (the platform's chain profiles differ per deployment).
 async fn send_tx(
     config: &CliConfig,
     tx_args: &TxArgs,
@@ -204,9 +221,10 @@ async fn send_tx(
     chain_id: u64,
     to: Address,
     data: Bytes,
+    platform_required: Option<u64>,
 ) -> Result<TxOutcome, ApiCommandError> {
     let rpc = tx_args.resolve_rpc(config, chain_id)?;
-    let confirmations = tx_args.resolve_confirmations(config, chain_id)?;
+    let confirmations = tx_args.resolve_confirmations(config, chain_id, platform_required)?;
     let sender = TxSender::connect(rpc, signer, chain_id).await?;
     Ok(sender
         .send_and_confirm(to, data, confirmations, tx_args.timeout())
@@ -268,13 +286,39 @@ fn post_operation(
 }
 
 /// Wraps a confirmation-POST failure that happens *after* the transaction
-/// landed so the caller always learns the tx hash.
-fn confirm_after_tx(outcome: &TxOutcome, source: ApiCommandError) -> ApiCommandError {
+/// landed so the caller always learns the tx hash and the confirm-only
+/// command that retries just the platform confirmation.
+fn confirm_after_tx(
+    outcome: &TxOutcome,
+    source: ApiCommandError,
+    confirm_command: String,
+) -> ApiCommandError {
     ApiCommandError::ConfirmAfterTx {
         tx_hash: outcome.tx_hash,
+        confirm_command,
         source: Box::new(source),
     }
 }
+
+/// Whether the platform rejected a confirmation because the receipt does not
+/// yet carry enough confirmations for its chain profile.
+fn insufficient_confirmations(error: &ApiCommandError) -> bool {
+    let ApiCommandError::HttpStatus { body, .. } = error else {
+        return false;
+    };
+    ["code", "error", "message"]
+        .iter()
+        .filter_map(|key| body.get(*key).and_then(Value::as_str))
+        .any(|value| {
+            value
+                .to_ascii_uppercase()
+                .contains("INSUFFICIENT_CONFIRMATIONS")
+        })
+}
+
+const CONFIRM_RETRY_MAX: u32 = 4;
+const CONFIRM_RETRY_INITIAL: std::time::Duration = std::time::Duration::from_secs(5);
+const CONFIRM_RETRY_MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl ApiArgs {
     /// Fetches the chain id recorded on a project (used when a calldata
@@ -294,6 +338,48 @@ impl ApiArgs {
             endpoint: "/projects/{project_id}",
             reason: "missing chain_id/project_networks".to_string(),
         })
+    }
+
+    /// POSTs the platform confirmation for a transaction that already landed.
+    ///
+    /// The platform rejects receipts with fewer confirmations than its chain
+    /// profile requires (`INSUFFICIENT_CONFIRMATIONS`); confirmations accrue
+    /// on their own, so such rejections are retried with backoff instead of
+    /// failing a landed transaction. Any terminal failure is wrapped so the
+    /// caller always learns the tx hash and the confirm-only recovery
+    /// command — never guidance to re-broadcast.
+    async fn confirm_landed_tx(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        request: &WorkflowRequest,
+        request_log_path: &Path,
+        outcome: &TxOutcome,
+        confirm_command: String,
+    ) -> Result<WorkflowCallResult, ApiCommandError> {
+        let mut delay = CONFIRM_RETRY_INITIAL;
+        let mut retries = 0;
+        loop {
+            match self
+                .call_workflow_result(config, cli_args, request, request_log_path)
+                .await
+            {
+                Ok(result) => return Ok(result),
+                Err(error) if retries < CONFIRM_RETRY_MAX && insufficient_confirmations(&error) => {
+                    retries += 1;
+                    progress(
+                        cli_args,
+                        &format!(
+                            "Platform requires more confirmations; retrying the confirmation in {}s ({retries}/{CONFIRM_RETRY_MAX})",
+                            delay.as_secs()
+                        ),
+                    );
+                    tokio::time::sleep(delay).await;
+                    delay = (delay * 2).min(CONFIRM_RETRY_MAX_DELAY);
+                }
+                Err(error) => return Err(confirm_after_tx(outcome, error, confirm_command)),
+            }
+        }
     }
 }
 
@@ -450,6 +536,7 @@ impl ApiArgs {
             calldata.chain_id,
             calldata.state_oracle_address,
             encode_batch(calldata.calldata.clone()),
+            calldata.required_confirmations,
         )
         .await?;
 
@@ -460,10 +547,20 @@ impl ApiArgs {
             Some(release_id),
             &json!({ "mode": "transaction", "txHash": outcome.tx_hash }),
         )?;
+        let confirm_command = format!(
+            "pcl releases deploy {project} {release_id} --field mode=transaction --field txHash={} --json",
+            outcome.tx_hash
+        );
         let confirm = self
-            .call_workflow_result(config, cli_args, &confirm_request, request_log_path)
-            .await
-            .map_err(|e| confirm_after_tx(&outcome, e))?;
+            .confirm_landed_tx(
+                config,
+                cli_args,
+                &confirm_request,
+                request_log_path,
+                &outcome,
+                confirm_command,
+            )
+            .await?;
 
         Ok(broadcast_envelope(
             "release_deploy_broadcast",
@@ -538,6 +635,7 @@ impl ApiArgs {
             chain_id,
             calldata.to,
             calldata.data.clone(),
+            calldata.required_confirmations,
         )
         .await?;
 
@@ -548,10 +646,20 @@ impl ApiArgs {
             Some(release_id),
             &json!({ "txHash": outcome.tx_hash }),
         )?;
+        let confirm_command = format!(
+            "pcl releases remove {project} {release_id} --field txHash={} --json",
+            outcome.tx_hash
+        );
         let confirm = self
-            .call_workflow_result(config, cli_args, &confirm_request, request_log_path)
-            .await
-            .map_err(|e| confirm_after_tx(&outcome, e))?;
+            .confirm_landed_tx(
+                config,
+                cli_args,
+                &confirm_request,
+                request_log_path,
+                &outcome,
+                confirm_command,
+            )
+            .await?;
 
         Ok(broadcast_envelope(
             "release_remove_broadcast",
@@ -769,7 +877,16 @@ impl ApiArgs {
         )?;
 
         progress(cli_args, "Broadcasting manager transfer transaction");
-        let outcome = send_tx(config, &args.broadcast.tx, signer, chain_id, to, data).await?;
+        let outcome = send_tx(
+            config,
+            &args.broadcast.tx,
+            signer,
+            chain_id,
+            to,
+            data,
+            calldata.required_confirmations,
+        )
+        .await?;
 
         // The on-chain transfer is a two-transaction flow: this initiation tx
         // only marks the transfer pending. The `ManagerTransferred` logs the
@@ -839,6 +956,7 @@ impl ApiArgs {
             calldata.chain_id,
             calldata.to,
             calldata.calldata.clone(),
+            calldata.required_confirmations,
         )
         .await?;
 
@@ -857,10 +975,20 @@ impl ApiArgs {
                 "new_manager_address": signer_address,
             }),
         )?;
+        let confirm_command = format!(
+            "pcl protocol-manager --project {project} --confirm-transfer --field mode=onchain --field tx_hash={} --field chain_id={} --field new_manager_address={signer_address} --json",
+            outcome.tx_hash, calldata.chain_id
+        );
         let confirm = self
-            .call_workflow_result(config, cli_args, &confirm_request, request_log_path)
-            .await
-            .map_err(|e| confirm_after_tx(&outcome, e))?;
+            .confirm_landed_tx(
+                config,
+                cli_args,
+                &confirm_request,
+                request_log_path,
+                &outcome,
+                confirm_command,
+            )
+            .await?;
 
         Ok(broadcast_envelope(
             "protocol_manager_accept_broadcast",
@@ -1070,6 +1198,68 @@ mod tests {
         // without --broadcast.
         assert!(validate_manager_consent(&args(false, true, false, true, false)).is_err());
         assert!(validate_manager_consent(&args(false, false, true, true, false)).is_err());
+    }
+
+    #[test]
+    fn calldata_responses_carry_the_platform_confirmation_requirement() {
+        // Deploy calldata is camelCase like the rest of its payload.
+        let deploy = json!({
+            "chainId": 84532,
+            "stateOracleAddress": "0xed9A39bf60d325796De60D67b3BD00ce6c4B5007",
+            "calldata": ["0x12"],
+            "isNoop": false,
+            "requiredConfirmations": 6,
+        });
+        let parsed: ReleaseDeployCalldataResponse =
+            parse_response("deploy-calldata", &deploy).unwrap();
+        assert_eq!(parsed.required_confirmations, Some(6));
+
+        // Snake-case payloads accept both casings; absence stays None so the
+        // fallback table applies.
+        let accept = json!({
+            "chain_id": 1337,
+            "to": "0x0101010101010101010101010101010101010101",
+            "calldata": "0x01",
+            "required_confirmations": 3,
+        });
+        let parsed: AcceptCalldataResponse = parse_response("accept-calldata", &accept).unwrap();
+        assert_eq!(parsed.required_confirmations, Some(3));
+
+        let remove = json!({
+            "to": "0x0101010101010101010101010101010101010101",
+            "data": "0x01",
+        });
+        let parsed: ReleaseRemoveCalldataResponse =
+            parse_response("remove-calldata", &remove).unwrap();
+        assert_eq!(parsed.required_confirmations, None);
+    }
+
+    #[test]
+    fn insufficient_confirmations_detected_from_platform_rejections() {
+        let rejection = |body: Value| {
+            ApiCommandError::HttpStatus {
+                method: "POST",
+                path: "/x".to_string(),
+                status: 400,
+                request_id: None,
+                body: Box::new(body),
+            }
+        };
+        assert!(insufficient_confirmations(&rejection(
+            json!({ "code": "INSUFFICIENT_CONFIRMATIONS" })
+        )));
+        assert!(insufficient_confirmations(&rejection(
+            json!({ "error": "insufficient_confirmations" })
+        )));
+        assert!(insufficient_confirmations(&rejection(
+            json!({ "message": "Rejected: INSUFFICIENT_CONFIRMATIONS (needed 6, got 3)" })
+        )));
+        assert!(!insufficient_confirmations(&rejection(
+            json!({ "code": "nonce_expired" })
+        )));
+        assert!(!insufficient_confirmations(
+            &ApiCommandError::BroadcastCancelled
+        ));
     }
 
     #[test]

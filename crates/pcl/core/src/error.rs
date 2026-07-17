@@ -183,6 +183,33 @@ pub enum DeployError {
         reason: String,
     },
 
+    #[error("Failed to record the project-create intent at {path} before creating: {reason}")]
+    CreateIntentWrite { path: String, reason: String },
+
+    #[error(
+        "Found a pending project-create intent at {path} but it is unreadable: {reason}. If an earlier `pcl deploy` already created the project, add its id to credible.toml (`pcl projects mine` lists your projects); then delete the intent file and re-run."
+    )]
+    CreateIntentUnreadable { path: String, reason: String },
+
+    #[error(
+        "The pending project-create intent at {path} belongs to platform {intent_platform}, but this deploy targets {requested}. Resolve the earlier create against {intent_platform} first (adopt the project id into credible.toml or delete the intent file), then re-run."
+    )]
+    CreateIntentPlatformMismatch {
+        path: String,
+        intent_platform: String,
+        requested: String,
+    },
+
+    #[error(
+        "An earlier `pcl deploy` create for project {name:?} on chain {chain_id} never recorded its outcome, and {count} projects with that name now exist on the platform. Creating again would add another duplicate. Pick the right project id from `pcl projects mine`, add `project_id = \"<id>\"` to credible.toml, and delete {path} to continue."
+    )]
+    AmbiguousProjectCreate {
+        name: String,
+        chain_id: u64,
+        count: usize,
+        path: String,
+    },
+
     #[error(
         "Machine output requires `--yes` (pcl deploy mutates the project and broadcasts transactions)"
     )]

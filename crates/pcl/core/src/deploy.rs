@@ -340,6 +340,109 @@ fn upsert_project_id(contents: &str, project_id: Uuid) -> String {
     result
 }
 
+/// A create intent persisted *before* the project-create POST.
+///
+/// If the POST's outcome is ambiguous — response lost, malformed, or a
+/// post-commit server error — no project id reaches credible.toml, but the
+/// intent survives. The next run then reconciles against the platform (adopt
+/// the already-created project) instead of blindly posting a second create:
+/// the platform permits duplicate project names, so a blind retry would
+/// orphan real projects.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct CreateIntent {
+    project_name: String,
+    chain_id: u64,
+    platform_url: String,
+}
+
+/// The intent lives next to the credible.toml whose `project_id` it guards
+/// (e.g. `.credible.toml.create-intent.json`), so it shares the writability
+/// preflight and travels with the project checkout.
+fn create_intent_path(config_path: &Path) -> PathBuf {
+    let file_name = config_path.file_name().map_or_else(
+        || "credible.toml".to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    config_path.with_file_name(format!(".{file_name}.create-intent.json"))
+}
+
+/// Loads a surviving create intent. A corrupt intent is an error, not a
+/// silent create: it still signals that an earlier create's outcome was
+/// never recorded.
+fn load_create_intent(path: &Path) -> Result<Option<CreateIntent>, DeployError> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(DeployError::CreateIntentUnreadable {
+                path: path.display().to_string(),
+                reason: error.to_string(),
+            });
+        }
+    };
+    serde_json::from_str(&contents).map(Some).map_err(|error| {
+        DeployError::CreateIntentUnreadable {
+            path: path.display().to_string(),
+            reason: error.to_string(),
+        }
+    })
+}
+
+fn write_create_intent(path: &Path, intent: &CreateIntent) -> Result<(), DeployError> {
+    let contents = serde_json::to_string_pretty(intent).map_err(|error| {
+        DeployError::CreateIntentWrite {
+            path: path.display().to_string(),
+            reason: error.to_string(),
+        }
+    })?;
+    std::fs::write(path, contents).map_err(|error| {
+        DeployError::CreateIntentWrite {
+            path: path.display().to_string(),
+            reason: error.to_string(),
+        }
+    })
+}
+
+/// Best-effort removal once the create outcome is recorded (or definitely
+/// did not happen). A leftover intent only costs one reconcile pass on the
+/// next run, so removal failures are not fatal.
+fn clear_create_intent(path: &Path) {
+    let _ = std::fs::remove_file(path);
+}
+
+/// IDs of the user's projects matching a create intent, by exact name and
+/// chain. An item without readable chain info still matches on name alone —
+/// counting it as a candidate errs toward "do not create a duplicate", and a
+/// wrongly adopted project is still caught by [`resolve_chain_id`] before
+/// anything is mutated.
+fn matching_project_ids(projects: &Value, name: &str, chain_id: u64) -> Vec<String> {
+    let items = projects
+        .as_array()
+        .or_else(|| {
+            ["projects", "data", "items"]
+                .iter()
+                .find_map(|key| projects.get(key).and_then(Value::as_array))
+        })
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    items
+        .iter()
+        .filter(|item| {
+            ["project_name", "projectName", "name"]
+                .iter()
+                .find_map(|key| item.get(*key).and_then(Value::as_str))
+                .is_some_and(|candidate| candidate == name)
+        })
+        .filter(|item| project_chain_id(item).is_none_or(|candidate| candidate == chain_id))
+        .filter_map(|item| {
+            ["id", "project_id", "projectId"]
+                .iter()
+                .find_map(|key| item.get(*key).and_then(Value::as_str))
+                .map(ToString::to_string)
+        })
+        .collect()
+}
+
 /// Verifies credible.toml can be read and written *before* the project is
 /// created remotely, so a read-only file or missing path fails while
 /// cancellation is still side-effect free.
@@ -506,53 +609,135 @@ impl DeployArgs {
             // POST; verify that write can succeed while nothing has been
             // mutated yet.
             preflight_project_id_write(&config_path)?;
-            self.confirm_step(
-                human,
-                &format!("Create project {name:?} on chain {chain_id} on the platform?"),
-            )?;
-            progress(
-                human,
-                &format!("Creating project {name:?} on chain {chain_id}"),
-            );
-            let body = json!({ "project_name": name, "chain_id": chain_id });
-            let project = api
-                .workflow_json(
-                    config,
-                    cli_args,
-                    HttpMethod::Post,
-                    "post_projects",
-                    &[],
-                    Some(&body),
-                )
-                .await?;
-            let project_id = project
-                .get("id")
-                .or_else(|| project.get("project_id"))
-                .and_then(Value::as_str)
-                .and_then(|id| Uuid::parse_str(id).ok())
-                .ok_or(DeployError::UnexpectedResponse {
-                    endpoint: "/projects",
-                    reason: "missing project id in create response".to_string(),
-                })?;
-            // The remote project now exists; a failure here must carry its id
-            // and a resume path so the next run adopts it instead of creating
-            // a duplicate.
-            write_project_id(&config_path, project_id).map_err(|error| {
-                DeployError::TomlWriteBackAfterCreate {
-                    path: config_path.display().to_string(),
-                    project_id,
-                    reason: match error {
-                        DeployError::TomlWriteBack { reason, .. } => reason,
-                        other => other.to_string(),
-                    },
+            let intent_path = create_intent_path(&config_path);
+            // A surviving intent means an earlier create POST's outcome was
+            // never recorded; reconcile with the platform before creating
+            // anything else — never blind-POST a second create.
+            let adopted = match load_create_intent(&intent_path)? {
+                Some(intent) => {
+                    self.reconcile_create_intent(
+                        &api,
+                        config,
+                        cli_args,
+                        &intent,
+                        &intent_path,
+                        human,
+                    )
+                    .await?
                 }
-            })?;
-            credible.project_id = Some(project_id);
-            progress(
-                human,
-                &format!("Created project {project_id} and recorded it in credible.toml"),
-            );
-            (project_id, project, Some(chain_id))
+                None => None,
+            };
+            if let Some(project_id) = adopted {
+                progress(
+                    human,
+                    &format!("Adopting project {project_id} created by an interrupted earlier run"),
+                );
+                write_project_id(&config_path, project_id).map_err(|error| {
+                    DeployError::TomlWriteBackAfterCreate {
+                        path: config_path.display().to_string(),
+                        project_id,
+                        reason: match error {
+                            DeployError::TomlWriteBack { reason, .. } => reason,
+                            other => other.to_string(),
+                        },
+                    }
+                })?;
+                clear_create_intent(&intent_path);
+                credible.project_id = Some(project_id);
+                let project_id_string = project_id.to_string();
+                let project = api
+                    .workflow_json(
+                        config,
+                        cli_args,
+                        HttpMethod::Get,
+                        "get_projects_project_id",
+                        &[("project_id", project_id_string.as_str())],
+                        None,
+                    )
+                    .await?;
+                // Adopted, not created: the platform record is authoritative
+                // for the chain, exactly like a pre-recorded project_id.
+                (project_id, project, None)
+            } else {
+                self.confirm_step(
+                    human,
+                    &format!("Create project {name:?} on chain {chain_id} on the platform?"),
+                )?;
+                // Persist the intent before the POST: from here on, a lost or
+                // malformed create response leaves a marker that forces the
+                // next run to reconcile instead of creating a duplicate (the
+                // platform allows duplicate project names).
+                write_create_intent(
+                    &intent_path,
+                    &CreateIntent {
+                        project_name: name.clone(),
+                        chain_id,
+                        platform_url: self.api_url.as_str().trim_end_matches('/').to_string(),
+                    },
+                )?;
+                progress(
+                    human,
+                    &format!("Creating project {name:?} on chain {chain_id}"),
+                );
+                let body = json!({ "project_name": name, "chain_id": chain_id });
+                let project = match api
+                    .workflow_json(
+                        config,
+                        cli_args,
+                        HttpMethod::Post,
+                        "post_projects",
+                        &[],
+                        Some(&body),
+                    )
+                    .await
+                {
+                    Ok(project) => project,
+                    Err(error) => {
+                        // A definite rejection means nothing was created and
+                        // the intent can go; any other failure (network drop,
+                        // 5xx, lost response) is ambiguous and the intent
+                        // must survive for the next run's reconcile pass.
+                        if matches!(
+                            &error,
+                            crate::api::ApiCommandError::HttpStatus { status, .. }
+                                if (400..=499).contains(status)
+                        ) {
+                            clear_create_intent(&intent_path);
+                        }
+                        return Err(error.into());
+                    }
+                };
+                let project_id = project
+                    .get("id")
+                    .or_else(|| project.get("project_id"))
+                    .and_then(Value::as_str)
+                    .and_then(|id| Uuid::parse_str(id).ok())
+                    .ok_or(DeployError::UnexpectedResponse {
+                        endpoint: "/projects",
+                        reason: "missing project id in create response".to_string(),
+                    })?;
+                // The remote project now exists; a failure here must carry
+                // its id and a resume path, and the surviving intent lets the
+                // next run adopt it automatically instead of creating a
+                // duplicate.
+                write_project_id(&config_path, project_id).map_err(|error| {
+                    DeployError::TomlWriteBackAfterCreate {
+                        path: config_path.display().to_string(),
+                        project_id,
+                        reason: match error {
+                            DeployError::TomlWriteBack { reason, .. } => reason,
+                            other => other.to_string(),
+                        },
+                    }
+                })?;
+                clear_create_intent(&intent_path);
+                credible.project_id = Some(project_id);
+                progress(
+                    human,
+                    &format!("Created project {project_id} and recorded it in credible.toml"),
+                );
+                (project_id, project, Some(chain_id))
+            }
         };
         let project_created = created_chain_id.is_some();
 
@@ -760,6 +945,69 @@ impl DeployArgs {
                 format!("pcl deployments --project {project_id}"),
             ],
         )
+    }
+
+    /// Resolves a surviving create intent against the platform: returns the
+    /// already-created project's id when exactly one of the user's projects
+    /// matches the intent's name and chain, `None` when the earlier create
+    /// demonstrably never happened, and an error when adoption cannot be
+    /// decided safely (foreign platform, multiple candidates).
+    async fn reconcile_create_intent(
+        &self,
+        api: &ApiArgs,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        intent: &CreateIntent,
+        intent_path: &Path,
+        human: bool,
+    ) -> Result<Option<Uuid>, DeployError> {
+        let requested = self.api_url.as_str().trim_end_matches('/').to_string();
+        if intent.platform_url != requested {
+            // The unresolved create belongs to another platform; matching
+            // this platform's projects against it proves nothing.
+            return Err(DeployError::CreateIntentPlatformMismatch {
+                path: intent_path.display().to_string(),
+                intent_platform: intent.platform_url.clone(),
+                requested,
+            });
+        }
+        progress(
+            human,
+            &format!(
+                "An earlier create for project {:?} never recorded its outcome; checking the platform before creating",
+                intent.project_name
+            ),
+        );
+        let mine = api
+            .workflow_json(
+                config,
+                cli_args,
+                HttpMethod::Get,
+                "get_views_projects_home",
+                &[],
+                None,
+            )
+            .await?;
+        let ids = matching_project_ids(&mine, &intent.project_name, intent.chain_id);
+        match ids.as_slice() {
+            [] => Ok(None),
+            [id] => {
+                Uuid::parse_str(id).map(Some).map_err(|_| {
+                    DeployError::UnexpectedResponse {
+                        endpoint: "/views/projects/home",
+                        reason: format!("project id {id} is not a UUID"),
+                    }
+                })
+            }
+            _ => {
+                Err(DeployError::AmbiguousProjectCreate {
+                    name: intent.project_name.clone(),
+                    chain_id: intent.chain_id,
+                    count: ids.len(),
+                    path: intent_path.display().to_string(),
+                })
+            }
+        }
     }
 
     /// Interactive gate before a mutating step; cancelling is side-effect
@@ -1162,6 +1410,73 @@ mod tests {
             std::fs::read_to_string(&missing).unwrap(),
             "environment = \"staging\"\n"
         );
+    }
+
+    #[test]
+    fn create_intent_round_trips_and_clears() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("credible.toml");
+        let intent_path = create_intent_path(&config_path);
+        assert_eq!(
+            intent_path.file_name().unwrap().to_str().unwrap(),
+            ".credible.toml.create-intent.json"
+        );
+
+        // No intent → no reconcile needed.
+        assert!(load_create_intent(&intent_path).unwrap().is_none());
+
+        let intent = CreateIntent {
+            project_name: "demo".to_string(),
+            chain_id: 84532,
+            platform_url: "https://api.example".to_string(),
+        };
+        write_create_intent(&intent_path, &intent).unwrap();
+        let loaded = load_create_intent(&intent_path).unwrap().unwrap();
+        assert_eq!(loaded.project_name, "demo");
+        assert_eq!(loaded.chain_id, 84532);
+        assert_eq!(loaded.platform_url, "https://api.example");
+
+        clear_create_intent(&intent_path);
+        assert!(load_create_intent(&intent_path).unwrap().is_none());
+
+        // A corrupt intent is an error, not a silent fresh create: it still
+        // marks an unresolved earlier create.
+        std::fs::write(&intent_path, "not json").unwrap();
+        assert!(matches!(
+            load_create_intent(&intent_path),
+            Err(DeployError::CreateIntentUnreadable { .. })
+        ));
+    }
+
+    #[test]
+    fn matching_project_ids_filters_by_name_and_chain() {
+        let projects = json!([
+            { "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "project_name": "demo", "project_networks": ["84532"] },
+            { "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "project_name": "demo", "project_networks": ["1"] },
+            { "id": "cccccccc-cccc-cccc-cccc-cccccccccccc", "project_name": "other", "project_networks": ["84532"] },
+        ]);
+
+        // Name + chain must both match.
+        assert_eq!(
+            matching_project_ids(&projects, "demo", 84532),
+            vec!["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".to_string()]
+        );
+        assert!(matching_project_ids(&projects, "demo", 59141).is_empty());
+        assert!(matching_project_ids(&projects, "missing", 84532).is_empty());
+
+        // Duplicate names on the same chain are all reported — the caller
+        // must refuse to guess.
+        let duplicates = json!({ "projects": [
+            { "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "projectName": "demo", "project_networks": ["84532"] },
+            { "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "name": "demo", "chain_id": 84532 },
+        ]});
+        assert_eq!(matching_project_ids(&duplicates, "demo", 84532).len(), 2);
+
+        // An item without readable chain info still matches on name: err
+        // toward "do not create a duplicate".
+        let chainless =
+            json!([{ "id": "dddddddd-dddd-dddd-dddd-dddddddddddd", "project_name": "demo" }]);
+        assert_eq!(matching_project_ids(&chainless, "demo", 84532).len(), 1);
     }
 
     #[test]

@@ -667,6 +667,49 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
                         ],
                     )
                 }
+                DeployError::CreateIntentWrite { .. } => {
+                    (
+                        "deploy.create_intent_write_failed",
+                        true,
+                        vec![
+                            "Check the credible.toml directory permissions, then re-run pcl deploy"
+                                .to_string(),
+                        ],
+                    )
+                }
+                DeployError::CreateIntentUnreadable { path, .. } => {
+                    (
+                        "deploy.create_intent_unreadable",
+                        true,
+                        vec![
+                        "pcl projects mine --json".to_string(),
+                        "Add project_id = \"<id>\" to credible.toml if the project already exists"
+                            .to_string(),
+                        format!("Delete {path} once the earlier create is resolved"),
+                    ],
+                    )
+                }
+                DeployError::CreateIntentPlatformMismatch { path, .. } => {
+                    (
+                        "deploy.create_intent_platform_mismatch",
+                        true,
+                        vec![
+                            "pcl projects mine --json (against the intent's platform)".to_string(),
+                            format!("Delete {path} once the earlier create is resolved"),
+                        ],
+                    )
+                }
+                DeployError::AmbiguousProjectCreate { path, .. } => {
+                    (
+                        "deploy.project_create_ambiguous",
+                        true,
+                        vec![
+                            "pcl projects mine --json".to_string(),
+                            "Add project_id = \"<id>\" to credible.toml".to_string(),
+                            format!("Delete {path} once the right project is recorded"),
+                        ],
+                    )
+                }
                 DeployError::MachineYesRequired => {
                     (
                         "deploy.yes_required",

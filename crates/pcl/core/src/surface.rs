@@ -1595,7 +1595,7 @@ fn llms_guide() -> Value {
                 "pcl protocol-manager --project <ref> --accept-calldata --broadcast"
             ],
             "orchestrator": "pcl deploy runs the full flow (resolve/create project, set protocol manager via signed challenge, build+verify assertions, create release, wait for checks, broadcast StateOracle.batch, confirm). Reruns resume: it observes state before each step. Machine output requires --yes.",
-            "safety": "Human mode prompts before every mutation — transactions and no-transaction platform confirmations alike (--yes skips); machine mode treats --broadcast/--yes as consent. On-chain manager transfers are two-step: initiation (--transfer-calldata --broadcast) marks the transfer pending, and acceptance by the new manager (--accept-calldata --broadcast) both emits the logs the platform verifies and confirms the transfer. Tx hash is always surfaced even when the follow-up confirmation call fails; rerunning reconciles via the platform's noop path."
+            "safety": "Human mode prompts before every mutation — transactions and no-transaction platform confirmations alike (--yes skips); machine mode treats --broadcast/--yes as consent. On-chain manager transfers are two-step: initiation (--transfer-calldata --broadcast) marks the transfer pending, and acceptance by the new manager (--accept-calldata --broadcast) both emits the logs the platform verifies and confirms the transfer. Tx hash is always surfaced even when the follow-up confirmation call fails, and the error carries a confirm-only next action that retries just the platform confirmation with the landed hash — never re-broadcast after a landed transaction."
         },
         "raw_api": {
             "policy": "For normal product work, use workflow_alternatives from pcl api list/inspect or a top-level workflow command. Raw api call is for debugging, OpenAPI parity checks, internal/service endpoints, browser-session bridge investigation, or new endpoint exploration before promotion.",
@@ -2851,6 +2851,7 @@ mod tests {
                 email: Some("agent@example.com".to_string()),
             }),
             platform_url: None,
+            rpc: BTreeMap::default(),
         };
         let args = ExportIncidentsArgs {
             project_id: Some("11111111-1111-4111-8111-111111111111".to_string()),
@@ -2905,6 +2906,7 @@ mod tests {
                 email: Some("agent@example.com".to_string()),
             }),
             platform_url: None,
+            rpc: BTreeMap::default(),
         };
         let args = ExportIncidentsArgs {
             project_id: Some("11111111-1111-4111-8111-111111111111".to_string()),

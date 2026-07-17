@@ -33,12 +33,14 @@ sol! {
     function batch(bytes[] calldata data) external;
 }
 
-/// Minimum confirmations the platform verifier accepts before a deploy
-/// confirmation, mirroring the dapp's `getRequiredConfirmations` profile:
-/// 1 for local devnets, 3 for known testnets, and 12 for mainnets. Chains
-/// not listed here get the mainnet value — conservative rather than below
-/// the platform gate.
-pub fn required_confirmations(chain_id: u64) -> u64 {
+/// Fallback confirmation floor when the platform does not state its own
+/// requirement: 1 for local devnets, 3 for known testnets, and 12 for
+/// mainnets/unknown chains. The real policy lives in the platform's chain
+/// profile (`getRequiredConfirmations`) and varies per deployment, so a
+/// platform-provided value always overrides this table; when only the
+/// fallback is available and it undershoots, the confirmation POST is
+/// retried while confirmations accrue instead of failing the landed tx.
+pub fn fallback_confirmations(chain_id: u64) -> u64 {
     match chain_id {
         // Local devnets (anvil/hardhat).
         1337 | 31337 => 1,
@@ -68,7 +70,7 @@ pub enum OnchainError {
     },
 
     #[error(
-        "{requested} confirmation(s) is below the {required} the platform requires on chain {chain_id}; a deploy confirmation would be rejected with INSUFFICIENT_CONFIRMATIONS. Raise --confirmations (or the stored per-chain value) to at least {required}."
+        "{requested} confirmation(s) is below the {required} required on chain {chain_id}; the platform would reject the confirmation with INSUFFICIENT_CONFIRMATIONS. Raise --confirmations (or the stored per-chain value) to at least {required}."
     )]
     InsufficientConfirmations {
         chain_id: u64,
@@ -97,11 +99,14 @@ pub enum OnchainError {
         message: String,
     },
 
-    #[error("Transaction {tx_hash} was not confirmed: {source}")]
-    Confirmation {
+    #[error(
+        "Transaction {tx_hash} was submitted to chain {chain_id} but its confirmation state is unknown ({message}). Do not re-broadcast: the transaction may still confirm. Check it by hash first, and re-run the command only once its status is known."
+    )]
+    ConfirmationUnknown {
         tx_hash: B256,
-        #[source]
-        source: PendingTransactionError,
+        chain_id: u64,
+        redacted_url: String,
+        message: String,
     },
 
     #[error("Transaction {tx_hash} reverted on-chain (block {block})")]
@@ -115,7 +120,7 @@ pub struct TxArgs {
     #[arg(long, env = "PCL_RPC_URL")]
     pub rpc_url: Option<Url>,
 
-    /// Confirmations to wait for after broadcasting (default: what the platform requires for the chain; lower values are rejected)
+    /// Confirmations to wait for after broadcasting (default: the platform-stated requirement when the calldata carries one, else a per-chain fallback; values below the requirement are rejected)
     #[arg(long)]
     pub confirmations: Option<u64>,
 
@@ -144,15 +149,19 @@ impl TxArgs {
     }
 
     /// Resolves how many confirmations to wait for: flag first, then the
-    /// per-chain config, then the platform requirement for the chain. A flag
-    /// or stored value below [`required_confirmations`] is rejected up front —
-    /// the platform verifier would refuse the receipt after gas was spent.
+    /// per-chain config, then the requirement itself. The requirement is the
+    /// platform-stated value when the calldata response carries one
+    /// (authoritative — the platform's chain profiles differ per deployment),
+    /// falling back to [`fallback_confirmations`] otherwise. A flag or stored
+    /// value below the requirement is rejected up front — the platform
+    /// verifier would refuse the receipt after gas was spent.
     pub fn resolve_confirmations(
         &self,
         config: &CliConfig,
         chain_id: u64,
+        platform_required: Option<u64>,
     ) -> Result<u64, OnchainError> {
-        let required = required_confirmations(chain_id);
+        let required = platform_required.unwrap_or_else(|| fallback_confirmations(chain_id));
         let requested = self
             .confirmations
             .or_else(|| config.rpc_endpoint(chain_id).and_then(|e| e.confirmations));
@@ -268,12 +277,24 @@ impl TxSender {
             })?;
         let tx_hash = *pending.tx_hash();
 
+        // A failure while waiting for the receipt does NOT mean the
+        // transaction failed — it was already accepted by the RPC. Surface
+        // that ambiguity explicitly (submitted, confirmation unknown) and
+        // scrub the provider error, which can echo the credential-bearing
+        // RPC URL.
         let receipt = pending
             .with_required_confirmations(confirmations)
             .with_timeout(Some(timeout))
             .get_receipt()
             .await
-            .map_err(|source| OnchainError::Confirmation { tx_hash, source })?;
+            .map_err(|source: PendingTransactionError| {
+                OnchainError::ConfirmationUnknown {
+                    tx_hash,
+                    chain_id: self.chain_id,
+                    redacted_url: crate::config::redacted_rpc_host(self.rpc.as_str()),
+                    message: scrub_rpc_error(&source.to_string(), &self.rpc),
+                }
+            })?;
 
         if !receipt.status() {
             return Err(OnchainError::Reverted {
@@ -383,8 +404,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_confirmations_precedence_and_platform_floor() {
-        // Chain 1 (mainnet) requires 12.
+    fn resolve_confirmations_precedence_and_floor() {
+        // Chain 1 falls back to a 12-confirmation floor.
         let config = config_with_rpc(1, "https://x.example", Some(15));
 
         // A flag at or above the requirement wins.
@@ -392,30 +413,32 @@ mod tests {
             confirmations: Some(20),
             ..Default::default()
         };
-        assert_eq!(flag.resolve_confirmations(&config, 1).unwrap(), 20);
+        assert_eq!(flag.resolve_confirmations(&config, 1, None).unwrap(), 20);
 
         // Then the stored per-chain value.
         assert_eq!(
-            TxArgs::default().resolve_confirmations(&config, 1).unwrap(),
+            TxArgs::default()
+                .resolve_confirmations(&config, 1, None)
+                .unwrap(),
             15
         );
 
-        // Then the platform requirement itself.
+        // Then the requirement itself.
         assert_eq!(
             TxArgs::default()
-                .resolve_confirmations(&CliConfig::default(), 1)
+                .resolve_confirmations(&CliConfig::default(), 1, None)
                 .unwrap(),
             12
         );
 
-        // Values below the platform requirement are rejected up front,
-        // whether they come from the flag or the stored config.
+        // Values below the requirement are rejected up front, whether they
+        // come from the flag or the stored config.
         let low_flag = TxArgs {
             confirmations: Some(1),
             ..Default::default()
         };
         assert!(matches!(
-            low_flag.resolve_confirmations(&config, 1),
+            low_flag.resolve_confirmations(&config, 1, None),
             Err(OnchainError::InsufficientConfirmations {
                 chain_id: 1,
                 requested: 1,
@@ -424,30 +447,70 @@ mod tests {
         ));
         let low_config = config_with_rpc(1, "https://x.example", Some(3));
         assert!(matches!(
-            TxArgs::default().resolve_confirmations(&low_config, 1),
+            TxArgs::default().resolve_confirmations(&low_config, 1, None),
             Err(OnchainError::InsufficientConfirmations { .. })
         ));
 
-        // Local devnets and testnets have lower floors.
+        // Local devnets and testnets have lower fallback floors.
         assert_eq!(
             TxArgs::default()
-                .resolve_confirmations(&CliConfig::default(), 31337)
+                .resolve_confirmations(&CliConfig::default(), 31337, None)
                 .unwrap(),
             1
         );
         assert_eq!(
             TxArgs::default()
-                .resolve_confirmations(&CliConfig::default(), 84532)
+                .resolve_confirmations(&CliConfig::default(), 84532, None)
                 .unwrap(),
             3
         );
         // Unknown chains get the conservative mainnet floor.
         assert_eq!(
             TxArgs::default()
-                .resolve_confirmations(&CliConfig::default(), 999_999)
+                .resolve_confirmations(&CliConfig::default(), 999_999, None)
                 .unwrap(),
             12
         );
+    }
+
+    #[test]
+    fn resolve_confirmations_platform_requirement_overrides_the_fallback_table() {
+        // The platform's chain profile is authoritative in both directions:
+        // an internal profile can require 3 on a devnet chain the table maps
+        // to 1, and an external one can require 6 where the table says 3.
+        assert_eq!(
+            TxArgs::default()
+                .resolve_confirmations(&CliConfig::default(), 1337, Some(3))
+                .unwrap(),
+            3
+        );
+        assert_eq!(
+            TxArgs::default()
+                .resolve_confirmations(&CliConfig::default(), 84532, Some(6))
+                .unwrap(),
+            6
+        );
+        // A platform requirement below the table is honored too — the table
+        // is only a guess when the platform says nothing.
+        assert_eq!(
+            TxArgs::default()
+                .resolve_confirmations(&CliConfig::default(), 1, Some(2))
+                .unwrap(),
+            2
+        );
+        // Explicit values below the platform requirement are rejected.
+        let low_flag = TxArgs {
+            confirmations: Some(1),
+            ..Default::default()
+        };
+        assert!(matches!(
+            low_flag.resolve_confirmations(&CliConfig::default(), 1337, Some(3)),
+            Err(OnchainError::InsufficientConfirmations {
+                chain_id: 1337,
+                requested: 1,
+                required: 3,
+            })
+        ));
     }
 
     #[test]
@@ -471,5 +534,26 @@ mod tests {
         assert!(!rendered.contains("hunter2"));
         assert!(!rendered.contains("apikey123"));
         assert!(rendered.contains("https://rpc.example.com"));
+    }
+
+    #[test]
+    fn confirmation_unknown_is_scrubbed_and_warns_against_rebroadcast() {
+        let rpc: Url = "https://user:hunter2@rpc.example.com/v2/apikey123"
+            .parse()
+            .unwrap();
+        // A receipt-poll transport error typically echoes the full RPC URL.
+        let error = OnchainError::ConfirmationUnknown {
+            tx_hash: B256::repeat_byte(0xab),
+            chain_id: 84532,
+            redacted_url: crate::config::redacted_rpc_host(rpc.as_str()),
+            message: scrub_rpc_error(&format!("request timeout connecting to {rpc}"), &rpc),
+        };
+        let rendered = error.to_string();
+        assert!(!rendered.contains("hunter2"));
+        assert!(!rendered.contains("apikey123"));
+        // The transaction was already accepted: the hash must be present and
+        // the guidance must be to check it, never to send again.
+        assert!(rendered.contains(&B256::repeat_byte(0xab).to_string()));
+        assert!(rendered.contains("Do not re-broadcast"));
     }
 }
