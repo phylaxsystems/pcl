@@ -109,9 +109,16 @@ struct ProtocolManagerNonceResponse {
 }
 
 /// `GET /projects/{id}/protocol-manager/transfer-calldata` (mode union)
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum TransferMode {
+    Direct,
+    Onchain,
+}
+
 #[derive(Debug, Deserialize)]
 struct TransferCalldataResponse {
-    mode: String,
+    mode: TransferMode,
     #[serde(default)]
     chain_id: Option<u64>,
     #[serde(default)]
@@ -144,6 +151,28 @@ fn parse_response<T: serde::de::DeserializeOwned>(
             reason: e.to_string(),
         }
     })
+}
+
+/// Rejects internally inconsistent deploy-calldata responses before either
+/// skipping required chain work or spending gas on an empty batch.
+fn validate_release_deploy_calldata(
+    calldata: &ReleaseDeployCalldataResponse,
+) -> Result<(), ApiCommandError> {
+    match (calldata.is_noop, calldata.calldata.is_empty()) {
+        (true, true) | (false, false) => Ok(()),
+        (true, false) => {
+            Err(ApiCommandError::UnexpectedResponse {
+                endpoint: "deploy-calldata",
+                reason: "noop response unexpectedly included transaction calldata".to_string(),
+            })
+        }
+        (false, true) => {
+            Err(ApiCommandError::UnexpectedResponse {
+                endpoint: "deploy-calldata",
+                reason: "non-noop response did not include transaction calldata".to_string(),
+            })
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -476,6 +505,7 @@ impl ApiArgs {
             .await?;
         let calldata: ReleaseDeployCalldataResponse =
             parse_response("deploy-calldata", &calldata_result.body)?;
+        validate_release_deploy_calldata(&calldata)?;
 
         let next_actions = vec![
             format!("pcl releases show {project} {release_id}"),
@@ -826,7 +856,7 @@ impl ApiArgs {
             "pcl protocol-manager --project {project} --pending-transfer"
         )];
 
-        if calldata.mode == "direct" {
+        if calldata.mode == TransferMode::Direct {
             // Nothing on-chain to move; confirm directly.
             confirm_mutation(
                 cli_args,
@@ -855,6 +885,7 @@ impl ApiArgs {
             ));
         }
 
+        debug_assert_eq!(calldata.mode, TransferMode::Onchain);
         let (Some(chain_id), Some(to), Some(data)) =
             (calldata.chain_id, calldata.to, calldata.calldata.clone())
         else {
@@ -1111,7 +1142,7 @@ mod tests {
         });
         let parsed: TransferCalldataResponse =
             parse_response("transfer-calldata", &onchain).unwrap();
-        assert_eq!(parsed.mode, "onchain");
+        assert_eq!(parsed.mode, TransferMode::Onchain);
         assert_eq!(parsed.chain_id, Some(84532));
         assert!(parsed.to.is_some());
 
@@ -1124,9 +1155,64 @@ mod tests {
         });
         let parsed: TransferCalldataResponse =
             parse_response("transfer-calldata", &direct).unwrap();
-        assert_eq!(parsed.mode, "direct");
+        assert_eq!(parsed.mode, TransferMode::Direct);
         assert!(parsed.to.is_none());
         assert!(parsed.calldata.is_none());
+    }
+
+    #[test]
+    fn transfer_calldata_rejects_unknown_mode() {
+        let body = json!({
+            "mode": "future-mode",
+            "chain_id": 84532,
+            "to": "0x0101010101010101010101010101010101010101",
+            "calldata": "0xdeadbeef",
+            "total_contracts": 1,
+        });
+        let err =
+            parse_response::<TransferCalldataResponse>("protocol-manager/transfer-calldata", &body)
+                .unwrap_err();
+        assert!(matches!(
+            err,
+            ApiCommandError::UnexpectedResponse {
+                endpoint: "protocol-manager/transfer-calldata",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn deploy_calldata_requires_noop_and_calldata_to_agree() {
+        let response = |is_noop, calldata| {
+            ReleaseDeployCalldataResponse {
+                chain_id: 31337,
+                state_oracle_address: address!("0101010101010101010101010101010101010101"),
+                calldata,
+                is_noop,
+                message: None,
+                operations: Vec::new(),
+                required_confirmations: None,
+            }
+        };
+
+        assert!(validate_release_deploy_calldata(&response(true, Vec::new())).is_ok());
+        assert!(
+            validate_release_deploy_calldata(&response(false, vec![Bytes::from_static(&[1])]))
+                .is_ok()
+        );
+
+        for inconsistent in [
+            response(false, Vec::new()),
+            response(true, vec![Bytes::from_static(&[1])]),
+        ] {
+            assert!(matches!(
+                validate_release_deploy_calldata(&inconsistent),
+                Err(ApiCommandError::UnexpectedResponse {
+                    endpoint: "deploy-calldata",
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]
