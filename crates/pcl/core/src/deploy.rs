@@ -221,7 +221,8 @@ fn newest_release<'a>(
 /// in both directions: with a diff it reads as "changes" (risking a duplicate
 /// release), without one it can be a stale leftover whose contents differ
 /// from the config. Either way an inactive release is resumed only when its
-/// snapshot matched the payload ([`snapshot_matches_payload`]).
+/// snapshot matched the platform's canonical preview
+/// ([`snapshot_matches_preview`]).
 fn release_step(has_changes: bool, inactive: Option<(&ReleaseSummary, bool)>) -> ReleaseStep {
     match inactive {
         Some((candidate, true)) => {
@@ -237,47 +238,91 @@ fn release_step(has_changes: bool, inactive: Option<(&ReleaseSummary, bool)>) ->
     }
 }
 
-/// One assertion's identity within a release: (address, file, args, bytecode).
-type AssertionKey = (String, String, Vec<String>, String);
+/// One assertion's canonical identity within a release:
+/// (file, constructor args, assertion id).
+type AssertionKey = (String, Vec<String>, String);
 
-/// The [`AssertionKey`] set describing a release's contents, extracted from
-/// either a release payload or a release detail's `configSnapshot` — the two
-/// share the `contracts` record shape.
-fn assertion_set(contracts: &Value) -> Option<Vec<AssertionKey>> {
+/// One contract's canonical identity within a release:
+/// (label, address, display name, assertions).
+type ContractKey = (String, String, String, Vec<AssertionKey>);
+
+fn strict_string_array(value: &Value) -> Option<Vec<String>> {
+    value
+        .as_array()?
+        .iter()
+        .map(|item| item.as_str().map(ToString::to_string))
+        .collect()
+}
+
+/// The [`ContractKey`] set describing an inactive release's canonical
+/// contents. Release snapshots contain the assertion ids assigned after the
+/// platform has compiled and stored the assertions in DA.
+fn snapshot_contract_set(contracts: &Value) -> Option<Vec<ContractKey>> {
     let mut set = Vec::new();
-    for contract in contracts.as_object()?.values() {
+    for (label, contract) in contracts.as_object()? {
         let address = contract.get("address")?.as_str()?.to_ascii_lowercase();
+        let name = contract.get("name")?.as_str()?.to_string();
+        let mut assertions = Vec::new();
         for assertion in contract.get("assertions")?.as_array()? {
-            set.push((
-                address.clone(),
+            assertions.push((
                 assertion.get("file")?.as_str()?.to_string(),
-                assertion
-                    .get("args")?
-                    .as_array()?
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(ToString::to_string)
-                    .collect(),
-                // Bytecode participates so a recompile (new compiler settings,
-                // edited source) never resumes a stale release.
-                assertion.get("bytecode")?.as_str()?.to_ascii_lowercase(),
+                strict_string_array(assertion.get("args")?)?,
+                assertion.get("assertionId")?.as_str()?.to_ascii_lowercase(),
             ));
         }
+        assertions.sort();
+        set.push((label.clone(), address, name, assertions));
     }
     set.sort();
     Some(set)
 }
 
-/// Whether an existing (inactive) release contains exactly the assertions the
-/// current payload would create. The preview endpoint diffs against the
-/// *active* release only, so without this check a rerun before activation
-/// would create a duplicate release instead of resuming.
-fn snapshot_matches_payload(release_detail: &Value, payload: &Value) -> bool {
+/// The desired canonical contract set exposed by release preview. Removed
+/// contracts and assertions are excluded; added, modified, and unchanged
+/// entries together describe the release that the current payload would
+/// create. Assertion ids come from the platform's canonical DA compilation,
+/// so they remain comparable to a stored snapshot even when the local compiler
+/// bytecode is normalized by the platform during release creation.
+fn preview_contract_set(preview: &Value) -> Option<Vec<ContractKey>> {
+    let mut set = Vec::new();
+    for (label, contract) in preview.get("diff")?.get("contracts")?.as_object()? {
+        match contract.get("changeType")?.as_str()? {
+            "removed" => continue,
+            "added" | "modified" | "unchanged" => {}
+            _ => return None,
+        }
+        let address = contract.get("address")?.as_str()?.to_ascii_lowercase();
+        let name = contract.get("name")?.as_str()?.to_string();
+        let mut assertions = Vec::new();
+        for assertion in contract.get("assertions")?.as_array()? {
+            match assertion.get("changeType")?.as_str()? {
+                "removed" => continue,
+                "added" | "modified" | "unchanged" => {}
+                _ => return None,
+            }
+            assertions.push((
+                assertion.get("file")?.as_str()?.to_string(),
+                strict_string_array(assertion.get("args")?)?,
+                assertion.get("assertionId")?.as_str()?.to_ascii_lowercase(),
+            ));
+        }
+        assertions.sort();
+        set.push((label.clone(), address, name, assertions));
+    }
+    set.sort();
+    Some(set)
+}
+
+/// Whether an existing inactive release contains exactly the canonical
+/// contract state produced by the current preview. The preview endpoint diffs
+/// against the *active* release only, so without this check a rerun before
+/// activation would create a duplicate release instead of resuming.
+fn snapshot_matches_preview(release_detail: &Value, preview: &Value) -> bool {
     let snapshot = release_detail
         .get("configSnapshot")
         .and_then(|snapshot| snapshot.get("contracts"))
-        .and_then(assertion_set);
-    let wanted = payload.get("contracts").and_then(assertion_set);
+        .and_then(snapshot_contract_set);
+    let wanted = preview_contract_set(preview);
     match (snapshot, wanted) {
         (Some(snapshot), Some(wanted)) => snapshot == wanted,
         _ => false,
@@ -889,7 +934,7 @@ impl DeployArgs {
                     .await?;
                 Some((
                     candidate,
-                    snapshot_matches_payload(&detail, &serde_json::to_value(&payload)?),
+                    snapshot_matches_preview(&detail, &serde_json::to_value(&preview)?),
                 ))
             }
             _ => None,
@@ -1342,52 +1387,168 @@ mod tests {
         assert!(!updated.contains("11111111"));
     }
 
-    #[test]
-    fn snapshot_matching_detects_identical_and_divergent_releases() {
-        let contracts = |bytecode: &str, args: Vec<&str>| {
-            json!({
-                "mock": {
-                    "address": "0x0101010101010101010101010101010101010101",
-                    "name": "Mock",
-                    "assertions": [{
-                        "file": "assertions/src/A.a.sol:A",
-                        "args": args,
-                        "bytecode": bytecode,
-                    }],
-                }
-            })
-        };
-        let detail = |contracts: Value| json!({ "configSnapshot": { "contracts": contracts } });
-        let payload = |contracts: Value| json!({ "contracts": contracts });
+    fn snapshot_contracts(assertion_id: &str, args: &[&str]) -> Value {
+        json!({
+            "mock": {
+                "address": "0x0101010101010101010101010101010101010101",
+                "name": "Mock",
+                "assertions": [{
+                    "file": "assertions/src/A.a.sol:A",
+                    "args": args,
+                    "bytecode": "0xplatform-normalized-bytecode",
+                    "assertionId": assertion_id,
+                }],
+            }
+        })
+    }
 
+    fn release_detail(contracts: Value) -> Value {
+        let mut detail = json!({ "configSnapshot": { "contracts": null } });
+        detail["configSnapshot"]["contracts"] = contracts;
+        detail
+    }
+
+    fn release_preview(assertion_id: &str, args: &[&str]) -> Value {
+        json!({
+            "diff": {
+                "contracts": {
+                    "mock": {
+                        "address": "0x0101010101010101010101010101010101010101",
+                        "name": "Mock",
+                        "changeType": "added",
+                        "assertions": [{
+                            "file": "assertions/src/A.a.sol:A",
+                            "args": args,
+                            "changeType": "added",
+                            "assertionId": assertion_id,
+                        }],
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn snapshot_matching_uses_complete_canonical_preview_state() {
         // Same content matches even with different address casing.
-        let mut upper = contracts("0x6080", vec![]);
+        let mut upper = snapshot_contracts("0xassertion", &[]);
         upper["mock"]["address"] = json!(
             "0x0101010101010101010101010101010101010101"
                 .to_ascii_uppercase()
                 .replace("0X", "0x")
         );
-        assert!(snapshot_matches_payload(
-            &detail(upper),
-            &payload(contracts("0x6080", vec![]))
+        assert!(snapshot_matches_preview(
+            &release_detail(upper),
+            &release_preview("0xASSERTION", &[])
         ));
 
-        // Different bytecode (recompile) must NOT resume.
-        assert!(!snapshot_matches_payload(
-            &detail(contracts("0x6080", vec![])),
-            &payload(contracts("0xdead", vec![]))
+        // The preview uses the same complete desired-state shape for retained
+        // contracts and assertions, regardless of their diff classification.
+        for change_type in ["added", "modified", "unchanged"] {
+            let mut classified = release_preview("0xassertion", &[]);
+            classified["diff"]["contracts"]["mock"]["changeType"] = json!(change_type);
+            classified["diff"]["contracts"]["mock"]["assertions"][0]["changeType"] =
+                json!(change_type);
+            assert!(snapshot_matches_preview(
+                &release_detail(snapshot_contracts("0xassertion", &[])),
+                &classified
+            ));
+        }
+
+        // Removed entries describe the active release, not the desired
+        // snapshot, so they are excluded from the comparison.
+        let mut removal_preview = release_preview("0xassertion", &[]);
+        removal_preview["diff"]["contracts"]["old"] = json!({
+            "address": "0x0202020202020202020202020202020202020202",
+            "name": "Old",
+            "changeType": "removed",
+            "assertions": [],
+        });
+        assert!(snapshot_matches_preview(
+            &release_detail(snapshot_contracts("0xassertion", &[])),
+            &removal_preview
+        ));
+    }
+
+    #[test]
+    fn snapshot_matching_rejects_divergent_canonical_state() {
+        // A source/compiler change produces a different canonical assertion
+        // id and must not resume the stale release.
+        assert!(!snapshot_matches_preview(
+            &release_detail(snapshot_contracts("0xold", &[])),
+            &release_preview("0xnew", &[])
         ));
 
         // Different constructor args must NOT resume.
-        assert!(!snapshot_matches_payload(
-            &detail(contracts("0x6080", vec!["1"])),
-            &payload(contracts("0x6080", vec!["2"]))
+        assert!(!snapshot_matches_preview(
+            &release_detail(snapshot_contracts("0xassertion", &["1"])),
+            &release_preview("0xassertion", &["2"])
         ));
 
-        // Missing snapshot (e.g. null bytecode) must NOT resume.
-        assert!(!snapshot_matches_payload(
+        // Contract metadata is part of the desired snapshot. Resuming across
+        // a label or display-name change would persist stale platform state.
+        let mut renamed_label = release_preview("0xassertion", &[]);
+        let renamed_contract = renamed_label["diff"]["contracts"]
+            .as_object_mut()
+            .unwrap()
+            .remove("mock")
+            .unwrap();
+        renamed_label["diff"]["contracts"]["renamed"] = renamed_contract;
+        assert!(!snapshot_matches_preview(
+            &release_detail(snapshot_contracts("0xassertion", &[])),
+            &renamed_label
+        ));
+
+        let mut renamed_display = release_preview("0xassertion", &[]);
+        renamed_display["diff"]["contracts"]["mock"]["name"] = json!("Renamed");
+        assert!(!snapshot_matches_preview(
+            &release_detail(snapshot_contracts("0xassertion", &[])),
+            &renamed_display
+        ));
+        let mut assertion_removal = release_preview("0xassertion", &[]);
+        assertion_removal["diff"]["contracts"]["mock"]["assertions"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "file": "assertions/src/Old.a.sol:Old",
+                "args": [],
+                "changeType": "removed",
+                "assertionId": null,
+                "previousAssertionId": "0xold",
+            }));
+        assert!(snapshot_matches_preview(
+            &release_detail(snapshot_contracts("0xassertion", &[])),
+            &assertion_removal
+        ));
+    }
+
+    #[test]
+    fn snapshot_matching_fails_closed_on_malformed_data() {
+        assert!(!snapshot_matches_preview(
             &json!({ "configSnapshot": null }),
-            &payload(contracts("0x6080", vec![]))
+            &release_preview("0xassertion", &[])
+        ));
+        // Malformed server data fails closed instead of normalizing into a
+        // potentially matching but incomplete identity.
+        let mut malformed_args = release_preview("0xassertion", &[]);
+        malformed_args["diff"]["contracts"]["mock"]["assertions"][0]["args"] = json!([1]);
+        assert!(!snapshot_matches_preview(
+            &release_detail(snapshot_contracts("0xassertion", &[])),
+            &malformed_args
+        ));
+
+        let mut malformed_change = release_preview("0xassertion", &[]);
+        malformed_change["diff"]["contracts"]["mock"]["changeType"] = json!("unknown");
+        assert!(!snapshot_matches_preview(
+            &release_detail(snapshot_contracts("0xassertion", &[])),
+            &malformed_change
+        ));
+
+        let mut missing_id = release_preview("0xassertion", &[]);
+        missing_id["diff"]["contracts"]["mock"]["assertions"][0]["assertionId"] = Value::Null;
+        assert!(!snapshot_matches_preview(
+            &release_detail(snapshot_contracts("0xassertion", &[])),
+            &missing_id
         ));
     }
 
