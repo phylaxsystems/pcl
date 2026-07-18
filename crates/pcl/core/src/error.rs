@@ -211,6 +211,15 @@ pub enum DeployError {
     },
 
     #[error(
+        "An earlier `pcl deploy` create for project {name:?} on chain {chain_id} never recorded its outcome and is not yet visible in the project index. Re-run `pcl deploy` to reconcile; it will not create another project while {path} exists. Only delete that intent after independently confirming the earlier create did not land."
+    )]
+    PendingProjectCreate {
+        name: String,
+        chain_id: u64,
+        path: String,
+    },
+
+    #[error(
         "Machine output requires `--yes` (pcl deploy mutates the project and broadcasts transactions)"
     )]
     MachineYesRequired,

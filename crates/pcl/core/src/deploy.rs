@@ -457,6 +457,43 @@ fn matching_project_ids(projects: &Value, name: &str, chain_id: u64) -> Vec<Stri
         .collect()
 }
 
+/// Decides whether a persisted create intent can be safely adopted from the
+/// project index. An empty index is *not* evidence that the earlier POST did
+/// not land: the response may have been lost and the index may still be
+/// delayed. Keep the intent fail-closed until the project can be adopted or
+/// the user explicitly resolves it.
+fn resolve_create_intent_match(
+    ids: &[String],
+    intent: &CreateIntent,
+    intent_path: &Path,
+) -> Result<Uuid, DeployError> {
+    match ids {
+        [] => {
+            Err(DeployError::PendingProjectCreate {
+                name: intent.project_name.clone(),
+                chain_id: intent.chain_id,
+                path: intent_path.display().to_string(),
+            })
+        }
+        [id] => {
+            Uuid::parse_str(id).map_err(|_| {
+                DeployError::UnexpectedResponse {
+                    endpoint: "/views/projects/home",
+                    reason: format!("project id {id} is not a UUID"),
+                }
+            })
+        }
+        _ => {
+            Err(DeployError::AmbiguousProjectCreate {
+                name: intent.project_name.clone(),
+                chain_id: intent.chain_id,
+                count: ids.len(),
+                path: intent_path.display().to_string(),
+            })
+        }
+    }
+}
+
 /// Verifies credible.toml can be read and written *before* the project is
 /// created remotely, so a read-only file or missing path fails while
 /// cancellation is still side-effect free.
@@ -629,15 +666,17 @@ impl DeployArgs {
             // anything else — never blind-POST a second create.
             let adopted = match load_create_intent(&intent_path)? {
                 Some(intent) => {
-                    self.reconcile_create_intent(
-                        &api,
-                        config,
-                        cli_args,
-                        &intent,
-                        &intent_path,
-                        human,
+                    Some(
+                        self.reconcile_create_intent(
+                            &api,
+                            config,
+                            cli_args,
+                            &intent,
+                            &intent_path,
+                            human,
+                        )
+                        .await?,
                     )
-                    .await?
                 }
                 None => None,
             };
@@ -956,9 +995,9 @@ impl DeployArgs {
 
     /// Resolves a surviving create intent against the platform: returns the
     /// already-created project's id when exactly one of the user's projects
-    /// matches the intent's name and chain, `None` when the earlier create
-    /// demonstrably never happened, and an error when adoption cannot be
-    /// decided safely (foreign platform, multiple candidates).
+    /// matches the intent's name and chain. It fails closed when the index is
+    /// empty or ambiguous: neither state proves the earlier create did not
+    /// land, so a second POST would risk a duplicate project.
     async fn reconcile_create_intent(
         &self,
         api: &ApiArgs,
@@ -967,7 +1006,7 @@ impl DeployArgs {
         intent: &CreateIntent,
         intent_path: &Path,
         human: bool,
-    ) -> Result<Option<Uuid>, DeployError> {
+    ) -> Result<Uuid, DeployError> {
         let requested = self.api_url.as_str().trim_end_matches('/').to_string();
         if intent.platform_url != requested {
             // The unresolved create belongs to another platform; matching
@@ -996,25 +1035,7 @@ impl DeployArgs {
             )
             .await?;
         let ids = matching_project_ids(&mine, &intent.project_name, intent.chain_id);
-        match ids.as_slice() {
-            [] => Ok(None),
-            [id] => {
-                Uuid::parse_str(id).map(Some).map_err(|_| {
-                    DeployError::UnexpectedResponse {
-                        endpoint: "/views/projects/home",
-                        reason: format!("project id {id} is not a UUID"),
-                    }
-                })
-            }
-            _ => {
-                Err(DeployError::AmbiguousProjectCreate {
-                    name: intent.project_name.clone(),
-                    chain_id: intent.chain_id,
-                    count: ids.len(),
-                    path: intent_path.display().to_string(),
-                })
-            }
-        }
+        resolve_create_intent_match(&ids, intent, intent_path)
     }
 
     /// Interactive gate before a mutating step; cancelling is side-effect
@@ -1447,6 +1468,38 @@ mod tests {
             load_create_intent(&intent_path),
             Err(DeployError::CreateIntentUnreadable { .. })
         ));
+    }
+
+    #[test]
+    fn create_intent_empty_index_fails_closed_until_the_project_appears() {
+        let dir = tempfile::tempdir().unwrap();
+        let intent_path = dir.path().join(".credible.toml.create-intent.json");
+        let intent = CreateIntent {
+            project_name: "demo".to_string(),
+            chain_id: 84532,
+            platform_url: "https://api.example".to_string(),
+        };
+
+        // The first index read can be stale after a lost create response. It
+        // must stop the run before the create POST branch, leaving the intent
+        // in place for a later reconciliation rather than risking a duplicate.
+        assert!(matches!(
+            resolve_create_intent_match(&[], &intent, &intent_path),
+            Err(DeployError::PendingProjectCreate {
+                name,
+                chain_id: 84532,
+                ..
+            }) if name == "demo"
+        ));
+
+        // Once the project appears, the same intent is adopted without a
+        // second create request.
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".to_string();
+        assert_eq!(
+            resolve_create_intent_match(std::slice::from_ref(&project_id), &intent, &intent_path)
+                .unwrap(),
+            Uuid::parse_str(&project_id).unwrap()
+        );
     }
 
     #[test]

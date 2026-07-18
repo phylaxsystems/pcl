@@ -710,6 +710,20 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
                         ],
                     )
                 }
+                DeployError::PendingProjectCreate { path, .. } => {
+                    (
+                        "deploy.project_create_pending_reconciliation",
+                        true,
+                        vec![
+                            "pcl projects mine --json".to_string(),
+                            "pcl deploy (retry reconciliation; no second project will be created)"
+                                .to_string(),
+                            format!(
+                                "Only after confirming no project was created: delete {path} and re-run pcl deploy"
+                            ),
+                        ],
+                    )
+                }
                 DeployError::MachineYesRequired => {
                     (
                         "deploy.yes_required",
