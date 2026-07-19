@@ -142,6 +142,14 @@ fn apply_dry_run_builds_and_verifies_fixture_payload_without_api() {
         summary["payload"]["contracts"]["mock"]["assertions"][0]["contractName"],
         "NoArgsAssertion"
     );
+    assert_eq!(
+        summary["payload"]["contracts"]["mock"]["assertions"][0]["compilerVersion"],
+        "v0.8.28+commit.7893614a"
+    );
+    assert_eq!(
+        summary["payload"]["contracts"]["mock"]["assertions"][0]["evmVersion"],
+        "cancun"
+    );
     assert!(
         summary["payload"]["contracts"]["mock"]["assertions"][0]["bytecode"]
             .as_str()
