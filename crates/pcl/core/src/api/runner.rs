@@ -94,7 +94,10 @@ use serde_json::{
     Value,
     json,
 };
-use std::path::Path;
+use std::{
+    io::Read as _,
+    path::Path,
+};
 
 /// Maximum accepted project image size, matching the dApp upload limit (5 MB).
 const MAX_IMAGE_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
@@ -685,20 +688,34 @@ impl ApiArgs {
         if args.body_template {
             return Ok(template_envelope(project_body_template(args)));
         }
-        // A `--profile-image <FILE>` upload has to happen before the request body
-        // is built: the storage endpoint returns a path that becomes the
-        // `profile_image_url` on the create/update request.
-        let request = if let Some(image_path) = &args.profile_image {
+        // Build and validate the project request before the upload. This keeps
+        // malformed body/field input from creating an orphaned storage object,
+        // and lets us patch the returned path into the already-read body (which
+        // matters for `--body-file -`: stdin can only be consumed once).
+        let mut request = projects_request(args)?;
+        if let Some(image_path) = &args.profile_image {
+            // The upload is a separate authenticated request, so refresh an
+            // expired/expiring CLI token before sending it. The project call
+            // below performs the same check again, harmlessly, after upload.
+            self.ensure_request_auth(config, cli_args, request.require_auth)
+                .await?;
             let storage_path = self
                 .upload_project_image(config, image_path, request_log_path)
                 .await?;
-            let mut args = args.clone();
-            args.profile_image = None;
-            args.profile_image_url = Some(storage_path);
-            projects_request(&args)?
-        } else {
-            projects_request(args)?
-        };
+            let mut body = request
+                .body
+                .as_deref()
+                .map(serde_json::from_str::<Value>)
+                .transpose()?
+                .unwrap_or_else(|| json!({}));
+            let object = body.as_object_mut().ok_or_else(|| {
+                ApiCommandError::InvalidWorkflow {
+                    message: "project body must be a JSON object".to_string(),
+                }
+            })?;
+            object.insert("profile_image_url".to_string(), Value::String(storage_path));
+            request.body = Some(body.to_string());
+        }
         self.run_prepared_workflow(
             config,
             cli_args,
@@ -729,7 +746,7 @@ impl ApiArgs {
                 ),
             }
         })?;
-        let bytes = std::fs::read(image_path).map_err(|source| {
+        let file = std::fs::File::open(image_path).map_err(|source| {
             ApiCommandError::InvalidWorkflow {
                 message: format!(
                     "Failed to read image file `{}`: {source}",
@@ -737,12 +754,46 @@ impl ApiArgs {
                 ),
             }
         })?;
-        if bytes.len() as u64 > MAX_IMAGE_FILE_SIZE_BYTES {
+        let declared_size = file
+            .metadata()
+            .map_err(|source| {
+                ApiCommandError::InvalidWorkflow {
+                    message: format!(
+                        "Failed to inspect image file `{}`: {source}",
+                        image_path.display()
+                    ),
+                }
+            })?
+            .len();
+        if declared_size > MAX_IMAGE_FILE_SIZE_BYTES {
             return Err(ApiCommandError::InvalidWorkflow {
                 message: format!(
                     "Image file `{}` is {} bytes; maximum is {} bytes (5 MB)",
                     image_path.display(),
-                    bytes.len(),
+                    declared_size,
+                    MAX_IMAGE_FILE_SIZE_BYTES
+                ),
+            });
+        }
+        // Do not trust metadata alone: a file can grow between metadata() and
+        // read(), and special files may report a zero length. Read at most one
+        // byte beyond the limit so the CLI never allocates an unbounded input.
+        let mut bytes = Vec::with_capacity(usize::try_from(declared_size).unwrap_or(0));
+        file.take(MAX_IMAGE_FILE_SIZE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|source| {
+                ApiCommandError::InvalidWorkflow {
+                    message: format!(
+                        "Failed to read image file `{}`: {source}",
+                        image_path.display()
+                    ),
+                }
+            })?;
+        if bytes.len() as u64 > MAX_IMAGE_FILE_SIZE_BYTES {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "Image file `{}` exceeds the maximum of {} bytes (5 MB)",
+                    image_path.display(),
                     MAX_IMAGE_FILE_SIZE_BYTES
                 ),
             });
