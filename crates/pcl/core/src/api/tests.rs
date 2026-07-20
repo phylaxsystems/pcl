@@ -144,6 +144,8 @@ fn projects_args() -> ProjectsArgs {
         project_name: None,
         project_description: None,
         profile_image_url: None,
+        profile_image: None,
+        remove_profile_image: false,
         github_url: None,
         chain_id: None,
         is_private: None,
@@ -1460,6 +1462,90 @@ fn builds_project_create_body_from_typed_flags() {
             "is_private": false
         })
     );
+}
+
+#[test]
+fn builds_project_body_with_profile_image_url() {
+    let request = projects_request(&ProjectsArgs {
+        create: true,
+        project_name: Some("Demo".to_string()),
+        chain_id: Some(1),
+        profile_image_url: Some("https://example.com/logo.png".to_string()),
+        ..projects_args()
+    })
+    .unwrap();
+
+    assert_eq!(
+        serde_json::from_str::<Value>(request.body.as_deref().unwrap()).unwrap(),
+        json!({
+            "project_name": "Demo",
+            "chain_id": 1,
+            "profile_image_url": "https://example.com/logo.png"
+        })
+    );
+}
+
+#[test]
+fn removing_project_image_sends_explicit_null() {
+    let request = projects_request(&ProjectsArgs {
+        project_id: Some("project-1".to_string()),
+        update: true,
+        remove_profile_image: true,
+        ..projects_args()
+    })
+    .unwrap();
+
+    assert_eq!(request.method.openapi_key(), "put");
+    assert_eq!(
+        serde_json::from_str::<Value>(request.body.as_deref().unwrap()).unwrap(),
+        json!({ "profile_image_url": null })
+    );
+}
+
+#[tokio::test]
+async fn uploads_project_image_and_returns_storage_path() {
+    let mut server = mockito::Server::new_async().await;
+    let upload = server
+        .mock("POST", "/api/v1/storage/upload")
+        .match_header("authorization", "Bearer access-token")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"path":"projects/0xabc/logo.png"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let api = test_api(server.url(), false);
+    let mut config = valid_auth_config("access-token", "refresh-token");
+    config.platform_url = Some(server.url());
+
+    let dir = tempfile::tempdir().unwrap();
+    let image = dir.path().join("logo.png");
+    std::fs::write(&image, b"not-a-real-png-but-fine-for-upload").unwrap();
+
+    let path = api
+        .upload_project_image(&config, &image, test_request_log_path())
+        .await
+        .unwrap();
+
+    assert_eq!(path, "projects/0xabc/logo.png");
+    upload.assert_async().await;
+}
+
+#[tokio::test]
+async fn upload_rejects_unsupported_image_extension() {
+    let api = test_api("http://127.0.0.1:0", false);
+    let config = valid_auth_config("access-token", "refresh-token");
+    let dir = tempfile::tempdir().unwrap();
+    let image = dir.path().join("logo.gif");
+    std::fs::write(&image, b"gif").unwrap();
+
+    let error = api
+        .upload_project_image(&config, &image, test_request_log_path())
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "workflow.invalid_arguments");
+    assert!(error.to_string().contains("png, jpg, jpeg, webp, svg"));
 }
 
 #[test]

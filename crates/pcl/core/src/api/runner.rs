@@ -96,6 +96,23 @@ use serde_json::{
 };
 use std::path::Path;
 
+/// Maximum accepted project image size, matching the dApp upload limit (5 MB).
+const MAX_IMAGE_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Map a local image file's extension to the MIME type the storage endpoint
+/// accepts. Returns `None` for unsupported extensions. Kept in sync with the
+/// dApp's `ALLOWED_IMAGE_MIME_TYPES`.
+fn image_mime_for_path(path: &Path) -> Option<&'static str> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "svg" => Some("image/svg+xml"),
+        _ => None,
+    }
+}
+
 fn generated_error_request_id<E>(error: &GeneratedError<E>) -> Option<String> {
     match error {
         GeneratedError::ErrorResponse(response) => request_id_from_headers(response.headers()),
@@ -668,7 +685,20 @@ impl ApiArgs {
         if args.body_template {
             return Ok(template_envelope(project_body_template(args)));
         }
-        let request = projects_request(args)?;
+        // A `--profile-image <FILE>` upload has to happen before the request body
+        // is built: the storage endpoint returns a path that becomes the
+        // `profile_image_url` on the create/update request.
+        let request = if let Some(image_path) = &args.profile_image {
+            let storage_path = self
+                .upload_project_image(config, image_path, request_log_path)
+                .await?;
+            let mut args = args.clone();
+            args.profile_image = None;
+            args.profile_image_url = Some(storage_path);
+            projects_request(&args)?
+        } else {
+            projects_request(args)?
+        };
         self.run_prepared_workflow(
             config,
             cli_args,
@@ -678,6 +708,88 @@ impl ApiArgs {
             projects_next_actions,
         )
         .await
+    }
+
+    /// Upload a local image file to the storage endpoint and return the storage
+    /// path the API stores as `profile_image_url`.
+    ///
+    /// Mirrors the dApp's create/settings flow: validate the file, POST it as
+    /// multipart `file` to `/storage/upload`, and read back `{ "path": ... }`.
+    pub(in crate::api) async fn upload_project_image(
+        &self,
+        config: &CliConfig,
+        image_path: &Path,
+        request_log_path: &Path,
+    ) -> Result<String, ApiCommandError> {
+        let mime = image_mime_for_path(image_path).ok_or_else(|| {
+            ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "Unsupported image `{}`. Allowed types: png, jpg, jpeg, webp, svg",
+                    image_path.display()
+                ),
+            }
+        })?;
+        let bytes = std::fs::read(image_path).map_err(|source| {
+            ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "Failed to read image file `{}`: {source}",
+                    image_path.display()
+                ),
+            }
+        })?;
+        if bytes.len() as u64 > MAX_IMAGE_FILE_SIZE_BYTES {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "Image file `{}` is {} bytes; maximum is {} bytes (5 MB)",
+                    image_path.display(),
+                    bytes.len(),
+                    MAX_IMAGE_FILE_SIZE_BYTES
+                ),
+            });
+        }
+
+        let file_name = image_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("image")
+            .to_string();
+        let part = reqwest::multipart::Part::bytes(bytes)
+            .file_name(file_name)
+            .mime_str(mime)?;
+        let form = reqwest::multipart::Form::new().part("file", part);
+
+        let requires_auth = !self.allow_unauthenticated;
+        let client = self.http_client(config, requires_auth, requires_auth)?;
+        let url = self.api_url("/storage/upload")?;
+        let payload = read_api_response(client.post(url).multipart(form).send().await?).await?;
+        write_request_log(
+            request_log_path,
+            "storage_upload",
+            "POST",
+            "/storage/upload",
+            payload.status.as_u16(),
+            payload.request_id.as_deref(),
+            None,
+        );
+        if !payload.status.is_success() {
+            return Err(ApiCommandError::HttpStatus {
+                method: "POST",
+                path: "/storage/upload".to_string(),
+                status: payload.status.as_u16(),
+                request_id: payload.request_id,
+                body: Box::new(payload.body),
+            });
+        }
+        payload
+            .body
+            .get("path")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .ok_or_else(|| {
+                ApiCommandError::InvalidWorkflow {
+                    message: "Image upload response did not include a storage path".to_string(),
+                }
+            })
     }
 
     pub(in crate::api) async fn run_assertions(

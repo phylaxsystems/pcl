@@ -346,6 +346,53 @@ mod tests {
     }
 
     #[test]
+    fn parses_project_image_options_and_enforces_conflicts() {
+        // Uploading a local image file parses on create.
+        let create = Cli::try_parse_from([
+            "pcl",
+            "projects",
+            "create",
+            "--project-name",
+            "demo",
+            "--chain-id",
+            "1",
+            "--profile-image",
+            "./logo.png",
+        ])
+        .unwrap();
+        assert!(matches!(create.command, Commands::Projects(_)));
+
+        // Removing the image parses on update.
+        let update = Cli::try_parse_from([
+            "pcl",
+            "projects",
+            "update",
+            "demo",
+            "--remove-profile-image",
+        ])
+        .unwrap();
+        assert!(matches!(update.command, Commands::Projects(_)));
+
+        // --profile-image and --profile-image-url are mutually exclusive.
+        let conflict = Cli::try_parse_from([
+            "pcl",
+            "projects",
+            "create",
+            "--project-name",
+            "demo",
+            "--chain-id",
+            "1",
+            "--profile-image",
+            "./logo.png",
+            "--profile-image-url",
+            "https://example.com/logo.png",
+        ])
+        .err()
+        .expect("expected --profile-image/--profile-image-url conflict");
+        assert_eq!(conflict.kind(), ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
     fn parses_agent_product_surface_commands() {
         assert!(matches!(
             Cli::try_parse_from(["pcl", "doctor", "--offline"])

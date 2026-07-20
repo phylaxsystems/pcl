@@ -182,6 +182,11 @@ fn project_request_body(args: &ProjectsArgs) -> Result<Option<String>, ApiComman
         "profile_image_url",
         args.profile_image_url.clone().map(Value::String),
     );
+    // `--remove-profile-image` clears the image by sending an explicit null,
+    // which `insert_optional` cannot express.
+    if args.remove_profile_image {
+        map.insert("profile_image_url".to_string(), Value::Null);
+    }
     insert_optional(
         map,
         "github_url",
