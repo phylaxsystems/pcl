@@ -48,7 +48,7 @@ env:
 jobs:
   runner-git-config:
     name: Runner Git Config Preflight
-    runs-on: phylax-self-hosted
+    runs-on: phylax-ubuntu-latitude
     steps:
       - name: Remove leaked GitHub SSH rewrites
         run: |
@@ -60,7 +60,7 @@ jobs:
     needs: runner-git-config
     uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@main
     with:
-      runner: "phylax-self-hosted"
+      runner: "phylax-ubuntu-latitude"
       rust-channel: "nightly-2026-01-07"
       require-lockfile: true
       requires-private-deps: true
@@ -77,7 +77,7 @@ jobs:
     name: Release Feature Check
     needs: runner-git-config
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: phylax-self-hosted
+    runs-on: phylax-ubuntu-latitude
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: true
       GIT_CONFIG_GLOBAL: /tmp/pcl-release-feature-${{ github.run_id }}-${{ github.run_attempt }}.gitconfig
@@ -104,7 +104,7 @@ jobs:
   agent-smoke:
     name: Agent CLI Smoke
     needs: [runner-git-config, release-feature-check]
-    runs-on: phylax-self-hosted
+    runs-on: phylax-ubuntu-latitude
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: true
       GIT_CONFIG_GLOBAL: /tmp/pcl-agent-smoke-${{ github.run_id }}-${{ github.run_attempt }}.gitconfig
