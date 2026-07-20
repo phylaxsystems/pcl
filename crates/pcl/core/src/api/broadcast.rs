@@ -837,7 +837,6 @@ impl ApiArgs {
             .ok_or(ApiCommandError::InvalidWorkflow {
                 message: "--transfer-calldata --broadcast requires --new-manager".to_string(),
             })?;
-        let signer = resolve_signer(&args.broadcast.wallet, cli_args).await?;
 
         progress(cli_args, "Fetching manager transfer calldata");
         let request = get_operation(
@@ -886,6 +885,10 @@ impl ApiArgs {
         }
 
         debug_assert_eq!(calldata.mode, TransferMode::Onchain);
+        // Direct transfers are platform-only and do not need a signer. Resolve
+        // the wallet only after the backend says an on-chain transaction is
+        // required, so a valid direct transfer works without wallet flags.
+        let signer = resolve_signer(&args.broadcast.wallet, cli_args).await?;
         let (Some(chain_id), Some(to), Some(data)) =
             (calldata.chain_id, calldata.to, calldata.calldata.clone())
         else {
@@ -1069,6 +1072,12 @@ fn challenge_expired(error: &ApiCommandError) -> bool {
 mod tests {
     use super::*;
     use alloy_primitives::address;
+    use chrono::{
+        TimeZone,
+        Utc,
+    };
+    use mockito::Matcher;
+    use std::collections::BTreeMap;
 
     #[test]
     fn deploy_calldata_response_parses_dapp_shape() {
@@ -1179,6 +1188,99 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn direct_manager_transfer_does_not_require_a_wallet() {
+        let mut server = mockito::Server::new_async().await;
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let new_manager = "0x0101010101010101010101010101010101010101";
+        let calldata = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/protocol-manager/transfer-calldata")
+                    .as_str(),
+            )
+            .match_query(Matcher::UrlEncoded(
+                "new_manager".into(),
+                new_manager.into(),
+            ))
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "mode": "direct",
+                    "to": null,
+                    "calldata": null,
+                    "contracts": [],
+                    "total_contracts": 0
+                })
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let confirm = server
+            .mock(
+                "POST",
+                format!("/api/v1/projects/{project_id}/protocol-manager/confirm-transfer").as_str(),
+            )
+            .match_header("authorization", "Bearer access-token")
+            .match_body(Matcher::Json(json!({
+                "mode": "direct",
+                "new_manager_address": new_manager
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status":"ok"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let api = ApiArgs::headless(server.url().parse().unwrap());
+        let mut config = CliConfig {
+            auth: Some(crate::config::UserAuth {
+                access_token: "access-token".to_string(),
+                refresh_token: "refresh-token".to_string(),
+                expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: Some("agent@example.com".to_string()),
+            }),
+            platform_url: Some(server.url()),
+            rpc: BTreeMap::new(),
+        };
+        let config_dir = tempfile::tempdir().unwrap();
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let request_log_path = config_dir.path().join("requests.jsonl");
+        let args = ProtocolManagerArgs {
+            new_manager: Some(new_manager.to_string()),
+            broadcast: BroadcastArgs {
+                broadcast: true,
+                yes: true,
+                ..BroadcastArgs::default()
+            },
+            ..ProtocolManagerArgs::default()
+        };
+
+        let result = api
+            .protocol_manager_transfer_broadcast(
+                &mut config,
+                &cli_args,
+                &args,
+                project_id,
+                &request_log_path,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result["data"]["mode"], "direct");
+        calldata.assert_async().await;
+        confirm.assert_async().await;
     }
 
     #[test]

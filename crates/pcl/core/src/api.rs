@@ -219,6 +219,37 @@ impl ApiArgs {
             .body)
     }
 
+    /// Executes a paginated GET workflow with explicit query parameters and
+    /// returns the response body.
+    pub(crate) async fn workflow_get_json_with_query(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        operation_id: &'static str,
+        path_params: &[(&'static str, &str)],
+        query: &[(&str, &str)],
+    ) -> Result<serde_json::Value, ApiCommandError> {
+        let mut operation = WorkflowOperation::new(HttpMethod::Get, operation_id);
+        for (name, value) in path_params {
+            operation = operation.path_param(name, *value);
+        }
+        let request = runtime_types::WorkflowRequest::from_operation(
+            operation,
+            query
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                .collect(),
+            None,
+            true,
+            Vec::<String>::new(),
+        )?;
+        let request_log_path = crate::request_log::request_log_path_for_args(cli_args);
+        Ok(self
+            .call_workflow_result(config, cli_args, &request, &request_log_path)
+            .await?
+            .body)
+    }
+
     /// Runs the full release deploy broadcast flow (calldata fetch → batch tx
     /// or noop → deploy confirmation) and returns the combined envelope.
     pub(crate) async fn release_deploy_broadcast_flow(

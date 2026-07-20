@@ -44,6 +44,7 @@ use serde_json::{
     json,
 };
 use std::{
+    collections::BTreeSet,
     io::Write as _,
     path::{
         Path,
@@ -56,6 +57,7 @@ use uuid::Uuid;
 
 const CHECK_POLL_INITIAL: Duration = Duration::from_secs(2);
 const CHECK_POLL_MAX: Duration = Duration::from_secs(10);
+const RELEASE_PAGE_SIZE: usize = 100;
 
 #[derive(clap::Parser, Debug)]
 #[command(
@@ -153,6 +155,26 @@ fn manager_step(skip: bool, current: Option<Address>, wallet: Address) -> Manage
     }
 }
 
+fn project_manager_address(project: &Value) -> Result<Option<Address>, DeployError> {
+    match project.get("protocol_manager_address") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(address)) => {
+            address.parse::<Address>().map(Some).map_err(|error| {
+                DeployError::UnexpectedResponse {
+                    endpoint: "/projects/{project_id}",
+                    reason: format!("invalid protocol_manager_address {address:?}: {error}"),
+                }
+            })
+        }
+        Some(_) => {
+            Err(DeployError::UnexpectedResponse {
+                endpoint: "/projects/{project_id}",
+                reason: "protocol_manager_address must be a string or null".to_string(),
+            })
+        }
+    }
+}
+
 /// What the release step decided to do, given the preview diff and the
 /// project's existing releases.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,30 +196,122 @@ struct ReleaseSummary {
     status: String,
 }
 
-fn release_summaries(body: &Value) -> Vec<ReleaseSummary> {
-    body.as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    Some(ReleaseSummary {
-                        id: item.get("id")?.as_str()?.to_string(),
-                        release_number: item.get("releaseNumber").and_then(Value::as_u64),
-                        environment: item
-                            .get("environment")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        status: item
-                            .get("status")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
+fn release_summaries(body: &Value) -> Result<Vec<ReleaseSummary>, DeployError> {
+    let items = body.as_array().ok_or_else(|| {
+        DeployError::UnexpectedResponse {
+            endpoint: "/projects/{project_id}/releases",
+            reason: "expected a JSON array".to_string(),
+        }
+    })?;
+
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let required_string = |field| {
+                item.get(field)
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                    .ok_or_else(|| {
+                        DeployError::UnexpectedResponse {
+                            endpoint: "/projects/{project_id}/releases",
+                            reason: format!("release at index {index} has no valid {field:?}"),
+                        }
                     })
-                })
-                .collect()
+            };
+            let release_number = match item.get("releaseNumber") {
+                None | Some(Value::Null) => None,
+                Some(value) => {
+                    Some(value.as_u64().ok_or_else(|| {
+                        DeployError::UnexpectedResponse {
+                            endpoint: "/projects/{project_id}/releases",
+                            reason: format!(
+                                "release at index {index} has a non-integer \"releaseNumber\""
+                            ),
+                        }
+                    })?)
+                }
+            };
+            Ok(ReleaseSummary {
+                id: required_string("id")?,
+                release_number,
+                environment: required_string("environment")?,
+                status: required_string("status")?,
+            })
         })
-        .unwrap_or_default()
+        .collect()
+}
+
+async fn inactive_release_summaries(
+    api: &ApiArgs,
+    config: &mut CliConfig,
+    cli_args: &CliArgs,
+    project_ref: &str,
+    environment: &str,
+) -> Result<Vec<ReleaseSummary>, DeployError> {
+    let mut summaries = Vec::new();
+    let mut seen_ids = BTreeSet::new();
+    let mut offset = 0_usize;
+    let limit = RELEASE_PAGE_SIZE.to_string();
+
+    loop {
+        let offset_value = offset.to_string();
+        let body = api
+            .workflow_get_json_with_query(
+                config,
+                cli_args,
+                "get_projects_project_id_releases",
+                &[("project_id", project_ref)],
+                &[
+                    ("environment", environment),
+                    ("status", "inactive"),
+                    ("limit", limit.as_str()),
+                    ("offset", offset_value.as_str()),
+                ],
+            )
+            .await?;
+        let page = release_summaries(&body)?;
+        let page_len = page.len();
+        if page_len > RELEASE_PAGE_SIZE {
+            return Err(DeployError::UnexpectedResponse {
+                endpoint: "/projects/{project_id}/releases",
+                reason: format!(
+                    "page at offset {offset} returned {page_len} releases, exceeding the requested limit {RELEASE_PAGE_SIZE}"
+                ),
+            });
+        }
+        for release in page {
+            if release.environment != environment || release.status != "inactive" {
+                return Err(DeployError::UnexpectedResponse {
+                    endpoint: "/projects/{project_id}/releases",
+                    reason: format!(
+                        "filtered release page returned id {} with environment {:?} and status {:?}",
+                        release.id, release.environment, release.status
+                    ),
+                });
+            }
+            if !seen_ids.insert(release.id.clone()) {
+                return Err(DeployError::UnexpectedResponse {
+                    endpoint: "/projects/{project_id}/releases",
+                    reason: format!(
+                        "release id {} appeared more than once while paginating",
+                        release.id
+                    ),
+                });
+            }
+            summaries.push(release);
+        }
+        if page_len < RELEASE_PAGE_SIZE {
+            return Ok(summaries);
+        }
+        offset = offset.checked_add(page_len).ok_or_else(|| {
+            DeployError::UnexpectedResponse {
+                endpoint: "/projects/{project_id}/releases",
+                reason: "release pagination offset overflowed".to_string(),
+            }
+        })?;
+    }
 }
 
 /// Outcome of scanning *every* inactive release for the environment against
@@ -451,12 +565,27 @@ fn write_create_intent(path: &Path, intent: &CreateIntent) -> Result<(), DeployE
             reason: error.to_string(),
         }
     })?;
-    std::fs::write(path, contents).map_err(|error| {
-        DeployError::CreateIntentWrite {
-            path: path.display().to_string(),
-            reason: error.to_string(),
-        }
-    })
+    // load_create_intent() is called before this write, so an existing path
+    // means another process (or a symlink swap) won the race. Never truncate
+    // or follow it: the marker protects against duplicate remote creates.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| {
+            DeployError::CreateIntentWrite {
+                path: path.display().to_string(),
+                reason: error.to_string(),
+            }
+        })?;
+    file.write_all(contents.as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|error| {
+            DeployError::CreateIntentWrite {
+                path: path.display().to_string(),
+                reason: error.to_string(),
+            }
+        })
 }
 
 /// Best-effort removal once the create outcome is recorded (or definitely
@@ -885,10 +1014,7 @@ impl DeployArgs {
         // ------------------------------------------------------------------
         // Step 2: protocol manager
         // ------------------------------------------------------------------
-        let current_manager = project
-            .get("protocol_manager_address")
-            .and_then(Value::as_str)
-            .and_then(|address| address.parse::<Address>().ok());
+        let current_manager = project_manager_address(&project)?;
         let wallet_address = signer.address();
 
         let manager_action =
@@ -943,17 +1069,14 @@ impl DeployArgs {
         let preview = ApplyArgs::call_preview(&client, &project_id, &payload).await?;
 
         let project_ref = project_id.to_string();
-        let releases = api
-            .workflow_json(
-                config,
-                cli_args,
-                HttpMethod::Get,
-                "get_projects_project_id_releases",
-                &[("project_id", project_ref.as_str())],
-                None,
-            )
-            .await?;
-        let summaries = release_summaries(&releases);
+        let summaries = inactive_release_summaries(
+            &api,
+            config,
+            cli_args,
+            project_ref.as_str(),
+            &credible.environment,
+        )
+        .await?;
         // Every inactive release for this environment is a potential resume
         // candidate, not just the newest: an interrupted earlier run can leave
         // a matching inactive release behind a later, non-matching one. The
@@ -962,9 +1085,7 @@ impl DeployArgs {
         // payload whether or not the preview reports changes.
         let preview_value = serde_json::to_value(&preview)?;
         let mut matched = Vec::new();
-        for candidate in summaries.iter().filter(|release| {
-            release.environment == credible.environment && release.status == "inactive"
-        }) {
+        for candidate in &summaries {
             let detail = api
                 .workflow_json(
                     config,
@@ -998,7 +1119,7 @@ impl DeployArgs {
         let (release_id, release_number, resumed) = match step {
             ReleaseStep::UpToDate => {
                 progress(human, "Everything already released and deployed");
-                let mut data = json!({
+                let data = json!({
                     "outcome": "up_to_date",
                     "project_id": project_id,
                     "project_created": project_created,
@@ -1007,7 +1128,11 @@ impl DeployArgs {
                     "tx": Value::Null,
                 });
                 #[cfg(feature = "credible")]
-                insert_field(&mut data, "verification", json!(verification));
+                let data = {
+                    let mut data = data;
+                    insert_field(&mut data, "verification", json!(verification));
+                    data
+                };
                 return Self::finish(
                     output_mode,
                     data,
@@ -1067,7 +1192,7 @@ impl DeployArgs {
             .await?;
         let deploy_data = deploy_envelope.get("data").cloned().unwrap_or(Value::Null);
 
-        let mut data = json!({
+        let data = json!({
             "outcome": if resumed { "resumed_and_deployed" } else { "released_and_deployed" },
             "project_id": project_id,
             "project_created": project_created,
@@ -1081,7 +1206,11 @@ impl DeployArgs {
             "deploy": deploy_data,
         });
         #[cfg(feature = "credible")]
-        insert_field(&mut data, "verification", json!(verification));
+        let data = {
+            let mut data = data;
+            insert_field(&mut data, "verification", json!(verification));
+            data
+        };
         Self::finish(
             output_mode,
             data,
@@ -1262,7 +1391,7 @@ impl DeployArgs {
         {
             let _ = (verification_inputs, output_mode);
         }
-        let mut data = json!({
+        let data = json!({
             "outcome": "dry_run",
             "project_id": credible.project_id,
             "would_create_project": credible.project_id.is_none(),
@@ -1270,7 +1399,11 @@ impl DeployArgs {
             "payload": payload,
         });
         #[cfg(feature = "credible")]
-        insert_field(&mut data, "verification", json!(verification));
+        let data = {
+            let mut data = data;
+            insert_field(&mut data, "verification", json!(verification));
+            data
+        };
         Ok(data)
     }
 
@@ -1328,6 +1461,12 @@ impl DeployArgs {
 mod tests {
     use super::*;
     use alloy_primitives::address;
+    use chrono::{
+        TimeZone,
+        Utc,
+    };
+    use mockito::Matcher;
+    use std::collections::BTreeMap;
 
     const WALLET: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     const OTHER: Address = address!("0101010101010101010101010101010101010101");
@@ -1348,6 +1487,28 @@ mod tests {
             manager_step(false, Some(OTHER), WALLET),
             ManagerStep::Mismatch { current: OTHER }
         );
+    }
+
+    #[test]
+    fn project_manager_address_fails_closed_on_malformed_values() {
+        assert_eq!(project_manager_address(&json!({})).unwrap(), None);
+        assert_eq!(
+            project_manager_address(&json!({ "protocol_manager_address": null })).unwrap(),
+            None
+        );
+        assert_eq!(
+            project_manager_address(&json!({
+                "protocol_manager_address": WALLET.to_string()
+            }))
+            .unwrap(),
+            Some(WALLET)
+        );
+        for malformed in [json!("not-an-address"), json!(123)] {
+            assert!(matches!(
+                project_manager_address(&json!({ "protocol_manager_address": malformed })),
+                Err(DeployError::UnexpectedResponse { .. })
+            ));
+        }
     }
 
     fn summaries(items: &[(&str, &str, &str)]) -> Vec<ReleaseSummary> {
@@ -1715,6 +1876,32 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn create_intent_refuses_to_follow_an_existing_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let intent_path = dir.path().join(".credible.toml.create-intent.json");
+        let target = dir.path().join("unrelated.json");
+        std::fs::write(&target, "do not overwrite").unwrap();
+        symlink(&target, &intent_path).unwrap();
+        let intent = CreateIntent {
+            project_name: "demo".to_string(),
+            chain_id: 84532,
+            platform_url: "https://api.example".to_string(),
+        };
+
+        assert!(matches!(
+            write_create_intent(&intent_path, &intent),
+            Err(DeployError::CreateIntentWrite { .. })
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "do not overwrite"
+        );
+    }
+
     #[test]
     fn create_intent_empty_index_fails_closed_until_the_project_appears() {
         let dir = tempfile::tempdir().unwrap();
@@ -1929,11 +2116,120 @@ mod tests {
                 "deployedAt": null,
                 "diff": null,
             },
-            { "unexpected": "shape" },
         ]);
-        let summaries = release_summaries(&body);
+        let summaries = release_summaries(&body).unwrap();
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].release_number, Some(3));
         assert_eq!(summaries[0].status, "inactive");
+    }
+
+    #[test]
+    fn release_summaries_fail_closed_on_malformed_items() {
+        for body in [
+            json!({ "releases": [] }),
+            json!([{ "unexpected": "shape" }]),
+            json!([{
+                "id": "release-1",
+                "releaseNumber": "3",
+                "environment": "staging",
+                "status": "inactive"
+            }]),
+        ] {
+            assert!(matches!(
+                release_summaries(&body),
+                Err(DeployError::UnexpectedResponse { .. })
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn inactive_release_scan_paginates_past_the_first_hundred() {
+        let mut server = mockito::Server::new_async().await;
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let first_page = Value::Array(
+            (0..RELEASE_PAGE_SIZE)
+                .map(|index| {
+                    json!({
+                        "id": format!("release-{index}"),
+                        "releaseNumber": index,
+                        "environment": "staging",
+                        "status": "inactive"
+                    })
+                })
+                .collect(),
+        );
+        let first = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/releases").as_str(),
+            )
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("environment".into(), "staging".into()),
+                Matcher::UrlEncoded("status".into(), "inactive".into()),
+                Matcher::UrlEncoded("limit".into(), "100".into()),
+                Matcher::UrlEncoded("offset".into(), "0".into()),
+            ]))
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(first_page.to_string())
+            .expect(1)
+            .create_async()
+            .await;
+        let second = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/releases").as_str(),
+            )
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("environment".into(), "staging".into()),
+                Matcher::UrlEncoded("status".into(), "inactive".into()),
+                Matcher::UrlEncoded("limit".into(), "100".into()),
+                Matcher::UrlEncoded("offset".into(), "100".into()),
+            ]))
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!([{
+                    "id": "release-100",
+                    "releaseNumber": 100,
+                    "environment": "staging",
+                    "status": "inactive"
+                }])
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let api = ApiArgs::headless(server.url().parse().unwrap());
+        let mut config = CliConfig {
+            auth: Some(crate::config::UserAuth {
+                access_token: "access-token".to_string(),
+                refresh_token: "refresh-token".to_string(),
+                expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: Some("agent@example.com".to_string()),
+            }),
+            platform_url: Some(server.url()),
+            rpc: BTreeMap::new(),
+        };
+        let config_dir = tempfile::tempdir().unwrap();
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+
+        let summaries =
+            inactive_release_summaries(&api, &mut config, &cli_args, project_id, "staging")
+                .await
+                .unwrap();
+
+        assert_eq!(summaries.len(), RELEASE_PAGE_SIZE + 1);
+        assert_eq!(summaries.last().unwrap().id, "release-100");
+        first.assert_async().await;
+        second.assert_async().await;
     }
 }
