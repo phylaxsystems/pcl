@@ -740,6 +740,17 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
                         ],
                     )
                 }
+                DeployError::AmbiguousInactiveRelease { project_id, .. } => {
+                    (
+                        "deploy.inactive_release_ambiguous",
+                        true,
+                        vec![
+                            format!("pcl releases list {project_id}"),
+                            "Activate or delete the duplicate inactive releases, then re-run pcl deploy"
+                                .to_string(),
+                        ],
+                    )
+                }
                 DeployError::MachineYesRequired => {
                     (
                         "deploy.yes_required",

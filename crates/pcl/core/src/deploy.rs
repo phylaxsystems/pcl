@@ -44,6 +44,7 @@ use serde_json::{
     json,
 };
 use std::{
+    io::Write as _,
     path::{
         Path,
         PathBuf,
@@ -171,7 +172,6 @@ struct ReleaseSummary {
     release_number: Option<u64>,
     environment: String,
     status: String,
-    created_at: String,
 }
 
 fn release_summaries(body: &Value) -> Vec<ReleaseSummary> {
@@ -193,11 +193,6 @@ fn release_summaries(body: &Value) -> Vec<ReleaseSummary> {
                             .and_then(Value::as_str)
                             .unwrap_or_default()
                             .to_string(),
-                        created_at: item
-                            .get("createdAt")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
                     })
                 })
                 .collect()
@@ -205,36 +200,49 @@ fn release_summaries(body: &Value) -> Vec<ReleaseSummary> {
         .unwrap_or_default()
 }
 
-/// Newest release for the environment, if any.
-fn newest_release<'a>(
-    releases: &'a [ReleaseSummary],
-    environment: &str,
-) -> Option<&'a ReleaseSummary> {
-    releases
-        .iter()
-        .filter(|release| release.environment == environment)
-        .max_by(|a, b| a.created_at.cmp(&b.created_at))
+/// Outcome of scanning *every* inactive release for the environment against
+/// the current preview snapshot. The preview diffs against the *active*
+/// release only, so an inactive release left by an interrupted earlier run is
+/// invisible to it; and the newest inactive release is not necessarily the one
+/// that matches (a later attempt can leave a different leftover). So each
+/// inactive release's stored snapshot is compared against the payload
+/// individually ([`snapshot_matches_preview`]), and the results are classified
+/// here.
+enum ResumeScan {
+    /// No inactive release matched — defer to the preview diff.
+    None,
+    /// Exactly one inactive release matched — resume it.
+    One(ReleaseSummary),
+    /// More than one matched; pcl refuses to guess which interrupted run is
+    /// ours. Carries the ambiguous release ids for the error.
+    Ambiguous(Vec<String>),
 }
 
-/// Resume decision. The preview diffs against the *active* release only, so
-/// an inactive release left by an interrupted earlier run is invisible to it
-/// in both directions: with a diff it reads as "changes" (risking a duplicate
-/// release), without one it can be a stale leftover whose contents differ
-/// from the config. Either way an inactive release is resumed only when its
-/// snapshot matched the platform's canonical preview
-/// ([`snapshot_matches_preview`]).
-fn release_step(has_changes: bool, inactive: Option<(&ReleaseSummary, bool)>) -> ReleaseStep {
-    match inactive {
-        Some((candidate, true)) => {
+/// Classifies the inactive releases whose snapshot matched the preview.
+fn scan_inactive_matches(mut matched: Vec<ReleaseSummary>) -> ResumeScan {
+    match matched.len() {
+        0 => ResumeScan::None,
+        1 => ResumeScan::One(matched.remove(0)),
+        _ => ResumeScan::Ambiguous(matched.iter().map(|r| r.id.clone()).collect()),
+    }
+}
+
+/// Resume decision. An inactive release is resumed only when exactly one of
+/// them snapshot-matched the payload (resolved upstream by
+/// [`scan_inactive_matches`]); otherwise the preview diff decides between
+/// creating a fresh release and doing nothing.
+fn release_step(has_changes: bool, resume: Option<&ReleaseSummary>) -> ReleaseStep {
+    match resume {
+        Some(candidate) => {
             ReleaseStep::Resume {
                 release_id: candidate.id.clone(),
                 release_number: candidate.release_number,
             }
         }
-        _ if has_changes => ReleaseStep::Create,
-        // A mismatching inactive release is not ours to broadcast: with no
-        // diff the active release already matches the config.
-        _ => ReleaseStep::UpToDate,
+        None if has_changes => ReleaseStep::Create,
+        // No matching leftover and no diff: the active release already matches
+        // the config.
+        None => ReleaseStep::UpToDate,
     }
 }
 
@@ -604,12 +612,21 @@ fn write_project_id(config_path: &Path, project_id: Uuid) -> Result<(), DeployEr
         std::fs::read_to_string(config_path).map_err(|e| toml_write_back(e.to_string()))?;
     let updated = upsert_project_id(&contents, project_id);
     let parent = config_path.parent().unwrap_or(Path::new("."));
-    let temp = parent.join(format!(".credible.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, &updated).map_err(|e| toml_write_back(e.to_string()))?;
-    std::fs::rename(&temp, config_path).map_err(|e| {
-        let _ = std::fs::remove_file(&temp);
-        toml_write_back(e.to_string())
-    })
+    // Create the temp file with a random name via O_EXCL (`tempfile` does
+    // both): a predictable `.tmp` path lets a hostile project directory
+    // pre-plant a symlink there, so a plain `fs::write` would follow it and
+    // clobber another user-writable file before the rename. Building it in the
+    // config's own directory keeps the rename atomic.
+    let mut temp = tempfile::Builder::new()
+        .prefix(".credible.toml.")
+        .suffix(".tmp")
+        .tempfile_in(parent)
+        .map_err(|e| toml_write_back(e.to_string()))?;
+    temp.write_all(updated.as_bytes())
+        .map_err(|e| toml_write_back(e.to_string()))?;
+    temp.persist(config_path)
+        .map(drop)
+        .map_err(|e| toml_write_back(e.error.to_string()))
 }
 
 /// Chain id the deploy binds to (manager challenge, RPC selection).
@@ -937,33 +954,46 @@ impl DeployArgs {
             )
             .await?;
         let summaries = release_summaries(&releases);
-        // An inactive release is a resume candidate only after its snapshot
-        // is compared against the payload — the preview cannot vouch for it
-        // (it diffs against the active release), so fetch the detail whether
-        // or not the preview reports changes.
-        let inactive_candidate = match newest_release(&summaries, &credible.environment) {
-            Some(candidate) if candidate.status == "inactive" => {
-                let detail = api
-                    .workflow_json(
-                        config,
-                        cli_args,
-                        HttpMethod::Get,
-                        "get_projects_project_id_releases_release_id",
-                        &[
-                            ("project_id", project_ref.as_str()),
-                            ("release_id", candidate.id.as_str()),
-                        ],
-                        None,
-                    )
-                    .await?;
-                Some((
-                    candidate,
-                    snapshot_matches_preview(&detail, &serde_json::to_value(&preview)?),
-                ))
+        // Every inactive release for this environment is a potential resume
+        // candidate, not just the newest: an interrupted earlier run can leave
+        // a matching inactive release behind a later, non-matching one. The
+        // preview cannot vouch for any of them (it diffs against the active
+        // release), so fetch each detail and compare its stored snapshot to the
+        // payload whether or not the preview reports changes.
+        let preview_value = serde_json::to_value(&preview)?;
+        let mut matched = Vec::new();
+        for candidate in summaries.iter().filter(|release| {
+            release.environment == credible.environment && release.status == "inactive"
+        }) {
+            let detail = api
+                .workflow_json(
+                    config,
+                    cli_args,
+                    HttpMethod::Get,
+                    "get_projects_project_id_releases_release_id",
+                    &[
+                        ("project_id", project_ref.as_str()),
+                        ("release_id", candidate.id.as_str()),
+                    ],
+                    None,
+                )
+                .await?;
+            if snapshot_matches_preview(&detail, &preview_value) {
+                matched.push(candidate.clone());
             }
-            _ => None,
+        }
+        let resume = match scan_inactive_matches(matched) {
+            ResumeScan::None => None,
+            ResumeScan::One(candidate) => Some(candidate),
+            ResumeScan::Ambiguous(release_ids) => {
+                return Err(DeployError::AmbiguousInactiveRelease {
+                    project_id,
+                    environment: credible.environment.clone(),
+                    release_ids,
+                });
+            }
         };
-        let step = release_step(preview.has_changes(), inactive_candidate);
+        let step = release_step(preview.has_changes(), resume.as_ref());
 
         let (release_id, release_number, resumed) = match step {
             ReleaseStep::UpToDate => {
@@ -1320,17 +1350,16 @@ mod tests {
         );
     }
 
-    fn summaries(items: &[(&str, &str, &str, &str)]) -> Vec<ReleaseSummary> {
+    fn summaries(items: &[(&str, &str, &str)]) -> Vec<ReleaseSummary> {
         items
             .iter()
             .enumerate()
-            .map(|(i, (id, environment, status, created_at))| {
+            .map(|(i, (id, environment, status))| {
                 ReleaseSummary {
                     id: (*id).to_string(),
                     release_number: Some(i as u64 + 1),
                     environment: (*environment).to_string(),
                     status: (*status).to_string(),
-                    created_at: (*created_at).to_string(),
                 }
             })
             .collect()
@@ -1338,36 +1367,49 @@ mod tests {
 
     #[test]
     fn release_step_decision_table() {
-        let candidate = &summaries(&[("new", "staging", "inactive", "2026-02-01T00:00:00Z")])[0];
+        let candidate = &summaries(&[("new", "staging", "inactive")])[0];
 
-        // No inactive candidate: diff → create, no diff → up to date.
+        // No resume candidate: diff → create, no diff → up to date.
         assert_eq!(release_step(true, None), ReleaseStep::Create);
         assert_eq!(release_step(false, None), ReleaseStep::UpToDate);
 
-        // A snapshot-matching inactive release is resumed regardless of the
-        // preview: the preview only diffs against the active release, so it
-        // cannot see a release created by an interrupted earlier run.
+        // A matching inactive release is resumed regardless of the preview
+        // diff: the preview only diffs against the active release, so it cannot
+        // see a release created by an interrupted earlier run.
         for has_changes in [true, false] {
             assert_eq!(
-                release_step(has_changes, Some((candidate, true))),
+                release_step(has_changes, Some(candidate)),
                 ReleaseStep::Resume {
                     release_id: "new".to_string(),
                     release_number: Some(1),
                 }
             );
         }
+    }
 
-        // A mismatching inactive release is never broadcast: with a diff a
-        // fresh release is created, without one the active release already
-        // matches the config and the stale leftover is ignored.
-        assert_eq!(
-            release_step(true, Some((candidate, false))),
-            ReleaseStep::Create
-        );
-        assert_eq!(
-            release_step(false, Some((candidate, false))),
-            ReleaseStep::UpToDate
-        );
+    #[test]
+    fn scan_inactive_matches_resumes_unique_and_flags_ambiguous() {
+        // Nothing matched → defer to the preview diff.
+        assert!(matches!(
+            scan_inactive_matches(Vec::new()),
+            ResumeScan::None
+        ));
+
+        // Exactly one match → resume it.
+        let one = summaries(&[("r1", "staging", "inactive")]);
+        match scan_inactive_matches(one) {
+            ResumeScan::One(release) => assert_eq!(release.id, "r1"),
+            _ => panic!("expected exactly one match"),
+        }
+
+        // More than one match → ambiguous, carrying every candidate id.
+        let many = summaries(&[("r1", "staging", "inactive"), ("r2", "staging", "inactive")]);
+        match scan_inactive_matches(many) {
+            ResumeScan::Ambiguous(ids) => {
+                assert_eq!(ids, vec!["r1".to_string(), "r2".to_string()]);
+            }
+            _ => panic!("expected ambiguous"),
+        }
     }
 
     #[test]
