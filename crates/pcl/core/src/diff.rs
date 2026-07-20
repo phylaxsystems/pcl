@@ -201,6 +201,11 @@ fn render_unchanged(out: &mut String, label: &str, entry: &ContractDiffEntry) {
         format!("contract \"{name}\" (unchanged)").dimmed(),
     )
     .unwrap();
+    // A contract is "unchanged" when its metadata (name/address) is untouched,
+    // but its assertions may still have changed — render those like the dApp does.
+    for a in &entry.assertions {
+        render_assertion_diff(out, a);
+    }
     writeln!(out).unwrap();
 }
 
@@ -711,6 +716,55 @@ mod tests {
         assert!(output.contains("- Old.sol"));
         assert!(!output.contains("name:"));
         assert!(!output.contains("address:"));
+    }
+
+    #[test]
+    fn renders_unchanged_contract_with_assertion_changes() {
+        disable_colors();
+
+        // The canonical diff (compute-release-diff.ts) marks a contract
+        // "unchanged" when its name/address are untouched, even if its
+        // assertions were added/removed/modified. Those nested changes must
+        // still be rendered, matching the dApp release-detail UI.
+        let json = json!({
+            "hasChanges": true,
+            "configMismatch": false,
+            "driftDetected": false,
+            "diff": {
+                "contracts": {
+                    "stable": {
+                        "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "name": "Stable",
+                        "changeType": "unchanged",
+                        "metadataChanges": null,
+                        "assertions": [
+                            { "file": "New.a.sol", "args": [], "changeType": "added", "assertionId": "0x1", "previousAssertionId": null, "compilerVersionChange": null },
+                            { "file": "Old.a.sol", "args": [], "changeType": "removed", "assertionId": null, "previousAssertionId": "0x2", "compilerVersionChange": null },
+                            { "file": "Tweaked.a.sol", "args": [], "changeType": "modified", "assertionId": "0x3", "previousAssertionId": "0x4", "compilerVersionChange": { "from": "0.8.20", "to": "0.8.24" } },
+                            { "file": "Untouched.a.sol", "args": [], "changeType": "unchanged", "assertionId": "0x5", "previousAssertionId": null, "compilerVersionChange": null }
+                        ]
+                    }
+                },
+                "summary": {
+                    "contracts": { "added": 0, "removed": 0, "modified": 0, "unchanged": 1 },
+                    "assertions": { "added": 1, "removed": 1, "modified": 1, "unchanged": 1 }
+                }
+            },
+            "diffedAgainstReleaseId": null
+        });
+
+        let preview: PreviewResponse = serde_json::from_value(json).unwrap();
+        let output = preview.render_plan();
+
+        assert!(output.contains("contract \"Stable\" (unchanged)"));
+        assert!(output.contains("+ New.a.sol"));
+        assert!(output.contains("- Old.a.sol"));
+        assert!(output.contains("~ Tweaked.a.sol"));
+        assert!(output.contains("compiler: 0.8.20 \u{2192} 0.8.24"));
+        // Unchanged assertions stay hidden, as in every other contract group.
+        assert!(!output.contains("Untouched.a.sol"));
+        // Rendered detail now agrees with the assertion-level summary.
+        assert!(output.contains("Plan: 1 added, 1 changed, 1 removed."));
     }
 
     #[test]
