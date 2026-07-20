@@ -724,6 +724,22 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
                         ],
                     )
                 }
+                DeployError::AdoptedProjectChainMismatch {
+                    project_id, path, ..
+                } => {
+                    (
+                        "deploy.adopted_project_chain_mismatch",
+                        true,
+                        vec![
+                            "pcl projects mine --json".to_string(),
+                            "pcl deploy (retry reconciliation; no second project will be created)"
+                                .to_string(),
+                            format!(
+                                "If {project_id} is the intended project, add project_id = \"{project_id}\" to credible.toml and delete {path}"
+                            ),
+                        ],
+                    )
+                }
                 DeployError::MachineYesRequired => {
                     (
                         "deploy.yes_required",

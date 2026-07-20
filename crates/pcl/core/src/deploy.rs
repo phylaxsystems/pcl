@@ -539,6 +539,38 @@ fn resolve_create_intent_match(
     }
 }
 
+/// Confirms an adopted project actually belongs to the pending create before
+/// any local recovery state is written. [`matching_project_ids`] can only
+/// match on name when the project index reports chain *names* rather than ids
+/// (as `/views/projects/home` does), so a same-name project on a different
+/// chain can slip through. Comparing the authoritative project record's chain
+/// against the intent closes that gap: a mismatch is rejected while the intent
+/// is still in place, instead of recording the wrong project id and clearing
+/// the intent (which a later run would then treat as the configured project
+/// and deploy to).
+fn validate_adopted_project_chain(
+    project: &Value,
+    project_id: Uuid,
+    intent: &CreateIntent,
+    intent_path: &Path,
+) -> Result<(), DeployError> {
+    let found = project_chain_id(project).ok_or(DeployError::UnexpectedResponse {
+        endpoint: "/projects/{project_id}",
+        reason: "adopted project has no chain_id/project_networks; cannot confirm it matches the pending create"
+            .to_string(),
+    })?;
+    if found != intent.chain_id {
+        return Err(DeployError::AdoptedProjectChainMismatch {
+            name: intent.project_name.clone(),
+            project_id,
+            intent_chain_id: intent.chain_id,
+            found_chain_id: found,
+            path: intent_path.display().to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Verifies credible.toml can be read and written *before* the project is
 /// created remotely, so a read-only file or missing path fails while
 /// cancellation is still side-effect free.
@@ -725,7 +757,10 @@ impl DeployArgs {
                 }
                 None => None,
             };
-            if let Some(project_id) = adopted {
+            if let Some((project_id, project)) = adopted {
+                // reconcile_create_intent already fetched the project record
+                // and confirmed its chain matches the intent, so recording the
+                // id and clearing the intent here is safe.
                 progress(
                     human,
                     &format!("Adopting project {project_id} created by an interrupted earlier run"),
@@ -742,17 +777,6 @@ impl DeployArgs {
                 })?;
                 clear_create_intent(&intent_path);
                 credible.project_id = Some(project_id);
-                let project_id_string = project_id.to_string();
-                let project = api
-                    .workflow_json(
-                        config,
-                        cli_args,
-                        HttpMethod::Get,
-                        "get_projects_project_id",
-                        &[("project_id", project_id_string.as_str())],
-                        None,
-                    )
-                    .await?;
                 // Adopted, not created: the platform record is authoritative
                 // for the chain, exactly like a pre-recorded project_id.
                 (project_id, project, None)
@@ -1051,7 +1075,7 @@ impl DeployArgs {
         intent: &CreateIntent,
         intent_path: &Path,
         human: bool,
-    ) -> Result<Uuid, DeployError> {
+    ) -> Result<(Uuid, Value), DeployError> {
         let requested = self.api_url.as_str().trim_end_matches('/').to_string();
         if intent.platform_url != requested {
             // The unresolved create belongs to another platform; matching
@@ -1080,7 +1104,25 @@ impl DeployArgs {
             )
             .await?;
         let ids = matching_project_ids(&mine, &intent.project_name, intent.chain_id);
-        resolve_create_intent_match(&ids, intent, intent_path)
+        let project_id = resolve_create_intent_match(&ids, intent, intent_path)?;
+        // The index only matched on name (the home view lists chain names, not
+        // ids), so fetch the authoritative record and confirm its chain before
+        // returning. Both this GET and the validation happen before the caller
+        // touches any local recovery state, so a mismatch leaves the intent in
+        // place instead of adopting a same-name project on the wrong chain.
+        let project_id_string = project_id.to_string();
+        let project = api
+            .workflow_json(
+                config,
+                cli_args,
+                HttpMethod::Get,
+                "get_projects_project_id",
+                &[("project_id", project_id_string.as_str())],
+                None,
+            )
+            .await?;
+        validate_adopted_project_chain(&project, project_id, intent, intent_path)?;
+        Ok((project_id, project))
     }
 
     /// Interactive gate before a mutating step; cancelling is side-effect
@@ -1661,6 +1703,46 @@ mod tests {
                 .unwrap(),
             Uuid::parse_str(&project_id).unwrap()
         );
+    }
+
+    #[test]
+    fn adopting_validates_the_project_chain_against_the_intent() {
+        let dir = tempfile::tempdir().unwrap();
+        let intent_path = dir.path().join(".credible.toml.create-intent.json");
+        let intent = CreateIntent {
+            project_name: "demo".to_string(),
+            chain_id: 84532,
+            platform_url: "https://api.example".to_string(),
+        };
+        let project_id = Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").unwrap();
+
+        // The home index only matches on name (it lists chain *names*), so a
+        // same-name project on another chain reaches this check. It must be
+        // rejected before any local recovery state is written — not adopted
+        // and then caught by resolve_chain_id after credible.toml is already
+        // pointed at the wrong project.
+        let other_chain = json!({ "project_networks": ["1"] });
+        assert!(matches!(
+            validate_adopted_project_chain(&other_chain, project_id, &intent, &intent_path),
+            Err(DeployError::AdoptedProjectChainMismatch {
+                intent_chain_id: 84532,
+                found_chain_id: 1,
+                ..
+            })
+        ));
+
+        // The authoritative record on the intended chain adopts cleanly.
+        let same_chain = json!({ "project_networks": ["84532"] });
+        assert!(
+            validate_adopted_project_chain(&same_chain, project_id, &intent, &intent_path).is_ok()
+        );
+
+        // A record with no chain info cannot be confirmed: fail closed rather
+        // than adopt on faith.
+        assert!(matches!(
+            validate_adopted_project_chain(&json!({}), project_id, &intent, &intent_path),
+            Err(DeployError::UnexpectedResponse { .. })
+        ));
     }
 
     #[test]

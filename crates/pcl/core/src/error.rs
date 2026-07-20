@@ -220,6 +220,17 @@ pub enum DeployError {
     },
 
     #[error(
+        "An earlier `pcl deploy` create for project {name:?} on chain {intent_chain_id} never recorded its outcome, but the only project with that name on the platform is {project_id} on chain {found_chain_id}. A different chain means this is not the project that create would have made, so pcl will not adopt it. Re-run `pcl deploy` to reconcile once the intended project appears; only delete {path} after confirming the earlier create did not land. To deploy to {project_id} instead, add `project_id = \"{project_id}\"` to credible.toml and delete {path}."
+    )]
+    AdoptedProjectChainMismatch {
+        name: String,
+        project_id: uuid::Uuid,
+        intent_chain_id: u64,
+        found_chain_id: u64,
+        path: String,
+    },
+
+    #[error(
         "Machine output requires `--yes` (pcl deploy mutates the project and broadcasts transactions)"
     )]
     MachineYesRequired,
