@@ -65,7 +65,9 @@ jobs:
   rust-base:
     name: Rust Test & Lint
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@main
+    # Pin the hosted-runner portability fix until phylaxsystems/actions#105
+    # lands on main.
+    uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@ec61d6a5b50aee981147351197655c6b4f503dd8
     with:
       runner: "ubuntu-latest"
       rust-channel: "nightly-2026-01-07"
