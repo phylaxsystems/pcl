@@ -31,6 +31,7 @@ use pcl_core::{
         ApplyError,
         AuthError,
         ConfigError,
+        DeployError,
     },
     output::command_for_mode,
     surface::ProductSurfaceError,
@@ -165,6 +166,8 @@ async fn run_command(
         }
         #[cfg(feature = "credible")]
         Commands::Apply(apply) => apply.run(cli_args, config).await?,
+        #[cfg(feature = "credible")]
+        Commands::Deploy(deploy) => deploy.run(cli_args, config).await?,
         Commands::Api(api) => api.run(config, cli_args, json_output).await?,
         Commands::Incidents(command) => command.run(config, cli_args, json_output).await?,
         Commands::Projects(command) => command.run(config, cli_args, json_output).await?,
@@ -219,6 +222,9 @@ fn error_envelope(err: &Report) -> Value {
     }
     if let Some(apply_error) = err.downcast_ref::<ApplyError>() {
         return with_envelope_metadata(apply_error_envelope(apply_error));
+    }
+    if let Some(deploy_error) = err.downcast_ref::<DeployError>() {
+        return deploy_error_envelope(deploy_error);
     }
     if let Some(auth_error) = err.downcast_ref::<AuthError>() {
         return with_envelope_metadata(auth_error_envelope(auth_error));
@@ -563,6 +569,223 @@ fn phoundry_error_envelope(err: &PhoundryError) -> Value {
     simple_error_value(code, &message, true, next_actions)
 }
 
+/// Machine envelope for `pcl deploy` failures. Wrapped API/apply/auth
+/// errors delegate to their own envelope mappers so provenance (HTTP
+/// metadata, tx hashes, structured codes) survives; every orchestration
+/// variant gets a stable code, recoverability, and next actions.
+#[allow(clippy::too_many_lines)]
+fn deploy_error_envelope(err: &DeployError) -> Value {
+    match err {
+        // Delegate wrapped errors to the mappers that know their structure —
+        // notably ConfirmAfterTx, whose envelope carries the landed tx hash
+        // and the nested API provenance.
+        DeployError::Api(api_error) => api_error.json_envelope(),
+        DeployError::Apply(apply_error) => {
+            with_envelope_metadata(apply_error_envelope(apply_error))
+        }
+        _ => {
+            let (code, recoverable, next_actions): (&str, bool, Vec<String>) = match err {
+                DeployError::Wallet(_) => {
+                    (
+                        "wallet.failed",
+                        true,
+                        vec![
+                            "pcl deploy --dry-run".to_string(),
+                            "pcl deploy --help".to_string(),
+                        ],
+                    )
+                }
+                DeployError::ManagerMismatch {
+                    project_id, wallet, ..
+                } => {
+                    (
+                        "deploy.manager_mismatch",
+                        true,
+                        vec![format!(
+                            "pcl protocol-manager --project {project_id} --transfer-calldata --new-manager {wallet} --broadcast"
+                        )],
+                    )
+                }
+                DeployError::MissingProjectInfo => {
+                    (
+                        "deploy.missing_project_info",
+                        true,
+                        vec!["pcl deploy --project-name <name> --chain-id <id>".to_string()],
+                    )
+                }
+                DeployError::ChainIdMismatch { .. } => {
+                    (
+                        "deploy.chain_id_mismatch",
+                        true,
+                        vec!["pcl deploy (omit --chain-id for an existing project)".to_string()],
+                    )
+                }
+                DeployError::UnexpectedResponse { .. } => {
+                    (
+                        "deploy.unexpected_response",
+                        true,
+                        vec!["pcl doctor --json".to_string()],
+                    )
+                }
+                DeployError::ChecksTimeout { .. } => {
+                    (
+                        "deploy.checks_timeout",
+                        true,
+                        vec!["pcl deploy (re-run to resume once checks finish)".to_string()],
+                    )
+                }
+                DeployError::ChecksFailed {
+                    project_id,
+                    release_id,
+                    ..
+                } => {
+                    (
+                        "deploy.checks_failed",
+                        true,
+                        vec![
+                            format!("pcl releases show {project_id} {release_id}"),
+                            format!(
+                                "pcl releases retry-check {project_id} {release_id} <check-id>"
+                            ),
+                        ],
+                    )
+                }
+                DeployError::TomlWriteBack { .. } => {
+                    (
+                        "deploy.toml_write_back_failed",
+                        true,
+                        vec!["Check credible.toml permissions, then re-run pcl deploy".to_string()],
+                    )
+                }
+                DeployError::TomlWriteBackAfterCreate { project_id, .. } => {
+                    (
+                        "deploy.project_created_write_back_failed",
+                        true,
+                        vec![
+                            format!("Add project_id = \"{project_id}\" to credible.toml"),
+                            "pcl deploy (re-run to resume with the existing project)".to_string(),
+                        ],
+                    )
+                }
+                DeployError::CreateIntentWrite { .. } => {
+                    (
+                        "deploy.create_intent_write_failed",
+                        true,
+                        vec![
+                            "Check the credible.toml directory permissions, then re-run pcl deploy"
+                                .to_string(),
+                        ],
+                    )
+                }
+                DeployError::CreateIntentUnreadable { path, .. } => {
+                    (
+                        "deploy.create_intent_unreadable",
+                        true,
+                        vec![
+                        "pcl projects mine --json".to_string(),
+                        "Add project_id = \"<id>\" to credible.toml if the project already exists"
+                            .to_string(),
+                        format!("Delete {path} once the earlier create is resolved"),
+                    ],
+                    )
+                }
+                DeployError::CreateIntentPlatformMismatch { path, .. } => {
+                    (
+                        "deploy.create_intent_platform_mismatch",
+                        true,
+                        vec![
+                            "pcl projects mine --json (against the intent's platform)".to_string(),
+                            format!("Delete {path} once the earlier create is resolved"),
+                        ],
+                    )
+                }
+                DeployError::AmbiguousProjectCreate { path, .. } => {
+                    (
+                        "deploy.project_create_ambiguous",
+                        true,
+                        vec![
+                            "pcl projects mine --json".to_string(),
+                            "Add project_id = \"<id>\" to credible.toml".to_string(),
+                            format!("Delete {path} once the right project is recorded"),
+                        ],
+                    )
+                }
+                DeployError::PendingProjectCreate { path, .. } => {
+                    (
+                        "deploy.project_create_pending_reconciliation",
+                        true,
+                        vec![
+                            "pcl projects mine --json".to_string(),
+                            "pcl deploy (retry reconciliation; no second project will be created)"
+                                .to_string(),
+                            format!(
+                                "Only after confirming no project was created: delete {path} and re-run pcl deploy"
+                            ),
+                        ],
+                    )
+                }
+                DeployError::AdoptedProjectChainMismatch {
+                    project_id, path, ..
+                } => {
+                    (
+                        "deploy.adopted_project_chain_mismatch",
+                        true,
+                        vec![
+                            "pcl projects mine --json".to_string(),
+                            "pcl deploy (retry reconciliation; no second project will be created)"
+                                .to_string(),
+                            format!(
+                                "If {project_id} is the intended project, add project_id = \"{project_id}\" to credible.toml and delete {path}"
+                            ),
+                        ],
+                    )
+                }
+                DeployError::AmbiguousInactiveRelease { project_id, .. } => {
+                    (
+                        "deploy.inactive_release_ambiguous",
+                        true,
+                        vec![
+                            format!("pcl releases list {project_id}"),
+                            "Activate or delete the duplicate inactive releases, then re-run pcl deploy"
+                                .to_string(),
+                        ],
+                    )
+                }
+                DeployError::MachineYesRequired => {
+                    (
+                        "deploy.yes_required",
+                        true,
+                        vec!["pcl deploy --yes --json".to_string()],
+                    )
+                }
+                DeployError::Cancelled => {
+                    ("deploy.cancelled", true, vec!["pcl deploy".to_string()])
+                }
+                DeployError::Json(_) | DeployError::Output(_) => {
+                    ("deploy.output_failed", false, Vec::new())
+                }
+                DeployError::Api(_) | DeployError::Apply(_) => unreachable!("delegated above"),
+            };
+            let mut error = serde_json::Map::new();
+            error.insert("code".to_string(), json!(code));
+            error.insert("message".to_string(), json!(err.to_string()));
+            error.insert("recoverable".to_string(), json!(recoverable));
+            if let DeployError::TomlWriteBackAfterCreate {
+                project_id, path, ..
+            } = err
+            {
+                error.insert("project_id".to_string(), json!(project_id));
+                error.insert("path".to_string(), json!(path));
+            }
+            with_envelope_metadata(json!({
+                "status": "error",
+                "error": error,
+                "next_actions": next_actions,
+            }))
+        }
+    }
+}
+
 fn auth_error_envelope(err: &AuthError) -> Value {
     if let Some(envelope) = auth_refresh_error_envelope(err) {
         return envelope;
@@ -817,6 +1040,7 @@ fn config_error_code(err: &ConfigError) -> &'static str {
         ConfigError::SerializeError(_) => "config.serialize_failed",
         ConfigError::JsonError(_) => "config.json_failed",
         ConfigError::NotAuthenticated => "config.not_authenticated",
+        ConfigError::InvalidValue(_) => "config.invalid_value",
     }
 }
 

@@ -18,6 +18,7 @@ use std::{
     path::PathBuf,
 };
 
+mod broadcast;
 mod definitions;
 mod envelopes;
 mod error;
@@ -39,6 +40,7 @@ pub use crate::output::{
     ENVELOPE_SCHEMA_VERSION,
     with_envelope_metadata,
 };
+pub use broadcast::BroadcastArgs;
 pub use error::ApiCommandError;
 pub use manifest::api_manifest;
 pub use render::{
@@ -64,7 +66,7 @@ use input::{
     write_json_output_file,
     write_jsonl_items_output_file,
 };
-pub(in crate::api) use method::HttpMethod;
+pub(crate) use method::HttpMethod;
 use openapi::{
     api_coverage,
     command_next_actions,
@@ -173,6 +175,125 @@ pub struct ApiArgs {
 
     #[arg(skip = Cell::new(true))]
     refresh_after_401: Cell<bool>,
+}
+
+impl ApiArgs {
+    /// Builds a headless API runtime for internal orchestration (e.g.
+    /// `pcl deploy`). The placeholder `command` is never dispatched.
+    pub(crate) fn headless(api_url: url::Url) -> Self {
+        Self {
+            command: ApiCommand::Manifest,
+            api_url,
+            allow_unauthenticated: false,
+            refresh_after_401: Cell::new(true),
+        }
+    }
+
+    /// Executes one workflow operation and returns the response body.
+    /// Auth attachment, token refresh, path expansion, and request logging
+    /// all behave exactly like the user-facing workflow commands.
+    pub(crate) async fn workflow_json(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        method: HttpMethod,
+        operation_id: &'static str,
+        path_params: &[(&'static str, &str)],
+        body: Option<&serde_json::Value>,
+    ) -> Result<serde_json::Value, ApiCommandError> {
+        let mut operation = WorkflowOperation::new(method, operation_id);
+        for (name, value) in path_params {
+            operation = operation.path_param(name, *value);
+        }
+        let request = runtime_types::WorkflowRequest::from_operation(
+            operation,
+            Vec::new(),
+            body.map(std::string::ToString::to_string),
+            true,
+            Vec::<String>::new(),
+        )?;
+        let request_log_path = crate::request_log::request_log_path_for_args(cli_args);
+        Ok(self
+            .call_workflow_result(config, cli_args, &request, &request_log_path)
+            .await?
+            .body)
+    }
+
+    /// Executes a paginated GET workflow with explicit query parameters and
+    /// returns the response body.
+    pub(crate) async fn workflow_get_json_with_query(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        operation_id: &'static str,
+        path_params: &[(&'static str, &str)],
+        query: &[(&str, &str)],
+    ) -> Result<serde_json::Value, ApiCommandError> {
+        let mut operation = WorkflowOperation::new(HttpMethod::Get, operation_id);
+        for (name, value) in path_params {
+            operation = operation.path_param(name, *value);
+        }
+        let request = runtime_types::WorkflowRequest::from_operation(
+            operation,
+            query
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                .collect(),
+            None,
+            true,
+            Vec::<String>::new(),
+        )?;
+        let request_log_path = crate::request_log::request_log_path_for_args(cli_args);
+        Ok(self
+            .call_workflow_result(config, cli_args, &request, &request_log_path)
+            .await?
+            .body)
+    }
+
+    /// Runs the full release deploy broadcast flow (calldata fetch → batch tx
+    /// or noop → deploy confirmation) and returns the combined envelope.
+    pub(crate) async fn release_deploy_broadcast_flow(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        project: &str,
+        release_id: &str,
+        broadcast: BroadcastArgs,
+    ) -> Result<serde_json::Value, ApiCommandError> {
+        let args = ReleasesArgs {
+            project: Some(project.to_string()),
+            release_id: Some(release_id.to_string()),
+            deploy_calldata: true,
+            broadcast,
+            ..ReleasesArgs::default()
+        };
+        let request_log_path = crate::request_log::request_log_path_for_args(cli_args);
+        self.run_releases_broadcast(config, cli_args, &args, &request_log_path)
+            .await
+    }
+
+    /// Runs the protocol-manager set flow with a wallet signature (nonce →
+    /// EIP-191 sign → submit) and returns the combined envelope.
+    pub(crate) async fn protocol_manager_set_signed_flow(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        project: &str,
+        chain_id: u64,
+        broadcast: BroadcastArgs,
+    ) -> Result<serde_json::Value, ApiCommandError> {
+        let args = ProtocolManagerArgs {
+            project: Some(project.to_string()),
+            set: true,
+            sign: true,
+            chain_id: Some(chain_id),
+            broadcast,
+            ..ProtocolManagerArgs::default()
+        };
+        let request_log_path = crate::request_log::request_log_path_for_args(cli_args);
+        self.run_protocol_manager_signed(config, cli_args, &args, &request_log_path)
+            .await
+    }
 }
 
 macro_rules! top_level_workflow_command {
@@ -841,6 +962,8 @@ struct ReleasesArgs {
     remove_calldata: bool,
     backtest_progress: bool,
     retry_check: bool,
+    chain_id: Option<u64>,
+    broadcast: BroadcastArgs,
     body: Option<String>,
     field: Vec<String>,
     body_file: Option<PathBuf>,
@@ -874,7 +997,7 @@ enum ReleasesSubcommand {
     #[command(about = "Confirm release removal")]
     Remove(ReleaseBodyArgs),
     #[command(about = "Build release calldata")]
-    Calldata(ReleaseCalldataArgs),
+    Calldata(Box<ReleaseCalldataArgs>),
     #[command(
         name = "backtest-progress",
         about = "Show release backtest/check progress"
@@ -936,10 +1059,10 @@ struct ReleaseCalldataArgs {
 
 #[derive(clap::Subcommand, Debug)]
 enum ReleaseCalldataSubcommand {
-    #[command(about = "Build deploy calldata")]
+    #[command(about = "Build deploy calldata, optionally broadcasting it on-chain")]
     Deploy(ReleaseDeployCalldataArgs),
-    #[command(about = "Build remove calldata")]
-    Remove(ReleaseRefArgs),
+    #[command(about = "Build remove calldata, optionally broadcasting it on-chain")]
+    Remove(ReleaseRemoveCalldataArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -948,8 +1071,29 @@ struct ReleaseDeployCalldataArgs {
     project: String,
     #[arg(value_name = "RELEASE_ID")]
     release_id: String,
-    #[arg(long, help = "Signer address")]
-    signer_address: String,
+    #[arg(
+        long,
+        required_unless_present = "broadcast",
+        help = "Signer address (defaults to the wallet address with --broadcast)"
+    )]
+    signer_address: Option<String>,
+    #[command(flatten)]
+    broadcast: BroadcastArgs,
+}
+
+#[derive(clap::Args, Debug)]
+struct ReleaseRemoveCalldataArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "RELEASE_ID")]
+    release_id: String,
+    #[arg(
+        long,
+        help = "Chain ID for --broadcast (defaults to the project's chain)"
+    )]
+    chain_id: Option<u64>,
+    #[command(flatten)]
+    broadcast: BroadcastArgs,
 }
 
 impl ReleasesCommand {
@@ -1005,12 +1149,15 @@ impl ReleasesSubcommand {
                     ReleaseCalldataSubcommand::Deploy(args) => {
                         let mut release_args = release_ref_args(args.project, args.release_id);
                         release_args.deploy_calldata = true;
-                        release_args.signer_address = Some(args.signer_address);
+                        release_args.signer_address = args.signer_address;
+                        release_args.broadcast = args.broadcast;
                         release_args
                     }
                     ReleaseCalldataSubcommand::Remove(args) => {
                         let mut release_args = release_ref_args(args.project, args.release_id);
                         release_args.remove_calldata = true;
+                        release_args.chain_id = args.chain_id;
+                        release_args.broadcast = args.broadcast;
                         release_args
                     }
                 }
@@ -1379,7 +1526,7 @@ struct IntegrationsArgs {
     body_template: bool,
 }
 
-#[derive(clap::Args, Debug)]
+#[derive(clap::Args, Debug, Default)]
 #[command(group(
     ArgGroup::new("protocol_manager_action")
         .args(["nonce", "set", "clear", "transfer_calldata", "accept_calldata", "pending_transfer", "confirm_transfer"])
@@ -1406,8 +1553,13 @@ struct ProtocolManagerArgs {
     new_manager: Option<String>,
     #[arg(long, help = "Address for --nonce")]
     address: Option<String>,
-    #[arg(long, help = "Chain ID for --nonce")]
+    #[arg(long, help = "Chain ID for --nonce and --set --sign")]
     chain_id: Option<u64>,
+    #[arg(
+        long,
+        help = "With --set: fetch the challenge nonce, sign it with the wallet (EIP-191), and submit it"
+    )]
+    sign: bool,
     #[arg(long, help = "JSON request body")]
     body: Option<String>,
     #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
@@ -1420,6 +1572,8 @@ struct ProtocolManagerArgs {
     body_file: Option<PathBuf>,
     #[arg(long, help = "Print a JSON body template")]
     body_template: bool,
+    #[command(flatten)]
+    broadcast: BroadcastArgs,
 }
 
 #[derive(clap::Args, Debug)]

@@ -251,6 +251,13 @@ impl ApiArgs {
                         json_output,
                     );
                 }
+                if args.broadcast.broadcast {
+                    return print_api_value(
+                        self.run_releases_broadcast(config, cli_args, args, &request_log_path)
+                            .await?,
+                        json_output,
+                    );
+                }
                 print_api_value(
                     self.run_releases(config, cli_args, args, &request_log_path)
                         .await?,
@@ -312,6 +319,13 @@ impl ApiArgs {
                 if args.body_template {
                     return print_api_value(
                         template_envelope(protocol_manager_body_template(args)),
+                        json_output,
+                    );
+                }
+                if args.sign || args.broadcast.broadcast {
+                    return print_api_value(
+                        self.run_protocol_manager_signed(config, cli_args, args, &request_log_path)
+                            .await?,
                         json_output,
                     );
                 }

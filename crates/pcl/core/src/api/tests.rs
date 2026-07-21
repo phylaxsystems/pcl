@@ -19,6 +19,7 @@ use serde_json::{
 };
 use std::{
     cell::Cell,
+    collections::BTreeMap,
     fs,
     path::Path,
 };
@@ -73,6 +74,7 @@ fn auth_config(
     email: Option<&str>,
 ) -> CliConfig {
     CliConfig {
+        rpc: BTreeMap::default(),
         auth: Some(UserAuth {
             access_token: access_token.to_string(),
             refresh_token: refresh_token.to_string(),
@@ -168,6 +170,8 @@ fn protocol_manager_args() -> ProtocolManagerArgs {
         new_manager: None,
         address: None,
         chain_id: None,
+        sign: false,
+        broadcast: BroadcastArgs::default(),
         body: None,
         field: Vec::new(),
         body_file: None,
@@ -233,6 +237,8 @@ fn release_args() -> ReleasesArgs {
         remove_calldata: false,
         backtest_progress: false,
         retry_check: false,
+        chain_id: None,
+        broadcast: BroadcastArgs::default(),
         body: None,
         field: Vec::new(),
         body_file: None,
@@ -1143,6 +1149,106 @@ async fn public_workflows_do_not_attach_expired_stored_tokens() {
     assert_eq!(output["status"], "ok");
     assert_eq!(output["request"]["auth"]["will_attach_stored_token"], false);
     mock.assert_async().await;
+}
+
+#[test]
+fn confirm_after_tx_envelope_preserves_chain_and_api_provenance() {
+    let tx_hash = alloy_primitives::B256::repeat_byte(0xab);
+    let confirm_command =
+        format!("pcl releases deploy x y --field mode=transaction --field txHash={tx_hash} --json");
+    let error = ApiCommandError::ConfirmAfterTx {
+        tx_hash,
+        confirm_command: confirm_command.clone(),
+        source: Box::new(ApiCommandError::HttpStatus {
+            method: "POST",
+            path: "/projects/x/releases/y/deploy".to_string(),
+            status: 502,
+            request_id: Some("req-42".to_string()),
+            body: Box::new(serde_json::json!({ "error": "bad gateway" })),
+        }),
+    };
+
+    let envelope = error.json_envelope();
+
+    assert_eq!(envelope["error"]["code"], "broadcast.confirm_failed");
+    // The landed transaction survives structurally, not only in prose.
+    assert_eq!(
+        envelope["error"]["tx_hash"],
+        serde_json::json!(tx_hash),
+        "{envelope}"
+    );
+    assert_eq!(envelope["tx_hash"], serde_json::json!(tx_hash));
+    // The nested API provenance survives too.
+    assert_eq!(envelope["error"]["request_id"], "req-42");
+    let source = &envelope["error"]["source"];
+    assert_eq!(source["error"]["http"]["status"], 502);
+    assert_eq!(
+        source["error"]["http"]["path"],
+        "/projects/x/releases/y/deploy"
+    );
+    assert_eq!(source["error"]["request_id"], "req-42");
+    assert_eq!(envelope["error"]["mutation"]["onchain_landed"], true);
+    assert_eq!(envelope["error"]["mutation"]["platform_confirmed"], false);
+    // Recovery is confirm-only: the first next action retries just the
+    // platform confirmation with the landed hash; nothing may point back at
+    // the broadcast path, and no action may use the removed --toon flag.
+    assert_eq!(
+        envelope["error"]["confirm_command"],
+        serde_json::json!(confirm_command)
+    );
+    let next_actions = envelope["next_actions"].as_array().unwrap();
+    assert_eq!(next_actions[0], serde_json::json!(confirm_command));
+    assert!(
+        next_actions.iter().all(|action| {
+            let action = action.as_str().unwrap();
+            !action.contains("--broadcast") && !action.contains("--toon")
+        }),
+        "{envelope}"
+    );
+}
+
+#[test]
+fn confirmation_unknown_envelope_marks_the_mutation_ambiguous() {
+    let tx_hash = alloy_primitives::B256::repeat_byte(0xcd);
+    let error = ApiCommandError::Onchain(crate::onchain::OnchainError::ConfirmationUnknown {
+        tx_hash,
+        chain_id: 84532,
+        redacted_url: "https://rpc.example.com".to_string(),
+        message: "request timeout".to_string(),
+    });
+
+    let envelope = error.json_envelope();
+
+    assert_eq!(
+        envelope["error"]["code"],
+        "onchain.tx_submitted_confirmation_unknown"
+    );
+    // The submitted-but-unobserved transaction survives structurally, with
+    // the mutation state explicitly unknown — a blind retry could
+    // double-broadcast.
+    assert_eq!(envelope["error"]["tx_hash"], serde_json::json!(tx_hash));
+    assert_eq!(envelope["tx_hash"], serde_json::json!(tx_hash));
+    assert_eq!(envelope["error"]["chain_id"], 84532);
+    assert_eq!(envelope["error"]["mutation"]["side_effecting"], true);
+    assert_eq!(envelope["error"]["mutation"]["onchain_landed"], "unknown");
+    // No next action may suggest an immediate retry/rebroadcast.
+    let next_actions = envelope["next_actions"].as_array().unwrap();
+    assert!(
+        next_actions
+            .iter()
+            .any(|action| action.as_str().unwrap().contains(&tx_hash.to_string())),
+        "{envelope}"
+    );
+    assert!(
+        next_actions.iter().all(|action| {
+            !action
+                .as_str()
+                .unwrap()
+                .to_lowercase()
+                .contains("retry the same")
+        }),
+        "{envelope}"
+    );
 }
 
 #[tokio::test]

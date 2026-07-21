@@ -1545,12 +1545,16 @@ fn llms_guide() -> Value {
             {
                 "goal": "Export resumable incident data",
                 "commands": ["pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --resume --json", "pcl jobs list --json"]
+            },
+            {
+                "goal": "Ship a foundry project's assertions end-to-end (project, protocol manager, release, on-chain activation)",
+                "commands": ["pcl deploy --dry-run --json", "pcl deploy --private-key <key> --rpc-url <url> --yes --json", "pcl config set-rpc <chain-id> <rpc-url>"]
             }
         ],
         "command_surfaces": {
             "workflows": ["pcl incidents", "pcl projects", "pcl assertions", "pcl account", "pcl contracts", "pcl releases", "pcl deployments", "pcl access", "pcl integrations", "pcl protocol-manager", "pcl events", "pcl search"],
             "discovery": ["pcl --json --llms", "pcl llms --json", "pcl workflows --json", "pcl schema --json", "pcl api manifest --json", "pcl api list --json", "pcl api inspect --json"],
-            "execution": ["pcl api call", "pcl export incidents"],
+            "execution": ["pcl api call", "pcl export incidents", "pcl apply", "pcl deploy"],
             "state": ["pcl artifacts", "pcl requests", "pcl jobs"],
             "shell": ["pcl completions bash", "pcl completions zsh", "pcl completions fish"]
         },
@@ -1579,6 +1583,19 @@ fn llms_guide() -> Value {
             "order": ["--body-template", "typed flags", "--field key=value", "--body-file body.json"],
             "body_templates": "Print payload contracts before writes; choose a concrete body variant when body_variants is returned.",
             "execution": "Workflow commands execute when invoked; inspect body templates and use typed flags or body files deliberately."
+        },
+        "onchain": {
+            "signing": "Commands that broadcast accept --private-key (env PCL_PRIVATE_KEY) or --account <foundry-keystore-name> (password via PCL_KEYSTORE_PASSWORD); pcl signs StateOracle transactions and EIP-191 challenges locally, calldata always comes from the API.",
+            "rpc": "RPC endpoints resolve from --rpc-url / PCL_RPC_URL, then the per-chain map set with pcl config set-rpc <chain-id> <url> [--confirmations N].",
+            "broadcast_flags": [
+                "pcl releases calldata deploy <project> <release-id> --broadcast",
+                "pcl releases calldata remove <project> <release-id> --broadcast",
+                "pcl protocol-manager --project <ref> --set --sign --chain-id <id>",
+                "pcl protocol-manager --project <ref> --transfer-calldata --new-manager 0x... --broadcast",
+                "pcl protocol-manager --project <ref> --accept-calldata --broadcast"
+            ],
+            "orchestrator": "pcl deploy runs the full flow (resolve/create project, set protocol manager via signed challenge, build+verify assertions, create release, wait for checks, broadcast StateOracle.batch, confirm). Reruns resume: it observes state before each step. Machine output requires --yes.",
+            "safety": "Human mode prompts before every mutation — transactions and no-transaction platform confirmations alike (--yes skips); machine mode treats --broadcast/--yes as consent. On-chain manager transfers are two-step: initiation (--transfer-calldata --broadcast) marks the transfer pending, and acceptance by the new manager (--accept-calldata --broadcast) both emits the logs the platform verifies and confirms the transfer. Tx hash is always surfaced even when the follow-up confirmation call fails, and the error carries a confirm-only next action that retries just the platform confirmation with the landed hash — never re-broadcast after a landed transaction."
         },
         "raw_api": {
             "policy": "For normal product work, use workflow_alternatives from pcl api list/inspect or a top-level workflow command. Raw api call is for debugging, OpenAPI parity checks, internal/service endpoints, browser-session bridge investigation, or new endpoint exploration before promotion.",
@@ -2339,7 +2356,10 @@ mod tests {
     use crate::DEFAULT_PLATFORM_URL;
     use mockito::Matcher;
     use pcl_common::args::CliArgs;
-    use std::net::TcpListener;
+    use std::{
+        collections::BTreeMap,
+        net::TcpListener,
+    };
     use tempfile::tempdir;
 
     fn public_incidents_body(ids: &[&str], page: u64, limit: u64) -> String {
@@ -2419,6 +2439,7 @@ mod tests {
     fn whoami_errors_on_expired_auth() {
         let args = WhoamiArgs { offline: false };
         let config = CliConfig {
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "expired-token".to_string(),
                 refresh_token: "refresh-token".to_string(),
@@ -2758,6 +2779,7 @@ mod tests {
             ..Default::default()
         };
         let mut config = CliConfig {
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
@@ -2829,6 +2851,7 @@ mod tests {
                 email: Some("agent@example.com".to_string()),
             }),
             platform_url: None,
+            rpc: BTreeMap::default(),
         };
         let args = ExportIncidentsArgs {
             project_id: Some("11111111-1111-4111-8111-111111111111".to_string()),
@@ -2883,6 +2906,7 @@ mod tests {
                 email: Some("agent@example.com".to_string()),
             }),
             platform_url: None,
+            rpc: BTreeMap::default(),
         };
         let args = ExportIncidentsArgs {
             project_id: Some("11111111-1111-4111-8111-111111111111".to_string()),

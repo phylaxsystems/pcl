@@ -240,11 +240,11 @@ impl ApplyArgs {
         parts.join(" ")
     }
 
-    fn build_client(&self, config: &CliConfig) -> Result<GeneratedClient, ApplyError> {
+    pub(crate) fn build_client(&self, config: &CliConfig) -> Result<GeneratedClient, ApplyError> {
         authenticated_client(config, &self.api_url).map_err(client_error_to_apply)
     }
 
-    async fn ensure_fresh_auth(
+    pub(crate) async fn ensure_fresh_auth(
         config: &mut CliConfig,
         cli_args: &CliArgs,
         api_url: &Url,
@@ -305,7 +305,7 @@ impl ApplyArgs {
         Ok(())
     }
 
-    async fn call_preview(
+    pub(crate) async fn call_preview(
         client: &GeneratedClient,
         project_id: &Uuid,
         payload: &PostProjectsProjectIdReleasesBody,
@@ -337,7 +337,7 @@ impl ApplyArgs {
         })
     }
 
-    async fn call_create_release(
+    pub(crate) async fn call_create_release(
         client: &GeneratedClient,
         project_id: &Uuid,
         payload: &PostProjectsProjectIdReleasesBody,
@@ -357,7 +357,7 @@ impl ApplyArgs {
         }
     }
 
-    fn build_payload(
+    pub(crate) fn build_payload(
         credible: &CredibleToml,
         root: &Path,
     ) -> Result<(PostProjectsProjectIdReleasesBody, Vec<(String, Bytes)>), ApplyError> {
@@ -422,7 +422,7 @@ impl ApplyArgs {
     }
 
     #[cfg(feature = "credible")]
-    fn verify_all_assertions(
+    pub(crate) fn verify_all_assertions(
         inputs: &[(String, Bytes)],
         output_mode: OutputMode,
     ) -> Result<VerificationSummary, ApplyError> {
@@ -620,7 +620,7 @@ fn build_contract_value(
     })
 }
 
-fn canonicalize_root(root: &Path) -> Result<PathBuf, ApplyError> {
+pub(crate) fn canonicalize_root(root: &Path) -> Result<PathBuf, ApplyError> {
     std::fs::canonicalize(root).map_err(|e| {
         ApplyError::Io {
             message: format!("Project root not found: {}", root.display()),
@@ -629,7 +629,7 @@ fn canonicalize_root(root: &Path) -> Result<PathBuf, ApplyError> {
     })
 }
 
-fn confirm_apply() -> Result<bool, ApplyError> {
+pub(crate) fn confirm_apply() -> Result<bool, ApplyError> {
     eprint!("Do you want to apply these changes? [Y/n]: ");
     stderr().flush().map_err(|e| {
         ApplyError::Io {
@@ -650,7 +650,7 @@ fn confirm_apply() -> Result<bool, ApplyError> {
         || trimmed.eq_ignore_ascii_case("yes"))
 }
 
-fn client_error_to_apply(error: ClientBuildError) -> ApplyError {
+pub(crate) fn client_error_to_apply(error: ClientBuildError) -> ApplyError {
     match error {
         ClientBuildError::NoAuthToken => ApplyError::NoAuthToken,
         ClientBuildError::ExpiredAuthToken(expires_at) => ApplyError::ExpiredAuthToken(expires_at),

@@ -103,6 +103,7 @@ fn validate_auth(config: &CliConfig) -> Result<&crate::config::UserAuth, ClientB
 mod tests {
     use super::*;
     use crate::config::UserAuth;
+    use std::collections::BTreeMap;
 
     #[tokio::test]
     async fn ensure_fresh_auth_refreshes_expired_token_before_header_use() {
@@ -125,6 +126,7 @@ mod tests {
             ..CliArgs::default()
         };
         let mut config = CliConfig {
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "expired-token".to_string(),
                 refresh_token: "old-refresh".to_string(),
@@ -176,6 +178,7 @@ mod tests {
                 email: Some("agent@example.com".to_string()),
             }),
             platform_url: None,
+            rpc: BTreeMap::default(),
         };
         let auth_url = url::Url::parse(&server.url()).expect("mock url");
 
@@ -202,6 +205,7 @@ mod tests {
                 email: None,
             }),
             platform_url: None,
+            rpc: BTreeMap::default(),
         };
         let api_url = url::Url::parse("https://other.phylax.example").expect("url");
 
@@ -213,6 +217,7 @@ mod tests {
     #[test]
     fn authorization_header_rejects_expired_tokens() {
         let config = CliConfig {
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "expired-token".to_string(),
                 refresh_token: String::new(),

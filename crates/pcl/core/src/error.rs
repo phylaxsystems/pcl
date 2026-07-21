@@ -120,6 +120,140 @@ pub enum VerifyError {
     Output(#[from] crate::output::OutputError),
 }
 
+/// Errors that can occur during the end-to-end `pcl deploy` orchestration.
+#[derive(Error, Debug)]
+pub enum DeployError {
+    #[error(transparent)]
+    Apply(#[from] ApplyError),
+
+    #[error(transparent)]
+    Api(#[from] crate::api::ApiCommandError),
+
+    #[error(transparent)]
+    Wallet(#[from] crate::wallet::WalletError),
+
+    #[error(
+        "Project {project_id} protocol manager is {current}, but the wallet is {wallet}. The deploy transaction must come from the manager wallet. Transfer it with `pcl protocol-manager --project {project_id} --transfer-calldata --new-manager {wallet} --broadcast`, or pass the manager's key."
+    )]
+    ManagerMismatch {
+        project_id: uuid::Uuid,
+        current: String,
+        wallet: String,
+    },
+
+    #[error(
+        "credible.toml has no project_id and no project can be created without a project name (set project_name in credible.toml or pass --project-name) and --chain-id"
+    )]
+    MissingProjectInfo,
+
+    #[error(
+        "--chain-id {flag} does not match the project's chain {project}. --chain-id only applies when creating a project; omit it to deploy to an existing project."
+    )]
+    ChainIdMismatch { flag: u64, project: u64 },
+
+    #[error("Unexpected {endpoint} response: {reason}")]
+    UnexpectedResponse {
+        endpoint: &'static str,
+        reason: String,
+    },
+
+    #[error(
+        "Release checks did not reach `all_passed` within {timeout_secs}s (last deploy-blocking status: {status}). Re-run `pcl deploy` to resume once checks finish."
+    )]
+    ChecksTimeout { timeout_secs: u64, status: String },
+
+    #[error(
+        "Release deploy-blocking checks failed (status: {status}). Inspect with `pcl releases show {project_id} {release_id}` and retry with `pcl releases retry-check`."
+    )]
+    ChecksFailed {
+        project_id: uuid::Uuid,
+        release_id: String,
+        status: String,
+    },
+
+    #[error("Failed to write project_id back to {path}: {reason}")]
+    TomlWriteBack { path: String, reason: String },
+
+    #[error(
+        "Created project {project_id} on the platform, but failed to record it in {path}: {reason}. Add `project_id = \"{project_id}\"` at the top of credible.toml, then re-run `pcl deploy` to resume with the existing project instead of creating another."
+    )]
+    TomlWriteBackAfterCreate {
+        path: String,
+        project_id: uuid::Uuid,
+        reason: String,
+    },
+
+    #[error("Failed to record the project-create intent at {path} before creating: {reason}")]
+    CreateIntentWrite { path: String, reason: String },
+
+    #[error(
+        "Found a pending project-create intent at {path} but it is unreadable: {reason}. If an earlier `pcl deploy` already created the project, add its id to credible.toml (`pcl projects mine` lists your projects); then delete the intent file and re-run."
+    )]
+    CreateIntentUnreadable { path: String, reason: String },
+
+    #[error(
+        "The pending project-create intent at {path} belongs to platform {intent_platform}, but this deploy targets {requested}. Resolve the earlier create against {intent_platform} first (adopt the project id into credible.toml or delete the intent file), then re-run."
+    )]
+    CreateIntentPlatformMismatch {
+        path: String,
+        intent_platform: String,
+        requested: String,
+    },
+
+    #[error(
+        "An earlier `pcl deploy` create for project {name:?} on chain {chain_id} never recorded its outcome, and {count} projects with that name now exist on the platform. Creating again would add another duplicate. Pick the right project id from `pcl projects mine`, add `project_id = \"<id>\"` to credible.toml, and delete {path} to continue."
+    )]
+    AmbiguousProjectCreate {
+        name: String,
+        chain_id: u64,
+        count: usize,
+        path: String,
+    },
+
+    #[error(
+        "An earlier `pcl deploy` create for project {name:?} on chain {chain_id} never recorded its outcome and is not yet visible in the project index. Re-run `pcl deploy` to reconcile; it will not create another project while {path} exists. Only delete that intent after independently confirming the earlier create did not land."
+    )]
+    PendingProjectCreate {
+        name: String,
+        chain_id: u64,
+        path: String,
+    },
+
+    #[error(
+        "An earlier `pcl deploy` create for project {name:?} on chain {intent_chain_id} never recorded its outcome, but the only project with that name on the platform is {project_id} on chain {found_chain_id}. A different chain means this is not the project that create would have made, so pcl will not adopt it. Re-run `pcl deploy` to reconcile once the intended project appears; only delete {path} after confirming the earlier create did not land. To deploy to {project_id} instead, add `project_id = \"{project_id}\"` to credible.toml and delete {path}."
+    )]
+    AdoptedProjectChainMismatch {
+        name: String,
+        project_id: uuid::Uuid,
+        intent_chain_id: u64,
+        found_chain_id: u64,
+        path: String,
+    },
+
+    #[error(
+        "Project {project_id} has more than one inactive release for environment {environment:?} that matches the current configuration ({release_ids:?}). pcl will not guess which interrupted run to resume. Inspect them with `pcl releases list {project_id}`, then activate or delete the extra releases and re-run `pcl deploy`."
+    )]
+    AmbiguousInactiveRelease {
+        project_id: uuid::Uuid,
+        environment: String,
+        release_ids: Vec<String>,
+    },
+
+    #[error(
+        "Machine output requires `--yes` (pcl deploy mutates the project and broadcasts transactions)"
+    )]
+    MachineYesRequired,
+
+    #[error("Deploy cancelled")]
+    Cancelled,
+
+    #[error("Failed to encode JSON output: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("Failed to write structured output: {0}")]
+    Output(#[from] crate::output::OutputError),
+}
+
 /// Errors that can occur during configuration operations
 #[derive(Error, Debug)]
 pub enum ConfigError {
@@ -147,6 +281,10 @@ pub enum ConfigError {
     /// but no authentication token is present in the config
     #[error("No Authentication Token Found")]
     NotAuthenticated,
+
+    /// Error when a config value supplied on the command line is invalid
+    #[error("Invalid config value: {0}")]
+    InvalidValue(String),
 }
 
 /// Errors that can occur during authentication operations

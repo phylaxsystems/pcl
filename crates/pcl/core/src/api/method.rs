@@ -1,7 +1,7 @@
 use clap::ValueEnum;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub(in crate::api) enum HttpMethod {
+pub(crate) enum HttpMethod {
     Get,
     Post,
     Put,

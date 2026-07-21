@@ -50,6 +50,11 @@ pub(super) struct WorkflowActionDefinition {
     pub(in crate::api) body_template: Option<&'static str>,
     pub(in crate::api) query: &'static [(&'static str, &'static str)],
     pub(in crate::api) example: &'static str,
+    /// Side effect the action performs beyond its anchored endpoint (e.g.
+    /// `"onchain_transaction"` for composite broadcast flows). Anchoring
+    /// alone cannot classify these: a broadcast action anchored to its
+    /// read-only calldata GET still signs and submits a transaction.
+    pub(in crate::api) side_effect: Option<&'static str>,
 }
 
 impl WorkflowDefinition {
@@ -85,6 +90,14 @@ impl WorkflowActionDefinition {
         object.insert("operation_id".to_string(), json!(self.operation_id));
         object.insert("method".to_string(), json!(method.as_str()));
         object.insert("path".to_string(), json!(path));
+        // Mutation classification is independent of the anchored endpoint's
+        // method: composite broadcast actions anchor to a read-only calldata
+        // GET but still send a transaction. Schema consumers must read this,
+        // not `method`, to decide whether an action is safe discovery.
+        object.insert("mutating".to_string(), json!(self.mutating()));
+        if let Some(side_effect) = self.side_effect {
+            object.insert("side_effect".to_string(), json!(side_effect));
+        }
         if !self.required_flags.is_empty() {
             object.insert(
                 "required_flags".to_string(),
@@ -115,6 +128,14 @@ impl WorkflowActionDefinition {
 
     pub(super) fn method(&self) -> HttpMethod {
         self.generated_operation().0
+    }
+
+    /// Whether executing this action mutates state — either because its
+    /// anchored endpoint is side-effecting, or because the action declares an
+    /// additional side effect (an on-chain transaction) the endpoint method
+    /// cannot express.
+    pub(super) fn mutating(&self) -> bool {
+        self.side_effect.is_some() || super::method_side_effecting(self.method().as_str())
     }
 
     pub(super) fn path(&self) -> &'static str {
@@ -261,3 +282,71 @@ const WORKFLOW_DEFINITIONS: &[WorkflowDefinition] = &[
     workflows::protocol_manager::DEFINITION,
     workflows::events::DEFINITION,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every composite broadcast action sends a transaction regardless of the
+    /// endpoint it anchors to, so it must classify as mutating with explicit
+    /// side-effect metadata — a schema consumer reading `method: GET` alone
+    /// would otherwise surface it as safe discovery.
+    #[test]
+    fn broadcast_actions_always_classify_as_mutating() {
+        let mut broadcast_actions = 0;
+        for definition in workflow_definitions() {
+            for action in definition.actions {
+                let manifest = action.manifest_value();
+                assert_eq!(
+                    manifest["mutating"],
+                    json!(action.mutating()),
+                    "{}.{} manifest diverges from its classification",
+                    definition.name,
+                    action.name
+                );
+                if action.name.ends_with("_broadcast") {
+                    broadcast_actions += 1;
+                    assert!(
+                        action.mutating(),
+                        "{}.{} broadcasts a transaction but classifies as read-only",
+                        definition.name,
+                        action.name
+                    );
+                    assert_eq!(
+                        manifest["side_effect"],
+                        json!("onchain_transaction"),
+                        "{}.{} must declare its side effect explicitly",
+                        definition.name,
+                        action.name
+                    );
+                }
+            }
+        }
+        // deploy/remove (releases) + transfer/accept (protocol-manager).
+        assert_eq!(broadcast_actions, 4);
+    }
+
+    /// The regression the metadata exists for: an action anchored to a
+    /// read-only calldata GET (`transfer_broadcast`) is still mutating, while
+    /// the plain calldata action on the same endpoint stays read-only.
+    #[test]
+    fn anchoring_does_not_decide_mutation_classification() {
+        let manager = workflow_definition("protocol-manager").unwrap();
+        let action = |name: &str| {
+            manager
+                .actions
+                .iter()
+                .find(|action| action.name == name)
+                .unwrap()
+        };
+
+        let transfer_broadcast = action("transfer_broadcast");
+        assert_eq!(transfer_broadcast.method(), HttpMethod::Get);
+        assert!(transfer_broadcast.mutating());
+
+        let transfer_calldata = action("transfer_calldata");
+        assert_eq!(transfer_calldata.method(), HttpMethod::Get);
+        assert!(!transfer_calldata.mutating());
+        assert_eq!(transfer_calldata.manifest_value().get("side_effect"), None);
+    }
+}

@@ -29,6 +29,7 @@ use serde_json::{
 };
 
 use std::{
+    collections::BTreeMap,
     fmt,
     io::Write,
     path::{
@@ -62,6 +63,27 @@ pub struct CliConfig {
     /// `--auth-url` so a custom platform only has to be specified once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform_url: Option<String>,
+    /// Per-chain RPC endpoints used when broadcasting transactions.
+    /// Keys are chain ids as strings (TOML table keys must be strings).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub rpc: BTreeMap<String, RpcEndpoint>,
+}
+
+/// RPC endpoint configuration for a single chain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RpcEndpoint {
+    /// HTTP(S) RPC URL for the chain
+    pub url: String,
+    /// Confirmations to wait for after broadcasting (defaults to 1 when absent)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmations: Option<u64>,
+}
+
+impl CliConfig {
+    /// Returns the configured RPC endpoint for a chain id, if any.
+    pub fn rpc_endpoint(&self, chain_id: u64) -> Option<&RpcEndpoint> {
+        self.rpc.get(&chain_id.to_string())
+    }
 }
 
 /// Command-line arguments for configuration management
@@ -78,6 +100,27 @@ enum ConfigCommand {
     Show,
     #[command(about = "Delete the current configuration")]
     Delete,
+    #[command(
+        name = "set-rpc",
+        about = "Set the RPC endpoint used when broadcasting transactions on a chain"
+    )]
+    SetRpc {
+        /// Chain id the endpoint serves
+        chain_id: u64,
+        /// HTTP(S) RPC URL
+        url: String,
+        /// Confirmations to wait for after broadcasting (default 1)
+        #[arg(long)]
+        confirmations: Option<u64>,
+    },
+    #[command(
+        name = "unset-rpc",
+        about = "Remove the stored RPC endpoint for a chain"
+    )]
+    UnsetRpc {
+        /// Chain id to remove
+        chain_id: u64,
+    },
 }
 
 impl ConfigArgs {
@@ -97,7 +140,62 @@ impl ConfigArgs {
     /// # Returns
     /// * `Result<(), ConfigError>` - Success or error
     pub fn run(&self, config: &mut CliConfig, cli_args: &CliArgs) -> Result<(), ConfigError> {
-        match self.command {
+        match &self.command {
+            ConfigCommand::SetRpc {
+                chain_id,
+                url,
+                confirmations,
+            } => {
+                let parsed = url::Url::parse(url).map_err(|e| {
+                    ConfigError::InvalidValue(format!(
+                        "invalid RPC URL {}: {e}",
+                        redacted_rpc_host(url)
+                    ))
+                })?;
+                if !matches!(parsed.scheme(), "http" | "https") {
+                    return Err(ConfigError::InvalidValue(format!(
+                        "RPC URL must be http(s), got {:?}",
+                        parsed.scheme()
+                    )));
+                }
+                config.rpc.insert(
+                    chain_id.to_string(),
+                    RpcEndpoint {
+                        url: url.clone(),
+                        confirmations: *confirmations,
+                    },
+                );
+                // Echo only non-secret metadata; the URL may embed an API key.
+                print_config_output(
+                    &with_envelope_metadata(json!({
+                        "status": "ok",
+                        "data": {
+                            "chain_id": chain_id,
+                            "rpc": {
+                                "configured": true,
+                                "host": redacted_rpc_host(url),
+                                "confirmations": confirmations,
+                            },
+                        },
+                        "next_actions": ["pcl config show"],
+                    })),
+                    cli_args.json_output(),
+                )
+            }
+            ConfigCommand::UnsetRpc { chain_id } => {
+                let removed = config.rpc.remove(&chain_id.to_string());
+                print_config_output(
+                    &with_envelope_metadata(json!({
+                        "status": "ok",
+                        "data": {
+                            "chain_id": chain_id,
+                            "removed": removed.is_some(),
+                        },
+                        "next_actions": ["pcl config show"],
+                    })),
+                    cli_args.json_output(),
+                )
+            }
             ConfigCommand::Show => {
                 print_config_output(
                     &config_show_envelope(config, cli_args),
@@ -483,6 +581,7 @@ fn config_show_envelope(config: &CliConfig, cli_args: &CliArgs) -> Value {
             "config_path": CliConfig::config_file_path(cli_args).display().to_string(),
             "platform_url": config.platform_url.as_deref(),
             "auth": config_auth_value(config),
+            "rpc": redacted_rpc_endpoints(config),
         },
         "next_actions": if config.auth.is_some() {
             json!(["pcl auth status", "pcl account", "pcl doctor"])
@@ -545,6 +644,38 @@ fn print_config_output(value: &Value, json_output: bool) -> Result<(), ConfigErr
     Ok(())
 }
 
+/// Non-secret view of the stored RPC endpoints for `pcl config show`.
+/// Provider URLs commonly carry API keys in userinfo, path, or query
+/// parameters, so only chain id, host, and confirmations are exposed; the
+/// full URL never leaves config storage.
+fn redacted_rpc_endpoints(config: &CliConfig) -> Value {
+    let mut endpoints = serde_json::Map::new();
+    for (chain_id, endpoint) in &config.rpc {
+        endpoints.insert(
+            chain_id.clone(),
+            json!({
+                "configured": true,
+                "host": redacted_rpc_host(&endpoint.url),
+                "confirmations": endpoint.confirmations,
+            }),
+        );
+    }
+    Value::Object(endpoints)
+}
+
+/// Scheme, host, and explicit port of an RPC URL; everything else (userinfo,
+/// path, query) may carry credentials and is dropped.
+pub(crate) fn redacted_rpc_host(url: &str) -> String {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return "<unparseable-url>".to_string();
+    };
+    let host = parsed.host_str().unwrap_or("<unknown-host>");
+    match parsed.port() {
+        Some(port) => format!("{}://{host}:{port}", parsed.scheme()),
+        None => format!("{}://{host}", parsed.scheme()),
+    }
+}
+
 impl fmt::Display for CliConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let config_path = Self::get_config_dir().join(CONFIG_FILE);
@@ -559,6 +690,22 @@ impl fmt::Display for CliConfig {
         match &self.auth {
             Some(auth) => writeln!(f, "{auth}")?,
             None => writeln!(f, "Authentication: Not authenticated")?,
+        }
+
+        if !self.rpc.is_empty() {
+            writeln!(f, "RPC endpoints:")?;
+            for (chain_id, endpoint) in &self.rpc {
+                // Redacted: provider URLs commonly embed API keys.
+                write!(
+                    f,
+                    "  chain {chain_id}: {}",
+                    redacted_rpc_host(&endpoint.url)
+                )?;
+                match endpoint.confirmations {
+                    Some(confirmations) => writeln!(f, " ({confirmations} confirmations)")?,
+                    None => writeln!(f)?,
+                }
+            }
         }
 
         Ok(())
@@ -724,6 +871,7 @@ mod tests {
         let fixed_timestamp = DateTime::from_timestamp(1672502400, 0).unwrap(); // 2022-12-31 16:00:00 UTC
 
         let config = CliConfig {
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "test_access".to_string(),
                 refresh_token: "test_refresh".to_string(),
@@ -765,6 +913,176 @@ mod tests {
     }
 
     #[test]
+    fn rpc_map_roundtrips_through_toml() {
+        let mut config = CliConfig::default();
+        config.rpc.insert(
+            "84532".to_string(),
+            RpcEndpoint {
+                url: "https://sepolia.base.org".to_string(),
+                confirmations: Some(3),
+            },
+        );
+        config.rpc.insert(
+            "31337".to_string(),
+            RpcEndpoint {
+                url: "http://127.0.0.1:8545".to_string(),
+                confirmations: None,
+            },
+        );
+
+        let serialized = toml::to_string(&config).unwrap();
+        let deserialized: CliConfig = toml::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized, config);
+        assert_eq!(
+            deserialized.rpc_endpoint(84532).unwrap().confirmations,
+            Some(3)
+        );
+        assert_eq!(
+            deserialized.rpc_endpoint(31337).unwrap().url,
+            "http://127.0.0.1:8545"
+        );
+        assert!(deserialized.rpc_endpoint(1).is_none());
+    }
+
+    #[test]
+    fn legacy_config_without_rpc_section_still_parses() {
+        let config: CliConfig = toml::from_str(
+            r#"
+[auth]
+access_token = "a"
+refresh_token = "r"
+expires_at = 1672502400
+"#,
+        )
+        .unwrap();
+        assert!(config.rpc.is_empty());
+        assert_eq!(config.auth.unwrap().access_token, "a");
+    }
+
+    #[test]
+    fn empty_rpc_map_is_not_serialized() {
+        let serialized = toml::to_string(&CliConfig::default()).unwrap();
+        assert!(!serialized.contains("rpc"));
+    }
+
+    #[test]
+    fn config_show_redacts_rpc_urls() {
+        let mut config = CliConfig::default();
+        config.rpc.insert(
+            "84532".to_string(),
+            RpcEndpoint {
+                url: "https://user:hunter2@rpc.example.com/v2/apikey123?token=sekrit".to_string(),
+                confirmations: Some(3),
+            },
+        );
+
+        let envelope = config_show_envelope(&config, &CliArgs::default());
+        let rendered = envelope.to_string();
+        assert!(!rendered.contains("hunter2"));
+        assert!(!rendered.contains("apikey123"));
+        assert!(!rendered.contains("sekrit"));
+        assert_eq!(
+            envelope["data"]["rpc"]["84532"]["host"],
+            "https://rpc.example.com"
+        );
+        assert_eq!(envelope["data"]["rpc"]["84532"]["configured"], true);
+        assert_eq!(envelope["data"]["rpc"]["84532"]["confirmations"], 3);
+
+        // The human formatter is redacted the same way.
+        let display = config.to_string();
+        assert!(display.contains("https://rpc.example.com"));
+        assert!(!display.contains("hunter2"));
+        assert!(!display.contains("apikey123"));
+    }
+
+    #[test]
+    fn redacted_rpc_host_keeps_scheme_host_and_port() {
+        assert_eq!(
+            redacted_rpc_host("http://127.0.0.1:8545"),
+            "http://127.0.0.1:8545"
+        );
+        assert_eq!(
+            redacted_rpc_host("https://mainnet.infura.io/v3/SECRET"),
+            "https://mainnet.infura.io"
+        );
+        assert_eq!(redacted_rpc_host("not a url"), "<unparseable-url>");
+    }
+
+    #[test]
+    fn set_rpc_rejects_invalid_urls() {
+        let mut config = CliConfig::default();
+        let args = ConfigArgs {
+            command: ConfigCommand::SetRpc {
+                chain_id: 1,
+                url: "not a url".to_string(),
+                confirmations: None,
+            },
+        };
+        assert!(args.run(&mut config, &CliArgs::default()).is_err());
+
+        let args = ConfigArgs {
+            command: ConfigCommand::SetRpc {
+                chain_id: 1,
+                url: "ws://example.com".to_string(),
+                confirmations: None,
+            },
+        };
+        assert!(args.run(&mut config, &CliArgs::default()).is_err());
+        assert!(config.rpc.is_empty());
+    }
+
+    #[test]
+    fn set_rpc_parse_errors_do_not_expose_url_credentials() {
+        let mut config = CliConfig::default();
+        let args = ConfigArgs {
+            command: ConfigCommand::SetRpc {
+                chain_id: 1,
+                url: "https://user:hunter2@rpc.example.com:invalid/v2/apikey123?token=sekrit"
+                    .to_string(),
+                confirmations: None,
+            },
+        };
+
+        let error = args
+            .run(&mut config, &CliArgs::default())
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("<unparseable-url>"));
+        for secret in ["user", "hunter2", "apikey123", "sekrit"] {
+            assert!(!error.contains(secret), "error exposed {secret:?}: {error}");
+        }
+        assert!(config.rpc.is_empty());
+    }
+
+    #[test]
+    fn set_and_unset_rpc_mutate_config() {
+        let mut config = CliConfig::default();
+        let args = ConfigArgs {
+            command: ConfigCommand::SetRpc {
+                chain_id: 84532,
+                url: "https://sepolia.base.org".to_string(),
+                confirmations: Some(2),
+            },
+        };
+        args.run(&mut config, &CliArgs::default()).unwrap();
+        assert_eq!(
+            config.rpc_endpoint(84532),
+            Some(&RpcEndpoint {
+                url: "https://sepolia.base.org".to_string(),
+                confirmations: Some(2),
+            })
+        );
+
+        let args = ConfigArgs {
+            command: ConfigCommand::UnsetRpc { chain_id: 84532 },
+        };
+        args.run(&mut config, &CliArgs::default()).unwrap();
+        assert!(config.rpc.is_empty());
+    }
+
+    #[test]
     fn write_to_file_if_unchanged_preserves_newer_disk_auth() {
         let temp_dir = TempDir::new().unwrap();
         let cli_args = CliArgs {
@@ -772,6 +1090,7 @@ mod tests {
             ..Default::default()
         };
         let old_config = CliConfig {
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
@@ -784,6 +1103,7 @@ mod tests {
             platform_url: None,
         };
         let stale_process_config = CliConfig {
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "normalized_old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
@@ -796,6 +1116,7 @@ mod tests {
             platform_url: None,
         };
         let newer_config = CliConfig {
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "new_access".to_string(),
                 refresh_token: "new_refresh".to_string(),
@@ -830,6 +1151,7 @@ mod tests {
         let config = CliConfig {
             auth: None,
             platform_url: Some("https://custom.phylax.example".to_string()),
+            rpc: BTreeMap::default(),
         };
         config.write_to_file_at_dir(&config_dir).unwrap();
         let read_config = CliConfig::read_from_file_at_dir(&config_dir).unwrap();
@@ -988,6 +1310,7 @@ mod tests {
     #[test]
     fn normalizes_legacy_device_session_expiry_from_access_token_exp() {
         let mut config = CliConfig {
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig".to_string(),
                 refresh_token: "refresh".to_string(),
@@ -1019,6 +1342,7 @@ mod tests {
     #[test]
     fn test_config_args_delete() {
         let mut config = CliConfig {
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "test".to_string(),
                 refresh_token: "test".to_string(),
@@ -1044,6 +1368,7 @@ mod tests {
             ..Default::default()
         };
         let config = CliConfig {
+            rpc: BTreeMap::default(),
             auth: Some(UserAuth {
                 access_token: "secret-access".to_string(),
                 refresh_token: "secret-refresh".to_string(),

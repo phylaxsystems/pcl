@@ -45,6 +45,15 @@ sha2 = "0.10"
 alloy-primitives = { version = "1.6.0", features = ["getrandom"] }
 alloy-json-abi = "1.6.0"
 alloy-dyn-abi = { version = "1.6.0", features = ["std"] }
+alloy-sol-types = "1.6.0"
+
+# alloy signing / rpc (versions match what phoundry already pulls transitively)
+alloy-signer = "2.0.5"
+alloy-signer-local = { version = "2.0.5", features = ["keystore"] }
+alloy-provider = { version = "2.0.5", default-features = false, features = ["reqwest", "reqwest-rustls-tls"] }
+alloy-network = "2.0.5"
+alloy-rpc-types-eth = "2.0.5"
+rpassword = "7"
 
 
 [workspace.lints.clippy]
