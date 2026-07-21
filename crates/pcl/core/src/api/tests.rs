@@ -1523,7 +1523,12 @@ async fn uploads_project_image_and_returns_storage_path() {
     std::fs::write(&image, b"not-a-real-png-but-fine-for-upload").unwrap();
 
     let path = api
-        .upload_project_image(&config, &image, test_request_log_path())
+        .upload_project_image(
+            &mut config,
+            &CliArgs::default(),
+            &image,
+            test_request_log_path(),
+        )
         .await
         .unwrap();
 
@@ -1600,6 +1605,69 @@ async fn project_image_upload_refreshes_auth_before_the_multipart_request() {
 }
 
 #[tokio::test]
+async fn project_image_upload_refreshes_and_retries_after_401() {
+    let mut server = mockito::Server::new_async().await;
+    let first_attempt = server
+        .mock("POST", "/api/v1/storage/upload")
+        .match_header("authorization", "Bearer old-access")
+        .with_status(401)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"code":"TOKEN_EXPIRED","error":"expired"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let refresh = server
+        .mock("POST", "/api/v1/auth/refresh")
+        .match_body(Matcher::Json(json!({ "refresh_token": "old-refresh" })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"token":"new-access","refresh_token":"new-refresh","expires_at":"2030-01-01T00:00:00Z","refresh_expires_at":"2030-02-01T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create_async()
+        .await;
+    let retry = server
+        .mock("POST", "/api/v1/storage/upload")
+        .match_header("authorization", "Bearer new-access")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"path":"projects/0xabc/logo.png"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let api = test_api(server.url(), false);
+    let temp_dir = tempfile::tempdir().unwrap();
+    let cli_args = CliArgs {
+        config_dir: Some(temp_dir.path().to_path_buf()),
+        ..Default::default()
+    };
+    // A locally-unexpired token (2030) that the server nonetheless rejects: the
+    // proactive `ensure_request_auth` check leaves it untouched, so only a
+    // reactive refresh-on-401 can recover.
+    let mut config = valid_auth_config("old-access", "old-refresh");
+    config.platform_url = Some(server.url());
+    config.write_to_file(&cli_args).unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let image = dir.path().join("logo.png");
+    std::fs::write(&image, b"not-a-real-png-but-fine-for-upload").unwrap();
+
+    let path = api
+        .upload_project_image(&mut config, &cli_args, &image, test_request_log_path())
+        .await
+        .unwrap();
+
+    assert_eq!(path, "projects/0xabc/logo.png");
+    assert_eq!(config.auth.as_ref().unwrap().access_token, "new-access");
+    assert_eq!(config.auth.as_ref().unwrap().refresh_token, "new-refresh");
+    first_attempt.assert_async().await;
+    refresh.assert_async().await;
+    retry.assert_async().await;
+}
+
+#[tokio::test]
 async fn malformed_project_body_fails_before_image_upload() {
     let mut server = mockito::Server::new_async().await;
     let upload = server
@@ -1638,13 +1706,18 @@ async fn malformed_project_body_fails_before_image_upload() {
 #[tokio::test]
 async fn upload_rejects_unsupported_image_extension() {
     let api = test_api("http://127.0.0.1:0", false);
-    let config = valid_auth_config("access-token", "refresh-token");
+    let mut config = valid_auth_config("access-token", "refresh-token");
     let dir = tempfile::tempdir().unwrap();
     let image = dir.path().join("logo.gif");
     std::fs::write(&image, b"gif").unwrap();
 
     let error = api
-        .upload_project_image(&config, &image, test_request_log_path())
+        .upload_project_image(
+            &mut config,
+            &CliArgs::default(),
+            &image,
+            test_request_log_path(),
+        )
         .await
         .unwrap_err();
 
@@ -1655,7 +1728,7 @@ async fn upload_rejects_unsupported_image_extension() {
 #[tokio::test]
 async fn upload_rejects_an_oversized_file_without_reading_it_into_memory() {
     let api = test_api("http://127.0.0.1:0", false);
-    let config = valid_auth_config("access-token", "refresh-token");
+    let mut config = valid_auth_config("access-token", "refresh-token");
     let dir = tempfile::tempdir().unwrap();
     let image = dir.path().join("huge.png");
     std::fs::File::create(&image)
@@ -1664,7 +1737,12 @@ async fn upload_rejects_an_oversized_file_without_reading_it_into_memory() {
         .unwrap();
 
     let error = api
-        .upload_project_image(&config, &image, test_request_log_path())
+        .upload_project_image(
+            &mut config,
+            &CliArgs::default(),
+            &image,
+            test_request_log_path(),
+        )
         .await
         .unwrap_err();
 

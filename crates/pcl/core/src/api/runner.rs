@@ -700,7 +700,7 @@ impl ApiArgs {
             self.ensure_request_auth(config, cli_args, request.require_auth)
                 .await?;
             let storage_path = self
-                .upload_project_image(config, image_path, request_log_path)
+                .upload_project_image(config, cli_args, image_path, request_log_path)
                 .await?;
             let mut body = request
                 .body
@@ -734,7 +734,8 @@ impl ApiArgs {
     /// multipart `file` to `/storage/upload`, and read back `{ "path": ... }`.
     pub(in crate::api) async fn upload_project_image(
         &self,
-        config: &CliConfig,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
         image_path: &Path,
         request_log_path: &Path,
     ) -> Result<String, ApiCommandError> {
@@ -804,15 +805,30 @@ impl ApiArgs {
             .and_then(|name| name.to_str())
             .unwrap_or("image")
             .to_string();
-        let part = reqwest::multipart::Part::bytes(bytes)
-            .file_name(file_name)
-            .mime_str(mime)?;
-        let form = reqwest::multipart::Form::new().part("file", part);
 
         let requires_auth = !self.allow_unauthenticated;
-        let client = self.http_client(config, requires_auth, requires_auth)?;
         let url = self.api_url("/storage/upload")?;
-        let payload = read_api_response(client.post(url).multipart(form).send().await?).await?;
+
+        // A `reqwest` multipart form is a single-use stream, so both the first
+        // attempt and any post-refresh retry need a freshly built form.
+        // Rebuilding the client on retry also picks up a token that
+        // `try_refresh_after_401` swapped into `config`.
+        let build_form = || -> Result<reqwest::multipart::Form, ApiCommandError> {
+            let part = reqwest::multipart::Part::bytes(bytes.clone())
+                .file_name(file_name.clone())
+                .mime_str(mime)?;
+            Ok(reqwest::multipart::Form::new().part("file", part))
+        };
+
+        let client = self.http_client(config, requires_auth, requires_auth)?;
+        let mut payload = read_api_response(
+            client
+                .post(url.clone())
+                .multipart(build_form()?)
+                .send()
+                .await?,
+        )
+        .await?;
         write_request_log(
             request_log_path,
             "storage_upload",
@@ -822,6 +838,34 @@ impl ApiArgs {
             payload.request_id.as_deref(),
             None,
         );
+
+        // Mirror `call_workflow_result`/`call_api`: a 401 on a locally-unexpired
+        // token that the server rejects can still be recovered by refreshing and
+        // retrying once. `ensure_request_auth` earlier only covers expired tokens.
+        if payload.status.as_u16() == 401
+            && requires_auth
+            && self.try_refresh_after_401(config, cli_args).await?
+        {
+            let client = self.http_client(config, requires_auth, requires_auth)?;
+            payload = read_api_response(
+                client
+                    .post(url.clone())
+                    .multipart(build_form()?)
+                    .send()
+                    .await?,
+            )
+            .await?;
+            write_request_log(
+                request_log_path,
+                "storage_upload_retry_after_refresh",
+                "POST",
+                "/storage/upload",
+                payload.status.as_u16(),
+                payload.request_id.as_deref(),
+                None,
+            );
+        }
+
         if !payload.status.is_success() {
             return Err(ApiCommandError::HttpStatus {
                 method: "POST",
