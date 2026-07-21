@@ -62,23 +62,12 @@ jobs:
       - name: Check formatting without private dependencies
         run: cargo +"$RUST_NIGHTLY_VERSION" fmt --all -- --check
 
-  runner-git-config:
-    name: Runner Git Config Preflight
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: phylax-ubuntu-latitude
-    steps:
-      - name: Remove leaked GitHub SSH rewrites
-        run: |
-          git config --global --unset-all 'url.git@github.com:.insteadOf' || true
-          git config --global --unset-all 'url.ssh://git@github.com/.insteadOf' || true
-
   rust-base:
     name: Rust Test & Lint
-    needs: runner-git-config
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@main
     with:
-      runner: "phylax-ubuntu-latitude-large"
+      runner: "ubuntu-latest"
       rust-channel: "nightly-2026-01-07"
       require-lockfile: true
       requires-private-deps: true
@@ -93,9 +82,8 @@ jobs:
 
   release-feature-check:
     name: Release Feature Check
-    needs: runner-git-config
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: phylax-ubuntu-latitude-large
+    runs-on: ubuntu-latest
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: true
       GIT_CONFIG_GLOBAL: /tmp/pcl-release-feature-${{ github.run_id }}-${{ github.run_attempt }}.gitconfig
@@ -121,8 +109,9 @@ jobs:
 
   agent-smoke:
     name: Agent CLI Smoke
-    needs: [runner-git-config, release-feature-check]
-    runs-on: phylax-ubuntu-latitude-large
+    needs: release-feature-check
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: true
       GIT_CONFIG_GLOBAL: /tmp/pcl-agent-smoke-${{ github.run_id }}-${{ github.run_attempt }}.gitconfig
