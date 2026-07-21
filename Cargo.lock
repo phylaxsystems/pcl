@@ -3221,7 +3221,7 @@ dependencies = [
 
 [[package]]
 name = "dapp-api-client"
-version = "1.5.1"
+version = "1.6.0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -7443,7 +7443,7 @@ dependencies = [
 
 [[package]]
 name = "pcl"
-version = "1.5.1"
+version = "1.6.0"
 dependencies = [
  "chrono",
  "clap",
@@ -7460,7 +7460,7 @@ dependencies = [
 
 [[package]]
 name = "pcl-common"
-version = "1.5.1"
+version = "1.6.0"
 dependencies = [
  "clap",
  "serde_json",
@@ -7468,7 +7468,7 @@ dependencies = [
 
 [[package]]
 name = "pcl-core"
-version = "1.5.1"
+version = "1.6.0"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
@@ -7509,7 +7509,7 @@ dependencies = [
 
 [[package]]
 name = "pcl-phoundry"
-version = "1.5.1"
+version = "1.6.0"
 dependencies = [
  "alloy-json-abi",
  "clap",
