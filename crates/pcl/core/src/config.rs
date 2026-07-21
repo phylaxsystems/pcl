@@ -147,7 +147,10 @@ impl ConfigArgs {
                 confirmations,
             } => {
                 let parsed = url::Url::parse(url).map_err(|e| {
-                    ConfigError::InvalidValue(format!("invalid RPC URL {url:?}: {e}"))
+                    ConfigError::InvalidValue(format!(
+                        "invalid RPC URL {}: {e}",
+                        redacted_rpc_host(url)
+                    ))
                 })?;
                 if !matches!(parsed.scheme(), "http" | "https") {
                     return Err(ConfigError::InvalidValue(format!(
@@ -1026,6 +1029,30 @@ expires_at = 1672502400
             },
         };
         assert!(args.run(&mut config, &CliArgs::default()).is_err());
+        assert!(config.rpc.is_empty());
+    }
+
+    #[test]
+    fn set_rpc_parse_errors_do_not_expose_url_credentials() {
+        let mut config = CliConfig::default();
+        let args = ConfigArgs {
+            command: ConfigCommand::SetRpc {
+                chain_id: 1,
+                url: "https://user:hunter2@rpc.example.com:invalid/v2/apikey123?token=sekrit"
+                    .to_string(),
+                confirmations: None,
+            },
+        };
+
+        let error = args
+            .run(&mut config, &CliArgs::default())
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("<unparseable-url>"));
+        for secret in ["user", "hunter2", "apikey123", "sekrit"] {
+            assert!(!error.contains(secret), "error exposed {secret:?}: {error}");
+        }
         assert!(config.rpc.is_empty());
     }
 
