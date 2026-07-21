@@ -73,9 +73,9 @@ jobs:
       requires-private-deps: true
       use-nextest: true
       enable-sccache: true
-      sccache-backend: "local"
+      sccache-backend: "gha"
       deny-checks: "advisories"
-      deny-preinstalled: true
+      deny-preinstalled: false
     secrets:
       APP_ID: ${{ secrets.APP_ID }}
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
