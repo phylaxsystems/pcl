@@ -41,13 +41,30 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   # Keep in sync with rust-toolchain.toml
   RUST_NIGHTLY_VERSION: "nightly-2026-01-07"
 
 jobs:
+  untrusted-fork:
+    name: Untrusted Fork Safety Check
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install "$RUST_NIGHTLY_VERSION" --profile minimal --component rustfmt --no-self-update
+      - name: Check formatting without private dependencies
+        run: cargo +"$RUST_NIGHTLY_VERSION" fmt --all -- --check
+
   runner-git-config:
     name: Runner Git Config Preflight
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: phylax-ubuntu-latitude
     steps:
       - name: Remove leaked GitHub SSH rewrites
@@ -58,6 +75,7 @@ jobs:
   rust-base:
     name: Rust Test & Lint
     needs: runner-git-config
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@main
     with:
       runner: "phylax-ubuntu-latitude"
