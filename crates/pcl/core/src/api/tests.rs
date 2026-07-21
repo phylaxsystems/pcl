@@ -146,6 +146,8 @@ fn projects_args() -> ProjectsArgs {
         project_name: None,
         project_description: None,
         profile_image_url: None,
+        profile_image: None,
+        remove_profile_image: false,
         github_url: None,
         chain_id: None,
         is_private: None,
@@ -1566,6 +1568,292 @@ fn builds_project_create_body_from_typed_flags() {
             "is_private": false
         })
     );
+}
+
+#[test]
+fn builds_project_body_with_profile_image_url() {
+    let request = projects_request(&ProjectsArgs {
+        create: true,
+        project_name: Some("Demo".to_string()),
+        chain_id: Some(1),
+        profile_image_url: Some("https://example.com/logo.png".to_string()),
+        ..projects_args()
+    })
+    .unwrap();
+
+    assert_eq!(
+        serde_json::from_str::<Value>(request.body.as_deref().unwrap()).unwrap(),
+        json!({
+            "project_name": "Demo",
+            "chain_id": 1,
+            "profile_image_url": "https://example.com/logo.png"
+        })
+    );
+}
+
+#[test]
+fn removing_project_image_sends_explicit_null() {
+    let request = projects_request(&ProjectsArgs {
+        project_id: Some("project-1".to_string()),
+        update: true,
+        remove_profile_image: true,
+        ..projects_args()
+    })
+    .unwrap();
+
+    assert_eq!(request.method.openapi_key(), "put");
+    assert_eq!(
+        serde_json::from_str::<Value>(request.body.as_deref().unwrap()).unwrap(),
+        json!({ "profile_image_url": null })
+    );
+}
+
+#[tokio::test]
+async fn uploads_project_image_and_returns_storage_path() {
+    let mut server = mockito::Server::new_async().await;
+    let upload = server
+        .mock("POST", "/api/v1/storage/upload")
+        .match_header("authorization", "Bearer access-token")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"path":"projects/0xabc/logo.png"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let api = test_api(server.url(), false);
+    let mut config = valid_auth_config("access-token", "refresh-token");
+    config.platform_url = Some(server.url());
+
+    let dir = tempfile::tempdir().unwrap();
+    let image = dir.path().join("logo.png");
+    std::fs::write(&image, b"not-a-real-png-but-fine-for-upload").unwrap();
+
+    let path = api
+        .upload_project_image(
+            &mut config,
+            &CliArgs::default(),
+            &image,
+            test_request_log_path(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(path, "projects/0xabc/logo.png");
+    upload.assert_async().await;
+}
+
+#[tokio::test]
+async fn project_image_upload_refreshes_auth_before_the_multipart_request() {
+    let mut server = mockito::Server::new_async().await;
+    let refresh = server
+        .mock("POST", "/api/v1/auth/refresh")
+        .match_body(Matcher::Json(json!({ "refresh_token": "old-refresh" })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"token":"new-access","refresh_token":"new-refresh","expires_at":"2030-01-01T00:00:00Z","refresh_expires_at":"2030-02-01T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create_async()
+        .await;
+    let upload = server
+        .mock("POST", "/api/v1/storage/upload")
+        .match_header("authorization", "Bearer new-access")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"path":"projects/user/logo.png"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let project_id = "550e8400-e29b-41d4-a716-446655440000";
+    let update = server
+        .mock("PUT", format!("/api/v1/projects/{project_id}").as_str())
+        .match_header("authorization", "Bearer new-access")
+        .match_body(Matcher::Json(json!({
+            "profile_image_url": "projects/user/logo.png"
+        })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"{{"id":"{project_id}"}}"#))
+        .expect(1)
+        .create_async()
+        .await;
+
+    let api = test_api(server.url(), false);
+    let config_dir = tempfile::tempdir().unwrap();
+    let cli_args = CliArgs {
+        config_dir: Some(config_dir.path().to_path_buf()),
+        ..CliArgs::default()
+    };
+    let mut config = expired_auth_config("old-access", "old-refresh");
+    config.platform_url = Some(server.url());
+    config.write_to_file(&cli_args).unwrap();
+    let image_dir = tempfile::tempdir().unwrap();
+    let image = image_dir.path().join("logo.png");
+    std::fs::write(&image, b"png").unwrap();
+    let args = ProjectsArgs {
+        project_id: Some(project_id.to_string()),
+        update: true,
+        profile_image: Some(image),
+        ..projects_args()
+    };
+
+    let result = api
+        .run_projects(&mut config, &cli_args, &args, test_request_log_path())
+        .await
+        .unwrap();
+
+    assert_eq!(result["status"], "ok");
+    assert_eq!(config.auth.as_ref().unwrap().access_token, "new-access");
+    refresh.assert_async().await;
+    upload.assert_async().await;
+    update.assert_async().await;
+}
+
+#[tokio::test]
+async fn project_image_upload_refreshes_and_retries_after_401() {
+    let mut server = mockito::Server::new_async().await;
+    let first_attempt = server
+        .mock("POST", "/api/v1/storage/upload")
+        .match_header("authorization", "Bearer old-access")
+        .with_status(401)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"code":"TOKEN_EXPIRED","error":"expired"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let refresh = server
+        .mock("POST", "/api/v1/auth/refresh")
+        .match_body(Matcher::Json(json!({ "refresh_token": "old-refresh" })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"token":"new-access","refresh_token":"new-refresh","expires_at":"2030-01-01T00:00:00Z","refresh_expires_at":"2030-02-01T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create_async()
+        .await;
+    let retry = server
+        .mock("POST", "/api/v1/storage/upload")
+        .match_header("authorization", "Bearer new-access")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"path":"projects/0xabc/logo.png"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let api = test_api(server.url(), false);
+    let temp_dir = tempfile::tempdir().unwrap();
+    let cli_args = CliArgs {
+        config_dir: Some(temp_dir.path().to_path_buf()),
+        ..Default::default()
+    };
+    // A locally-unexpired token (2030) that the server nonetheless rejects: the
+    // proactive `ensure_request_auth` check leaves it untouched, so only a
+    // reactive refresh-on-401 can recover.
+    let mut config = valid_auth_config("old-access", "old-refresh");
+    config.platform_url = Some(server.url());
+    config.write_to_file(&cli_args).unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let image = dir.path().join("logo.png");
+    std::fs::write(&image, b"not-a-real-png-but-fine-for-upload").unwrap();
+
+    let path = api
+        .upload_project_image(&mut config, &cli_args, &image, test_request_log_path())
+        .await
+        .unwrap();
+
+    assert_eq!(path, "projects/0xabc/logo.png");
+    assert_eq!(config.auth.as_ref().unwrap().access_token, "new-access");
+    assert_eq!(config.auth.as_ref().unwrap().refresh_token, "new-refresh");
+    first_attempt.assert_async().await;
+    refresh.assert_async().await;
+    retry.assert_async().await;
+}
+
+#[tokio::test]
+async fn malformed_project_body_fails_before_image_upload() {
+    let mut server = mockito::Server::new_async().await;
+    let upload = server
+        .mock("POST", "/api/v1/storage/upload")
+        .expect(0)
+        .create_async()
+        .await;
+    let api = test_api(server.url(), false);
+    let mut config = valid_auth_config("access-token", "refresh-token");
+    config.platform_url = Some(server.url());
+    let dir = tempfile::tempdir().unwrap();
+    let image = dir.path().join("logo.png");
+    std::fs::write(&image, b"png").unwrap();
+    let args = ProjectsArgs {
+        project_id: Some("550e8400-e29b-41d4-a716-446655440000".to_string()),
+        update: true,
+        profile_image: Some(image),
+        body: Some("[not-json".to_string()),
+        ..projects_args()
+    };
+
+    let error = api
+        .run_projects(
+            &mut config,
+            &CliArgs::default(),
+            &args,
+            test_request_log_path(),
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "input.invalid_json");
+    upload.assert_async().await;
+}
+
+#[tokio::test]
+async fn upload_rejects_unsupported_image_extension() {
+    let api = test_api("http://127.0.0.1:0", false);
+    let mut config = valid_auth_config("access-token", "refresh-token");
+    let dir = tempfile::tempdir().unwrap();
+    let image = dir.path().join("logo.gif");
+    std::fs::write(&image, b"gif").unwrap();
+
+    let error = api
+        .upload_project_image(
+            &mut config,
+            &CliArgs::default(),
+            &image,
+            test_request_log_path(),
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "workflow.invalid_arguments");
+    assert!(error.to_string().contains("png, jpg, jpeg, webp, svg"));
+}
+
+#[tokio::test]
+async fn upload_rejects_an_oversized_file_without_reading_it_into_memory() {
+    let api = test_api("http://127.0.0.1:0", false);
+    let mut config = valid_auth_config("access-token", "refresh-token");
+    let dir = tempfile::tempdir().unwrap();
+    let image = dir.path().join("huge.png");
+    std::fs::File::create(&image)
+        .unwrap()
+        .set_len(5 * 1024 * 1024 + 1)
+        .unwrap();
+
+    let error = api
+        .upload_project_image(
+            &mut config,
+            &CliArgs::default(),
+            &image,
+            test_request_log_path(),
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "workflow.invalid_arguments");
+    assert!(error.to_string().contains("maximum is 5242880 bytes"));
 }
 
 #[test]

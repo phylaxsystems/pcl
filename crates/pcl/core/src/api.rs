@@ -516,7 +516,7 @@ struct IncidentsArgs {
     jsonl: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct ProjectsArgs {
     project_id: Option<String>,
     mine: bool,
@@ -535,6 +535,11 @@ struct ProjectsArgs {
     project_name: Option<String>,
     project_description: Option<String>,
     profile_image_url: Option<String>,
+    /// Local image file to upload and set as the project image. Resolved to a
+    /// storage path before the create/update request is built.
+    profile_image: Option<PathBuf>,
+    /// Clear the project image by sending `profile_image_url: null`.
+    remove_profile_image: bool,
     github_url: Option<String>,
     chain_id: Option<u64>,
     is_private: Option<bool>,
@@ -548,7 +553,7 @@ struct ProjectsArgs {
 #[derive(clap::Args, Debug)]
 #[command(
     about = "List, inspect, create, update, save, or delete projects",
-    after_help = "Examples:\n  pcl projects mine\n  pcl projects list\n  pcl projects show <project-ref>\n  pcl projects saved --user-id <user-id>\n  pcl projects create --project-name demo --chain-id 1\n  pcl projects update <project-ref> --field github_url=https://github.com/org/repo\n  pcl projects save <project-ref>"
+    after_help = "Examples:\n  pcl projects mine\n  pcl projects list\n  pcl projects show <project-ref>\n  pcl projects saved --user-id <user-id>\n  pcl projects create --project-name demo --chain-id 1\n  pcl projects create --project-name demo --chain-id 1 --profile-image ./logo.png\n  pcl projects update <project-ref> --profile-image ./logo.png\n  pcl projects update <project-ref> --remove-profile-image\n  pcl projects update <project-ref> --field github_url=https://github.com/org/repo\n  pcl projects save <project-ref>"
 )]
 pub struct ProjectsCommand {
     #[command(flatten)]
@@ -619,8 +624,24 @@ struct ProjectWriteArgs {
     project_name: Option<String>,
     #[arg(long, help = "Project description")]
     project_description: Option<String>,
-    #[arg(long, help = "Project profile image URL")]
+    #[arg(
+        long,
+        help = "Project profile image URL or storage path (already hosted)"
+    )]
     profile_image_url: Option<String>,
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = ["profile_image_url", "remove_profile_image"],
+        help = "Upload a local image file (png/jpeg/webp/svg, max 5 MB) and set it as the project image"
+    )]
+    profile_image: Option<PathBuf>,
+    #[arg(
+        long,
+        conflicts_with_all = ["profile_image_url", "profile_image"],
+        help = "Remove the current project image"
+    )]
+    remove_profile_image: bool,
     #[arg(long, help = "Project GitHub URL")]
     github_url: Option<String>,
     #[arg(long, help = "Chain ID for create")]
@@ -750,6 +771,8 @@ impl ProjectWriteArgs {
         args.project_name = self.project_name;
         args.project_description = self.project_description;
         args.profile_image_url = self.profile_image_url;
+        args.profile_image = self.profile_image;
+        args.remove_profile_image = self.remove_profile_image;
         args.github_url = self.github_url;
         args.chain_id = self.chain_id;
         args.is_private = self.is_private;

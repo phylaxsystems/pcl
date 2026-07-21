@@ -94,7 +94,27 @@ use serde_json::{
     Value,
     json,
 };
-use std::path::Path;
+use std::{
+    io::Read as _,
+    path::Path,
+};
+
+/// Maximum accepted project image size, matching the dApp upload limit (5 MB).
+const MAX_IMAGE_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Map a local image file's extension to the MIME type the storage endpoint
+/// accepts. Returns `None` for unsupported extensions. Kept in sync with the
+/// dApp's `ALLOWED_IMAGE_MIME_TYPES`.
+fn image_mime_for_path(path: &Path) -> Option<&'static str> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "svg" => Some("image/svg+xml"),
+        _ => None,
+    }
+}
 
 fn generated_error_request_id<E>(error: &GeneratedError<E>) -> Option<String> {
     match error {
@@ -682,7 +702,34 @@ impl ApiArgs {
         if args.body_template {
             return Ok(template_envelope(project_body_template(args)));
         }
-        let request = projects_request(args)?;
+        // Build and validate the project request before the upload. This keeps
+        // malformed body/field input from creating an orphaned storage object,
+        // and lets us patch the returned path into the already-read body (which
+        // matters for `--body-file -`: stdin can only be consumed once).
+        let mut request = projects_request(args)?;
+        if let Some(image_path) = &args.profile_image {
+            // The upload is a separate authenticated request, so refresh an
+            // expired/expiring CLI token before sending it. The project call
+            // below performs the same check again, harmlessly, after upload.
+            self.ensure_request_auth(config, cli_args, request.require_auth)
+                .await?;
+            let storage_path = self
+                .upload_project_image(config, cli_args, image_path, request_log_path)
+                .await?;
+            let mut body = request
+                .body
+                .as_deref()
+                .map(serde_json::from_str::<Value>)
+                .transpose()?
+                .unwrap_or_else(|| json!({}));
+            let object = body.as_object_mut().ok_or_else(|| {
+                ApiCommandError::InvalidWorkflow {
+                    message: "project body must be a JSON object".to_string(),
+                }
+            })?;
+            object.insert("profile_image_url".to_string(), Value::String(storage_path));
+            request.body = Some(body.to_string());
+        }
         self.run_prepared_workflow(
             config,
             cli_args,
@@ -692,6 +739,166 @@ impl ApiArgs {
             projects_next_actions,
         )
         .await
+    }
+
+    /// Upload a local image file to the storage endpoint and return the storage
+    /// path the API stores as `profile_image_url`.
+    ///
+    /// Mirrors the dApp's create/settings flow: validate the file, POST it as
+    /// multipart `file` to `/storage/upload`, and read back `{ "path": ... }`.
+    pub(in crate::api) async fn upload_project_image(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        image_path: &Path,
+        request_log_path: &Path,
+    ) -> Result<String, ApiCommandError> {
+        let mime = image_mime_for_path(image_path).ok_or_else(|| {
+            ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "Unsupported image `{}`. Allowed types: png, jpg, jpeg, webp, svg",
+                    image_path.display()
+                ),
+            }
+        })?;
+        let file = std::fs::File::open(image_path).map_err(|source| {
+            ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "Failed to read image file `{}`: {source}",
+                    image_path.display()
+                ),
+            }
+        })?;
+        let declared_size = file
+            .metadata()
+            .map_err(|source| {
+                ApiCommandError::InvalidWorkflow {
+                    message: format!(
+                        "Failed to inspect image file `{}`: {source}",
+                        image_path.display()
+                    ),
+                }
+            })?
+            .len();
+        if declared_size > MAX_IMAGE_FILE_SIZE_BYTES {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "Image file `{}` is {} bytes; maximum is {} bytes (5 MB)",
+                    image_path.display(),
+                    declared_size,
+                    MAX_IMAGE_FILE_SIZE_BYTES
+                ),
+            });
+        }
+        // Do not trust metadata alone: a file can grow between metadata() and
+        // read(), and special files may report a zero length. Read at most one
+        // byte beyond the limit so the CLI never allocates an unbounded input.
+        let mut bytes = Vec::with_capacity(usize::try_from(declared_size).unwrap_or(0));
+        file.take(MAX_IMAGE_FILE_SIZE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|source| {
+                ApiCommandError::InvalidWorkflow {
+                    message: format!(
+                        "Failed to read image file `{}`: {source}",
+                        image_path.display()
+                    ),
+                }
+            })?;
+        if bytes.len() as u64 > MAX_IMAGE_FILE_SIZE_BYTES {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "Image file `{}` exceeds the maximum of {} bytes (5 MB)",
+                    image_path.display(),
+                    MAX_IMAGE_FILE_SIZE_BYTES
+                ),
+            });
+        }
+
+        let file_name = image_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("image")
+            .to_string();
+
+        let requires_auth = !self.allow_unauthenticated;
+        let url = self.api_url("/storage/upload")?;
+
+        // A `reqwest` multipart form is a single-use stream, so both the first
+        // attempt and any post-refresh retry need a freshly built form.
+        // Rebuilding the client on retry also picks up a token that
+        // `try_refresh_after_401` swapped into `config`.
+        let build_form = || -> Result<reqwest::multipart::Form, ApiCommandError> {
+            let part = reqwest::multipart::Part::bytes(bytes.clone())
+                .file_name(file_name.clone())
+                .mime_str(mime)?;
+            Ok(reqwest::multipart::Form::new().part("file", part))
+        };
+
+        let client = self.http_client(config, requires_auth, requires_auth)?;
+        let mut payload = read_api_response(
+            client
+                .post(url.clone())
+                .multipart(build_form()?)
+                .send()
+                .await?,
+        )
+        .await?;
+        write_request_log(
+            request_log_path,
+            "storage_upload",
+            "POST",
+            "/storage/upload",
+            payload.status.as_u16(),
+            payload.request_id.as_deref(),
+            None,
+        );
+
+        // Mirror `call_workflow_result`/`call_api`: a 401 on a locally-unexpired
+        // token that the server rejects can still be recovered by refreshing and
+        // retrying once. `ensure_request_auth` earlier only covers expired tokens.
+        if payload.status.as_u16() == 401
+            && requires_auth
+            && self.try_refresh_after_401(config, cli_args).await?
+        {
+            let client = self.http_client(config, requires_auth, requires_auth)?;
+            payload = read_api_response(
+                client
+                    .post(url.clone())
+                    .multipart(build_form()?)
+                    .send()
+                    .await?,
+            )
+            .await?;
+            write_request_log(
+                request_log_path,
+                "storage_upload_retry_after_refresh",
+                "POST",
+                "/storage/upload",
+                payload.status.as_u16(),
+                payload.request_id.as_deref(),
+                None,
+            );
+        }
+
+        if !payload.status.is_success() {
+            return Err(ApiCommandError::HttpStatus {
+                method: "POST",
+                path: "/storage/upload".to_string(),
+                status: payload.status.as_u16(),
+                request_id: payload.request_id,
+                body: Box::new(payload.body),
+            });
+        }
+        payload
+            .body
+            .get("path")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .ok_or_else(|| {
+                ApiCommandError::InvalidWorkflow {
+                    message: "Image upload response did not include a storage path".to_string(),
+                }
+            })
     }
 
     pub(in crate::api) async fn run_assertions(
