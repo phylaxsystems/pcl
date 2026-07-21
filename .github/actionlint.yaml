@@ -1,0 +1,4 @@
+self-hosted-runner:
+  labels:
+    - phylax-ubuntu-latitude
+    - phylax-ubuntu-latitude-large
