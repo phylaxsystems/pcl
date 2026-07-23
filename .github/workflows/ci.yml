@@ -41,43 +41,51 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   # Keep in sync with rust-toolchain.toml
   RUST_NIGHTLY_VERSION: "nightly-2026-01-07"
 
 jobs:
-  runner-git-config:
-    name: Runner Git Config Preflight
-    runs-on: phylax-ubuntu-latitude
+  untrusted-fork:
+    name: Untrusted Fork Safety Check
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
     steps:
-      - name: Remove leaked GitHub SSH rewrites
-        run: |
-          git config --global --unset-all 'url.git@github.com:.insteadOf' || true
-          git config --global --unset-all 'url.ssh://git@github.com/.insteadOf' || true
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install "$RUST_NIGHTLY_VERSION" --profile minimal --component rustfmt --no-self-update
+      - name: Check formatting without private dependencies
+        run: cargo +"$RUST_NIGHTLY_VERSION" fmt --all -- --check
 
   rust-base:
     name: Rust Test & Lint
-    needs: runner-git-config
-    uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@main
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # Pin the hosted-runner portability fix until phylaxsystems/actions#105
+    # lands on main.
+    uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@ec61d6a5b50aee981147351197655c6b4f503dd8
     with:
-      runner: "phylax-ubuntu-latitude"
+      runner: "ubuntu-latest"
       rust-channel: "nightly-2026-01-07"
       require-lockfile: true
       requires-private-deps: true
       use-nextest: true
       enable-sccache: true
-      sccache-backend: "local"
+      sccache-backend: "gha"
       deny-checks: "advisories"
-      deny-preinstalled: true
+      deny-preinstalled: false
     secrets:
       APP_ID: ${{ secrets.APP_ID }}
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
 
   release-feature-check:
     name: Release Feature Check
-    needs: runner-git-config
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: phylax-ubuntu-latitude
+    runs-on: ubuntu-latest
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: true
       GIT_CONFIG_GLOBAL: /tmp/pcl-release-feature-${{ github.run_id }}-${{ github.run_attempt }}.gitconfig
@@ -87,7 +95,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: Generate GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
@@ -103,8 +111,9 @@ jobs:
 
   agent-smoke:
     name: Agent CLI Smoke
-    needs: [runner-git-config, release-feature-check]
-    runs-on: phylax-ubuntu-latitude
+    needs: release-feature-check
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: true
       GIT_CONFIG_GLOBAL: /tmp/pcl-agent-smoke-${{ github.run_id }}-${{ github.run_attempt }}.gitconfig
@@ -115,7 +124,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: Generate GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}

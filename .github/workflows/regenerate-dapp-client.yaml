@@ -4,10 +4,6 @@ on:
   schedule:
     - cron: "0 8 * * *" # daily at 8am UTC
   workflow_dispatch: {}
-  pull_request:
-    paths:
-      - .github/workflows/regenerate-dapp-client.yaml
-      - scripts/dapp-client-diff-summary.py
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,13 +12,39 @@ concurrency:
 jobs:
   regenerate:
     name: Regenerate dapp-api-client
-    runs-on: phylax-ubuntu-latitude
+    runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Configure Git for private dependencies
+        env:
+          GH_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          config="${RUNNER_TEMP}/regenerate-private-deps.gitconfig"
+          echo "GIT_CONFIG_GLOBAL=${config}" >> "$GITHUB_ENV"
+          GIT_CONFIG_GLOBAL="$config" git config --global \
+            url."https://x-access-token:${GH_APP_TOKEN}@github.com/".insteadOf \
+            "https://github.com/"
 
       - name: Regenerate client from latest OpenAPI spec
         run: make regenerate
+
+      - name: Clear private-dependency credentials
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/regenerate-private-deps.gitconfig"
 
       - name: Check for changes
         id: diff
