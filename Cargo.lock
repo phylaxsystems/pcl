@@ -16459,28 +16459,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "alloy-op-evm"
-version = "0.31.0"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=e3b59e76588f99db17205f5601e45a5b00f0bfbb#e3b59e76588f99db17205f5601e45a5b00f0bfbb"
-
-[[patch.unused]]
-name = "alloy-op-hardforks"
-version = "0.4.7"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=e3b59e76588f99db17205f5601e45a5b00f0bfbb#e3b59e76588f99db17205f5601e45a5b00f0bfbb"
-
-[[patch.unused]]
-name = "op-alloy-consensus"
-version = "0.24.0"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=e3b59e76588f99db17205f5601e45a5b00f0bfbb#e3b59e76588f99db17205f5601e45a5b00f0bfbb"
-
-[[patch.unused]]
-name = "op-alloy-network"
-version = "0.24.0"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=e3b59e76588f99db17205f5601e45a5b00f0bfbb#e3b59e76588f99db17205f5601e45a5b00f0bfbb"
-
-[[patch.unused]]
-name = "op-alloy-rpc-types"
-version = "0.24.0"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=e3b59e76588f99db17205f5601e45a5b00f0bfbb#e3b59e76588f99db17205f5601e45a5b00f0bfbb"
