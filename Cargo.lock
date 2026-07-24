@@ -1203,7 +1203,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1214,7 +1214,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1592,7 +1592,7 @@ dependencies = [
 [[package]]
 name = "assertion-da-client"
 version = "1.6.0"
-source = "git+https://github.com/phylaxsystems/credible-sdk.git?rev=1853420bcd673a7f636ad7ffae666b972126ff5c#1853420bcd673a7f636ad7ffae666b972126ff5c"
+source = "git+https://github.com/phylaxsystems/credible-sdk.git?rev=d03d87fba952645782ac26afb96ea9fa015f0590#d03d87fba952645782ac26afb96ea9fa015f0590"
 dependencies = [
  "alloy-primitives",
  "assertion-da-core 1.6.0",
@@ -1618,7 +1618,7 @@ dependencies = [
 [[package]]
 name = "assertion-da-core"
 version = "1.6.0"
-source = "git+https://github.com/phylaxsystems/credible-sdk.git?rev=1853420bcd673a7f636ad7ffae666b972126ff5c#1853420bcd673a7f636ad7ffae666b972126ff5c"
+source = "git+https://github.com/phylaxsystems/credible-sdk.git?rev=d03d87fba952645782ac26afb96ea9fa015f0590#d03d87fba952645782ac26afb96ea9fa015f0590"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -1667,7 +1667,7 @@ dependencies = [
 [[package]]
 name = "assertion-executor"
 version = "1.6.0"
-source = "git+https://github.com/phylaxsystems/credible-sdk.git?rev=1853420bcd673a7f636ad7ffae666b972126ff5c#1853420bcd673a7f636ad7ffae666b972126ff5c"
+source = "git+https://github.com/phylaxsystems/credible-sdk.git?rev=d03d87fba952645782ac26afb96ea9fa015f0590#d03d87fba952645782ac26afb96ea9fa015f0590"
 dependencies = [
  "alloy-chains",
  "alloy-consensus 2.0.5",
@@ -1706,7 +1706,7 @@ dependencies = [
 [[package]]
 name = "assertion-verification"
 version = "1.6.0"
-source = "git+https://github.com/phylaxsystems/credible-sdk.git?rev=1853420bcd673a7f636ad7ffae666b972126ff5c#1853420bcd673a7f636ad7ffae666b972126ff5c"
+source = "git+https://github.com/phylaxsystems/credible-sdk.git?rev=d03d87fba952645782ac26afb96ea9fa015f0590#d03d87fba952645782ac26afb96ea9fa015f0590"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -2998,7 +2998,7 @@ dependencies = [
  "terminfo",
  "thiserror 2.0.18",
  "which",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3038,7 +3038,7 @@ checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.1.14",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]
@@ -3153,7 +3153,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4761,7 +4761,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4920,7 +4920,7 @@ dependencies = [
 [[package]]
 name = "eip-common"
 version = "1.6.0"
-source = "git+https://github.com/phylaxsystems/credible-sdk.git?rev=1853420bcd673a7f636ad7ffae666b972126ff5c#1853420bcd673a7f636ad7ffae666b972126ff5c"
+source = "git+https://github.com/phylaxsystems/credible-sdk.git?rev=d03d87fba952645782ac26afb96ea9fa015f0590#d03d87fba952645782ac26afb96ea9fa015f0590"
 dependencies = [
  "alloy-eips 2.0.5",
  "alloy-primitives",
@@ -5185,7 +5185,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6835,7 +6835,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.18",
- "windows 0.61.3",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -7626,7 +7626,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -8802,7 +8802,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -9070,7 +9070,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b685c8311c9171d1bd2895222965d25616b2de2cb5819dd3504ed9250df9fecd"
 dependencies = [
  "ahash",
- "hashbrown 0.17.1",
+ "hashbrown 0.16.1",
  "parking_lot",
  "stable_deref_trait",
 ]
@@ -10276,7 +10276,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -12031,7 +12031,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -12090,7 +12090,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -12550,9 +12550,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e72c1c2cb7b223fafb600a619537a871c2818583d619401b785e7c0b746ccde2"
+checksum = "76a5c54c7310e7b8b9577c286d7e399ddd876c3e12b3ed917a8aabc4b96e9e8c"
 dependencies = [
  "base64 0.22.1",
  "bs58",
@@ -12570,9 +12570,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b90c488738ecb4fb0262f41f43bc40efc5868d9fb744319ddf5f5317f417bfac"
+checksum = "84d57bc0c8b9a17920c178daa6bb924850d54a9c97ab45194bb8c17ad66bb660"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -12880,7 +12880,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -12960,7 +12960,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tracing",
  "unicode-width 0.2.2",
 ]
@@ -13358,7 +13358,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "url",
  "zip 4.6.1",
 ]
@@ -13551,7 +13551,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -13770,7 +13770,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -15283,7 +15283,7 @@ dependencies = [
  "watchexec-events",
  "watchexec-signals",
  "watchexec-supervisor",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -15623,7 +15623,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -16459,28 +16459,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "alloy-op-evm"
-version = "0.31.0"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=e3b59e76588f99db17205f5601e45a5b00f0bfbb#e3b59e76588f99db17205f5601e45a5b00f0bfbb"
-
-[[patch.unused]]
-name = "alloy-op-hardforks"
-version = "0.4.7"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=e3b59e76588f99db17205f5601e45a5b00f0bfbb#e3b59e76588f99db17205f5601e45a5b00f0bfbb"
-
-[[patch.unused]]
-name = "op-alloy-consensus"
-version = "0.24.0"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=e3b59e76588f99db17205f5601e45a5b00f0bfbb#e3b59e76588f99db17205f5601e45a5b00f0bfbb"
-
-[[patch.unused]]
-name = "op-alloy-network"
-version = "0.24.0"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=e3b59e76588f99db17205f5601e45a5b00f0bfbb#e3b59e76588f99db17205f5601e45a5b00f0bfbb"
-
-[[patch.unused]]
-name = "op-alloy-rpc-types"
-version = "0.24.0"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=e3b59e76588f99db17205f5601e45a5b00f0bfbb#e3b59e76588f99db17205f5601e45a5b00f0bfbb"
