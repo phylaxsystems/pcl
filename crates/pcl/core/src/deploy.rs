@@ -21,6 +21,10 @@ use crate::{
         canonicalize_root,
         confirm_apply,
     },
+    assertion_spec::{
+        self,
+        V2SpecFinding,
+    },
     config::CliConfig,
     credible_config::CredibleToml,
     error::DeployError,
@@ -814,6 +818,24 @@ fn progress(human: bool, message: &str) {
     }
 }
 
+fn print_warning(message: &str) {
+    eprintln!("{} {message}", "Warning:".yellow().bold());
+}
+
+/// Prints the warnings carried by a result payload for humans; machine output
+/// keeps them in the envelope instead.
+fn print_human_warnings(data: &Value) {
+    for message in data
+        .get("warnings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|warning| warning.get("message").and_then(Value::as_str))
+    {
+        print_warning(message);
+    }
+}
+
 #[cfg(feature = "credible")]
 fn insert_field(data: &mut Value, key: &str, value: Value) {
     if let Some(object) = data.as_object_mut() {
@@ -843,9 +865,18 @@ impl DeployArgs {
             Some(self.wallet.signer(human).await?)
         };
 
+        // Assertions written against the V2 spec do not run on a platform that
+        // serves V1 (production/Linea). That is a warning, not a gate: the
+        // platform decides what it accepts, and a stale marker list must never
+        // be the reason a deploy stops.
+        let v2_findings = assertion_spec::scan_assertion_sources(&root, &credible);
+
         if self.dry_run {
-            // Plan only: build and verify locally, touch nothing remote.
-            let plan = Self::dry_run_plan(&credible, &root, output_mode, signer.as_ref())?;
+            // Plan only: build and verify locally, touch nothing remote. The
+            // chain is only known here when it was passed as the create input.
+            let warnings = self.spec_warnings(false, self.chain_id, &v2_findings);
+            let plan =
+                Self::dry_run_plan(&credible, &root, output_mode, signer.as_ref(), &warnings)?;
             return Self::finish_dry_run(plan, output_mode);
         }
         // Past the dry-run return a signer was always resolved above.
@@ -1011,6 +1042,11 @@ impl DeployArgs {
 
         let project_chain_id = resolve_chain_id(self.chain_id, created_chain_id, &project)?;
 
+        // Warn before the protocol-manager step and before any release exists,
+        // so a spec mismatch is visible while every remaining step is still
+        // ahead of the user.
+        let spec_warnings = self.spec_warnings(human, Some(project_chain_id), &v2_findings);
+
         // ------------------------------------------------------------------
         // Step 2: protocol manager
         // ------------------------------------------------------------------
@@ -1126,6 +1162,7 @@ impl DeployArgs {
                     "protocol_manager": { "action": manager_action, "address": wallet_address },
                     "release": Value::Null,
                     "tx": Value::Null,
+                    "warnings": spec_warnings,
                 });
                 #[cfg(feature = "credible")]
                 let data = {
@@ -1204,6 +1241,7 @@ impl DeployArgs {
             },
             "checks": check_state,
             "deploy": deploy_data,
+            "warnings": spec_warnings,
         });
         #[cfg(feature = "credible")]
         let data = {
@@ -1378,11 +1416,40 @@ impl DeployArgs {
         }
     }
 
+    /// The V2-spec mismatch warning for this run, in the machine-output form
+    /// carried by the result envelope. Empty when the target platform runs V2
+    /// or the assertions do not use it.
+    ///
+    /// `print_now` prints it for humans immediately, before anything is
+    /// mutated. The terminal output prints it again from the payload, so a run
+    /// that mutates nothing (`--dry-run`) passes `false` and reports once.
+    fn spec_warnings(
+        &self,
+        print_now: bool,
+        chain_id: Option<u64>,
+        findings: &[V2SpecFinding],
+    ) -> Vec<Value> {
+        let Some(message) = assertion_spec::deploy_warning(&self.api_url, chain_id, findings)
+        else {
+            return Vec::new();
+        };
+        if print_now {
+            print_warning(&message);
+        }
+        vec![assertion_spec::warning_json(
+            &message,
+            &self.api_url,
+            chain_id,
+            findings,
+        )]
+    }
+
     fn dry_run_plan(
         credible: &CredibleToml,
         root: &Path,
         output_mode: OutputMode,
         signer: Option<&alloy_signer_local::PrivateKeySigner>,
+        warnings: &[Value],
     ) -> Result<Value, DeployError> {
         let (payload, verification_inputs) = ApplyArgs::build_payload(credible, root)?;
         #[cfg(feature = "credible")]
@@ -1397,6 +1464,7 @@ impl DeployArgs {
             "would_create_project": credible.project_id.is_none(),
             "wallet_address": signer.map(|s| s.address().to_string()),
             "payload": payload,
+            "warnings": warnings,
         });
         #[cfg(feature = "credible")]
         let data = {
@@ -1412,6 +1480,7 @@ impl DeployArgs {
             println!(
                 "Dry run complete. Built and verified the release payload; no project or release was created."
             );
+            print_human_warnings(&data);
             return Ok(());
         }
         let envelope = ok_envelope(data, vec!["pcl deploy --yes".to_string()]);
@@ -1449,6 +1518,9 @@ impl DeployArgs {
             for action in &next_actions {
                 println!("  next:    {action}");
             }
+            // Repeated at the end: the same warning was printed before the
+            // release existed, far enough back to have scrolled away.
+            print_human_warnings(&data);
             return Ok(());
         }
         let envelope = ok_envelope(data, next_actions);
@@ -1470,6 +1542,51 @@ mod tests {
 
     const WALLET: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     const OTHER: Address = address!("0101010101010101010101010101010101010101");
+
+    /// `--api-url` is the target platform, so it decides whether V2 assertions
+    /// are supported; machine output carries the warning in the envelope.
+    #[test]
+    fn spec_warnings_follow_the_target_platform_and_chain() {
+        use clap::Parser as _;
+
+        let deploy = |api_url: &str| {
+            DeployArgs::try_parse_from(["deploy", "--api-url", api_url]).expect("parse deploy args")
+        };
+        let findings = [V2SpecFinding {
+            file: "assertions/src/V2.a.sol".to_string(),
+            markers: vec!["registerTxEndTrigger".to_string()],
+        }];
+
+        let production = deploy("https://app.phylax.systems");
+        let warnings = production.spec_warnings(false, Some(8453), &findings);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(
+            warnings[0]["code"],
+            crate::assertion_spec::V2_SPEC_UNSUPPORTED_CODE
+        );
+        assert_eq!(warnings[0]["files"][0]["file"], "assertions/src/V2.a.sol");
+
+        // A Linea chain warns even when the platform is not production.
+        let custom = deploy("https://custom.phylax.example");
+        assert_eq!(
+            custom
+                .spec_warnings(
+                    false,
+                    Some(crate::assertion_spec::LINEA_MAINNET_CHAIN_ID),
+                    &findings
+                )
+                .len(),
+            1
+        );
+
+        // V2-capable target, or no V2 usage: nothing to warn about.
+        assert!(
+            custom
+                .spec_warnings(false, Some(8453), &findings)
+                .is_empty()
+        );
+        assert!(production.spec_warnings(false, Some(8453), &[]).is_empty());
+    }
 
     #[test]
     fn manager_step_decision_table() {

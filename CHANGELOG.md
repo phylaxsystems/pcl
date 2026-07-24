@@ -4,6 +4,11 @@ All notable user-facing changes should be recorded here.
 
 ## Unreleased
 
+### Added
+
+- `pcl deploy` warns when the assertions it is about to release use the V2 spec but the target does not support it (the `app.phylax.systems` platform, or a Linea chain). The warning names the files and the V2 triggers/precompiles found in them, prints before the protocol-manager step and again at the end, and appears in `--json` output as `data.warnings`. It never blocks a deploy.
+- `pcl auth login` warns when logging in to `app.phylax.systems` that the platform runs the V1 assertion spec and assertions must not be written against V2. Machine output carries it as a `warnings` array on the login envelope.
+
 ### Breaking changes
 
 - Removed TOON output entirely: the `--toon` flag, the `--format toon` alias, and the TOON envelope renderer are gone. `--json` is the only machine output mode; agent guidance, manifest examples, and `next_actions` hints now use `--json`.

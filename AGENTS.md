@@ -38,6 +38,8 @@ Every agent-facing command should be treated as an envelope. With `--json` this 
 
 Errors use the same shape with `status: "error"` and an `error` object. Do not parse prose diagnostics. Check `error.code`, `error.recoverable`, `error.http.status`, `error.request_id`, and `next_actions`.
 
+Some commands add non-fatal warnings: `pcl deploy` reports them as `data.warnings`, `pcl auth login` as a top-level `warnings` array. Each entry has `code` and `message`; the status stays `ok`. `assertion_spec.v2_unsupported` means the target platform or chain runs the V1 assertion spec, so V2 triggers and precompiles are not supported there.
+
 Output mode rules:
 
 - default: human-readable output for people
