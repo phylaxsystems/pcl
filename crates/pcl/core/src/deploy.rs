@@ -885,6 +885,15 @@ impl DeployArgs {
         let api = ApiArgs::headless(self.api_url.clone());
         ApplyArgs::ensure_fresh_auth(config, cli_args, &self.api_url).await?;
 
+        // Warn before step 1: creating a project POSTs and rewrites
+        // credible.toml, so a warning printed after it would arrive once
+        // cancelling is no longer free. The platform is always known here; the
+        // chain is too whenever it was passed as the create input, and
+        // otherwise comes from the project record below.
+        let warned_early = !self
+            .spec_warnings(human, self.chain_id, &v2_findings)
+            .is_empty();
+
         // ------------------------------------------------------------------
         // Step 1: resolve or create the project
         // ------------------------------------------------------------------
@@ -1042,10 +1051,12 @@ impl DeployArgs {
 
         let project_chain_id = resolve_chain_id(self.chain_id, created_chain_id, &project)?;
 
-        // Warn before the protocol-manager step and before any release exists,
-        // so a spec mismatch is visible while every remaining step is still
-        // ahead of the user.
-        let spec_warnings = self.spec_warnings(human, Some(project_chain_id), &v2_findings);
+        // Re-derive with the resolved chain: an existing project's chain is
+        // only known after the fetch, and this still lands before the
+        // protocol-manager step and before any release exists. Printing is
+        // suppressed when the pre-step-1 warning already said it.
+        let spec_warnings =
+            self.spec_warnings(human && !warned_early, Some(project_chain_id), &v2_findings);
 
         // ------------------------------------------------------------------
         // Step 2: protocol manager

@@ -158,7 +158,7 @@ fn chain_label(chain_id: u64) -> String {
 /// marker lists. A marker that is a substring of another match is dropped, so
 /// `ph.assetsMatchSharePriceAt(...)` reports the `At` form only.
 pub fn detect_v2_markers(source: &str) -> Vec<String> {
-    let code = strip_solidity_comments(source);
+    let code = strip_comments_and_literals(source);
     let mut found: Vec<String> = Vec::new();
 
     for marker in V2_CALL_MARKERS {
@@ -309,14 +309,42 @@ pub fn login_warning_json(message: &str, platform_url: &Url) -> Value {
     })
 }
 
-/// Replaces Solidity comments with spaces so a commented-out V2 call is not
-/// read as usage. Byte positions are preserved, but only presence matters.
-fn strip_solidity_comments(source: &str) -> String {
+/// Replaces Solidity comments and string-literal contents with spaces, so a
+/// commented-out V2 call is not read as usage and neither is one spelled out
+/// inside a string. Byte positions are preserved, but only presence matters.
+///
+/// String state matters in both directions: a literal holding `/*` would
+/// otherwise blank the rest of the file and hide a real V2 call, and a literal
+/// holding `registerTxEndTrigger(` would otherwise be reported as usage.
+fn strip_comments_and_literals(source: &str) -> String {
     let bytes = source.as_bytes();
     let mut out = String::with_capacity(source.len());
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index..].starts_with(b"//") {
+        if bytes[index] == b'"' || bytes[index] == b'\'' {
+            let quote = bytes[index];
+            out.push(char::from(quote));
+            index += 1;
+            // Blank the contents, keeping the quotes so the surrounding code
+            // stays separated. An escape consumes the next byte, so `\"` does
+            // not end the literal; an unterminated one runs to end of file,
+            // matching what solc would reject anyway.
+            while index < bytes.len() && bytes[index] != quote {
+                if bytes[index] == b'\\' && index + 1 < bytes.len() {
+                    out.push(' ');
+                    index += 1;
+                }
+                let char_len = source[index..].chars().next().map_or(1, char::len_utf8);
+                for _ in 0..char_len {
+                    out.push(if bytes[index] == b'\n' { '\n' } else { ' ' });
+                }
+                index += char_len;
+            }
+            if index < bytes.len() {
+                out.push(char::from(quote));
+                index += 1;
+            }
+        } else if bytes[index..].starts_with(b"//") {
             while index < bytes.len() && bytes[index] != b'\n' {
                 out.push(' ');
                 index += 1;
@@ -481,6 +509,37 @@ mod tests {
     #[test]
     fn non_ascii_source_does_not_panic_and_still_matches() {
         let source = "contract A { string s = \"↯ vault\"; function t() external { registerTxEndTrigger(this.c.selector); } }";
+        assert_eq!(detect_v2_markers(source), vec!["registerTxEndTrigger"]);
+    }
+
+    #[test]
+    fn a_v2_call_inside_a_string_literal_is_not_usage() {
+        let source = r#"contract A { string s = "registerTxEndTrigger(x)"; }"#;
+        assert!(
+            detect_v2_markers(source).is_empty(),
+            "{:?}",
+            detect_v2_markers(source)
+        );
+        let escaped = r#"contract A { string s = "say \" registerTxEndTrigger(x)"; }"#;
+        assert!(detect_v2_markers(escaped).is_empty());
+        let single = "contract A { string s = 'registerTxEndTrigger(x)'; }";
+        assert!(detect_v2_markers(single).is_empty());
+    }
+
+    #[test]
+    fn a_comment_opener_inside_a_string_literal_does_not_blank_the_file() {
+        let source = r#"contract A { string s = "/*"; function t() external { registerTxEndTrigger(this.c.selector); } }"#;
+        assert_eq!(detect_v2_markers(source), vec!["registerTxEndTrigger"]);
+        let line_comment = r#"contract A { string s = "//"; function t() external { registerTxEndTrigger(this.c.selector); } }"#;
+        assert_eq!(
+            detect_v2_markers(line_comment),
+            vec!["registerTxEndTrigger"]
+        );
+    }
+
+    #[test]
+    fn a_quote_inside_a_comment_does_not_open_a_literal() {
+        let source = "contract A { // it's fine\n function t() external { registerTxEndTrigger(this.c.selector); } }";
         assert_eq!(detect_v2_markers(source), vec!["registerTxEndTrigger"]);
     }
 
