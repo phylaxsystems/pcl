@@ -21,6 +21,7 @@ use serde_json::{
     json,
 };
 use std::{
+    collections::HashSet,
     fmt::Write as _,
     path::Path,
 };
@@ -41,16 +42,24 @@ const V1_ONLY_PLATFORM_HOSTS: [&str; 1] = ["app.phylax.systems"];
 pub const V2_SPEC_UNSUPPORTED_CODE: &str = "assertion_spec.v2_unsupported";
 
 /// V2-only identifiers called as functions: triggers, precompiles, and the
-/// fork helpers on `Assertion`. A needle containing `.` (`ph.context`) is
-/// matched with the prefix, because the bare identifier is too common to be
-/// evidence of anything.
-const V2_CALL_MARKERS: [&str; 30] = [
+/// fork helpers on `Assertion`. This is the whole surface `credible-std`
+/// declares under its `V2` section headers, plus the experimental flow-rate
+/// reads that only exist alongside it; `tests::v2_surface_is_covered` fails
+/// when the two drift apart.
+///
+/// A needle containing `.` (`ph.context`) is matched with the prefix, because
+/// the bare identifier is too common to be evidence of anything. `ph.load` is
+/// deliberately absent: the V1 `load(address, bytes32)` and the V2
+/// `load(bytes32)` share a name, and telling them apart needs argument
+/// parsing this heuristic does not do.
+const V2_CALL_MARKERS: [&str; 44] = [
     // Triggers
     "registerTxEndTrigger",
     "registerFnCallTrigger",
     "registerErc20ChangeTrigger",
     "watchCumulativeInflow",
     "watchCumulativeOutflow",
+    "watchAnomaly",
     // Fork helpers
     "_preTx",
     "_postTx",
@@ -61,17 +70,31 @@ const V2_CALL_MARKERS: [&str; 30] = [
     "loadStateAt",
     "callinputAt",
     "callOutputAt",
+    "_matchingCalls",
     "matchingCalls",
+    "_successOnlyFilter",
     "getLogsForCall",
     "getLogsQuery",
     "getErc20TransfersForTokens",
     "getErc20Transfers",
     "changedErc20BalanceDeltas",
     "reduceErc20BalanceDeltas",
+    "forbidChangeForSlots",
     // Trigger context
     "ph.context",
     "inflowContext",
     "outflowContext",
+    "inflowRate",
+    "outflowRate",
+    // Persistent assertion storage
+    "ph.store",
+    "ph.exists",
+    "ph.values_left",
+    // Mapping tracing
+    "changedMappingKeys",
+    "mappingValueDiff",
+    // Anomaly detection
+    "anomalyContext",
     // Protection-suite precompiles
     "assetsMatchSharePriceAt",
     "assetsMatchSharePrice",
@@ -80,10 +103,25 @@ const V2_CALL_MARKERS: [&str; 30] = [
     "oracleSanity",
     "normalizeDecimals",
     "ratioGe",
+    // Math precompiles
+    "ph.mulDivDown",
+    "ph.mulDivUp",
 ];
 
 /// V2-only types, used in declarations rather than calls.
-const V2_TYPE_MARKERS: [&str; 2] = ["PhEvm.ForkId", "PhEvm.TriggerContext"];
+const V2_TYPE_MARKERS: [&str; 11] = [
+    "PhEvm.ForkId",
+    "PhEvm.TriggerContext",
+    "PhEvm.TriggerCall",
+    "PhEvm.CallFilter",
+    "PhEvm.AnomalyContext",
+    "PhEvm.InflowContext",
+    "PhEvm.OutflowContext",
+    "PhEvm.FlowRateContext",
+    "PhEvm.Erc20TransferData",
+    "PhEvm.StaticCallResult",
+    "PhEvm.LogQuery",
+];
 
 /// One assertion source that uses the V2 spec.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,29 +189,40 @@ pub fn detect_v2_markers(source: &str) -> Vec<String> {
 pub fn scan_assertion_sources(root: &Path, credible: &CredibleToml) -> Vec<V2SpecFinding> {
     let mut findings: Vec<V2SpecFinding> = Vec::new();
 
-    for contract in credible.contracts.values() {
-        for assertion in &contract.assertions {
-            let relative = assertion
-                .file
-                .split_once(':')
-                .map_or(assertion.file.as_str(), |(path, _)| path);
-            if findings.iter().any(|finding| finding.file == relative) {
-                continue;
-            }
-            let Ok(source) = std::fs::read_to_string(root.join(relative)) else {
-                continue;
-            };
-            let markers = detect_v2_markers(&source);
-            if !markers.is_empty() {
-                findings.push(V2SpecFinding {
-                    file: relative.to_string(),
-                    markers,
-                });
-            }
+    for relative in unique_assertion_paths(credible) {
+        let Ok(source) = std::fs::read_to_string(root.join(relative)) else {
+            continue;
+        };
+        let markers = detect_v2_markers(&source);
+        if !markers.is_empty() {
+            findings.push(V2SpecFinding {
+                file: relative.to_string(),
+                markers,
+            });
         }
     }
 
     findings
+}
+
+/// Distinct assertion source paths declared in `credible.toml`, in declaration
+/// order. A `file` entry may carry a `path:Contract` suffix, and one source is
+/// commonly referenced by several contracts; deduplicating before reading keeps
+/// deploy startup scaling with unique files rather than with references.
+fn unique_assertion_paths(credible: &CredibleToml) -> Vec<&str> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    credible
+        .contracts
+        .values()
+        .flat_map(|contract| &contract.assertions)
+        .map(|assertion| {
+            assertion
+                .file
+                .split_once(':')
+                .map_or(assertion.file.as_str(), |(path, _)| path)
+        })
+        .filter(|relative| seen.insert(relative))
+        .collect()
 }
 
 /// The V2-unsupported warning for a deploy, or `None` when the target platform
@@ -458,6 +507,179 @@ mod tests {
             fs::write(full, source).expect("write source");
         }
         temp
+    }
+
+    /// Every V2 identifier `credible-std` declares, with a representative use.
+    /// This is the regression net for the marker lists: adding a V2 API to
+    /// `credible-std` means adding it here and to `V2_CALL_MARKERS` /
+    /// `V2_TYPE_MARKERS`, and `v2_surface_is_covered` fails when only one of
+    /// the two happens.
+    const V2_SURFACE: [(&str, &str); 55] = [
+        // TriggerRecorder / Assertion — V2 trigger registration
+        (
+            "registerTxEndTrigger",
+            "registerTxEndTrigger(this.c.selector);",
+        ),
+        (
+            "registerFnCallTrigger",
+            "registerFnCallTrigger(this.c.selector, ITarget.swap.selector);",
+        ),
+        (
+            "registerErc20ChangeTrigger",
+            "registerErc20ChangeTrigger(this.c.selector, token);",
+        ),
+        (
+            "watchCumulativeInflow",
+            "watchCumulativeInflow(token, 500, 1 hours, this.c.selector);",
+        ),
+        (
+            "watchCumulativeOutflow",
+            "watchCumulativeOutflow(token, 500, 1 hours, this.c.selector);",
+        ),
+        ("watchAnomaly", "watchAnomaly(target, this.c.selector);"),
+        // Assertion — ForkId constructors
+        ("_preTx", "_preTx();"),
+        ("_postTx", "_postTx();"),
+        ("_preCall", "_preCall(callId);"),
+        ("_postCall", "_postCall(callId);"),
+        // Assertion — V2 call matching helpers
+        ("_matchingCalls", "_matchingCalls(target, sel, 10);"),
+        ("_successOnlyFilter", "_successOnlyFilter();"),
+        // PhEvm — fork-aware reads
+        (
+            "staticcallAt",
+            "ph.staticcallAt(target, data, 100000, fork);",
+        ),
+        ("loadStateAt", "ph.loadStateAt(target, slot, fork);"),
+        ("getLogsQuery", "ph.getLogsQuery(query, fork);"),
+        ("getErc20Transfers", "ph.getErc20Transfers(token, fork);"),
+        (
+            "getErc20TransfersForTokens",
+            "ph.getErc20TransfersForTokens(tokens, fork);",
+        ),
+        (
+            "changedErc20BalanceDeltas",
+            "ph.changedErc20BalanceDeltas(token, fork);",
+        ),
+        (
+            "reduceErc20BalanceDeltas",
+            "ph.reduceErc20BalanceDeltas(token, fork);",
+        ),
+        ("forbidChangeForSlots", "ph.forbidChangeForSlots(slots);"),
+        // PhEvm — call inspection
+        ("callinputAt", "ph.callinputAt(callId);"),
+        ("callOutputAt", "ph.callOutputAt(callId);"),
+        (
+            "matchingCalls",
+            "ph.matchingCalls(target, sel, filter, 10);",
+        ),
+        ("getLogsForCall", "ph.getLogsForCall(query, callId);"),
+        // PhEvm — trigger and flow context
+        ("ph.context", "ph.context();"),
+        ("inflowContext", "ph.inflowContext();"),
+        ("outflowContext", "ph.outflowContext();"),
+        ("inflowRate", "ph.inflowRate();"),
+        ("outflowRate", "ph.outflowRate();"),
+        // PhEvm — persistent assertion storage
+        ("ph.store", "ph.store(key, value);"),
+        ("ph.exists", "ph.exists(key);"),
+        ("ph.values_left", "ph.values_left();"),
+        // PhEvm — mapping tracing
+        (
+            "changedMappingKeys",
+            "ph.changedMappingKeys(target, baseSlot);",
+        ),
+        (
+            "mappingValueDiff",
+            "ph.mappingValueDiff(target, baseSlot, key, 0);",
+        ),
+        // PhEvm — anomaly detection
+        ("anomalyContext", "ph.anomalyContext(target);"),
+        // PhEvm — protection suite
+        (
+            "assetsMatchSharePrice",
+            "ph.assetsMatchSharePrice(vault, 10);",
+        ),
+        (
+            "assetsMatchSharePriceAt",
+            "ph.assetsMatchSharePriceAt(vault, 10, fork0, fork1);",
+        ),
+        (
+            "conserveBalance",
+            "ph.conserveBalance(fork0, fork1, token, account);",
+        ),
+        ("oracleSanity", "ph.oracleSanity(oracle, data, 100);"),
+        (
+            "oracleSanityAt",
+            "ph.oracleSanityAt(oracle, data, 100, fork0, fork1);",
+        ),
+        ("normalizeDecimals", "ph.normalizeDecimals(amount, 6, 18);"),
+        ("ratioGe", "ph.ratioGe(n1, d1, n2, d2, 10);"),
+        // PhEvm — math precompiles
+        ("ph.mulDivDown", "ph.mulDivDown(x, y, denominator);"),
+        ("ph.mulDivUp", "ph.mulDivUp(x, y, denominator);"),
+        // PhEvm — V2-only types
+        ("PhEvm.ForkId", "PhEvm.ForkId memory fork;"),
+        ("PhEvm.TriggerContext", "PhEvm.TriggerContext memory ctx;"),
+        ("PhEvm.TriggerCall", "PhEvm.TriggerCall[] memory calls;"),
+        ("PhEvm.CallFilter", "PhEvm.CallFilter memory filter;"),
+        ("PhEvm.AnomalyContext", "PhEvm.AnomalyContext memory ctx;"),
+        ("PhEvm.InflowContext", "PhEvm.InflowContext memory ctx;"),
+        ("PhEvm.OutflowContext", "PhEvm.OutflowContext memory ctx;"),
+        ("PhEvm.FlowRateContext", "PhEvm.FlowRateContext memory ctx;"),
+        (
+            "PhEvm.Erc20TransferData",
+            "PhEvm.Erc20TransferData[] memory transfers;",
+        ),
+        (
+            "PhEvm.StaticCallResult",
+            "PhEvm.StaticCallResult memory result;",
+        ),
+        ("PhEvm.LogQuery", "PhEvm.LogQuery memory query;"),
+    ];
+
+    /// The marker lists and [`V2_SURFACE`] describe the same set, and each
+    /// entry is detected on its own. A V2 API that reaches `credible-std`
+    /// without reaching the marker lists is exactly the miss this guards: the
+    /// assertion deploys to a V1 platform and never fires, unwarned.
+    #[test]
+    fn v2_surface_is_covered() {
+        let declared: std::collections::BTreeSet<&str> =
+            V2_CALL_MARKERS.into_iter().chain(V2_TYPE_MARKERS).collect();
+        let exercised: std::collections::BTreeSet<&str> =
+            V2_SURFACE.into_iter().map(|(marker, _)| marker).collect();
+        assert_eq!(
+            declared,
+            exercised,
+            "marker lists and V2_SURFACE disagree; missing from V2_SURFACE: {:?}, missing from the marker lists: {:?}",
+            declared.difference(&exercised).collect::<Vec<_>>(),
+            exercised.difference(&declared).collect::<Vec<_>>(),
+        );
+
+        for (marker, usage) in V2_SURFACE {
+            let source =
+                format!("contract A is Assertion {{ function f() external {{ {usage} }} }}");
+            assert_eq!(
+                detect_v2_markers(&source),
+                vec![marker.to_string()],
+                "`{usage}` should be detected as exactly {marker}"
+            );
+        }
+    }
+
+    #[test]
+    fn shared_sources_are_read_once_per_unique_path() {
+        let credible = credible_with(&[
+            "assertions/src/Shared.a.sol:First",
+            "assertions/src/Shared.a.sol:Second",
+            "assertions/src/Shared.a.sol",
+            "assertions/src/Other.a.sol",
+        ]);
+
+        assert_eq!(
+            unique_assertion_paths(&credible),
+            vec!["assertions/src/Shared.a.sol", "assertions/src/Other.a.sol"]
+        );
     }
 
     #[test]
