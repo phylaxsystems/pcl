@@ -843,6 +843,17 @@ fn insert_field(data: &mut Value, key: &str, value: Value) {
     }
 }
 
+fn attach_warnings(source: DeployError, warnings: Vec<Value>) -> DeployError {
+    if warnings.is_empty() {
+        source
+    } else {
+        DeployError::WithWarnings {
+            source: Box::new(source),
+            warnings,
+        }
+    }
+}
+
 impl DeployArgs {
     #[allow(clippy::too_many_lines)]
     pub async fn run(&self, cli_args: &CliArgs, config: &mut CliConfig) -> Result<(), DeployError> {
@@ -1273,12 +1284,7 @@ impl DeployArgs {
         }
         .await;
 
-        result.map_err(|source| {
-            DeployError::WithWarnings {
-                source: Box::new(source),
-                warnings: warnings_for_errors,
-            }
-        })
+        result.map_err(|source| attach_warnings(source, warnings_for_errors))
     }
 
     /// Resolves a surviving create intent against the platform: returns the
@@ -1608,6 +1614,27 @@ mod tests {
                 .is_empty()
         );
         assert!(production.spec_warnings(false, Some(8453), &[]).is_empty());
+    }
+
+    #[test]
+    fn errors_are_only_wrapped_when_warnings_exist() {
+        assert!(matches!(
+            attach_warnings(DeployError::Cancelled, Vec::new()),
+            DeployError::Cancelled
+        ));
+
+        let warning = json!({
+            "code": crate::assertion_spec::V2_SPEC_UNSUPPORTED_CODE,
+            "message": "production runs V1",
+        });
+        let error = attach_warnings(DeployError::Cancelled, vec![warning.clone()]);
+        match error {
+            DeployError::WithWarnings { source, warnings } => {
+                assert!(matches!(*source, DeployError::Cancelled));
+                assert_eq!(warnings, vec![warning]);
+            }
+            other => panic!("expected warning wrapper, got {other:?}"),
+        }
     }
 
     #[test]
