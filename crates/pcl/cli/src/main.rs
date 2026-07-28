@@ -576,6 +576,13 @@ fn phoundry_error_envelope(err: &PhoundryError) -> Value {
 #[allow(clippy::too_many_lines)]
 fn deploy_error_envelope(err: &DeployError) -> Value {
     match err {
+        DeployError::WithWarnings { source, warnings } => {
+            let mut envelope = deploy_error_envelope(source);
+            if !warnings.is_empty() {
+                envelope["warnings"] = json!(warnings);
+            }
+            envelope
+        }
         // Delegate wrapped errors to the mappers that know their structure —
         // notably ConfirmAfterTx, whose envelope carries the landed tx hash
         // and the nested API provenance.
@@ -764,7 +771,9 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
                 DeployError::Json(_) | DeployError::Output(_) => {
                     ("deploy.output_failed", false, Vec::new())
                 }
-                DeployError::Api(_) | DeployError::Apply(_) => unreachable!("delegated above"),
+                DeployError::Api(_)
+                | DeployError::Apply(_)
+                | DeployError::WithWarnings { .. } => unreachable!("delegated above"),
             };
             let mut error = serde_json::Map::new();
             error.insert("code".to_string(), json!(code));
@@ -1395,5 +1404,30 @@ mod tests {
         assert_eq!(envelope["error"]["auth"]["token_valid"], false);
         assert_eq!(envelope["next_actions"][0], "pcl auth refresh");
         assert_eq!(envelope["next_actions"][1], "pcl auth login --force");
+    }
+
+    #[test]
+    fn deploy_api_failure_keeps_post_scan_spec_warnings() {
+        let warning = json!({
+            "code": "assertion_spec.v2_unsupported",
+            "message": "production runs V1",
+        });
+        let err = DeployError::WithWarnings {
+            source: Box::new(DeployError::Apply(ApplyError::Api {
+                endpoint: "/projects/id/releases".to_string(),
+                status: Some(400),
+                body: "unsupported assertion spec".to_string(),
+            })),
+            warnings: vec![warning],
+        };
+
+        let envelope = deploy_error_envelope(&err);
+
+        assert_eq!(envelope["status"], "error");
+        assert_eq!(
+            envelope["warnings"][0]["code"],
+            "assertion_spec.v2_unsupported"
+        );
+        assert_eq!(envelope["error"]["code"], "apply.failed");
     }
 }

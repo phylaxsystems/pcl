@@ -52,7 +52,7 @@ pub const V2_SPEC_UNSUPPORTED_CODE: &str = "assertion_spec.v2_unsupported";
 /// deliberately absent: the V1 `load(address, bytes32)` and the V2
 /// `load(bytes32)` share a name, and telling them apart needs argument
 /// parsing this heuristic does not do.
-const V2_CALL_MARKERS: [&str; 44] = [
+const V2_CALL_MARKERS: [&str; 46] = [
     // Triggers
     "registerTxEndTrigger",
     "registerFnCallTrigger",
@@ -79,6 +79,8 @@ const V2_CALL_MARKERS: [&str; 44] = [
     "getErc20Transfers",
     "changedErc20BalanceDeltas",
     "reduceErc20BalanceDeltas",
+    "getTxObject",
+    "forbidChangeForSlot",
     "forbidChangeForSlots",
     // Trigger context
     "ph.context",
@@ -109,7 +111,10 @@ const V2_CALL_MARKERS: [&str; 44] = [
 ];
 
 /// V2-only types, used in declarations rather than calls.
-const V2_TYPE_MARKERS: [&str; 11] = [
+const V2_TYPE_MARKERS: [&str; 14] = [
+    // Explicit non-Legacy spec registration
+    "AssertionSpec.Reshiram",
+    "AssertionSpec.Experimental",
     "PhEvm.ForkId",
     "PhEvm.TriggerContext",
     "PhEvm.TriggerCall",
@@ -121,6 +126,7 @@ const V2_TYPE_MARKERS: [&str; 11] = [
     "PhEvm.Erc20TransferData",
     "PhEvm.StaticCallResult",
     "PhEvm.LogQuery",
+    "PhEvm.TxObject",
 ];
 
 /// One assertion source that uses the V2 spec.
@@ -155,8 +161,7 @@ fn chain_label(chain_id: u64) -> String {
 }
 
 /// V2-only identifiers used by `source`, in the order they are declared in the
-/// marker lists. A marker that is a substring of another match is dropped, so
-/// `ph.assetsMatchSharePriceAt(...)` reports the `At` form only.
+/// marker lists.
 pub fn detect_v2_markers(source: &str) -> Vec<String> {
     let code = strip_comments_and_literals(source);
     let mut found: Vec<String> = Vec::new();
@@ -173,14 +178,6 @@ pub fn detect_v2_markers(source: &str) -> Vec<String> {
     }
 
     found
-        .iter()
-        .filter(|marker| {
-            !found
-                .iter()
-                .any(|other| other.len() > marker.len() && other.contains(marker.as_str()))
-        })
-        .cloned()
-        .collect()
 }
 
 /// Scans the assertion sources declared in `credible.toml` for V2 spec usage.
@@ -573,7 +570,15 @@ mod tests {
     /// `credible-std` means adding it here and to `V2_CALL_MARKERS` /
     /// `V2_TYPE_MARKERS`, and `v2_surface_is_covered` fails when only one of
     /// the two happens.
-    const V2_SURFACE: [(&str, &str); 55] = [
+    const V2_SURFACE: [(&str, &str); 60] = [
+        (
+            "AssertionSpec.Reshiram",
+            "registerAssertionSpec(AssertionSpec.Reshiram);",
+        ),
+        (
+            "AssertionSpec.Experimental",
+            "registerAssertionSpec(AssertionSpec.Experimental);",
+        ),
         // TriggerRecorder / Assertion — V2 trigger registration
         (
             "registerTxEndTrigger",
@@ -624,6 +629,8 @@ mod tests {
             "reduceErc20BalanceDeltas",
             "ph.reduceErc20BalanceDeltas(token, fork);",
         ),
+        ("getTxObject", "ph.getTxObject();"),
+        ("forbidChangeForSlot", "ph.forbidChangeForSlot(slot);"),
         ("forbidChangeForSlots", "ph.forbidChangeForSlots(slots);"),
         // PhEvm — call inspection
         ("callinputAt", "ph.callinputAt(callId);"),
@@ -695,6 +702,7 @@ mod tests {
             "PhEvm.StaticCallResult memory result;",
         ),
         ("PhEvm.LogQuery", "PhEvm.LogQuery memory query;"),
+        ("PhEvm.TxObject", "PhEvm.TxObject memory txObject;"),
     ];
 
     /// The marker lists and [`V2_SURFACE`] describe the same set, and each
@@ -702,6 +710,7 @@ mod tests {
     /// without reaching the marker lists is exactly the miss this guards: the
     /// assertion deploys to a V1 platform and never fires, unwarned.
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn v2_surface_is_covered() {
         let declared: std::collections::BTreeSet<&str> =
             V2_CALL_MARKERS.into_iter().chain(V2_TYPE_MARKERS).collect();
@@ -724,6 +733,110 @@ mod tests {
                 "`{usage}` should be detected as exactly {marker}"
             );
         }
+
+        // The executor dependency is the authority for the spec gate. Walk
+        // every selector in its generated PhEvm interface, ask Legacy whether
+        // it is allowed, and require this marker mapping to cover the exact
+        // rejected set. This fails when the pinned executor adds a non-Legacy
+        // precompile without a corresponding source marker.
+        #[cfg(feature = "credible")]
+        {
+            use alloy_sol_types::SolCall;
+            use assertion_executor::{
+                phevm::sol_abi::PhEvm,
+                types::AssertionSpec,
+            };
+
+            let covered = [
+                ("getTxObject", PhEvm::getTxObjectCall::SELECTOR),
+                ("ph.context", PhEvm::contextCall::SELECTOR),
+                ("outflowContext", PhEvm::outflowContextCall::SELECTOR),
+                ("inflowContext", PhEvm::inflowContextCall::SELECTOR),
+                ("anomalyContext", PhEvm::anomalyContextCall::SELECTOR),
+                ("callinputAt", PhEvm::callinputAtCall::SELECTOR),
+                ("callOutputAt", PhEvm::callOutputAtCall::SELECTOR),
+                ("matchingCalls", PhEvm::matchingCallsCall::SELECTOR),
+                ("loadStateAt", PhEvm::loadStateAt_0Call::SELECTOR),
+                ("loadStateAt", PhEvm::loadStateAt_1Call::SELECTOR),
+                ("getLogsQuery", PhEvm::getLogsQueryCall::SELECTOR),
+                ("getLogsForCall", PhEvm::getLogsForCallCall::SELECTOR),
+                (
+                    "forbidChangeForSlot",
+                    PhEvm::forbidChangeForSlotCall::SELECTOR,
+                ),
+                (
+                    "forbidChangeForSlots",
+                    PhEvm::forbidChangeForSlotsCall::SELECTOR,
+                ),
+                ("staticcallAt", PhEvm::staticcallAtCall::SELECTOR),
+                ("conserveBalance", PhEvm::conserveBalanceCall::SELECTOR),
+                ("getErc20Transfers", PhEvm::getErc20TransfersCall::SELECTOR),
+                (
+                    "getErc20TransfersForTokens",
+                    PhEvm::getErc20TransfersForTokensCall::SELECTOR,
+                ),
+                (
+                    "changedErc20BalanceDeltas",
+                    PhEvm::changedErc20BalanceDeltasCall::SELECTOR,
+                ),
+                (
+                    "reduceErc20BalanceDeltas",
+                    PhEvm::reduceErc20BalanceDeltasCall::SELECTOR,
+                ),
+                (
+                    "changedMappingKeys",
+                    PhEvm::changedMappingKeysCall::SELECTOR,
+                ),
+                ("mappingValueDiff", PhEvm::mappingValueDiffCall::SELECTOR),
+                ("ph.mulDivDown", PhEvm::mulDivDownCall::SELECTOR),
+                ("ph.mulDivUp", PhEvm::mulDivUpCall::SELECTOR),
+                ("normalizeDecimals", PhEvm::normalizeDecimalsCall::SELECTOR),
+                ("ratioGe", PhEvm::ratioGeCall::SELECTOR),
+                ("oracleSanity", PhEvm::oracleSanityCall::SELECTOR),
+                ("oracleSanityAt", PhEvm::oracleSanityAtCall::SELECTOR),
+                (
+                    "assetsMatchSharePrice",
+                    PhEvm::assetsMatchSharePriceCall::SELECTOR,
+                ),
+                (
+                    "assetsMatchSharePriceAt",
+                    PhEvm::assetsMatchSharePriceAtCall::SELECTOR,
+                ),
+                ("outflowRate", PhEvm::outflowRateCall::SELECTOR),
+                ("inflowRate", PhEvm::inflowRateCall::SELECTOR),
+            ];
+            let executor_non_legacy: std::collections::BTreeSet<[u8; 4]> =
+                PhEvm::PhEvmCalls::SELECTORS
+                    .iter()
+                    .copied()
+                    .filter(|selector| !AssertionSpec::Legacy.allows_selector(*selector))
+                    .collect();
+            let covered_selectors: std::collections::BTreeSet<[u8; 4]> =
+                covered.iter().map(|(_, selector)| *selector).collect();
+
+            assert_eq!(covered_selectors, executor_non_legacy);
+            for (marker, _) in covered {
+                assert!(
+                    declared.contains(marker),
+                    "executor-gated precompile `{marker}` has no source marker"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn overlapping_call_names_are_all_reported_when_both_are_called() {
+        let markers = detect_v2_markers(
+            "ph.assetsMatchSharePrice(vault, 10);
+             ph.assetsMatchSharePriceAt(vault, 10, pre, post);
+             ph.oracleSanity(oracle, data, 10);
+             ph.oracleSanityAt(oracle, data, 10, pre, post);",
+        );
+
+        assert!(markers.contains(&"assetsMatchSharePrice".to_string()));
+        assert!(markers.contains(&"assetsMatchSharePriceAt".to_string()));
+        assert!(markers.contains(&"oracleSanity".to_string()));
+        assert!(markers.contains(&"oracleSanityAt".to_string()));
     }
 
     #[test]

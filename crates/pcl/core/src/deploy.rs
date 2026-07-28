@@ -1057,217 +1057,228 @@ impl DeployArgs {
         // suppressed when the pre-step-1 warning already said it.
         let spec_warnings =
             self.spec_warnings(human && !warned_early, Some(project_chain_id), &v2_findings);
+        let warnings_for_errors = spec_warnings.clone();
 
-        // ------------------------------------------------------------------
-        // Step 2: protocol manager
-        // ------------------------------------------------------------------
-        let current_manager = project_manager_address(&project)?;
-        let wallet_address = signer.address();
+        let result: Result<(), DeployError> = async {
+            // ------------------------------------------------------------------
+            // Step 2: protocol manager
+            // ------------------------------------------------------------------
+            let current_manager = project_manager_address(&project)?;
+            let wallet_address = signer.address();
 
-        let manager_action =
-            match manager_step(self.skip_protocol_manager, current_manager, wallet_address) {
-                ManagerStep::Skipped => "skipped".to_string(),
-                ManagerStep::AlreadySet => {
-                    progress(human, "Protocol manager already set to this wallet");
-                    "already_set".to_string()
-                }
-                ManagerStep::Mismatch { current } => {
-                    return Err(DeployError::ManagerMismatch {
-                        project_id,
-                        current: current.to_string(),
-                        wallet: wallet_address.to_string(),
-                    });
-                }
-                ManagerStep::NeedsSet => {
-                    self.confirm_step(
+            let manager_action =
+                match manager_step(self.skip_protocol_manager, current_manager, wallet_address) {
+                    ManagerStep::Skipped => "skipped".to_string(),
+                    ManagerStep::AlreadySet => {
+                        progress(human, "Protocol manager already set to this wallet");
+                        "already_set".to_string()
+                    }
+                    ManagerStep::Mismatch { current } => {
+                        return Err(DeployError::ManagerMismatch {
+                            project_id,
+                            current: current.to_string(),
+                            wallet: wallet_address.to_string(),
+                        });
+                    }
+                    ManagerStep::NeedsSet => {
+                        self.confirm_step(
                         human,
                         &format!(
                             "Set the protocol manager of project {project_id} to {wallet_address}?"
                         ),
                     )?;
-                    progress(
-                        human,
-                        "Setting protocol manager (signed challenge, no transaction)",
-                    );
-                    api.protocol_manager_set_signed_flow(
+                        progress(
+                            human,
+                            "Setting protocol manager (signed challenge, no transaction)",
+                        );
+                        api.protocol_manager_set_signed_flow(
+                            config,
+                            cli_args,
+                            &project_id.to_string(),
+                            project_chain_id,
+                            self.broadcast_args(&signer),
+                        )
+                        .await?;
+                        "set".to_string()
+                    }
+                };
+
+            // ------------------------------------------------------------------
+            // Step 3: build + verify + preview + create/resume release
+            // ------------------------------------------------------------------
+            progress(human, "Building and verifying assertions");
+            let (payload, verification_inputs) = ApplyArgs::build_payload(&credible, &root)?;
+            #[cfg(feature = "credible")]
+            let verification = ApplyArgs::verify_all_assertions(&verification_inputs, output_mode)?;
+            #[cfg(not(feature = "credible"))]
+            let _ = verification_inputs;
+
+            let client = self.typed_client(config)?;
+            progress(human, "Previewing release changes");
+            let preview = ApplyArgs::call_preview(&client, &project_id, &payload).await?;
+
+            let project_ref = project_id.to_string();
+            let summaries = inactive_release_summaries(
+                &api,
+                config,
+                cli_args,
+                project_ref.as_str(),
+                &credible.environment,
+            )
+            .await?;
+            // Every inactive release for this environment is a potential resume
+            // candidate, not just the newest: an interrupted earlier run can leave
+            // a matching inactive release behind a later, non-matching one. The
+            // preview cannot vouch for any of them (it diffs against the active
+            // release), so fetch each detail and compare its stored snapshot to the
+            // payload whether or not the preview reports changes.
+            let preview_value = serde_json::to_value(&preview)?;
+            let mut matched = Vec::new();
+            for candidate in &summaries {
+                let detail = api
+                    .workflow_json(
                         config,
                         cli_args,
-                        &project_id.to_string(),
-                        project_chain_id,
-                        self.broadcast_args(&signer),
+                        HttpMethod::Get,
+                        "get_projects_project_id_releases_release_id",
+                        &[
+                            ("project_id", project_ref.as_str()),
+                            ("release_id", candidate.id.as_str()),
+                        ],
+                        None,
                     )
                     .await?;
-                    "set".to_string()
+                if snapshot_matches_preview(&detail, &preview_value) {
+                    matched.push(candidate.clone());
+                }
+            }
+            let resume = match scan_inactive_matches(matched) {
+                ResumeScan::None => None,
+                ResumeScan::One(candidate) => Some(candidate),
+                ResumeScan::Ambiguous(release_ids) => {
+                    return Err(DeployError::AmbiguousInactiveRelease {
+                        project_id,
+                        environment: credible.environment.clone(),
+                        release_ids,
+                    });
+                }
+            };
+            let step = release_step(preview.has_changes(), resume.as_ref());
+
+            let (release_id, release_number, resumed) = match step {
+                ReleaseStep::UpToDate => {
+                    progress(human, "Everything already released and deployed");
+                    let data = json!({
+                        "outcome": "up_to_date",
+                        "project_id": project_id,
+                        "project_created": project_created,
+                        "protocol_manager": { "action": manager_action, "address": wallet_address },
+                        "release": Value::Null,
+                        "tx": Value::Null,
+                        "warnings": spec_warnings,
+                    });
+                    #[cfg(feature = "credible")]
+                    let data = {
+                        let mut data = data;
+                        insert_field(&mut data, "verification", json!(verification));
+                        data
+                    };
+                    return Self::finish(
+                        output_mode,
+                        data,
+                        vec![
+                            format!("pcl releases list {project_id}"),
+                            format!("pcl projects show {project_id}"),
+                        ],
+                    );
+                }
+                ReleaseStep::Resume {
+                    release_id,
+                    release_number,
+                } => {
+                    progress(
+                        human,
+                        &format!("Resuming existing inactive release {release_id}"),
+                    );
+                    (release_id, release_number, true)
+                }
+                ReleaseStep::Create => {
+                    if human {
+                        print!("{}", preview.render_plan());
+                        if !self.yes && !confirm_apply()? {
+                            return Err(DeployError::Cancelled);
+                        }
+                    }
+                    progress(human, "Creating release");
+                    let release =
+                        ApplyArgs::call_create_release(&client, &project_id, &payload).await?;
+                    (
+                        release.id.to_string(),
+                        Some(u64::from(release.release_number)),
+                        false,
+                    )
                 }
             };
 
-        // ------------------------------------------------------------------
-        // Step 3: build + verify + preview + create/resume release
-        // ------------------------------------------------------------------
-        progress(human, "Building and verifying assertions");
-        let (payload, verification_inputs) = ApplyArgs::build_payload(&credible, &root)?;
-        #[cfg(feature = "credible")]
-        let verification = ApplyArgs::verify_all_assertions(&verification_inputs, output_mode)?;
-        #[cfg(not(feature = "credible"))]
-        let _ = verification_inputs;
+            // ------------------------------------------------------------------
+            // Step 4: wait for deploy-gating checks
+            // ------------------------------------------------------------------
+            let check_state = self
+                .wait_for_checks(&api, config, cli_args, &project_ref, &release_id, human)
+                .await?;
 
-        let client = self.typed_client(config)?;
-        progress(human, "Previewing release changes");
-        let preview = ApplyArgs::call_preview(&client, &project_id, &payload).await?;
-
-        let project_ref = project_id.to_string();
-        let summaries = inactive_release_summaries(
-            &api,
-            config,
-            cli_args,
-            project_ref.as_str(),
-            &credible.environment,
-        )
-        .await?;
-        // Every inactive release for this environment is a potential resume
-        // candidate, not just the newest: an interrupted earlier run can leave
-        // a matching inactive release behind a later, non-matching one. The
-        // preview cannot vouch for any of them (it diffs against the active
-        // release), so fetch each detail and compare its stored snapshot to the
-        // payload whether or not the preview reports changes.
-        let preview_value = serde_json::to_value(&preview)?;
-        let mut matched = Vec::new();
-        for candidate in &summaries {
-            let detail = api
-                .workflow_json(
+            // ------------------------------------------------------------------
+            // Step 5+6: on-chain deploy (noop-aware) + platform confirmation
+            // ------------------------------------------------------------------
+            progress(human, "Deploying release on-chain");
+            let deploy_envelope = api
+                .release_deploy_broadcast_flow(
                     config,
                     cli_args,
-                    HttpMethod::Get,
-                    "get_projects_project_id_releases_release_id",
-                    &[
-                        ("project_id", project_ref.as_str()),
-                        ("release_id", candidate.id.as_str()),
-                    ],
-                    None,
+                    &project_ref,
+                    &release_id,
+                    self.broadcast_args(&signer),
                 )
                 .await?;
-            if snapshot_matches_preview(&detail, &preview_value) {
-                matched.push(candidate.clone());
-            }
-        }
-        let resume = match scan_inactive_matches(matched) {
-            ResumeScan::None => None,
-            ResumeScan::One(candidate) => Some(candidate),
-            ResumeScan::Ambiguous(release_ids) => {
-                return Err(DeployError::AmbiguousInactiveRelease {
-                    project_id,
-                    environment: credible.environment.clone(),
-                    release_ids,
-                });
-            }
-        };
-        let step = release_step(preview.has_changes(), resume.as_ref());
+            let deploy_data = deploy_envelope.get("data").cloned().unwrap_or(Value::Null);
 
-        let (release_id, release_number, resumed) = match step {
-            ReleaseStep::UpToDate => {
-                progress(human, "Everything already released and deployed");
-                let data = json!({
-                    "outcome": "up_to_date",
-                    "project_id": project_id,
-                    "project_created": project_created,
-                    "protocol_manager": { "action": manager_action, "address": wallet_address },
-                    "release": Value::Null,
-                    "tx": Value::Null,
-                    "warnings": spec_warnings,
-                });
-                #[cfg(feature = "credible")]
-                let data = {
-                    let mut data = data;
-                    insert_field(&mut data, "verification", json!(verification));
-                    data
-                };
-                return Self::finish(
-                    output_mode,
-                    data,
-                    vec![
-                        format!("pcl releases list {project_id}"),
-                        format!("pcl projects show {project_id}"),
-                    ],
-                );
-            }
-            ReleaseStep::Resume {
-                release_id,
-                release_number,
-            } => {
-                progress(
-                    human,
-                    &format!("Resuming existing inactive release {release_id}"),
-                );
-                (release_id, release_number, true)
-            }
-            ReleaseStep::Create => {
-                if human {
-                    print!("{}", preview.render_plan());
-                    if !self.yes && !confirm_apply()? {
-                        return Err(DeployError::Cancelled);
-                    }
-                }
-                progress(human, "Creating release");
-                let release =
-                    ApplyArgs::call_create_release(&client, &project_id, &payload).await?;
-                (
-                    release.id.to_string(),
-                    Some(u64::from(release.release_number)),
-                    false,
-                )
-            }
-        };
-
-        // ------------------------------------------------------------------
-        // Step 4: wait for deploy-gating checks
-        // ------------------------------------------------------------------
-        let check_state = self
-            .wait_for_checks(&api, config, cli_args, &project_ref, &release_id, human)
-            .await?;
-
-        // ------------------------------------------------------------------
-        // Step 5+6: on-chain deploy (noop-aware) + platform confirmation
-        // ------------------------------------------------------------------
-        progress(human, "Deploying release on-chain");
-        let deploy_envelope = api
-            .release_deploy_broadcast_flow(
-                config,
-                cli_args,
-                &project_ref,
-                &release_id,
-                self.broadcast_args(&signer),
+            let data = json!({
+                "outcome": if resumed { "resumed_and_deployed" } else { "released_and_deployed" },
+                "project_id": project_id,
+                "project_created": project_created,
+                "protocol_manager": { "action": manager_action, "address": wallet_address },
+                "release": {
+                    "id": release_id,
+                    "release_number": release_number,
+                    "resumed": resumed,
+                },
+                "checks": check_state,
+                "deploy": deploy_data,
+                "warnings": spec_warnings,
+            });
+            #[cfg(feature = "credible")]
+            let data = {
+                let mut data = data;
+                insert_field(&mut data, "verification", json!(verification));
+                data
+            };
+            Self::finish(
+                output_mode,
+                data,
+                vec![
+                    format!("pcl releases show {project_id} {release_id}"),
+                    format!("pcl deployments --project {project_id}"),
+                ],
             )
-            .await?;
-        let deploy_data = deploy_envelope.get("data").cloned().unwrap_or(Value::Null);
+        }
+        .await;
 
-        let data = json!({
-            "outcome": if resumed { "resumed_and_deployed" } else { "released_and_deployed" },
-            "project_id": project_id,
-            "project_created": project_created,
-            "protocol_manager": { "action": manager_action, "address": wallet_address },
-            "release": {
-                "id": release_id,
-                "release_number": release_number,
-                "resumed": resumed,
-            },
-            "checks": check_state,
-            "deploy": deploy_data,
-            "warnings": spec_warnings,
-        });
-        #[cfg(feature = "credible")]
-        let data = {
-            let mut data = data;
-            insert_field(&mut data, "verification", json!(verification));
-            data
-        };
-        Self::finish(
-            output_mode,
-            data,
-            vec![
-                format!("pcl releases show {project_id} {release_id}"),
-                format!("pcl deployments --project {project_id}"),
-            ],
-        )
+        result.map_err(|source| {
+            DeployError::WithWarnings {
+                source: Box::new(source),
+                warnings: warnings_for_errors,
+            }
+        })
     }
 
     /// Resolves a surviving create intent against the platform: returns the
