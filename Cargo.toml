@@ -42,17 +42,17 @@ uuid = { version = "1.23", features = ["serde", "v4"] }
 sha2 = "0.10"
 
 # alloy core
-alloy-primitives = { version = "1.6.0", features = ["getrandom"] }
-alloy-json-abi = "1.6.0"
-alloy-dyn-abi = { version = "1.6.0", features = ["std"] }
-alloy-sol-types = "1.6.0"
+alloy-primitives = { version = "1.6.1", features = ["getrandom"] }
+alloy-json-abi = "1.6.1"
+alloy-dyn-abi = { version = "1.6.1", features = ["std"] }
+alloy-sol-types = "1.6.1"
 
 # alloy signing / rpc (versions match what phoundry already pulls transitively)
-alloy-signer = "2.0.5"
-alloy-signer-local = { version = "2.0.5", features = ["keystore"] }
-alloy-provider = { version = "2.0.5", default-features = false, features = ["reqwest", "reqwest-rustls-tls"] }
-alloy-network = "2.0.5"
-alloy-rpc-types-eth = "2.0.5"
+alloy-signer = "2.2.0"
+alloy-signer-local = { version = "2.2.0", features = ["keystore"] }
+alloy-provider = { version = "2.2.0", default-features = false, features = ["reqwest", "reqwest-rustls-tls"] }
+alloy-network = "2.2.0"
+alloy-rpc-types-eth = "2.2.0"
 rpassword = "7"
 
 
@@ -87,20 +87,14 @@ rustflags = [
 ]
 debug = "line-tables-only"
 
-# Mirrors phoundry's [patch.crates-io] block
+# Patches required when consuming Phoundry as a git dependency.
 [patch.crates-io]
 solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 
 foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
 
 op-revm = { git = "https://github.com/foundry-rs/op-revm", rev = "c10fd76e66fd46cebc08ba370aa58bde72b94140" }
-
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "cf4e08013c0d6c537364f053462807ec42d4056a" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "cf4e08013c0d6c537364f053462807ec42d4056a" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "cf4e08013c0d6c537364f053462807ec42d4056a" }
 
 # commonware: keep the complete set aligned with Phoundry's current Tempo workspace.
 # All 12 must be patched jointly — single-crate patch leaves cargo free to pick 2026.5.0.
