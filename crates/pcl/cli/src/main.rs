@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
     let mut read_valid_config = true;
     let mut config = match CliConfig::read_from_file(&cli.args) {
         Ok(config) => config,
-        Err(err) if cli.command.can_run_without_valid_config() => {
+        Err(_err) if cli.command.can_run_without_valid_config() => {
             read_valid_config = false;
             CliConfig::default()
         }

@@ -6,7 +6,7 @@ fmt-check:
 	cargo fmt --all -- --check
 
 clippy:
-	cargo +nightly-2026-01-07 clippy --all-targets --workspace --locked --profile dev -- -D warnings -D clippy::pedantic
+	cargo +nightly-2026-07-28 clippy --all-targets --workspace --locked --profile dev -- -D warnings -D clippy::pedantic
 
 full-check:
 	cargo check --locked --workspace --all-targets --features full

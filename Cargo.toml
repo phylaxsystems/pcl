@@ -89,22 +89,20 @@ debug = "line-tables-only"
 
 # Mirrors phoundry's [patch.crates-io] block
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar.git", rev = "530f129" }
-solar-interface = { git = "https://github.com/paradigmxyz/solar.git", rev = "530f129" }
-solar-ast = { git = "https://github.com/paradigmxyz/solar.git", rev = "530f129" }
-solar-sema = { git = "https://github.com/paradigmxyz/solar.git", rev = "530f129" }
-solar-parse = { git = "https://github.com/paradigmxyz/solar.git", rev = "530f129" }
-solar-config = { git = "https://github.com/paradigmxyz/solar.git", rev = "530f129" }
-solar-data-structures = { git = "https://github.com/paradigmxyz/solar.git", rev = "530f129" }
-solar-macros = { git = "https://github.com/paradigmxyz/solar.git", rev = "530f129" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 
-op-revm = { git = "https://github.com/ethereum-optimism/optimism", rev = "e3b59e76588f99db17205f5601e45a5b00f0bfbb" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "fa7fd22e59767408c967483149ca0a2b420da24d" }
 
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "b1348487bac6954c3ec898c9454daf10b4aa905e" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "b1348487bac6954c3ec898c9454daf10b4aa905e" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "b1348487bac6954c3ec898c9454daf10b4aa905e" }
+op-revm = { git = "https://github.com/foundry-rs/op-revm", rev = "c10fd76e66fd46cebc08ba370aa58bde72b94140" }
 
-# commonware: tempo b1348487 uses bls12381::dkg::Output (2026.4.0); crates.io 2026.5.0 moved it.
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "cf4e08013c0d6c537364f053462807ec42d4056a" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "cf4e08013c0d6c537364f053462807ec42d4056a" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "cf4e08013c0d6c537364f053462807ec42d4056a" }
+
+# commonware: keep the complete set aligned with Phoundry's current Tempo workspace.
 # All 12 must be patched jointly — single-crate patch leaves cargo free to pick 2026.5.0.
 commonware-broadcast = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
 commonware-codec = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
