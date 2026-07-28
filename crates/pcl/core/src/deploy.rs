@@ -21,6 +21,10 @@ use crate::{
         canonicalize_root,
         confirm_apply,
     },
+    assertion_spec::{
+        self,
+        V2SpecFinding,
+    },
     config::CliConfig,
     credible_config::CredibleToml,
     error::DeployError,
@@ -814,10 +818,39 @@ fn progress(human: bool, message: &str) {
     }
 }
 
+fn print_warning(message: &str) {
+    eprintln!("{} {message}", "Warning:".yellow().bold());
+}
+
+/// Prints the warnings carried by a result payload for humans; machine output
+/// keeps them in the envelope instead.
+fn print_human_warnings(data: &Value) {
+    for message in data
+        .get("warnings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|warning| warning.get("message").and_then(Value::as_str))
+    {
+        print_warning(message);
+    }
+}
+
 #[cfg(feature = "credible")]
 fn insert_field(data: &mut Value, key: &str, value: Value) {
     if let Some(object) = data.as_object_mut() {
         object.insert(key.to_string(), value);
+    }
+}
+
+fn attach_warnings(source: DeployError, warnings: Vec<Value>) -> DeployError {
+    if warnings.is_empty() {
+        source
+    } else {
+        DeployError::WithWarnings {
+            source: Box::new(source),
+            warnings,
+        }
     }
 }
 
@@ -843,9 +876,18 @@ impl DeployArgs {
             Some(self.wallet.signer(human).await?)
         };
 
+        // Assertions written against the V2 spec do not run on a platform that
+        // serves V1 (production/Linea). That is a warning, not a gate: the
+        // platform decides what it accepts, and a stale marker list must never
+        // be the reason a deploy stops.
+        let v2_findings = assertion_spec::scan_assertion_sources(&root, &credible);
+
         if self.dry_run {
-            // Plan only: build and verify locally, touch nothing remote.
-            let plan = Self::dry_run_plan(&credible, &root, output_mode, signer.as_ref())?;
+            // Plan only: build and verify locally, touch nothing remote. The
+            // chain is only known here when it was passed as the create input.
+            let warnings = self.spec_warnings(false, self.chain_id, &v2_findings);
+            let plan =
+                Self::dry_run_plan(&credible, &root, output_mode, signer.as_ref(), &warnings)?;
             return Self::finish_dry_run(plan, output_mode);
         }
         // Past the dry-run return a signer was always resolved above.
@@ -853,6 +895,15 @@ impl DeployArgs {
 
         let api = ApiArgs::headless(self.api_url.clone());
         ApplyArgs::ensure_fresh_auth(config, cli_args, &self.api_url).await?;
+
+        // Warn before step 1: creating a project POSTs and rewrites
+        // credible.toml, so a warning printed after it would arrive once
+        // cancelling is no longer free. The platform is always known here; the
+        // chain is too whenever it was passed as the create input, and
+        // otherwise comes from the project record below.
+        let warned_early = !self
+            .spec_warnings(human, self.chain_id, &v2_findings)
+            .is_empty();
 
         // ------------------------------------------------------------------
         // Step 1: resolve or create the project
@@ -1011,214 +1062,229 @@ impl DeployArgs {
 
         let project_chain_id = resolve_chain_id(self.chain_id, created_chain_id, &project)?;
 
-        // ------------------------------------------------------------------
-        // Step 2: protocol manager
-        // ------------------------------------------------------------------
-        let current_manager = project_manager_address(&project)?;
-        let wallet_address = signer.address();
+        // Re-derive with the resolved chain: an existing project's chain is
+        // only known after the fetch, and this still lands before the
+        // protocol-manager step and before any release exists. Printing is
+        // suppressed when the pre-step-1 warning already said it.
+        let spec_warnings =
+            self.spec_warnings(human && !warned_early, Some(project_chain_id), &v2_findings);
+        let warnings_for_errors = spec_warnings.clone();
 
-        let manager_action =
-            match manager_step(self.skip_protocol_manager, current_manager, wallet_address) {
-                ManagerStep::Skipped => "skipped".to_string(),
-                ManagerStep::AlreadySet => {
-                    progress(human, "Protocol manager already set to this wallet");
-                    "already_set".to_string()
-                }
-                ManagerStep::Mismatch { current } => {
-                    return Err(DeployError::ManagerMismatch {
-                        project_id,
-                        current: current.to_string(),
-                        wallet: wallet_address.to_string(),
-                    });
-                }
-                ManagerStep::NeedsSet => {
-                    self.confirm_step(
+        let result: Result<(), DeployError> = async {
+            // ------------------------------------------------------------------
+            // Step 2: protocol manager
+            // ------------------------------------------------------------------
+            let current_manager = project_manager_address(&project)?;
+            let wallet_address = signer.address();
+
+            let manager_action =
+                match manager_step(self.skip_protocol_manager, current_manager, wallet_address) {
+                    ManagerStep::Skipped => "skipped".to_string(),
+                    ManagerStep::AlreadySet => {
+                        progress(human, "Protocol manager already set to this wallet");
+                        "already_set".to_string()
+                    }
+                    ManagerStep::Mismatch { current } => {
+                        return Err(DeployError::ManagerMismatch {
+                            project_id,
+                            current: current.to_string(),
+                            wallet: wallet_address.to_string(),
+                        });
+                    }
+                    ManagerStep::NeedsSet => {
+                        self.confirm_step(
                         human,
                         &format!(
                             "Set the protocol manager of project {project_id} to {wallet_address}?"
                         ),
                     )?;
-                    progress(
-                        human,
-                        "Setting protocol manager (signed challenge, no transaction)",
-                    );
-                    api.protocol_manager_set_signed_flow(
+                        progress(
+                            human,
+                            "Setting protocol manager (signed challenge, no transaction)",
+                        );
+                        api.protocol_manager_set_signed_flow(
+                            config,
+                            cli_args,
+                            &project_id.to_string(),
+                            project_chain_id,
+                            self.broadcast_args(&signer),
+                        )
+                        .await?;
+                        "set".to_string()
+                    }
+                };
+
+            // ------------------------------------------------------------------
+            // Step 3: build + verify + preview + create/resume release
+            // ------------------------------------------------------------------
+            progress(human, "Building and verifying assertions");
+            let (payload, verification_inputs) = ApplyArgs::build_payload(&credible, &root)?;
+            #[cfg(feature = "credible")]
+            let verification = ApplyArgs::verify_all_assertions(&verification_inputs, output_mode)?;
+            #[cfg(not(feature = "credible"))]
+            let _ = verification_inputs;
+
+            let client = self.typed_client(config)?;
+            progress(human, "Previewing release changes");
+            let preview = ApplyArgs::call_preview(&client, &project_id, &payload).await?;
+
+            let project_ref = project_id.to_string();
+            let summaries = inactive_release_summaries(
+                &api,
+                config,
+                cli_args,
+                project_ref.as_str(),
+                &credible.environment,
+            )
+            .await?;
+            // Every inactive release for this environment is a potential resume
+            // candidate, not just the newest: an interrupted earlier run can leave
+            // a matching inactive release behind a later, non-matching one. The
+            // preview cannot vouch for any of them (it diffs against the active
+            // release), so fetch each detail and compare its stored snapshot to the
+            // payload whether or not the preview reports changes.
+            let preview_value = serde_json::to_value(&preview)?;
+            let mut matched = Vec::new();
+            for candidate in &summaries {
+                let detail = api
+                    .workflow_json(
                         config,
                         cli_args,
-                        &project_id.to_string(),
-                        project_chain_id,
-                        self.broadcast_args(&signer),
+                        HttpMethod::Get,
+                        "get_projects_project_id_releases_release_id",
+                        &[
+                            ("project_id", project_ref.as_str()),
+                            ("release_id", candidate.id.as_str()),
+                        ],
+                        None,
                     )
                     .await?;
-                    "set".to_string()
+                if snapshot_matches_preview(&detail, &preview_value) {
+                    matched.push(candidate.clone());
+                }
+            }
+            let resume = match scan_inactive_matches(matched) {
+                ResumeScan::None => None,
+                ResumeScan::One(candidate) => Some(candidate),
+                ResumeScan::Ambiguous(release_ids) => {
+                    return Err(DeployError::AmbiguousInactiveRelease {
+                        project_id,
+                        environment: credible.environment.clone(),
+                        release_ids,
+                    });
+                }
+            };
+            let step = release_step(preview.has_changes(), resume.as_ref());
+
+            let (release_id, release_number, resumed) = match step {
+                ReleaseStep::UpToDate => {
+                    progress(human, "Everything already released and deployed");
+                    let data = json!({
+                        "outcome": "up_to_date",
+                        "project_id": project_id,
+                        "project_created": project_created,
+                        "protocol_manager": { "action": manager_action, "address": wallet_address },
+                        "release": Value::Null,
+                        "tx": Value::Null,
+                        "warnings": spec_warnings,
+                    });
+                    #[cfg(feature = "credible")]
+                    let data = {
+                        let mut data = data;
+                        insert_field(&mut data, "verification", json!(verification));
+                        data
+                    };
+                    return Self::finish(
+                        output_mode,
+                        data,
+                        vec![
+                            format!("pcl releases list {project_id}"),
+                            format!("pcl projects show {project_id}"),
+                        ],
+                    );
+                }
+                ReleaseStep::Resume {
+                    release_id,
+                    release_number,
+                } => {
+                    progress(
+                        human,
+                        &format!("Resuming existing inactive release {release_id}"),
+                    );
+                    (release_id, release_number, true)
+                }
+                ReleaseStep::Create => {
+                    if human {
+                        print!("{}", preview.render_plan());
+                        if !self.yes && !confirm_apply()? {
+                            return Err(DeployError::Cancelled);
+                        }
+                    }
+                    progress(human, "Creating release");
+                    let release =
+                        ApplyArgs::call_create_release(&client, &project_id, &payload).await?;
+                    (
+                        release.id.to_string(),
+                        Some(u64::from(release.release_number)),
+                        false,
+                    )
                 }
             };
 
-        // ------------------------------------------------------------------
-        // Step 3: build + verify + preview + create/resume release
-        // ------------------------------------------------------------------
-        progress(human, "Building and verifying assertions");
-        let (payload, verification_inputs) = ApplyArgs::build_payload(&credible, &root)?;
-        #[cfg(feature = "credible")]
-        let verification = ApplyArgs::verify_all_assertions(&verification_inputs, output_mode)?;
-        #[cfg(not(feature = "credible"))]
-        let _ = verification_inputs;
+            // ------------------------------------------------------------------
+            // Step 4: wait for deploy-gating checks
+            // ------------------------------------------------------------------
+            let check_state = self
+                .wait_for_checks(&api, config, cli_args, &project_ref, &release_id, human)
+                .await?;
 
-        let client = self.typed_client(config)?;
-        progress(human, "Previewing release changes");
-        let preview = ApplyArgs::call_preview(&client, &project_id, &payload).await?;
-
-        let project_ref = project_id.to_string();
-        let summaries = inactive_release_summaries(
-            &api,
-            config,
-            cli_args,
-            project_ref.as_str(),
-            &credible.environment,
-        )
-        .await?;
-        // Every inactive release for this environment is a potential resume
-        // candidate, not just the newest: an interrupted earlier run can leave
-        // a matching inactive release behind a later, non-matching one. The
-        // preview cannot vouch for any of them (it diffs against the active
-        // release), so fetch each detail and compare its stored snapshot to the
-        // payload whether or not the preview reports changes.
-        let preview_value = serde_json::to_value(&preview)?;
-        let mut matched = Vec::new();
-        for candidate in &summaries {
-            let detail = api
-                .workflow_json(
+            // ------------------------------------------------------------------
+            // Step 5+6: on-chain deploy (noop-aware) + platform confirmation
+            // ------------------------------------------------------------------
+            progress(human, "Deploying release on-chain");
+            let deploy_envelope = api
+                .release_deploy_broadcast_flow(
                     config,
                     cli_args,
-                    HttpMethod::Get,
-                    "get_projects_project_id_releases_release_id",
-                    &[
-                        ("project_id", project_ref.as_str()),
-                        ("release_id", candidate.id.as_str()),
-                    ],
-                    None,
+                    &project_ref,
+                    &release_id,
+                    self.broadcast_args(&signer),
                 )
                 .await?;
-            if snapshot_matches_preview(&detail, &preview_value) {
-                matched.push(candidate.clone());
-            }
-        }
-        let resume = match scan_inactive_matches(matched) {
-            ResumeScan::None => None,
-            ResumeScan::One(candidate) => Some(candidate),
-            ResumeScan::Ambiguous(release_ids) => {
-                return Err(DeployError::AmbiguousInactiveRelease {
-                    project_id,
-                    environment: credible.environment.clone(),
-                    release_ids,
-                });
-            }
-        };
-        let step = release_step(preview.has_changes(), resume.as_ref());
+            let deploy_data = deploy_envelope.get("data").cloned().unwrap_or(Value::Null);
 
-        let (release_id, release_number, resumed) = match step {
-            ReleaseStep::UpToDate => {
-                progress(human, "Everything already released and deployed");
-                let data = json!({
-                    "outcome": "up_to_date",
-                    "project_id": project_id,
-                    "project_created": project_created,
-                    "protocol_manager": { "action": manager_action, "address": wallet_address },
-                    "release": Value::Null,
-                    "tx": Value::Null,
-                });
-                #[cfg(feature = "credible")]
-                let data = {
-                    let mut data = data;
-                    insert_field(&mut data, "verification", json!(verification));
-                    data
-                };
-                return Self::finish(
-                    output_mode,
-                    data,
-                    vec![
-                        format!("pcl releases list {project_id}"),
-                        format!("pcl projects show {project_id}"),
-                    ],
-                );
-            }
-            ReleaseStep::Resume {
-                release_id,
-                release_number,
-            } => {
-                progress(
-                    human,
-                    &format!("Resuming existing inactive release {release_id}"),
-                );
-                (release_id, release_number, true)
-            }
-            ReleaseStep::Create => {
-                if human {
-                    print!("{}", preview.render_plan());
-                    if !self.yes && !confirm_apply()? {
-                        return Err(DeployError::Cancelled);
-                    }
-                }
-                progress(human, "Creating release");
-                let release =
-                    ApplyArgs::call_create_release(&client, &project_id, &payload).await?;
-                (
-                    release.id.to_string(),
-                    Some(u64::from(release.release_number)),
-                    false,
-                )
-            }
-        };
-
-        // ------------------------------------------------------------------
-        // Step 4: wait for deploy-gating checks
-        // ------------------------------------------------------------------
-        let check_state = self
-            .wait_for_checks(&api, config, cli_args, &project_ref, &release_id, human)
-            .await?;
-
-        // ------------------------------------------------------------------
-        // Step 5+6: on-chain deploy (noop-aware) + platform confirmation
-        // ------------------------------------------------------------------
-        progress(human, "Deploying release on-chain");
-        let deploy_envelope = api
-            .release_deploy_broadcast_flow(
-                config,
-                cli_args,
-                &project_ref,
-                &release_id,
-                self.broadcast_args(&signer),
+            let data = json!({
+                "outcome": if resumed { "resumed_and_deployed" } else { "released_and_deployed" },
+                "project_id": project_id,
+                "project_created": project_created,
+                "protocol_manager": { "action": manager_action, "address": wallet_address },
+                "release": {
+                    "id": release_id,
+                    "release_number": release_number,
+                    "resumed": resumed,
+                },
+                "checks": check_state,
+                "deploy": deploy_data,
+                "warnings": spec_warnings,
+            });
+            #[cfg(feature = "credible")]
+            let data = {
+                let mut data = data;
+                insert_field(&mut data, "verification", json!(verification));
+                data
+            };
+            Self::finish(
+                output_mode,
+                data,
+                vec![
+                    format!("pcl releases show {project_id} {release_id}"),
+                    format!("pcl deployments --project {project_id}"),
+                ],
             )
-            .await?;
-        let deploy_data = deploy_envelope.get("data").cloned().unwrap_or(Value::Null);
+        }
+        .await;
 
-        let data = json!({
-            "outcome": if resumed { "resumed_and_deployed" } else { "released_and_deployed" },
-            "project_id": project_id,
-            "project_created": project_created,
-            "protocol_manager": { "action": manager_action, "address": wallet_address },
-            "release": {
-                "id": release_id,
-                "release_number": release_number,
-                "resumed": resumed,
-            },
-            "checks": check_state,
-            "deploy": deploy_data,
-        });
-        #[cfg(feature = "credible")]
-        let data = {
-            let mut data = data;
-            insert_field(&mut data, "verification", json!(verification));
-            data
-        };
-        Self::finish(
-            output_mode,
-            data,
-            vec![
-                format!("pcl releases show {project_id} {release_id}"),
-                format!("pcl deployments --project {project_id}"),
-            ],
-        )
+        result.map_err(|source| attach_warnings(source, warnings_for_errors))
     }
 
     /// Resolves a surviving create intent against the platform: returns the
@@ -1378,11 +1444,40 @@ impl DeployArgs {
         }
     }
 
+    /// The V2-spec mismatch warning for this run, in the machine-output form
+    /// carried by the result envelope. Empty when the target platform runs V2
+    /// or the assertions do not use it.
+    ///
+    /// `print_now` prints it for humans immediately, before anything is
+    /// mutated. The terminal output prints it again from the payload, so a run
+    /// that mutates nothing (`--dry-run`) passes `false` and reports once.
+    fn spec_warnings(
+        &self,
+        print_now: bool,
+        chain_id: Option<u64>,
+        findings: &[V2SpecFinding],
+    ) -> Vec<Value> {
+        let Some(message) = assertion_spec::deploy_warning(&self.api_url, chain_id, findings)
+        else {
+            return Vec::new();
+        };
+        if print_now {
+            print_warning(&message);
+        }
+        vec![assertion_spec::warning_json(
+            &message,
+            &self.api_url,
+            chain_id,
+            findings,
+        )]
+    }
+
     fn dry_run_plan(
         credible: &CredibleToml,
         root: &Path,
         output_mode: OutputMode,
         signer: Option<&alloy_signer_local::PrivateKeySigner>,
+        warnings: &[Value],
     ) -> Result<Value, DeployError> {
         let (payload, verification_inputs) = ApplyArgs::build_payload(credible, root)?;
         #[cfg(feature = "credible")]
@@ -1397,6 +1492,7 @@ impl DeployArgs {
             "would_create_project": credible.project_id.is_none(),
             "wallet_address": signer.map(|s| s.address().to_string()),
             "payload": payload,
+            "warnings": warnings,
         });
         #[cfg(feature = "credible")]
         let data = {
@@ -1412,6 +1508,7 @@ impl DeployArgs {
             println!(
                 "Dry run complete. Built and verified the release payload; no project or release was created."
             );
+            print_human_warnings(&data);
             return Ok(());
         }
         let envelope = ok_envelope(data, vec!["pcl deploy --yes".to_string()]);
@@ -1449,6 +1546,9 @@ impl DeployArgs {
             for action in &next_actions {
                 println!("  next:    {action}");
             }
+            // Repeated at the end: the same warning was printed before the
+            // release existed, far enough back to have scrolled away.
+            print_human_warnings(&data);
             return Ok(());
         }
         let envelope = ok_envelope(data, next_actions);
@@ -1470,6 +1570,72 @@ mod tests {
 
     const WALLET: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     const OTHER: Address = address!("0101010101010101010101010101010101010101");
+
+    /// `--api-url` is the target platform, so it decides whether V2 assertions
+    /// are supported; machine output carries the warning in the envelope.
+    #[test]
+    fn spec_warnings_follow_the_target_platform_and_chain() {
+        use clap::Parser as _;
+
+        let deploy = |api_url: &str| {
+            DeployArgs::try_parse_from(["deploy", "--api-url", api_url]).expect("parse deploy args")
+        };
+        let findings = [V2SpecFinding {
+            file: "assertions/src/V2.a.sol".to_string(),
+            markers: vec!["registerTxEndTrigger".to_string()],
+        }];
+
+        let production = deploy("https://app.phylax.systems");
+        let warnings = production.spec_warnings(false, Some(8453), &findings);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(
+            warnings[0]["code"],
+            crate::assertion_spec::V2_SPEC_UNSUPPORTED_CODE
+        );
+        assert_eq!(warnings[0]["files"][0]["file"], "assertions/src/V2.a.sol");
+
+        // A Linea chain warns even when the platform is not production.
+        let custom = deploy("https://custom.phylax.example");
+        assert_eq!(
+            custom
+                .spec_warnings(
+                    false,
+                    Some(crate::assertion_spec::LINEA_MAINNET_CHAIN_ID),
+                    &findings
+                )
+                .len(),
+            1
+        );
+
+        // V2-capable target, or no V2 usage: nothing to warn about.
+        assert!(
+            custom
+                .spec_warnings(false, Some(8453), &findings)
+                .is_empty()
+        );
+        assert!(production.spec_warnings(false, Some(8453), &[]).is_empty());
+    }
+
+    #[test]
+    fn errors_are_only_wrapped_when_warnings_exist() {
+        assert!(matches!(
+            attach_warnings(DeployError::Cancelled, Vec::new()),
+            DeployError::Cancelled
+        ));
+
+        let warning = json!({
+            "code": crate::assertion_spec::V2_SPEC_UNSUPPORTED_CODE,
+            "message": "production runs V1",
+        });
+        let error = attach_warnings(DeployError::Cancelled, vec![warning.clone()]);
+        match error {
+            DeployError::WithWarnings { source, warnings } => {
+                assert!(matches!(*source, DeployError::Cancelled));
+                assert_eq!(warnings, vec![warning]);
+            }
+            other => panic!("expected warning wrapper, got {other:?}"),
+        }
+    }
 
     #[test]
     fn manager_step_decision_table() {

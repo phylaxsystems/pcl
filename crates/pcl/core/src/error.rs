@@ -123,6 +123,13 @@ pub enum VerifyError {
 /// Errors that can occur during the end-to-end `pcl deploy` orchestration.
 #[derive(Error, Debug)]
 pub enum DeployError {
+    #[error("{source}")]
+    WithWarnings {
+        #[source]
+        source: Box<DeployError>,
+        warnings: Vec<serde_json::Value>,
+    },
+
     #[error(transparent)]
     Apply(#[from] ApplyError),
 

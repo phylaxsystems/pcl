@@ -7,6 +7,7 @@
 pub mod abi;
 pub mod api;
 pub mod apply;
+pub mod assertion_spec;
 pub mod auth;
 pub mod client;
 pub mod config;

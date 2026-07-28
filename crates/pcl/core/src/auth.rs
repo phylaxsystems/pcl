@@ -6,6 +6,7 @@ use crate::{
         request_id_from_headers,
         with_envelope_metadata,
     },
+    assertion_spec,
     config::{
         AUTH_EXPIRES_SOON_SECONDS,
         CliConfig,
@@ -437,6 +438,42 @@ impl AuthCommand {
         )
     }
 
+    /// The assertion-spec notice for the platform being logged in to: the
+    /// production platform runs the V1 spec, so assertions must not be written
+    /// against V2 there. Advice, not a finding — no project is in scope yet.
+    fn v2_spec_notice(&self) -> Option<String> {
+        assertion_spec::login_notice(&self.effective_auth_url())
+    }
+
+    /// Attaches the assertion-spec notice to a login envelope so machine
+    /// callers see it in the same envelope as the login result.
+    fn with_v2_spec_warning(&self, mut envelope: Value) -> Value {
+        let Some(message) = self.v2_spec_notice() else {
+            return envelope;
+        };
+        if let Some(object) = envelope.as_object_mut() {
+            object.insert(
+                "warnings".to_string(),
+                json!([assertion_spec::login_warning_json(
+                    &message,
+                    &self.effective_auth_url()
+                )]),
+            );
+        }
+        envelope
+    }
+
+    /// Prints the assertion-spec notice for humans; machine output carries it
+    /// in the envelope instead.
+    fn print_v2_spec_notice(&self, json_output: bool) {
+        if json_output || current_output_mode() != OutputMode::Human {
+            return;
+        }
+        if let Some(message) = self.v2_spec_notice() {
+            eprintln!("{} {message}", "Warning:".yellow().bold());
+        }
+    }
+
     /// Initiate the login process and wait for user authentication
     async fn login(
         &self,
@@ -452,7 +489,11 @@ impl AuthCommand {
         let mut expired_auth = None;
         if let Some(auth) = &config.auth {
             if auth.expires_at > chrono::Utc::now() && !force {
-                Self::print_output(&self.status_envelope(config), json_output)?;
+                Self::print_output(
+                    &self.with_v2_spec_warning(self.status_envelope(config)),
+                    json_output,
+                )?;
+                self.print_v2_spec_notice(json_output);
                 return Ok(());
             }
             if auth.expires_at <= chrono::Utc::now() {
@@ -474,7 +515,7 @@ impl AuthCommand {
         let auth_response = Self::request_auth_code(&client).await?;
         if no_wait {
             Self::print_output(
-                &self.login_challenge_envelope(
+                &self.with_v2_spec_warning(self.login_challenge_envelope(
                     &auth_response,
                     if force {
                         AuthChallengeReason::Forced
@@ -482,9 +523,10 @@ impl AuthCommand {
                         auth_challenge_reason(config, false)
                     },
                     json_output,
-                ),
+                )),
                 json_output,
             )?;
+            self.print_v2_spec_notice(json_output);
             return Ok(());
         }
         if json_output {
@@ -493,7 +535,7 @@ impl AuthCommand {
             )?;
             self.wait_for_verification(config, &client, &auth_response, true)
                 .await?;
-            let mut output = self.status_envelope(config);
+            let mut output = self.with_v2_spec_warning(self.status_envelope(config));
             if let Some(object) = output.as_object_mut() {
                 object.insert("event".to_string(), json!("auth.login_complete"));
                 object.insert("terminal".to_string(), json!(true));
@@ -505,7 +547,9 @@ impl AuthCommand {
 
         self.display_login_instructions(&auth_response);
         self.wait_for_verification(config, &client, &auth_response, json_output)
-            .await
+            .await?;
+        self.print_v2_spec_notice(json_output);
+        Ok(())
     }
 
     // Helper to create a new API client with the base URL set
@@ -824,12 +868,13 @@ impl AuthCommand {
                 expires_at.unwrap_or_else(default_poll_fallback_expires_at),
             )?;
             self.remember_platform_url(config);
-            let mut output = self.status_envelope(config);
+            let mut output = self.with_v2_spec_warning(self.status_envelope(config));
             if let Some(object) = output.as_object_mut() {
                 object.insert("event".to_string(), json!("auth.login_complete"));
                 object.insert("terminal".to_string(), json!(true));
             }
             Self::print_output(&output, json_output)?;
+            self.print_v2_spec_notice(json_output);
             return Ok(());
         }
 
@@ -1662,6 +1707,40 @@ mod tests {
         };
         cmd.remember_platform_url(&mut config);
         assert!(config.platform_url.is_none());
+    }
+
+    #[test]
+    fn login_warns_about_the_v2_spec_only_on_a_v1_platform() {
+        let login = |auth_url: &str| {
+            AuthCommand {
+                command: AuthSubcommands::Login {
+                    force: false,
+                    no_wait: false,
+                },
+                auth_url: Some(auth_url.parse().unwrap()),
+            }
+        };
+
+        let production = login(DEFAULT_PLATFORM_URL);
+        let notice = production.v2_spec_notice().expect("notice on production");
+        assert!(notice.contains("V1 assertion spec"), "{notice}");
+
+        // Machine callers get the same notice in the login envelope.
+        let envelope = production.with_v2_spec_warning(json!({"status": "ok"}));
+        assert_eq!(
+            envelope["warnings"][0]["code"],
+            crate::assertion_spec::V2_SPEC_UNSUPPORTED_CODE
+        );
+        assert_eq!(envelope["warnings"][0]["assertion_spec"], "v1");
+
+        let custom = login("https://custom.phylax.example");
+        assert!(custom.v2_spec_notice().is_none());
+        assert!(
+            custom
+                .with_v2_spec_warning(json!({"status": "ok"}))
+                .get("warnings")
+                .is_none()
+        );
     }
 
     #[test]
