@@ -161,7 +161,7 @@ jobs:
       binary-name: pcl
       version: ${{ needs.create-tag.outputs.version }}
       artifact_name: pcl-binaries-${{ needs.create-tag.outputs.version }}
-      rust-channel: "nightly-2026-01-07"
+      rust-channel: "nightly-2026-07-28"
       package: "pcl"
       cargo-features: "full"
       enable-sccache: true
