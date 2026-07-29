@@ -114,7 +114,7 @@ fn render_added(out: &mut String, label: &str, entry: &ContractDiffEntry) {
         out,
         "  {} contract \"{name}\" ({})",
         "+".green(),
-        &*entry.address,
+        *entry.address,
     )
     .unwrap();
     for a in &entry.assertions {
@@ -131,7 +131,7 @@ fn render_removed(out: &mut String, label: &str, entry: &ContractDiffEntry) {
         out,
         "  {} contract \"{name}\" ({})",
         "-".red(),
-        &*entry.address,
+        *entry.address,
     )
     .unwrap();
     for a in &entry.assertions {
@@ -148,7 +148,7 @@ fn render_modified(out: &mut String, label: &str, entry: &ContractDiffEntry) {
         out,
         "  {} contract \"{name}\" ({})",
         "~".yellow(),
-        &*entry.address,
+        *entry.address,
     )
     .unwrap();
 
@@ -162,7 +162,7 @@ fn render_modified(out: &mut String, label: &str, entry: &ContractDiffEntry) {
             writeln!(
                 out,
                 "      address: {} \u{2192} {}",
-                &*addr_change.from, &*addr_change.to,
+                *addr_change.from, *addr_change.to,
             )
             .unwrap();
         }

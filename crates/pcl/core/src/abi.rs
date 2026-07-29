@@ -26,7 +26,7 @@ pub enum ConstructorAbiError {
     UnsupportedType {
         ty: String,
         #[source]
-        source: alloy_dyn_abi::Error,
+        source: Box<alloy_dyn_abi::Error>,
     },
 
     #[error("failed to parse constructor arg '{arg}' as {ty}: {source}")]
@@ -34,7 +34,7 @@ pub enum ConstructorAbiError {
         arg: String,
         ty: String,
         #[source]
-        source: alloy_dyn_abi::Error,
+        source: Box<alloy_dyn_abi::Error>,
     },
 
     #[error("constructor args ABI encode failed: {0}")]
@@ -88,14 +88,14 @@ pub fn encode_args(abi: &JsonAbi, args: &[String]) -> Result<Vec<u8>, Constructo
             let sol_type = param.resolve().map_err(|e| {
                 ConstructorAbiError::UnsupportedType {
                     ty: param.selector_type().into_owned(),
-                    source: e,
+                    source: Box::new(e),
                 }
             })?;
             sol_type.coerce_str(arg).map_err(|e| {
                 ConstructorAbiError::CoerceFailure {
                     arg: arg.clone(),
                     ty: param.selector_type().into_owned(),
-                    source: e,
+                    source: Box::new(e),
                 }
             })
         })

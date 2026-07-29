@@ -74,7 +74,7 @@ const INITIAL_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Maximum interval between authentication status checks.
 const MAX_POLL_INTERVAL: Duration = Duration::from_secs(10);
 /// Overall polling budget, matching the previous 150 x 2s behavior.
-const POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const POLL_TIMEOUT: Duration = Duration::from_mins(5);
 /// Maximum time to wait for another local CLI process to finish rotating auth.
 const REFRESH_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 /// Poll interval while waiting on the local refresh lock.
