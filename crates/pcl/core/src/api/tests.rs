@@ -31,7 +31,7 @@ fn test_request_log_path() -> &'static Path {
 fn test_api(api_url: impl AsRef<str>, allow_unauthenticated: bool) -> ApiArgs {
     ApiArgs {
         command: ApiCommand::Manifest,
-        api_url: api_url.as_ref().parse().unwrap(),
+        api_url: Some(api_url.as_ref().parse().unwrap()),
         allow_unauthenticated,
         refresh_after_401: Cell::new(true),
     }

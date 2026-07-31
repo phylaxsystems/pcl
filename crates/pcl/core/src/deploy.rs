@@ -105,10 +105,9 @@ pub struct DeployArgs {
         long = "api-url",
         env = "PCL_API_URL",
         value_hint = ValueHint::Url,
-        default_value = crate::config::default_platform_url(),
-        help = "Base URL for the platform API. Defaults to the URL remembered from the last login, then production"
+        help = "Base URL for the platform API. Defaults to the platform remembered from the last login or network selection"
     )]
-    pub api_url: Url,
+    pub api_url: Option<Url>,
 
     #[command(flatten)]
     pub wallet: WalletArgs,
@@ -855,6 +854,12 @@ fn attach_warnings(source: DeployError, warnings: Vec<Value>) -> DeployError {
 }
 
 impl DeployArgs {
+    /// Platform URL for this run: the explicit `-u`/`PCL_API_URL` value when
+    /// given, otherwise the platform resolved during startup.
+    fn resolved_api_url(&self) -> Url {
+        crate::platform::platform_url_or_active(self.api_url.as_ref())
+    }
+
     #[allow(clippy::too_many_lines)]
     pub async fn run(&self, cli_args: &CliArgs, config: &mut CliConfig) -> Result<(), DeployError> {
         let output_mode = cli_args.output_mode();
@@ -893,8 +898,8 @@ impl DeployArgs {
         // Past the dry-run return a signer was always resolved above.
         let signer = signer.ok_or(crate::wallet::WalletError::NoWallet)?;
 
-        let api = ApiArgs::headless(self.api_url.clone());
-        ApplyArgs::ensure_fresh_auth(config, cli_args, &self.api_url).await?;
+        let api = ApiArgs::headless(self.resolved_api_url());
+        ApplyArgs::ensure_fresh_auth(config, cli_args, &self.resolved_api_url()).await?;
 
         // Warn before step 1: creating a project POSTs and rewrites
         // credible.toml, so a warning printed after it would arrive once
@@ -991,7 +996,7 @@ impl DeployArgs {
                     &CreateIntent {
                         project_name: name.clone(),
                         chain_id,
-                        platform_url: self.api_url.as_str().trim_end_matches('/').to_string(),
+                        platform_url: crate::platform::trim_platform_url(&self.resolved_api_url()),
                     },
                 )?;
                 progress(
@@ -1216,7 +1221,7 @@ impl DeployArgs {
                 ReleaseStep::Create => {
                     if human {
                         print!("{}", preview.render_plan());
-                        if !self.yes && !confirm_apply()? {
+                        if !self.yes && !confirm_apply(&self.resolved_api_url())? {
                             return Err(DeployError::Cancelled);
                         }
                     }
@@ -1301,7 +1306,7 @@ impl DeployArgs {
         intent_path: &Path,
         human: bool,
     ) -> Result<(Uuid, Value), DeployError> {
-        let requested = self.api_url.as_str().trim_end_matches('/').to_string();
+        let requested = crate::platform::trim_platform_url(&self.resolved_api_url());
         if intent.platform_url != requested {
             // The unresolved create belongs to another platform; matching
             // this platform's projects against it proves nothing.
@@ -1383,7 +1388,7 @@ impl DeployArgs {
         &self,
         config: &CliConfig,
     ) -> Result<dapp_api_client::generated::client::Client, DeployError> {
-        crate::client::authenticated_client(config, &self.api_url)
+        crate::client::authenticated_client(config, &self.resolved_api_url())
             .map_err(crate::apply::client_error_to_apply)
             .map_err(DeployError::Apply)
     }
@@ -1457,7 +1462,8 @@ impl DeployArgs {
         chain_id: Option<u64>,
         findings: &[V2SpecFinding],
     ) -> Vec<Value> {
-        let Some(message) = assertion_spec::deploy_warning(&self.api_url, chain_id, findings)
+        let Some(message) =
+            assertion_spec::deploy_warning(&self.resolved_api_url(), chain_id, findings)
         else {
             return Vec::new();
         };
@@ -1466,7 +1472,7 @@ impl DeployArgs {
         }
         vec![assertion_spec::warning_json(
             &message,
-            &self.api_url,
+            &self.resolved_api_url(),
             chain_id,
             findings,
         )]

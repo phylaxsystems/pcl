@@ -18,11 +18,9 @@ pub mod download;
 pub mod error;
 pub mod onchain;
 pub mod output;
+pub mod platform;
 pub mod request_log;
 pub mod surface;
 #[cfg(feature = "credible")]
 pub mod verify;
 pub mod wallet;
-
-/// Default platform url. URL suffixes added on demand.
-pub const DEFAULT_PLATFORM_URL: &str = "https://app.phylax.systems";

@@ -68,6 +68,9 @@ pub enum ApplyError {
     #[error("Apply cancelled")]
     ApplyCancelled,
 
+    #[error(transparent)]
+    Platform(#[from] PlatformError),
+
     #[error("JSON mode with pending changes requires `--yes`")]
     JsonConfirmationRequiresYes,
 
@@ -292,6 +295,22 @@ pub enum ConfigError {
     /// Error when a config value supplied on the command line is invalid
     #[error("Invalid config value: {0}")]
     InvalidValue(String),
+}
+
+/// Errors that can occur while resolving which platform to talk to.
+#[derive(Error, Debug)]
+pub enum PlatformError {
+    /// Nothing resolved a platform and there is no terminal to choose one on.
+    /// `pcl` has no compiled-in default, so this is a hard stop rather than a
+    /// silent fallback to a host that may no longer serve the dApp.
+    #[error(
+        "No platform selected. Pass `-u <url>` or set `PCL_API_URL`, or run `pcl auth login` from a terminal to choose one. Production networks: {networks}"
+    )]
+    NoPlatformResolved { networks: String },
+
+    /// The interactive network selector was cancelled or failed.
+    #[error("Network selection failed: {0}")]
+    SelectionFailed(#[source] inquire::InquireError),
 }
 
 /// Errors that can occur during authentication operations

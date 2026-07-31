@@ -15,7 +15,6 @@ use pcl_core::deploy::DeployArgs;
 #[cfg(feature = "credible")]
 use pcl_core::verify::VerifyArgs;
 use pcl_core::{
-    DEFAULT_PLATFORM_URL,
     api::{
         AccessCommand,
         AccountCommand,
@@ -35,6 +34,7 @@ use pcl_core::{
     auth::AuthCommand,
     config::ConfigArgs,
     download::DownloadArgs,
+    platform::Url,
     surface::{
         ArtifactsArgs,
         DoctorArgs,
@@ -57,12 +57,13 @@ fn version_message() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION
         .get_or_init(|| {
+            // No "Default Platform URL" line: there is no compiled-in default
+            // platform to report.
             format!(
-                "{}\nCommit: {}\nBuild Timestamp: {}\nDefault Platform URL: {}",
+                "{}\nCommit: {}\nBuild Timestamp: {}",
                 env!("CARGO_PKG_VERSION"),
                 env!("VERGEN_GIT_SHA"),
                 env!("VERGEN_BUILD_TIMESTAMP"),
-                DEFAULT_PLATFORM_URL,
             )
         })
         .as_str()
@@ -182,6 +183,91 @@ impl Commands {
     pub fn should_force_config_write(&self) -> bool {
         matches!(self, Self::Config(config) if config.should_force_config_write())
             || matches!(self, Self::Auth(auth) if auth.should_force_config_write())
+    }
+
+    /// Whether an explicit `-u`/`--auth-url` should update the remembered
+    /// platform. Only `pcl auth login` moves the user's platform; on every
+    /// other command `-u` is a one-shot override.
+    pub fn should_persist_platform_url(&self) -> bool {
+        matches!(self, Self::Auth(auth) if auth.persists_platform_url())
+    }
+
+    /// Whether this command talks to a platform and therefore needs one
+    /// resolved before dispatch.
+    ///
+    /// Written as an exclusion list so a newly added command resolves a
+    /// platform by default: resolving one that goes unused is harmless, while
+    /// failing to resolve one that is needed is not.
+    pub fn needs_platform_url(&self) -> bool {
+        !self.is_platform_independent()
+    }
+
+    /// Commands that run entirely against local state — the build toolchain,
+    /// on-disk config, or static metadata — and must never prompt for a
+    /// network.
+    fn is_platform_independent(&self) -> bool {
+        // `auth status` reads local config only, and `doctor --offline`
+        // deliberately makes no network calls.
+        #[cfg(feature = "credible")]
+        if matches!(self, Self::Apply(apply) if !apply.needs_platform_url()) {
+            return true;
+        }
+        if matches!(self, Self::Auth(auth) if !auth.needs_platform_url())
+            || matches!(self, Self::Doctor(doctor) if doctor.is_offline())
+            || matches!(self, Self::Api(api) if !api.needs_platform_url())
+        {
+            return true;
+        }
+        match self {
+            #[cfg(feature = "credible")]
+            Self::Test(_) | Self::Verify(_) => true,
+            Self::Build(_)
+            | Self::Config(_)
+            | Self::Whoami(_)
+            | Self::Workflows(_)
+            | Self::Artifacts(_)
+            | Self::Requests(_)
+            | Self::Schema(_)
+            | Self::Llms(_)
+            | Self::Jobs(_)
+            | Self::Completions(_) => true,
+            _ => false,
+        }
+    }
+
+    /// The explicit `-u`/`--api-url`/`--auth-url` (or `PCL_*` env) value for
+    /// this command, when one was given. An explicit value short-circuits
+    /// platform resolution, so no prompt or error is needed.
+    pub fn platform_url_flag(&self) -> Option<Url> {
+        // `auth` resolves its own precedence (PCL_AUTH_URL then PCL_API_URL),
+        // so it returns an owned URL rather than a borrow of a parsed field.
+        if let Self::Auth(auth) = self {
+            return auth.platform_url_flag();
+        }
+        let flag = match self {
+            #[cfg(feature = "credible")]
+            Self::Apply(apply) => apply.api_url.as_ref(),
+            #[cfg(feature = "credible")]
+            Self::Deploy(deploy) => deploy.api_url.as_ref(),
+            Self::Api(api) => api.platform_url_flag(),
+            Self::Download(download) => download.api_url.as_ref(),
+            Self::Doctor(doctor) => doctor.platform_url_flag(),
+            Self::Export(export) => export.platform_url_flag(),
+            Self::Incidents(command) => command.platform_url_flag(),
+            Self::Projects(command) => command.platform_url_flag(),
+            Self::Assertions(command) => command.platform_url_flag(),
+            Self::Search(command) => command.platform_url_flag(),
+            Self::Account(command) => command.platform_url_flag(),
+            Self::Contracts(command) => command.platform_url_flag(),
+            Self::Releases(command) => command.platform_url_flag(),
+            Self::Deployments(command) => command.platform_url_flag(),
+            Self::Access(command) => command.platform_url_flag(),
+            Self::Integrations(command) => command.platform_url_flag(),
+            Self::ProtocolManager(command) => command.platform_url_flag(),
+            Self::Events(command) => command.platform_url_flag(),
+            _ => None,
+        };
+        flag.cloned()
     }
 }
 

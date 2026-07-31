@@ -6,12 +6,19 @@
 
 use std::process::Command;
 
+/// Passed explicitly because there is no default platform: without `-u` these
+/// runs would fail on platform resolution before reaching the deploy error
+/// under test.
+const TEST_PLATFORM_URL: &str = "https://linea.phylax.systems";
+
 fn run_deploy(config_dir: &std::path::Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_pcl"))
         .arg("--config-dir")
         .arg(config_dir)
         .arg("--json")
         .arg("deploy")
+        .arg("--api-url")
+        .arg(TEST_PLATFORM_URL)
         .args(args)
         .output()
         .expect("run pcl deploy")

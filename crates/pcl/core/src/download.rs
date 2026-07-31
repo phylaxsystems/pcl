@@ -62,10 +62,17 @@ pub struct DownloadArgs {
         long = "api-url",
         env = "PCL_API_URL",
         value_hint = clap::ValueHint::Url,
-        default_value = crate::config::default_platform_url(),
-        help = "Base URL for the platform API. Defaults to the URL remembered from the last login"
+        help = "Base URL for the platform API. Defaults to the platform remembered from the last login or network selection"
     )]
-    pub api_url: url::Url,
+    pub api_url: Option<url::Url>,
+}
+
+impl DownloadArgs {
+    /// Platform URL for this run: the explicit `-u`/`PCL_API_URL` value when
+    /// given, otherwise the platform resolved during startup.
+    fn resolved_api_url(&self) -> url::Url {
+        crate::platform::platform_url_or_active(self.api_url.as_ref())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -137,7 +144,7 @@ impl DownloadArgs {
     ) -> Result<(), DownloadError> {
         let output_mode = cli_args.output_mode();
 
-        ensure_fresh_auth(config, &self.api_url, cli_args)
+        ensure_fresh_auth(config, &self.resolved_api_url(), cli_args)
             .await
             .map_err(client_error_to_download)?;
         let client = self.build_client(config)?;
@@ -328,7 +335,7 @@ impl DownloadArgs {
     }
 
     fn build_client(&self, config: &CliConfig) -> Result<GeneratedClient, DownloadError> {
-        authenticated_client(config, &self.api_url).map_err(client_error_to_download)
+        authenticated_client(config, &self.resolved_api_url()).map_err(client_error_to_download)
     }
 
     async fn resolve_project(

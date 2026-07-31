@@ -160,11 +160,10 @@ pub struct ApiArgs {
     #[arg(
         long = "api-url",
         env = "PCL_API_URL",
-        default_value = crate::config::default_platform_url(),
         global = true,
-        help = "Base URL for the platform API. Defaults to the URL remembered from the last login"
+        help = "Base URL for the platform API. Defaults to the platform remembered from the last login or network selection"
     )]
-    api_url: url::Url,
+    api_url: Option<url::Url>,
 
     #[arg(
         long,
@@ -183,10 +182,28 @@ impl ApiArgs {
     pub(crate) fn headless(api_url: url::Url) -> Self {
         Self {
             command: ApiCommand::Manifest,
-            api_url,
+            api_url: Some(api_url),
             allow_unauthenticated: false,
             refresh_after_401: Cell::new(true),
         }
+    }
+
+    /// The explicit `--api-url`/`PCL_API_URL` value, when one was given.
+    pub fn platform_url_flag(&self) -> Option<&url::Url> {
+        self.api_url.as_ref()
+    }
+
+    /// Whether this `pcl api` subcommand reaches the platform. `manifest`
+    /// prints a static, compiled-in contract; every other subcommand either
+    /// fetches the `OpenAPI` spec or calls an endpoint.
+    pub fn needs_platform_url(&self) -> bool {
+        !matches!(self.command, ApiCommand::Manifest)
+    }
+
+    /// Platform URL for this run: the explicit `--api-url`/`PCL_API_URL` value
+    /// when given, otherwise the platform resolved during startup.
+    pub(in crate::api) fn resolved_api_url(&self) -> url::Url {
+        crate::platform::platform_url_or_active(self.api_url.as_ref())
     }
 
     /// Executes one workflow operation and returns the response body.
@@ -308,6 +325,12 @@ macro_rules! top_level_workflow_command {
         }
 
         impl $name {
+            /// The explicit `--api-url`/`PCL_API_URL` value, when one was
+            /// given. Startup uses this to skip platform resolution.
+            pub fn platform_url_flag(&self) -> Option<&url::Url> {
+                self.globals.platform_url_flag()
+            }
+
             pub async fn run(
                 self,
                 config: &mut CliConfig,
@@ -665,6 +688,11 @@ struct ProjectWriteArgs {
 }
 
 impl ProjectsCommand {
+    /// The explicit `--api-url`/`PCL_API_URL` value, when one was given.
+    pub fn platform_url_flag(&self) -> Option<&url::Url> {
+        self.globals.platform_url_flag()
+    }
+
     pub async fn run(
         self,
         config: &mut CliConfig,
@@ -1120,6 +1148,11 @@ struct ReleaseRemoveCalldataArgs {
 }
 
 impl ReleasesCommand {
+    /// The explicit `--api-url`/`PCL_API_URL` value, when one was given.
+    pub fn platform_url_flag(&self) -> Option<&url::Url> {
+        self.globals.platform_url_flag()
+    }
+
     pub async fn run(
         self,
         config: &mut CliConfig,
@@ -1383,6 +1416,11 @@ struct AccessMemberBodyArgs {
 }
 
 impl AccessCommand {
+    /// The explicit `--api-url`/`PCL_API_URL` value, when one was given.
+    pub fn platform_url_flag(&self) -> Option<&url::Url> {
+        self.globals.platform_url_flag()
+    }
+
     pub async fn run(
         self,
         config: &mut CliConfig,

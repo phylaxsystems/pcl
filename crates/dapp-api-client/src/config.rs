@@ -56,6 +56,14 @@ impl fmt::Display for Environment {
 
 impl Environment {
     /// Get the base URL for this environment
+    ///
+    /// Note: `pcl` does not use this. It builds its base URL from the platform
+    /// URL resolved for the invocation (see `pcl_core::client::api_base_url`),
+    /// because a compiled-in host pins one network into the binary and
+    /// `dapp.phylax.systems` answers with a 301 — and a redirected POST is
+    /// downgraded to GET by reqwest, silently dropping the request body. These
+    /// constants remain for the crate's standalone examples only; anything
+    /// issuing writes should derive its base URL from a resolved platform.
     pub fn base_url(&self) -> &'static str {
         match self {
             Environment::Development => "http://localhost:3000/api/v1",

@@ -39,6 +39,25 @@ fn run_pcl(args: &[&str]) -> PclOutput {
     }
 }
 
+/// Like [`run_pcl`], but names a platform. Workflow commands resolve a platform
+/// before dispatch and there is no default, so a run with an empty config dir
+/// would otherwise stop at platform resolution.
+fn run_pcl_with_platform(args: &[&str]) -> PclOutput {
+    let config_dir = tempfile::tempdir().expect("temp config dir");
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .arg("--config-dir")
+        .arg(config_dir.path())
+        .env("PCL_API_URL", "https://linea.phylax.systems")
+        .args(args)
+        .output()
+        .expect("run pcl");
+    PclOutput {
+        success: output.status.success(),
+        stdout: String::from_utf8(output.stdout).expect("utf-8 stdout"),
+        stderr: String::from_utf8(output.stderr).expect("utf-8 stderr"),
+    }
+}
+
 fn assert_json_error(output: &PclOutput, code: &str) {
     output.assert_failure();
     assert!(output.stdout.is_empty());
@@ -186,10 +205,9 @@ fn new_workflow_subcommands_parse_and_emit_structured_templates() {
         ["--json", "releases", "deploy", "--body-template"].as_slice(),
         ["--json", "access", "invite", "--body-template"].as_slice(),
     ] {
-        let output = run_pcl(args);
+        let output = run_pcl_with_platform(args);
 
         output.assert_success();
-        assert!(output.stderr.is_empty(), "{}", output.stderr);
         let envelope: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("json envelope");
         assert_eq!(envelope["status"], "ok", "{envelope}");

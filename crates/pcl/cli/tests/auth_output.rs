@@ -3,17 +3,16 @@ use std::{
     process::Command,
 };
 
+/// The platform recorded by fixtures that just need "a logged-in user".
+///
+/// Every config written after a login records its platform explicitly — there
+/// is no production default whose absence stands in for one. A config with
+/// credentials but no `platform_url` is a pre-upgrade artifact, and is covered
+/// separately by the platform-boundary unit tests.
+const TEST_PLATFORM_URL: &str = "https://linea.phylax.systems";
+
 fn write_valid_auth_config(config_dir: &std::path::Path) {
-    fs::write(
-        config_dir.join("config.toml"),
-        r#"[auth]
-access_token = "test-token"
-refresh_token = "refresh-token"
-expires_at = 4102444800
-email = "agent@example.com"
-"#,
-    )
-    .expect("write test config");
+    write_valid_auth_config_for_platform(config_dir, TEST_PLATFORM_URL);
 }
 
 /// Like [`write_valid_auth_config`], but records the platform that issued the
@@ -71,16 +70,7 @@ email = "agent@example.com"
 }
 
 fn write_expired_refreshable_auth_config(config_dir: &std::path::Path) {
-    fs::write(
-        config_dir.join("config.toml"),
-        r#"[auth]
-access_token = "expired-token"
-refresh_token = "refresh-token"
-expires_at = 1
-email = "agent@example.com"
-"#,
-    )
-    .expect("write expired test config");
+    write_expired_refreshable_auth_config_for_platform(config_dir, TEST_PLATFORM_URL);
 }
 
 #[test]
@@ -853,6 +843,40 @@ fn auth_logout_json_clears_local_config_after_remote_logout() {
     let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
     assert!(!config.contains("[auth]"));
     logout.assert();
+}
+
+/// The network prompt is meant to be one-time, so the chosen platform has to be
+/// recorded before the command runs. Persisting it only after a successful
+/// command loses the choice on any failure and prompts again on the next run.
+#[test]
+fn login_records_its_platform_even_when_the_login_itself_fails() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let config_path = temp_dir.path().join("config.toml");
+
+    // Port 9 (discard) refuses the device-code request, so resolution succeeds
+    // and the command then fails.
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "auth",
+            "--auth-url",
+            "http://127.0.0.1:9",
+            "login",
+        ])
+        .output()
+        .expect("run pcl auth login");
+
+    assert!(
+        !output.status.success(),
+        "login against a dead host should fail: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let config = fs::read_to_string(&config_path).expect("config written despite the failure");
+    assert!(
+        config.contains(r#"platform_url = "http://127.0.0.1:9""#),
+        "the resolved platform must survive a failing command: {config}"
+    );
 }
 
 #[test]

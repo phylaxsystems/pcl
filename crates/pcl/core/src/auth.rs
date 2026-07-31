@@ -1,5 +1,4 @@
 use crate::{
-    DEFAULT_PLATFORM_URL,
     api::{
         envelope_output_string,
         generated_operation_path,
@@ -225,26 +224,70 @@ impl AuthCommand {
         )
     }
 
-    fn effective_auth_url(&self) -> url::Url {
-        if let Some(auth_url) = &self.auth_url {
-            return auth_url.clone();
-        }
-        if let Ok(api_url) = std::env::var("PCL_API_URL")
-            && let Ok(parsed) = api_url.parse()
-        {
-            return parsed;
-        }
-        crate::config::default_platform_url()
-            .parse()
-            .expect("default platform URL is valid")
+    /// Only a login records the platform it targeted. `ensure`, `refresh`, and
+    /// `status` must not move the remembered platform, and `logout` clears it.
+    pub fn persists_platform_url(&self) -> bool {
+        matches!(self.command, AuthSubcommands::Login { .. })
     }
 
-    /// Remembers a custom login URL in the config so later commands default to
-    /// it, or clears the remembered URL when logging in against production.
+    /// The platform this subcommand talks to.
+    ///
+    /// Only reached by subcommands that need one, all of which get a platform
+    /// resolved at startup — see [`Self::needs_platform_url`].
+    fn effective_auth_url(&self) -> url::Url {
+        self.reportable_auth_url()
+            .expect("startup resolves a platform for every auth subcommand that needs one")
+    }
+
+    /// The explicitly requested platform: `--auth-url`/`PCL_AUTH_URL` (both
+    /// land in `auth_url`), then `PCL_API_URL`.
+    ///
+    /// Startup consults this to skip platform resolution, so the `PCL_API_URL`
+    /// fallback has to live here rather than only in the resolved lookup —
+    /// otherwise a run with only `PCL_API_URL` set would still prompt.
+    pub fn platform_url_flag(&self) -> Option<url::Url> {
+        if let Some(auth_url) = &self.auth_url {
+            return Some(auth_url.clone());
+        }
+        std::env::var("PCL_API_URL")
+            .ok()
+            .and_then(|api_url| api_url.parse().ok())
+    }
+
+    /// The platform for reporting, which may not exist yet.
+    ///
+    /// `pcl auth status` and `pcl auth logout --local` answer questions about
+    /// local credentials and must work before any platform has been chosen.
+    fn reportable_auth_url(&self) -> Option<url::Url> {
+        self.platform_url_flag()
+            .or_else(crate::platform::active_platform_opt)
+    }
+
+    /// Reported platform, or a marker when none has been chosen yet.
+    fn reported_platform_url(&self) -> Value {
+        self.reportable_auth_url()
+            .map_or(Value::Null, |url| json!(url.as_str()))
+    }
+
+    /// Whether this subcommand reaches the platform and therefore needs one
+    /// resolved before it runs. `status` reads only local config, and
+    /// `logout --local` deliberately skips the remote call.
+    pub fn needs_platform_url(&self) -> bool {
+        !matches!(
+            self.command,
+            AuthSubcommands::Status | AuthSubcommands::Logout { local: true }
+        )
+    }
+
+    /// Remembers the platform this login targeted so later commands resolve to
+    /// it without prompting.
+    ///
+    /// Every login records its platform explicitly — there is no production
+    /// default whose absence could stand in for one.
     fn remember_platform_url(&self, config: &mut CliConfig) {
-        let auth_url = self.effective_auth_url();
-        config.platform_url = (auth_url.as_str().trim_end_matches('/') != DEFAULT_PLATFORM_URL)
-            .then(|| auth_url.as_str().trim_end_matches('/').to_string());
+        config.platform_url = Some(crate::platform::trim_platform_url(
+            &self.effective_auth_url(),
+        ));
     }
 
     /// Returns true when the *resolved* auth URL (explicit flag, then
@@ -297,7 +340,7 @@ impl AuthCommand {
                         "status": "ok",
                         "data": {
                             "authenticated": false,
-                            "platform_url": self.effective_auth_url().as_str(),
+                            "platform_url": self.reported_platform_url(),
                             "local_credentials_removed": true,
                             "remote_logout": logout,
                         },
@@ -937,7 +980,7 @@ impl AuthCommand {
                 "success": null,
                 "mode": "local",
                 "reason": "platform_mismatch",
-                "credential_platform": credential_platform(config),
+                "credential_platform": credential_platform_label(config),
                 "requested_platform": self.effective_auth_url().as_str(),
             });
         }
@@ -1031,7 +1074,10 @@ impl AuthCommand {
             return Err(AuthError::StoredTokenExpired {
                 user: auth.display_name(),
                 expires_at: auth.expires_at,
-                platform_url: self.effective_auth_url().as_str().to_string(),
+                platform_url: self.reportable_auth_url().map_or_else(
+                    || "no platform selected".to_string(),
+                    |url| crate::platform::trim_platform_url(&url),
+                ),
             });
         }
 
@@ -1054,7 +1100,7 @@ impl AuthCommand {
                     "expired": false,
                     "seconds_remaining": null,
                     "expires_in_seconds": null,
-                    "platform_url": self.effective_auth_url().as_str(),
+                    "platform_url": self.reported_platform_url(),
                 },
                 "next_actions": ["pcl auth login"],
             }));
@@ -1086,7 +1132,7 @@ impl AuthCommand {
                 "expires_at": auth.expires_at.to_rfc3339(),
                 "seconds_remaining": seconds_remaining,
                 "expires_in_seconds": seconds_remaining,
-                "platform_url": self.effective_auth_url().as_str(),
+                "platform_url": self.reported_platform_url(),
             },
             "next_actions": if token_expired {
                 json!(["pcl auth refresh --json", "pcl auth login --force", "pcl auth logout"])
@@ -1117,13 +1163,22 @@ impl AuthCommand {
     }
 }
 
-/// The platform the stored credentials were issued by: the remembered custom
-/// platform, or production when none is recorded.
-fn credential_platform(config: &CliConfig) -> &str {
-    config
-        .platform_url
-        .as_deref()
-        .unwrap_or(DEFAULT_PLATFORM_URL)
+/// The platform the stored credentials were issued by, when one is recorded.
+///
+/// Credentials stored by an earlier `pcl` — which deliberately left the
+/// remembered platform empty for production logins — have no recorded
+/// platform. There is no longer a default to assume them into, so they belong
+/// to an unknown platform.
+fn credential_platform(config: &CliConfig) -> Option<&str> {
+    config.platform_url.as_deref()
+}
+
+/// Label for the credential platform in operator-facing output.
+fn credential_platform_label(config: &CliConfig) -> String {
+    credential_platform(config).map_or_else(
+        || "an unrecorded platform (logged in with an earlier pcl release)".to_string(),
+        ToString::to_string,
+    )
 }
 
 /// Core of the platform-boundary check (split from
@@ -1136,7 +1191,14 @@ fn platform_switch(resolved: &url::Url, config: &CliConfig) -> bool {
     if config.auth.is_none() {
         return false;
     }
-    resolved.as_str().trim_end_matches('/') != credential_platform(config).trim_end_matches('/')
+    let Some(credential_platform) = credential_platform(config) else {
+        // Credentials from an earlier release record no platform. Treating
+        // them as belonging to whatever the user just selected would send a
+        // token to a platform that did not issue it, so this counts as a
+        // switch and forces a one-time re-login.
+        return true;
+    };
+    resolved.as_str().trim_end_matches('/') != credential_platform.trim_end_matches('/')
 }
 
 /// Guard for any code about to attach stored credentials to — or refresh
@@ -1148,7 +1210,7 @@ pub fn ensure_credential_platform(config: &CliConfig, target: &url::Url) -> Resu
         return Ok(());
     }
     Err(AuthError::PlatformMismatch {
-        credential_platform: credential_platform(config).to_string(),
+        credential_platform: credential_platform_label(config),
         requested: target.as_str().trim_end_matches('/').to_string(),
     })
 }
@@ -1682,31 +1744,60 @@ mod tests {
     }
 
     #[test]
-    fn remember_platform_url_stores_custom_url_and_clears_default() {
-        let mut config = CliConfig::default();
-
-        let cmd = AuthCommand {
-            command: AuthSubcommands::Login {
-                force: false,
-                no_wait: false,
-            },
-            auth_url: Some("https://custom.phylax.example/".parse().unwrap()),
+    fn remember_platform_url_always_stores_the_login_platform() {
+        // With no production default there is no sentinel: every login records
+        // its platform explicitly, including the production networks, so a
+        // later command never has to guess.
+        let login_against = |url: &str| {
+            let mut config = CliConfig::default();
+            AuthCommand {
+                command: AuthSubcommands::Login {
+                    force: false,
+                    no_wait: false,
+                },
+                auth_url: Some(url.parse().expect("test URL parses")),
+            }
+            .remember_platform_url(&mut config);
+            config.platform_url
         };
-        cmd.remember_platform_url(&mut config);
+
         assert_eq!(
-            config.platform_url.as_deref(),
+            login_against("https://custom.phylax.example/").as_deref(),
             Some("https://custom.phylax.example")
         );
+        assert_eq!(
+            login_against("https://linea.phylax.systems").as_deref(),
+            Some("https://linea.phylax.systems")
+        );
+        assert_eq!(
+            login_against("https://ethereum.phylax.systems/").as_deref(),
+            Some("https://ethereum.phylax.systems")
+        );
+    }
 
-        let cmd = AuthCommand {
-            command: AuthSubcommands::Login {
-                force: false,
-                no_wait: false,
-            },
-            auth_url: Some(DEFAULT_PLATFORM_URL.parse().unwrap()),
+    #[test]
+    fn only_login_persists_the_platform() {
+        let subcommand_persists = |command: AuthSubcommands| {
+            AuthCommand {
+                command,
+                auth_url: None,
+            }
+            .persists_platform_url()
         };
-        cmd.remember_platform_url(&mut config);
-        assert!(config.platform_url.is_none());
+
+        assert!(subcommand_persists(AuthSubcommands::Login {
+            force: false,
+            no_wait: false,
+        }));
+        assert!(!subcommand_persists(AuthSubcommands::Refresh {
+            force: false
+        }));
+        assert!(!subcommand_persists(AuthSubcommands::Ensure {
+            force: false
+        }));
+        assert!(!subcommand_persists(AuthSubcommands::Logout {
+            local: false
+        }));
     }
 
     #[test]
@@ -1721,7 +1812,7 @@ mod tests {
             }
         };
 
-        let production = login(DEFAULT_PLATFORM_URL);
+        let production = login("https://app.phylax.systems");
         let notice = production.v2_spec_notice().expect("notice on production");
         assert!(notice.contains("V1 assertion spec"), "{notice}");
 
@@ -2263,7 +2354,10 @@ mod tests {
         assert_eq!(logout["attempted"], false);
         assert_eq!(logout["mode"], "local");
         assert_eq!(logout["reason"], "platform_mismatch");
-        assert_eq!(logout["credential_platform"], DEFAULT_PLATFORM_URL);
+        assert_eq!(
+            logout["credential_platform"],
+            "an unrecorded platform (logged in with an earlier pcl release)"
+        );
         mock.assert_async().await;
     }
 
@@ -2371,26 +2465,29 @@ mod tests {
 
         let mut config = create_test_config();
 
-        // No explicit URL resolves to the credential platform (production
-        // here, since unit-test builds never remember a platform).
-        assert!(!base_cmd(None).switching_platform(&config));
+        // Credentials stored by an earlier release record no platform. With no
+        // default to assume them into, any target counts as a switch and
+        // forces a one-time re-login.
+        assert!(base_cmd(Some("https://linea.phylax.systems")).switching_platform(&config));
+        assert!(base_cmd(Some("https://custom.phylax.example")).switching_platform(&config));
 
         // Explicit URL matching the credential platform does not switch.
         config.platform_url = Some("https://custom.phylax.example".to_string());
         assert!(!base_cmd(Some("https://custom.phylax.example/")).switching_platform(&config));
 
-        // Explicit URL for another platform (including back to production) switches.
+        // Explicit URL for any other platform switches.
         assert!(base_cmd(Some("https://other.phylax.example")).switching_platform(&config));
-        assert!(base_cmd(Some(DEFAULT_PLATFORM_URL)).switching_platform(&config));
+        assert!(base_cmd(Some("https://linea.phylax.systems")).switching_platform(&config));
 
-        // The check compares the *resolved* URL, so a default resolution that
-        // lands on production also switches away from custom credentials.
+        // With no explicit flag the resolved URL is the startup platform, so
+        // the boundary check follows that rather than a compiled-in default.
+        crate::platform::set_active_platform(
+            "https://linea.phylax.systems".parse().expect("test URL"),
+        );
         assert!(base_cmd(None).switching_platform(&config));
 
-        // Without a remembered platform, production is the current platform.
-        config.platform_url = None;
-        assert!(!base_cmd(Some(DEFAULT_PLATFORM_URL)).switching_platform(&config));
-        assert!(base_cmd(Some("https://custom.phylax.example")).switching_platform(&config));
+        config.platform_url = Some("https://linea.phylax.systems".to_string());
+        assert!(!base_cmd(None).switching_platform(&config));
     }
 
     #[test]
@@ -2410,6 +2507,39 @@ mod tests {
         assert!(!platform_switch(&resolved, &CliConfig::default()));
     }
 
+    #[test]
+    fn credentials_without_a_recorded_platform_always_count_as_switching() {
+        // The upgrade path: production logins under the old default were
+        // deliberately not remembered, so these credentials carry no platform.
+        // Trusting them against a freshly selected network would send a token
+        // to a platform that did not issue it.
+        let config = create_test_config();
+        assert!(config.platform_url.is_none());
+        assert!(config.auth.is_some());
+
+        for target in [
+            "https://linea.phylax.systems",
+            "https://ethereum.phylax.systems",
+            "https://app.phylax.systems",
+        ] {
+            let resolved: url::Url = target.parse().expect("test URL parses");
+            assert!(
+                platform_switch(&resolved, &config),
+                "unrecorded credentials must not be trusted against {target}"
+            );
+        }
+
+        let err = ensure_credential_platform(
+            &config,
+            &"https://linea.phylax.systems".parse().expect("test URL"),
+        )
+        .expect_err("unrecorded credentials are a platform mismatch");
+        assert!(
+            err.to_string().contains("earlier pcl release"),
+            "error should explain the upgrade path: {err}"
+        );
+    }
+
     #[tokio::test]
     async fn login_with_explicit_custom_url_starts_fresh_login_despite_valid_token() {
         let mut server = Server::new_async().await;
@@ -2420,8 +2550,9 @@ mod tests {
             .with_body(test_auth_response_json())
             .create();
 
-        // Token is still valid, but it belongs to production, not the
-        // explicitly requested platform: login must not short-circuit.
+        // Token is still valid, but records no platform of its own, so it does
+        // not belong to the explicitly requested one: login must not
+        // short-circuit.
         let mut config = create_test_config();
         let cmd = AuthCommand::try_parse_from(vec![
             "auth",
@@ -2462,11 +2593,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_login_when_already_authenticated() {
+        // The stored credentials must record the platform being logged into,
+        // or the platform-boundary check treats this as a switch and starts a
+        // real device-auth flow instead of short-circuiting.
         let mut config = create_test_config();
+        config.platform_url = Some("https://linea.phylax.systems".to_string());
         let cmd = AuthCommand::try_parse_from(vec![
             "auth",
             "--auth-url",
-            "https://app.phylax.systems",
+            "https://linea.phylax.systems",
             "login",
         ])
         .unwrap();

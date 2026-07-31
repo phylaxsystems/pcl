@@ -1,5 +1,4 @@
 use crate::{
-    DEFAULT_PLATFORM_URL,
     api::{
         envelope_output_string,
         with_envelope_metadata,
@@ -36,7 +35,6 @@ use std::{
         Path,
         PathBuf,
     },
-    sync::OnceLock,
 };
 use uuid::Uuid;
 
@@ -56,11 +54,14 @@ pub const AUTH_EXPIRES_SOON_SECONDS: i64 = 300;
 pub struct CliConfig {
     /// Optional authentication details
     pub auth: Option<UserAuth>,
-    /// Platform URL remembered from `pcl auth login --auth-url <url>`.
+    /// Platform URL remembered from the last `pcl auth login` or interactive
+    /// network selection.
     ///
-    /// Only set when the login URL differs from the production default, and
-    /// cleared on `pcl auth logout`. Used as the default for `--api-url` and
-    /// `--auth-url` so a custom platform only has to be specified once.
+    /// Always set explicitly once a platform has been chosen — there is no
+    /// production default to encode as an absent value — and cleared on
+    /// `pcl auth logout`. Resolution reads this after an explicit
+    /// `-u`/`PCL_API_URL` and before prompting, so a platform only has to be
+    /// chosen once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform_url: Option<String>,
     /// Per-chain RPC endpoints used when broadcasting transactions.
@@ -519,59 +520,6 @@ impl CliConfig {
                 .unwrap_or(Self::get_config_dir()),
         )
     }
-}
-
-/// Returns the platform URL remembered from the last `pcl auth login` against
-/// a custom platform, if any.
-///
-/// The value is read once per process from the config file on disk (honoring
-/// `--config-dir` from the process arguments) so it can be used as a clap
-/// `default_value` before the config is otherwise loaded. Unit-test builds
-/// always return `None` to keep parsing deterministic.
-pub fn remembered_platform_url() -> Option<&'static str> {
-    static REMEMBERED: OnceLock<Option<String>> = OnceLock::new();
-    REMEMBERED
-        .get_or_init(|| {
-            if cfg!(test) {
-                return None;
-            }
-            let config_dir =
-                config_dir_from_process_args().unwrap_or_else(CliConfig::get_config_dir);
-            CliConfig::read_from_file_at_dir(&config_dir)
-                .ok()?
-                .platform_url
-                .filter(|url| url.parse::<url::Url>().is_ok())
-        })
-        .as_deref()
-}
-
-/// Default platform URL for `--api-url`/`--auth-url` arguments: the URL
-/// remembered from the last `pcl auth login`, falling back to production.
-pub fn default_platform_url() -> &'static str {
-    remembered_platform_url().unwrap_or(DEFAULT_PLATFORM_URL)
-}
-
-/// Extracts `--config-dir <path>` (or `--config-dir=<path>`) from the process
-/// arguments without a full clap parse.
-fn config_dir_from_process_args() -> Option<PathBuf> {
-    config_dir_from_args(std::env::args_os().skip(1))
-}
-
-fn config_dir_from_args<I>(args: I) -> Option<PathBuf>
-where
-    I: IntoIterator<Item = std::ffi::OsString>,
-{
-    let mut iter = args.into_iter();
-    while let Some(arg) = iter.next() {
-        let value = arg.to_string_lossy();
-        if value == "--config-dir" {
-            return iter.next().map(PathBuf::from);
-        }
-        if let Some(path) = value.strip_prefix("--config-dir=") {
-            return Some(PathBuf::from(path.to_string()));
-        }
-    }
-    None
 }
 
 fn config_show_envelope(config: &CliConfig, cli_args: &CliArgs) -> Value {
@@ -1175,31 +1123,6 @@ expires_at = 1672502400
 
         let config = CliConfig::read_from_file_at_dir(&config_dir).unwrap();
         assert!(config.platform_url.is_none());
-    }
-
-    #[test]
-    fn extracts_config_dir_from_args() {
-        use std::ffi::OsString;
-
-        let args = ["--json", "--config-dir", "/tmp/pcl-conf", "auth"].map(OsString::from);
-        assert_eq!(
-            config_dir_from_args(args),
-            Some(PathBuf::from("/tmp/pcl-conf"))
-        );
-
-        let args = ["auth", "--config-dir=/tmp/pcl-conf2"].map(OsString::from);
-        assert_eq!(
-            config_dir_from_args(args),
-            Some(PathBuf::from("/tmp/pcl-conf2"))
-        );
-
-        let args = ["auth", "login"].map(OsString::from);
-        assert_eq!(config_dir_from_args(args), None);
-    }
-
-    #[test]
-    fn default_platform_url_falls_back_to_production_in_tests() {
-        assert_eq!(default_platform_url(), DEFAULT_PLATFORM_URL);
     }
 
     #[test]

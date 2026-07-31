@@ -52,6 +52,18 @@ pub async fn ensure_fresh_auth(
     validate_auth(config).map(|_| ())
 }
 
+/// Base URL for API calls against `api_url`.
+///
+/// Always derived from the resolved platform URL rather than a compiled-in
+/// host. `dapp.phylax.systems` answers with a 301, and reqwest — like most HTTP
+/// clients — downgrades a redirected POST to GET, so routing writes through a
+/// redirect chain would silently drop request bodies.
+pub fn api_base_url(api_url: &url::Url) -> String {
+    let mut base = api_url.clone();
+    base.set_path("/api/v1");
+    base.to_string()
+}
+
 pub fn authenticated_client(
     config: &CliConfig,
     api_url: &url::Url,
@@ -59,9 +71,7 @@ pub fn authenticated_client(
     // Never attach the stored bearer token to a platform that did not issue it.
     crate::auth::ensure_credential_platform(config, api_url)
         .map_err(ClientBuildError::PlatformMismatch)?;
-    let mut base = api_url.clone();
-    base.set_path("/api/v1");
-    let base_url = base.to_string();
+    let base_url = api_base_url(api_url);
 
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
@@ -104,6 +114,44 @@ mod tests {
     use super::*;
     use crate::config::UserAuth;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn api_base_url_follows_the_resolved_platform() {
+        for (platform, expected) in [
+            (
+                "https://linea.phylax.systems",
+                "https://linea.phylax.systems/api/v1",
+            ),
+            (
+                "https://ethereum.phylax.systems/",
+                "https://ethereum.phylax.systems/api/v1",
+            ),
+            (
+                "https://shadow.phylax.example",
+                "https://shadow.phylax.example/api/v1",
+            ),
+            ("http://localhost:3000", "http://localhost:3000/api/v1"),
+        ] {
+            let resolved: url::Url = platform.parse().expect("test URL parses");
+            assert_eq!(api_base_url(&resolved), expected);
+        }
+    }
+
+    #[test]
+    fn api_base_url_never_routes_through_the_redirecting_host() {
+        // `dapp.phylax.systems` 301s to the network selector, and a redirected
+        // POST is downgraded to GET — bodies would be dropped. Requests must
+        // go straight to the resolved platform.
+        for platform in [
+            "https://linea.phylax.systems",
+            "https://ethereum.phylax.systems",
+        ] {
+            let resolved: url::Url = platform.parse().expect("test URL parses");
+            let base = api_base_url(&resolved);
+            assert!(!base.contains("dapp.phylax.systems"), "{base}");
+            assert!(!base.contains("app.phylax.systems"), "{base}");
+        }
+    }
 
     #[tokio::test]
     async fn ensure_fresh_auth_refreshes_expired_token_before_header_use() {
