@@ -32,8 +32,16 @@ use pcl_core::{
         AuthError,
         ConfigError,
         DeployError,
+        PlatformError,
     },
     output::command_for_mode,
+    platform::{
+        Interaction,
+        Url,
+        describe_platform,
+        resolve_for_invocation,
+        set_active_platform,
+    },
     surface::ProductSurfaceError,
 };
 #[cfg(feature = "credible")]
@@ -117,13 +125,37 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         }
     };
-    let original_config = config.clone();
+    // Snapshot of what is on disk, taken before normalization so that rewriting
+    // a legacy short expiry counts as a change worth persisting.
+    let mut original_config = config.clone();
     config.normalize_auth_expiry_from_access_token();
-    let baseline_config = config.clone();
 
     let should_write_after_invalid_config = cli.command.should_write_after_invalid_config();
     let should_force_config_write = cli.command.should_force_config_write();
+    // Everything that can fail lives inside this block so a failure becomes one
+    // structured envelope. A config write that escaped it would print a
+    // color-eyre diagnostic instead, breaking the single-envelope contract that
+    // `--json` callers parse.
     let result = async {
+        let platform_recorded = establish_active_platform(&cli.command, &cli.args, &mut config)?;
+        // Persist a newly chosen platform before running the command. The
+        // prompt is meant to be one-time, and the choice is the user's
+        // regardless of whether the command then succeeds — deferring this to
+        // the post-command write loses it on any failure and prompts again on
+        // the next run.
+        //
+        // Only when the file on disk parsed. Writing now would replace an
+        // unreadable config with a default one before the repair command has
+        // produced anything, so a cancelled or failed repair would destroy
+        // recoverable credentials; that case is left to the post-command write.
+        if platform_recorded && read_valid_config {
+            config.merge_selected_platform(&cli.args).await?;
+            // The write below only fires when the file still matches this
+            // snapshot, so it has to reflect what was just written.
+            original_config = config.clone();
+        }
+
+        let baseline_config = config.clone();
         run_command(cli.command, &cli.args, &mut config, cli.args.json_output()).await?;
         let command_changed_config = config != baseline_config;
         let passive_config_changed = baseline_config != original_config;
@@ -136,6 +168,12 @@ async fn main() -> Result<()> {
             if read_valid_config && !force_config_write {
                 config.write_to_file_if_unchanged(&cli.args, &original_config)?;
             } else {
+                if !read_valid_config {
+                    // About to replace a file this run could not parse. Keep the
+                    // original bytes: they may still hold credentials or RPC
+                    // settings that can be recovered by hand.
+                    CliConfig::back_up_unreadable(&cli.args)?;
+                }
                 config.write_to_file(&cli.args)?;
             }
         }
@@ -204,6 +242,90 @@ async fn run_command(
     Ok(())
 }
 
+/// Resolves the platform for this invocation and records it so every argument
+/// accessor sees the same one.
+///
+/// Runs before dispatch, while `config` is still writable: a fresh selection is
+/// recorded here and persisted by the normal config-write path, which keeps the
+/// prompt one-time. Resolving once also gives every command a single place to
+/// announce its platform.
+///
+/// Exits with a structured envelope when nothing resolves — a non-interactive
+/// run with no platform cannot proceed, and must never hang on a prompt.
+///
+/// Returns whether a platform was recorded in `config` and therefore needs
+/// persisting.
+fn establish_active_platform(
+    command: &Commands,
+    cli_args: &CliArgs,
+    config: &mut CliConfig,
+) -> Result<bool> {
+    // A command that needs no platform still reports the one it would use when
+    // that is already known — `pcl doctor --offline` should name the platform it
+    // is diagnosing — but it must never prompt, and must not fail when nothing
+    // is configured.
+    let needs_platform = command.needs_platform_url();
+    let interaction = if needs_platform {
+        Interaction::detect(cli_args.json_output())
+    } else {
+        Interaction::Forbidden
+    };
+    let remembered_before = config.platform_url.clone();
+    match resolve_for_invocation(
+        command.platform_url_flag().as_ref(),
+        config,
+        command.should_persist_platform_url(),
+        interaction,
+    ) {
+        Ok(platform_url) => {
+            // Only a command that actually talks to the platform announces it:
+            // the line exists so a wrong network is noticed before it is acted
+            // on. Local-only commands that surface the platform do so in their
+            // own output, and must not prepend anything to an error.
+            if needs_platform {
+                announce_platform(&platform_url, cli_args.output_mode());
+            }
+            set_active_platform(platform_url);
+            Ok(config.platform_url != remembered_before)
+        }
+        // Nothing to report, and nothing this command needs.
+        Err(_) if !needs_platform => Ok(false),
+        Err(err) => {
+            let envelope = with_envelope_metadata(platform_error_envelope(&err));
+            eprint!("{}", envelope_output_string(&envelope, false)?);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Announces the platform every command is about to talk to, so a wrong
+/// network is caught by eye rather than by a prompt.
+///
+/// Goes to stderr: stdout carries command data, and a machine run must stay
+/// parseable.
+fn announce_platform(platform_url: &Url, output_mode: OutputMode) {
+    if output_mode == OutputMode::Human {
+        eprintln!("Using {}", describe_platform(platform_url));
+    }
+}
+
+fn platform_error_envelope(err: &PlatformError) -> Value {
+    let (code, next_actions): (&str, &[&str]) = match err {
+        PlatformError::NoPlatformResolved { .. } => {
+            (
+                "platform.not_selected",
+                &[
+                    "pcl auth login (choose a network interactively)",
+                    "pcl <command> -u https://linea.phylax.systems",
+                    "PCL_API_URL=https://linea.phylax.systems pcl <command>",
+                ],
+            )
+        }
+        PlatformError::SelectionFailed(_) => ("platform.selection_failed", &["pcl auth login"]),
+    };
+    simple_error_value(code, &err.to_string(), true, next_actions)
+}
+
 fn ensure_human_pass_through(
     cli_args: &CliArgs,
     command: &'static str,
@@ -231,6 +353,9 @@ fn error_envelope(err: &Report) -> Value {
     }
     if let Some(config_error) = err.downcast_ref::<ConfigError>() {
         return with_envelope_metadata(config_error_envelope(config_error));
+    }
+    if let Some(platform_error) = err.downcast_ref::<PlatformError>() {
+        return with_envelope_metadata(platform_error_envelope(platform_error));
     }
     if let Some(download_error) = err.downcast_ref::<DownloadError>() {
         return with_envelope_metadata(download_error_envelope(download_error));
@@ -341,6 +466,9 @@ fn apply_error_envelope(err: &ApplyError) -> Value {
             )
         }
         ApplyError::ApplyCancelled => ("apply.cancelled", err.to_string(), &["pcl apply --help"]),
+        ApplyError::Platform(platform_error) => {
+            return platform_error_envelope(platform_error);
+        }
         _ => {
             (
                 "apply.failed",
@@ -1050,6 +1178,7 @@ fn config_error_code(err: &ConfigError) -> &'static str {
         ConfigError::JsonError(_) => "config.json_failed",
         ConfigError::NotAuthenticated => "config.not_authenticated",
         ConfigError::InvalidValue(_) => "config.invalid_value",
+        ConfigError::LockTimeout => "config.lock_timeout",
     }
 }
 

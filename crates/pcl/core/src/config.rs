@@ -1,5 +1,4 @@
 use crate::{
-    DEFAULT_PLATFORM_URL,
     api::{
         envelope_output_string,
         with_envelope_metadata,
@@ -31,12 +30,17 @@ use serde_json::{
 use std::{
     collections::BTreeMap,
     fmt,
+    fs::OpenOptions,
     io::Write,
     path::{
         Path,
         PathBuf,
     },
-    sync::OnceLock,
+};
+use tokio::time::{
+    Duration,
+    Instant,
+    sleep,
 };
 use uuid::Uuid;
 
@@ -48,6 +52,73 @@ const CONFIG_DIR_NAME: &str = "pcl";
 pub const CONFIG_FILE: &str = "config.toml";
 pub const AUTH_EXPIRES_SOON_SECONDS: i64 = 300;
 
+/// How long to wait for another process to release the config lock.
+const CONFIG_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often to retry while the config lock is held.
+const CONFIG_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Cross-process guard over the config file, held for a whole
+/// read-modify-write.
+///
+/// Compare-and-write ([`CliConfig::write_to_file_if_unchanged`]) is not enough
+/// on its own: it narrows the window between reading and writing but cannot
+/// close it, so two processes can still interleave and the loser's write is
+/// simply dropped. That is tolerable for a passive rewrite, and *not* tolerable
+/// for the refresh token — there is only ever one valid refresh token, so
+/// losing the write that recorded it logs the user out.
+///
+/// So every writer that merges into whatever is currently on disk takes this
+/// lock, and they all take the *same* one: token refresh and platform selection
+/// are different operations on the same file, and a lock that only refresh
+/// honoured would not serialize them against each other.
+///
+/// Released on drop, including on panic. A stale file left by a killed process
+/// does not wedge the CLI forever: waiting gives up after 30 seconds and
+/// surfaces [`ConfigError::LockTimeout`] instead.
+#[derive(Debug)]
+pub struct ConfigLock {
+    path: PathBuf,
+}
+
+impl ConfigLock {
+    /// Acquires the lock, waiting up to 30 seconds for another process to
+    /// release it before returning [`ConfigError::LockTimeout`].
+    pub async fn acquire(cli_args: &CliArgs) -> Result<Self, ConfigError> {
+        let path = CliConfig::config_file_path(cli_args).with_extension("toml.lock");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(ConfigError::WriteError)?;
+        }
+        let deadline = Instant::now() + CONFIG_LOCK_TIMEOUT;
+        loop {
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut file) => {
+                    let _ = writeln!(
+                        file,
+                        "pid={} acquired_at={}",
+                        std::process::id(),
+                        Utc::now().to_rfc3339()
+                    );
+                    let _ = file.sync_all();
+                    return Ok(Self { path });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if Instant::now() >= deadline {
+                        return Err(ConfigError::LockTimeout);
+                    }
+                    sleep(CONFIG_LOCK_POLL_INTERVAL).await;
+                }
+                Err(error) => return Err(ConfigError::WriteError(error)),
+            }
+        }
+    }
+}
+
+impl Drop for ConfigLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 /// Main configuration structure for PCL
 ///
 /// This struct holds all the configuration data for the PCL tool,
@@ -56,11 +127,14 @@ pub const AUTH_EXPIRES_SOON_SECONDS: i64 = 300;
 pub struct CliConfig {
     /// Optional authentication details
     pub auth: Option<UserAuth>,
-    /// Platform URL remembered from `pcl auth login --auth-url <url>`.
+    /// Platform URL remembered from the last `pcl auth login` or interactive
+    /// network selection.
     ///
-    /// Only set when the login URL differs from the production default, and
-    /// cleared on `pcl auth logout`. Used as the default for `--api-url` and
-    /// `--auth-url` so a custom platform only has to be specified once.
+    /// Always set explicitly once a platform has been chosen — there is no
+    /// production default to encode as an absent value — and cleared on
+    /// `pcl auth logout`. Resolution reads this after an explicit
+    /// `-u`/`PCL_API_URL` and before prompting, so a platform only has to be
+    /// chosen once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform_url: Option<String>,
     /// Per-chain RPC endpoints used when broadcasting transactions.
@@ -83,6 +157,21 @@ impl CliConfig {
     /// Returns the configured RPC endpoint for a chain id, if any.
     pub fn rpc_endpoint(&self, chain_id: u64) -> Option<&RpcEndpoint> {
         self.rpc.get(&chain_id.to_string())
+    }
+
+    /// Records `platform_url` as both the remembered platform and the issuer of
+    /// the stored credentials — the state a completed login leaves behind.
+    ///
+    /// Test-only, and deliberately one call: a fixture that sets only the
+    /// remembered platform describes credentials of unknown provenance, which
+    /// the platform-boundary check refuses. Tests that mean *that* state set
+    /// `platform_url` on its own.
+    #[cfg(test)]
+    pub(crate) fn set_test_platform(&mut self, platform_url: &str) {
+        self.platform_url = Some(platform_url.to_string());
+        if let Some(auth) = &mut self.auth {
+            auth.issuer_platform_url = Some(platform_url.to_string());
+        }
     }
 }
 
@@ -268,6 +357,37 @@ impl CliConfig {
         )
     }
 
+    /// Records this process's chosen platform without clobbering a concurrent
+    /// write, then adopts whatever ended up on disk.
+    ///
+    /// The in-memory config was read before the network selector prompted, and
+    /// the prompt stays open for as long as the user takes to answer. Another
+    /// `pcl` can rotate the refresh token in that window, so this process's
+    /// snapshot must not be written wholesale — only `platform_url` is merged
+    /// into the current file.
+    ///
+    /// The read and the write are both inside a [`ConfigLock`] because merging
+    /// is only safe if nothing else writes in between: a token refresh landing
+    /// after the read would be overwritten by the write, discarding the only
+    /// valid refresh token. Holding the same lock refresh takes makes the two
+    /// operations mutually exclusive rather than merely narrow.
+    pub async fn merge_selected_platform(&mut self, cli_args: &CliArgs) -> Result<(), ConfigError> {
+        let _lock = ConfigLock::acquire(cli_args).await?;
+        let Ok(mut current) = Self::read_from_file(cli_args) else {
+            // Unreadable only if it changed under us since startup, where the
+            // caller already parsed it. Nothing to merge, so record the choice.
+            return self.write_to_file(cli_args);
+        };
+        if current == *self {
+            return Ok(());
+        }
+        current.normalize_auth_expiry_from_access_token();
+        current.platform_url.clone_from(&self.platform_url);
+        current.write_to_file(cli_args)?;
+        *self = current;
+        Ok(())
+    }
+
     /// Writes the configuration only when the on-disk config still matches
     /// the snapshot read at process start. This prevents a read-only command
     /// from overwriting credentials that another process just refreshed.
@@ -282,6 +402,27 @@ impl CliConfig {
         }
         self.write_to_file(cli_args)?;
         Ok(true)
+    }
+
+    /// Copies an unreadable config file aside before it is replaced.
+    ///
+    /// A repair command (`pcl auth login`, `pcl config delete`) is allowed to
+    /// write a fresh config over a file it could not parse. Those bytes may
+    /// still hold recoverable credentials or RPC settings, so they are kept at
+    /// `config.toml.invalid` rather than dropped. Returns the backup path, or
+    /// `None` when there was no file to preserve.
+    ///
+    /// Only ever reached while the current file is unparseable, so it cannot
+    /// overwrite a backup taken from a good config: once the repair succeeds the
+    /// file parses and this is not called again.
+    pub fn back_up_unreadable(cli_args: &CliArgs) -> Result<Option<PathBuf>, ConfigError> {
+        let source = Self::config_file_path(cli_args);
+        if !source.exists() {
+            return Ok(None);
+        }
+        let backup = source.with_extension("toml.invalid");
+        std::fs::copy(&source, &backup).map_err(ConfigError::WriteError)?;
+        Ok(Some(backup))
     }
 
     /// Writes the configuration to a specific directory
@@ -521,59 +662,6 @@ impl CliConfig {
     }
 }
 
-/// Returns the platform URL remembered from the last `pcl auth login` against
-/// a custom platform, if any.
-///
-/// The value is read once per process from the config file on disk (honoring
-/// `--config-dir` from the process arguments) so it can be used as a clap
-/// `default_value` before the config is otherwise loaded. Unit-test builds
-/// always return `None` to keep parsing deterministic.
-pub fn remembered_platform_url() -> Option<&'static str> {
-    static REMEMBERED: OnceLock<Option<String>> = OnceLock::new();
-    REMEMBERED
-        .get_or_init(|| {
-            if cfg!(test) {
-                return None;
-            }
-            let config_dir =
-                config_dir_from_process_args().unwrap_or_else(CliConfig::get_config_dir);
-            CliConfig::read_from_file_at_dir(&config_dir)
-                .ok()?
-                .platform_url
-                .filter(|url| url.parse::<url::Url>().is_ok())
-        })
-        .as_deref()
-}
-
-/// Default platform URL for `--api-url`/`--auth-url` arguments: the URL
-/// remembered from the last `pcl auth login`, falling back to production.
-pub fn default_platform_url() -> &'static str {
-    remembered_platform_url().unwrap_or(DEFAULT_PLATFORM_URL)
-}
-
-/// Extracts `--config-dir <path>` (or `--config-dir=<path>`) from the process
-/// arguments without a full clap parse.
-fn config_dir_from_process_args() -> Option<PathBuf> {
-    config_dir_from_args(std::env::args_os().skip(1))
-}
-
-fn config_dir_from_args<I>(args: I) -> Option<PathBuf>
-where
-    I: IntoIterator<Item = std::ffi::OsString>,
-{
-    let mut iter = args.into_iter();
-    while let Some(arg) = iter.next() {
-        let value = arg.to_string_lossy();
-        if value == "--config-dir" {
-            return iter.next().map(PathBuf::from);
-        }
-        if let Some(path) = value.strip_prefix("--config-dir=") {
-            return Some(PathBuf::from(path.to_string()));
-        }
-    }
-    None
-}
-
 fn config_show_envelope(config: &CliConfig, cli_args: &CliArgs) -> Value {
     with_envelope_metadata(json!({
         "status": "ok",
@@ -738,6 +826,22 @@ pub struct UserAuth {
     /// Email address of the user (for email-based auth)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    /// The platform that issued these credentials.
+    ///
+    /// Deliberately stored *with* the credentials rather than alongside the
+    /// remembered platform in [`CliConfig::platform_url`]. The two answer
+    /// different questions — "which platform did I choose?" versus "who issued
+    /// this token?" — and only the second may gate attaching the token to a
+    /// request. Keeping provenance here makes that separation structural: it is
+    /// written only when fresh credentials are stored, cleared with them on
+    /// logout, and cannot be rebound by platform resolution or an interactive
+    /// selection.
+    ///
+    /// `None` for credentials stored by a release that did not record it. There
+    /// is no default to assume those into, so they belong to an unknown
+    /// platform and force a one-time re-login.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer_platform_url: Option<String>,
 }
 
 impl UserAuth {
@@ -873,6 +977,7 @@ mod tests {
         let config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "test_access".to_string(),
                 refresh_token: "test_refresh".to_string(),
                 expires_at: fixed_timestamp,
@@ -1009,6 +1114,161 @@ expires_at = 1672502400
         assert_eq!(redacted_rpc_host("not a url"), "<unparseable-url>");
     }
 
+    /// A config carrying credentials, as another process would have left it.
+    fn authenticated_config(access: &str, refresh: &str) -> CliConfig {
+        CliConfig {
+            auth: Some(UserAuth {
+                access_token: access.to_string(),
+                refresh_token: refresh.to_string(),
+                expires_at: DateTime::from_timestamp(4_102_444_800, 0).expect("timestamp"),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: None,
+                issuer_platform_url: Some("https://linea.phylax.systems".to_string()),
+            }),
+            ..CliConfig::default()
+        }
+    }
+
+    /// Recording a selected platform must not roll back an update that landed
+    /// before the merge started.
+    ///
+    /// The interactive selector can sit open indefinitely, and another `pcl` may
+    /// rotate the refresh token while it does. Writing this process's pre-prompt
+    /// snapshot would discard the rotation and leave a refresh token the
+    /// platform has already invalidated.
+    #[tokio::test]
+    async fn merging_a_selected_platform_keeps_an_already_rotated_token() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+
+        let stale = authenticated_config("old-access", "old-refresh");
+        authenticated_config("rotated-access", "rotated-refresh")
+            .write_to_file(&cli_args)
+            .expect("another process writes the rotated pair");
+
+        let mut config = stale.clone();
+        config.platform_url = Some("https://ethereum.phylax.systems".to_string());
+        config
+            .merge_selected_platform(&cli_args)
+            .await
+            .expect("merge the selection");
+
+        let on_disk = CliConfig::read_from_file(&cli_args).expect("read merged config");
+        let auth = on_disk.auth.as_ref().expect("credentials survive");
+        assert_eq!(
+            auth.refresh_token, "rotated-refresh",
+            "the concurrently rotated refresh token must survive"
+        );
+        assert_eq!(auth.access_token, "rotated-access");
+        assert_eq!(
+            on_disk.platform_url.as_deref(),
+            Some("https://ethereum.phylax.systems"),
+            "the selection still has to be recorded"
+        );
+        assert_eq!(
+            config, on_disk,
+            "this process adopts the merged state for the rest of the run"
+        );
+    }
+
+    /// The rotation that overlaps the merge is the dangerous one.
+    ///
+    /// Reloading before the write only protects updates that finished before the
+    /// reload. Without a lock, a refresh that writes its new pair *after* the
+    /// reload and before the merge's own write is silently overwritten, throwing
+    /// away the only valid refresh token — and the sibling test above cannot
+    /// catch it, because there the rotation is already on disk when the merge
+    /// begins.
+    ///
+    /// The lock itself is the barrier here: holding it forces the merge to wait,
+    /// and the rotation is written while it waits, so the rotation lands strictly
+    /// between the merge being asked for and the merge reading the file.
+    #[tokio::test]
+    async fn merging_a_selected_platform_waits_for_an_overlapping_rotation() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+
+        let stale = authenticated_config("old-access", "old-refresh");
+        stale
+            .write_to_file(&cli_args)
+            .expect("the pre-prompt state is on disk");
+
+        // Stand in for a concurrent `refresh_stored_auth`, which holds this same
+        // lock across its own read-modify-write.
+        let lock = ConfigLock::acquire(&cli_args)
+            .await
+            .expect("the refresher takes the lock first");
+
+        let mut config = stale.clone();
+        config.platform_url = Some("https://ethereum.phylax.systems".to_string());
+        let merge_args = cli_args.clone();
+        let merge = tokio::spawn(async move {
+            config.merge_selected_platform(&merge_args).await?;
+            Ok::<CliConfig, ConfigError>(config)
+        });
+
+        // The merge cannot have read anything yet: it is parked on the lock.
+        tokio::time::sleep(CONFIG_LOCK_POLL_INTERVAL * 3).await;
+        assert!(
+            !merge.is_finished(),
+            "the merge must block until the refresher releases the lock"
+        );
+        authenticated_config("rotated-access", "rotated-refresh")
+            .write_to_file(&cli_args)
+            .expect("the refresher writes its rotated pair");
+        drop(lock);
+
+        let merged = merge
+            .await
+            .expect("merge task joins")
+            .expect("merge the selection");
+
+        let on_disk = CliConfig::read_from_file(&cli_args).expect("read merged config");
+        let auth = on_disk.auth.as_ref().expect("credentials survive");
+        assert_eq!(
+            auth.refresh_token, "rotated-refresh",
+            "a rotation overlapping the merge must survive it"
+        );
+        assert_eq!(auth.access_token, "rotated-access");
+        assert_eq!(
+            on_disk.platform_url.as_deref(),
+            Some("https://ethereum.phylax.systems"),
+            "the selection still has to be recorded"
+        );
+        assert_eq!(merged, on_disk);
+    }
+
+    /// A lock left behind by a killed process must not wedge the CLI forever.
+    ///
+    /// Runs on a paused clock, which tokio auto-advances whenever every task is
+    /// parked on a timer, so the whole `CONFIG_LOCK_TIMEOUT` budget elapses
+    /// instantly instead of costing the suite 30 real seconds.
+    #[tokio::test(start_paused = true)]
+    async fn a_held_config_lock_times_out_rather_than_blocking_forever() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let _held = ConfigLock::acquire(&cli_args).await.expect("first acquire");
+
+        let error = ConfigLock::acquire(&cli_args)
+            .await
+            .expect_err("the lock is still held, so acquiring must fail");
+        assert!(
+            matches!(error, ConfigError::LockTimeout),
+            "expected a lock timeout, got {error:?}"
+        );
+    }
+
     #[test]
     fn set_rpc_rejects_invalid_urls() {
         let mut config = CliConfig::default();
@@ -1092,6 +1352,7 @@ expires_at = 1672502400
         let old_config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
                 expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
@@ -1105,6 +1366,7 @@ expires_at = 1672502400
         let stale_process_config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "normalized_old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
                 expires_at: DateTime::from_timestamp(4102444800, 0).unwrap(),
@@ -1118,6 +1380,7 @@ expires_at = 1672502400
         let newer_config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "new_access".to_string(),
                 refresh_token: "new_refresh".to_string(),
                 expires_at: DateTime::from_timestamp(4102444800, 0).unwrap(),
@@ -1178,31 +1441,6 @@ expires_at = 1672502400
     }
 
     #[test]
-    fn extracts_config_dir_from_args() {
-        use std::ffi::OsString;
-
-        let args = ["--json", "--config-dir", "/tmp/pcl-conf", "auth"].map(OsString::from);
-        assert_eq!(
-            config_dir_from_args(args),
-            Some(PathBuf::from("/tmp/pcl-conf"))
-        );
-
-        let args = ["auth", "--config-dir=/tmp/pcl-conf2"].map(OsString::from);
-        assert_eq!(
-            config_dir_from_args(args),
-            Some(PathBuf::from("/tmp/pcl-conf2"))
-        );
-
-        let args = ["auth", "login"].map(OsString::from);
-        assert_eq!(config_dir_from_args(args), None);
-    }
-
-    #[test]
-    fn default_platform_url_falls_back_to_production_in_tests() {
-        assert_eq!(default_platform_url(), DEFAULT_PLATFORM_URL);
-    }
-
-    #[test]
     fn test_read_nonexistent_config() {
         let (config_dir, _temp_dir) = setup_config_dir();
 
@@ -1214,6 +1452,7 @@ expires_at = 1672502400
     #[test]
     fn test_user_auth_display() {
         let auth = UserAuth {
+            issuer_platform_url: None,
             access_token: "test_access".to_string(),
             refresh_token: "test_refresh".to_string(),
             expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(), // 2022-12-31 16:00:00 UTC
@@ -1236,6 +1475,7 @@ expires_at = 1672502400
 
         // Non-zero wallet address takes priority over everything
         let with_addr = UserAuth {
+            issuer_platform_url: None,
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
@@ -1251,6 +1491,7 @@ expires_at = 1672502400
 
         // Email is next priority when no wallet address
         let with_email = UserAuth {
+            issuer_platform_url: None,
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
@@ -1263,6 +1504,7 @@ expires_at = 1672502400
 
         // User ID is fallback when no address or email
         let with_id = UserAuth {
+            issuer_platform_url: None,
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
@@ -1278,6 +1520,7 @@ expires_at = 1672502400
 
         // "unknown" when nothing is set
         let bare = UserAuth {
+            issuer_platform_url: None,
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
@@ -1292,6 +1535,7 @@ expires_at = 1672502400
     #[test]
     fn extracts_expiry_from_jwt_access_token() {
         let auth = UserAuth {
+            issuer_platform_url: None,
             access_token: "e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig".to_string(),
             refresh_token: String::new(),
             expires_at: DateTime::from_timestamp(0, 0).unwrap(),
@@ -1312,6 +1556,7 @@ expires_at = 1672502400
         let mut config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig".to_string(),
                 refresh_token: "refresh".to_string(),
                 expires_at: DateTime::from_timestamp(1, 0).unwrap(),
@@ -1344,6 +1589,7 @@ expires_at = 1672502400
         let mut config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "test".to_string(),
                 refresh_token: "test".to_string(),
                 expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
@@ -1370,6 +1616,7 @@ expires_at = 1672502400
         let config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "secret-access".to_string(),
                 refresh_token: "secret-refresh".to_string(),
                 expires_at: Utc::now() + chrono::Duration::minutes(10),
@@ -1442,6 +1689,7 @@ expires_at = 1672502400
     #[test]
     fn test_user_auth_serialization() {
         let auth = UserAuth {
+            issuer_platform_url: None,
             access_token: "test_access".to_string(),
             refresh_token: "test_refresh".to_string(),
             expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),

@@ -13,11 +13,10 @@ pub(in crate::api) struct ApiWorkflowOptions {
     #[arg(
         long = "api-url",
         env = "PCL_API_URL",
-        default_value = crate::config::default_platform_url(),
         global = true,
-        help = "Base URL for the platform API. Defaults to the URL remembered from the last login"
+        help = "Base URL for the platform API. Defaults to the platform remembered from the last login or network selection"
     )]
-    api_url: url::Url,
+    api_url: Option<url::Url>,
 
     #[arg(
         long,
@@ -28,6 +27,11 @@ pub(in crate::api) struct ApiWorkflowOptions {
 }
 
 impl ApiWorkflowOptions {
+    /// The explicit `--api-url`/`PCL_API_URL` value, when one was given.
+    pub(in crate::api) fn platform_url_flag(&self) -> Option<&url::Url> {
+        self.api_url.as_ref()
+    }
+
     pub(in crate::api) async fn run(
         self,
         command: WorkflowCommand,

@@ -160,11 +160,10 @@ pub struct ApiArgs {
     #[arg(
         long = "api-url",
         env = "PCL_API_URL",
-        default_value = crate::config::default_platform_url(),
         global = true,
-        help = "Base URL for the platform API. Defaults to the URL remembered from the last login"
+        help = "Base URL for the platform API. Defaults to the platform remembered from the last login or network selection"
     )]
-    api_url: url::Url,
+    api_url: Option<url::Url>,
 
     #[arg(
         long,
@@ -183,10 +182,28 @@ impl ApiArgs {
     pub(crate) fn headless(api_url: url::Url) -> Self {
         Self {
             command: ApiCommand::Manifest,
-            api_url,
+            api_url: Some(api_url),
             allow_unauthenticated: false,
             refresh_after_401: Cell::new(true),
         }
+    }
+
+    /// The explicit `--api-url`/`PCL_API_URL` value, when one was given.
+    pub fn platform_url_flag(&self) -> Option<&url::Url> {
+        self.api_url.as_ref()
+    }
+
+    /// Whether this `pcl api` subcommand reaches the platform. `manifest`
+    /// prints a static, compiled-in contract; every other subcommand either
+    /// fetches the `OpenAPI` spec or calls an endpoint.
+    pub fn needs_platform_url(&self) -> bool {
+        !matches!(self.command, ApiCommand::Manifest)
+    }
+
+    /// Platform URL for this run: the explicit `--api-url`/`PCL_API_URL` value
+    /// when given, otherwise the platform resolved during startup.
+    pub(in crate::api) fn resolved_api_url(&self) -> url::Url {
+        crate::platform::platform_url_or_active(self.api_url.as_ref())
     }
 
     /// Executes one workflow operation and returns the response body.
@@ -296,6 +313,50 @@ impl ApiArgs {
     }
 }
 
+/// Whether a workflow command's arguments reach the platform.
+///
+/// `--body-template` prints a static, compiled-in JSON schema: the runner
+/// returns it before constructing a client or fetching the spec. Those runs have
+/// to work on a clean install, because they are how an agent discovers the shape
+/// of a request body before it has chosen a network — requiring a platform to
+/// print a local schema is the tail wagging the dog.
+trait NeedsPlatformUrl {
+    fn needs_platform_url(&self) -> bool;
+}
+
+/// `--body-template` is the only local escape hatch on these commands.
+macro_rules! body_template_gates_platform {
+    ($($args:ty),+ $(,)?) => {
+        $(impl NeedsPlatformUrl for $args {
+            fn needs_platform_url(&self) -> bool {
+                !self.body_template
+            }
+        })+
+    };
+}
+
+/// Commands with no local mode: every invocation talks to the platform.
+macro_rules! always_needs_platform {
+    ($($args:ty),+ $(,)?) => {
+        $(impl NeedsPlatformUrl for $args {
+            fn needs_platform_url(&self) -> bool {
+                true
+            }
+        })+
+    };
+}
+
+body_template_gates_platform!(
+    AssertionsArgs,
+    AccountArgs,
+    ContractsArgs,
+    DeploymentsArgs,
+    IntegrationsArgs,
+    ProtocolManagerArgs,
+);
+
+always_needs_platform!(IncidentsArgs, SearchArgs, EventsArgs);
+
 macro_rules! top_level_workflow_command {
     ($name:ident, $args:ty, $variant:ident, $about:literal, $after_help:literal) => {
         #[derive(clap::Args, Debug)]
@@ -308,6 +369,17 @@ macro_rules! top_level_workflow_command {
         }
 
         impl $name {
+            /// The explicit `--api-url`/`PCL_API_URL` value, when one was
+            /// given. Startup uses this to skip platform resolution.
+            pub fn platform_url_flag(&self) -> Option<&url::Url> {
+                self.globals.platform_url_flag()
+            }
+
+            /// Whether this invocation reaches the platform.
+            pub fn needs_platform_url(&self) -> bool {
+                NeedsPlatformUrl::needs_platform_url(&self.args)
+            }
+
             pub async fn run(
                 self,
                 config: &mut CliConfig,
@@ -665,6 +737,19 @@ struct ProjectWriteArgs {
 }
 
 impl ProjectsCommand {
+    /// The explicit `--api-url`/`PCL_API_URL` value, when one was given.
+    pub fn platform_url_flag(&self) -> Option<&url::Url> {
+        self.globals.platform_url_flag()
+    }
+
+    /// Whether this invocation reaches the platform. Read from the subcommand
+    /// rather than the merged args, because merging consumes them.
+    pub fn needs_platform_url(&self) -> bool {
+        self.command
+            .as_ref()
+            .is_none_or(ProjectsSubcommand::needs_platform_url)
+    }
+
     pub async fn run(
         self,
         config: &mut CliConfig,
@@ -686,6 +771,28 @@ impl ProjectsCommand {
 }
 
 impl ProjectsSubcommand {
+    /// Whether this subcommand reaches the platform. `--body-template` on a
+    /// write prints a local schema and returns before any client is built.
+    ///
+    /// Matched exhaustively rather than with a `_ => true` catch-all: a new
+    /// body-taking variant would otherwise default to requiring a platform and
+    /// silently break its own `--body-template`.
+    fn needs_platform_url(&self) -> bool {
+        match self {
+            Self::Create(args) => !args.body_template,
+            Self::Update(args) => !args.write.body_template,
+            Self::List(_)
+            | Self::Mine
+            | Self::Show(_)
+            | Self::Saved(_)
+            | Self::Delete(_)
+            | Self::Save(_)
+            | Self::Unsave(_)
+            | Self::Resolve(_)
+            | Self::Widget(_) => true,
+        }
+    }
+
     fn into_args(self) -> ProjectsArgs {
         match self {
             Self::List(args) => {
@@ -1120,6 +1227,17 @@ struct ReleaseRemoveCalldataArgs {
 }
 
 impl ReleasesCommand {
+    /// The explicit `--api-url`/`PCL_API_URL` value, when one was given.
+    pub fn platform_url_flag(&self) -> Option<&url::Url> {
+        self.globals.platform_url_flag()
+    }
+
+    /// Whether this invocation reaches the platform. Read from the subcommand
+    /// rather than the merged args, because merging consumes them.
+    pub fn needs_platform_url(&self) -> bool {
+        ReleasesSubcommand::needs_platform_url(&self.command)
+    }
+
     pub async fn run(
         self,
         config: &mut CliConfig,
@@ -1139,6 +1257,18 @@ impl ReleasesCommand {
 }
 
 impl ReleasesSubcommand {
+    /// Whether this subcommand reaches the platform. `--body-template` on a
+    /// body-taking release command prints a local schema and returns before any
+    /// client is built.
+    fn needs_platform_url(&self) -> bool {
+        match self {
+            Self::Create(args) | Self::Preview(args) => !args.body.body_template,
+            Self::Deploy(args) | Self::Remove(args) => !args.body.body_template,
+            Self::RetryCheck(args) => !args.body.body_template,
+            Self::List(_) | Self::Show(_) | Self::Calldata(_) | Self::BacktestProgress(_) => true,
+        }
+    }
+
     fn into_args(self) -> ReleasesArgs {
         match self {
             Self::List(args) => release_project_args(Some(args.project)),
@@ -1383,6 +1513,17 @@ struct AccessMemberBodyArgs {
 }
 
 impl AccessCommand {
+    /// The explicit `--api-url`/`PCL_API_URL` value, when one was given.
+    pub fn platform_url_flag(&self) -> Option<&url::Url> {
+        self.globals.platform_url_flag()
+    }
+
+    /// Whether this invocation reaches the platform. Read from the subcommand
+    /// rather than the merged args, because merging consumes them.
+    pub fn needs_platform_url(&self) -> bool {
+        AccessSubcommand::needs_platform_url(&self.command)
+    }
+
     pub async fn run(
         self,
         config: &mut CliConfig,
@@ -1397,6 +1538,36 @@ impl AccessCommand {
 }
 
 impl AccessSubcommand {
+    /// Whether this subcommand reaches the platform. `--body-template` on a
+    /// body-taking access command prints a local schema and returns before any
+    /// client is built.
+    ///
+    /// Matched exhaustively, including through the `role` and `member` groups:
+    /// their nested variants carry [`WorkflowBodyArgs`] too, and a catch-all arm
+    /// would leave `--body-template` on them demanding a platform.
+    fn needs_platform_url(&self) -> bool {
+        match self {
+            Self::Accept(args) => !args.body.body_template,
+            Self::Invite(args) => !args.body.body_template,
+            Self::Resend(args) | Self::Revoke(args) => !args.body.body_template,
+            Self::Role(args) => {
+                match &args.command {
+                    AccessRoleSubcommand::Update(args) => !args.body.body_template,
+                }
+            }
+            Self::Member(args) => {
+                match &args.command {
+                    AccessMemberSubcommand::Remove(args) => !args.body.body_template,
+                }
+            }
+            Self::Members(_)
+            | Self::Invitations(_)
+            | Self::Pending
+            | Self::Preview(_)
+            | Self::MyRole(_) => true,
+        }
+    }
+
     fn into_args(self) -> AccessArgs {
         match self {
             Self::Members(args) => {

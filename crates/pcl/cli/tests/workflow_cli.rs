@@ -20,19 +20,25 @@ email = "agent@example.com"
 /// Like [`write_valid_auth_config`], but records the platform that issued the
 /// credentials so authenticated requests to that URL pass the
 /// platform-boundary check.
+///
+/// `issuer_platform_url` under `[auth]` is the value that check reads — the
+/// top-level `platform_url` only says which platform is remembered. A fixture for
+/// "logged in to this platform" sets both, because that is what a real login
+/// writes.
 fn write_valid_auth_config_for_platform(config_dir: &std::path::Path, platform_url: &str) {
+    let platform_url = platform_url.trim_end_matches('/');
     fs::write(
         config_dir.join("config.toml"),
         format!(
-            r#"platform_url = "{}"
+            r#"platform_url = "{platform_url}"
 
 [auth]
 access_token = "test-token"
 refresh_token = "refresh-token"
 expires_at = 4102444800
 email = "agent@example.com"
-"#,
-            platform_url.trim_end_matches('/')
+issuer_platform_url = "{platform_url}"
+"#
         ),
     )
     .expect("write test config");

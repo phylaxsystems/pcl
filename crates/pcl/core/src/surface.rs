@@ -303,12 +303,39 @@ pub struct DoctorArgs {
     #[arg(
         long = "api-url",
         env = "PCL_API_URL",
-        default_value = crate::config::default_platform_url(),
-        help = "Base URL for the platform API. Defaults to the URL remembered from the last login"
+        help = "Base URL for the platform API. Defaults to the platform remembered from the last login or network selection"
     )]
-    api_url: url::Url,
+    api_url: Option<url::Url>,
     #[arg(long, help = "Skip network health checks")]
     offline: bool,
+}
+
+impl DoctorArgs {
+    /// The explicit `--api-url`/`PCL_API_URL` value, when one was given.
+    pub fn platform_url_flag(&self) -> Option<&url::Url> {
+        self.api_url.as_ref()
+    }
+
+    /// Whether the run skips network checks, and therefore needs no platform.
+    /// Diagnostics must stay runnable before a platform has been chosen.
+    pub fn is_offline(&self) -> bool {
+        self.offline
+    }
+
+    /// Platform for the diagnostic report, which is `null` on an offline run
+    /// before any platform has been chosen.
+    fn reported_api_url(&self) -> Value {
+        self.api_url
+            .clone()
+            .or_else(crate::platform::active_platform_opt)
+            .map_or(Value::Null, |url| json!(url.as_str()))
+    }
+
+    /// Platform URL for this run: the explicit `--api-url`/`PCL_API_URL` value
+    /// when given, otherwise the platform resolved during startup.
+    fn resolved_api_url(&self) -> url::Url {
+        crate::platform::platform_url_or_active(self.api_url.as_ref())
+    }
 }
 
 #[derive(clap::Args, Debug)]
@@ -471,12 +498,57 @@ struct ExportIncidentsArgs {
     #[arg(
         long = "api-url",
         env = "PCL_API_URL",
-        default_value = crate::config::default_platform_url(),
-        help = "Base URL for the platform API. Defaults to the URL remembered from the last login"
+        help = "Base URL for the platform API. Defaults to the platform remembered from the last login or network selection"
     )]
-    api_url: url::Url,
+    api_url: Option<url::Url>,
     #[arg(long, help = "Do not attach a stored bearer token")]
     allow_unauthenticated: bool,
+}
+
+impl ExportArgs {
+    /// The explicit `--api-url`/`PCL_API_URL` value from the selected
+    /// subcommand, when one was given.
+    pub fn platform_url_flag(&self) -> Option<&url::Url> {
+        match &self.command {
+            ExportCommand::Incidents(args) => args.platform_url_flag(),
+        }
+    }
+
+    /// Whether the selected subcommand reaches the platform.
+    pub fn needs_platform_url(&self) -> bool {
+        match &self.command {
+            ExportCommand::Incidents(args) => args.needs_platform_url(),
+        }
+    }
+}
+
+impl ExportIncidentsArgs {
+    fn platform_url_flag(&self) -> Option<&url::Url> {
+        self.api_url.as_ref()
+    }
+
+    /// Whether this run reaches the platform. A `--dry-run` prints its plan and
+    /// fetches nothing, so it must work on a clean install without a platform.
+    fn needs_platform_url(&self) -> bool {
+        !self.dry_run
+    }
+
+    /// Platform URL for this run: the explicit `--api-url`/`PCL_API_URL` value
+    /// when given, otherwise the platform resolved during startup.
+    fn resolved_api_url(&self) -> url::Url {
+        crate::platform::platform_url_or_active(self.api_url.as_ref())
+    }
+
+    /// Platform URL to pin in the resume command, when one is known.
+    ///
+    /// A dry run may have resolved no platform. Rather than inventing one, the
+    /// resume command omits `--api-url` and lets the real execution resolve it
+    /// the same way any other command would.
+    fn resume_api_url(&self) -> Option<url::Url> {
+        self.api_url
+            .clone()
+            .or_else(crate::platform::active_platform_opt)
+    }
 }
 
 impl DoctorArgs {
@@ -511,8 +583,8 @@ impl DoctorArgs {
         ];
 
         if !self.offline {
-            checks.push(health_check(&self.api_url).await);
-            checks.push(auth_capability_check(&self.api_url).await);
+            checks.push(health_check(&self.resolved_api_url()).await);
+            checks.push(auth_capability_check(&self.resolved_api_url()).await);
         }
 
         let status = if checks
@@ -538,7 +610,7 @@ impl DoctorArgs {
                     "checks": checks,
                     "default_output": "human",
                     "json_output_flag": "--json",
-                    "api_url": self.api_url.as_str(),
+                    "api_url": self.reported_api_url(),
                 },
                 "next_actions": next_actions,
             }),
@@ -906,7 +978,7 @@ async fn export_incidents(
     ensure_export_auth(
         config,
         cli_args,
-        &args.api_url,
+        &args.resolved_api_url(),
         args.project_id.is_some(),
         args.allow_unauthenticated,
     )
@@ -962,7 +1034,7 @@ async fn export_incidents(
             args.allow_unauthenticated,
         )?)
         .build()?;
-    let client = generated_client_with_http_client(&args.api_url, http_client);
+    let client = generated_client_with_http_client(&args.resolved_api_url(), http_client);
     let project_id = match args.project_id.as_deref() {
         Some(project_ref) => Some(resolve_export_project_id(&client, project_ref).await?),
         None => None,
@@ -1451,9 +1523,15 @@ fn incident_export_resume_command(
         args.max_pages.to_string(),
         "--max-retries".to_string(),
         args.max_retries.to_string(),
-        "--api-url".to_string(),
-        shell_word(args.api_url.as_str()),
     ];
+
+    // Pinned so a resume targets the same platform this plan described — but
+    // only when there is one to pin. The value is deliberately not redacted:
+    // this line is meant to be copied and run.
+    if let Some(api_url) = args.resume_api_url() {
+        parts.push("--api-url".to_string());
+        parts.push(shell_word(api_url.as_str()));
+    }
 
     if let Some(project_id) = &args.project_id {
         parts.push("--project-id".to_string());
@@ -2353,7 +2431,6 @@ fn log_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DEFAULT_PLATFORM_URL;
     use mockito::Matcher;
     use pcl_common::args::CliArgs;
     use std::{
@@ -2441,6 +2518,7 @@ mod tests {
         let config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "expired-token".to_string(),
                 refresh_token: "refresh-token".to_string(),
                 expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
@@ -2493,6 +2571,7 @@ mod tests {
         );
 
         let auth = UserAuth {
+            issuer_platform_url: None,
             access_token: "expired-token".to_string(),
             refresh_token: "refresh-token".to_string(),
             expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
@@ -2648,7 +2727,7 @@ mod tests {
             continue_on_error: true,
             max_retries: 3,
             dry_run: false,
-            api_url: DEFAULT_PLATFORM_URL.parse().unwrap(),
+            api_url: Some("https://linea.phylax.systems".parse().unwrap()),
             allow_unauthenticated: false,
         };
 
@@ -2723,7 +2802,7 @@ mod tests {
             continue_on_error: false,
             max_retries: 1,
             dry_run: false,
-            api_url: server.url().parse().unwrap(),
+            api_url: Some(server.url().parse().unwrap()),
             allow_unauthenticated: true,
         };
 
@@ -2781,6 +2860,7 @@ mod tests {
         let mut config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: Some(server.url()),
                 access_token: "old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
                 expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
@@ -2808,7 +2888,7 @@ mod tests {
             continue_on_error: false,
             max_retries: 0,
             dry_run: false,
-            api_url: server.url().parse().unwrap(),
+            api_url: Some(server.url().parse().unwrap()),
             allow_unauthenticated: false,
         };
 
@@ -2842,6 +2922,7 @@ mod tests {
         };
         let mut config = CliConfig {
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "valid_access".to_string(),
                 refresh_token: "valid_refresh".to_string(),
                 expires_at: chrono::Utc::now() + chrono::Duration::hours(2),
@@ -2866,7 +2947,7 @@ mod tests {
             continue_on_error: false,
             max_retries: 0,
             dry_run: false,
-            api_url: server.url().parse().unwrap(),
+            api_url: Some(server.url().parse().unwrap()),
             allow_unauthenticated: false,
         };
 
@@ -2897,6 +2978,7 @@ mod tests {
         };
         let mut config = CliConfig {
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
                 expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
@@ -2921,7 +3003,7 @@ mod tests {
             continue_on_error: false,
             max_retries: 0,
             dry_run: false,
-            api_url: server.url().parse().unwrap(),
+            api_url: Some(server.url().parse().unwrap()),
             allow_unauthenticated: false,
         };
 
@@ -2936,9 +3018,11 @@ mod tests {
     #[tokio::test]
     async fn incident_export_records_failed_job_after_network_failure() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let api_url = format!("http://{}", listener.local_addr().unwrap())
-            .parse()
-            .unwrap();
+        let api_url = Some(
+            format!("http://{}", listener.local_addr().unwrap())
+                .parse()
+                .unwrap(),
+        );
         drop(listener);
 
         let temp = tempdir().unwrap();
@@ -3031,7 +3115,7 @@ mod tests {
             continue_on_error: true,
             max_retries: 0,
             dry_run: false,
-            api_url: server.url().parse().unwrap(),
+            api_url: Some(server.url().parse().unwrap()),
             allow_unauthenticated: true,
         };
 

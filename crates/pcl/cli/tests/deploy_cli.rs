@@ -6,12 +6,19 @@
 
 use std::process::Command;
 
+/// Passed explicitly because there is no default platform: without `-u` these
+/// runs would fail on platform resolution before reaching the deploy error
+/// under test.
+const TEST_PLATFORM_URL: &str = "https://linea.phylax.systems";
+
 fn run_deploy(config_dir: &std::path::Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_pcl"))
         .arg("--config-dir")
         .arg(config_dir)
         .arg("--json")
         .arg("deploy")
+        .arg("--api-url")
+        .arg(TEST_PLATFORM_URL)
         .args(args)
         .output()
         .expect("run pcl deploy")
@@ -70,4 +77,36 @@ fn deploy_delegates_wrapped_apply_errors_to_their_envelope() {
             .is_some_and(|message| message.contains("Project root not found")),
         "{envelope}"
     );
+}
+
+/// `--dry-run` builds and verifies locally and returns before any client is
+/// built, so planning a deploy must not require choosing a network — and must
+/// not prompt for one, since the flag promises to change nothing.
+///
+/// Run with no `--api-url` and an empty config dir on purpose: the failure has to
+/// be the local project error, not `platform.not_selected`.
+#[test]
+fn deploy_dry_run_needs_no_platform() {
+    let temp_dir = tempfile::tempdir().expect("temp config dir");
+    let missing_root = temp_dir.path().join("does-not-exist");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .arg("--config-dir")
+        .arg(temp_dir.path())
+        .args([
+            "--json",
+            "deploy",
+            "--dry-run",
+            "--root",
+            missing_root.to_str().expect("utf-8"),
+        ])
+        .output()
+        .expect("run pcl deploy --dry-run");
+
+    let envelope = error_envelope(&output);
+    assert_ne!(
+        envelope["error"]["code"], "platform.not_selected",
+        "a local dry run must not require a platform: {envelope}"
+    );
+    assert_eq!(envelope["error"]["code"], "apply.failed", "{envelope}");
 }

@@ -12,7 +12,12 @@ expired_auth_config_dir="$(mktemp -d)"
 verify_project_dir="$(mktemp -d)"
 trap 'rm -rf "$config_dir" "$missing_auth_config_dir" "$expired_auth_config_dir" "$verify_project_dir"' EXIT
 
+# `platform_url` is recorded because there is no default platform: every
+# command that talks to the API resolves one from the flag, the environment, or
+# this remembered value, and errors rather than prompting when run non-TTY.
 cat > "$config_dir/config.toml" <<'CONFIG'
+platform_url = "https://linea.phylax.systems"
+
 [auth]
 access_token = "agent-smoke-token"
 refresh_token = "agent-smoke-refresh-token"

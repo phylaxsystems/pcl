@@ -105,10 +105,9 @@ pub struct DeployArgs {
         long = "api-url",
         env = "PCL_API_URL",
         value_hint = ValueHint::Url,
-        default_value = crate::config::default_platform_url(),
-        help = "Base URL for the platform API. Defaults to the URL remembered from the last login, then production"
+        help = "Base URL for the platform API. Defaults to the platform remembered from the last login or network selection"
     )]
-    pub api_url: Url,
+    pub api_url: Option<Url>,
 
     #[command(flatten)]
     pub wallet: WalletArgs,
@@ -855,6 +854,21 @@ fn attach_warnings(source: DeployError, warnings: Vec<Value>) -> DeployError {
 }
 
 impl DeployArgs {
+    /// Platform URL for this run: the explicit `-u`/`PCL_API_URL` value when
+    /// given, otherwise the platform resolved during startup.
+    fn resolved_api_url(&self) -> Url {
+        crate::platform::platform_url_or_active(self.api_url.as_ref())
+    }
+
+    /// Whether this run reaches the platform.
+    ///
+    /// `--dry-run` builds and verifies locally and returns before any client is
+    /// constructed, so planning a deploy must not require choosing a network —
+    /// and must not prompt for one, since the flag promises to change nothing.
+    pub fn needs_platform_url(&self) -> bool {
+        !self.dry_run
+    }
+
     #[allow(clippy::too_many_lines)]
     pub async fn run(&self, cli_args: &CliArgs, config: &mut CliConfig) -> Result<(), DeployError> {
         let output_mode = cli_args.output_mode();
@@ -893,8 +907,8 @@ impl DeployArgs {
         // Past the dry-run return a signer was always resolved above.
         let signer = signer.ok_or(crate::wallet::WalletError::NoWallet)?;
 
-        let api = ApiArgs::headless(self.api_url.clone());
-        ApplyArgs::ensure_fresh_auth(config, cli_args, &self.api_url).await?;
+        let api = ApiArgs::headless(self.resolved_api_url());
+        ApplyArgs::ensure_fresh_auth(config, cli_args, &self.resolved_api_url()).await?;
 
         // Warn before step 1: creating a project POSTs and rewrites
         // credible.toml, so a warning printed after it would arrive once
@@ -991,7 +1005,7 @@ impl DeployArgs {
                     &CreateIntent {
                         project_name: name.clone(),
                         chain_id,
-                        platform_url: self.api_url.as_str().trim_end_matches('/').to_string(),
+                        platform_url: crate::platform::trim_platform_url(&self.resolved_api_url()),
                     },
                 )?;
                 progress(
@@ -1216,7 +1230,7 @@ impl DeployArgs {
                 ReleaseStep::Create => {
                     if human {
                         print!("{}", preview.render_plan());
-                        if !self.yes && !confirm_apply()? {
+                        if !self.yes && !confirm_apply(&self.resolved_api_url())? {
                             return Err(DeployError::Cancelled);
                         }
                     }
@@ -1301,14 +1315,15 @@ impl DeployArgs {
         intent_path: &Path,
         human: bool,
     ) -> Result<(Uuid, Value), DeployError> {
-        let requested = self.api_url.as_str().trim_end_matches('/').to_string();
+        let requested = crate::platform::trim_platform_url(&self.resolved_api_url());
         if intent.platform_url != requested {
             // The unresolved create belongs to another platform; matching
-            // this platform's projects against it proves nothing.
+            // this platform's projects against it proves nothing. The comparison
+            // is on the lossless form; only the message is redacted.
             return Err(DeployError::CreateIntentPlatformMismatch {
                 path: intent_path.display().to_string(),
-                intent_platform: intent.platform_url.clone(),
-                requested,
+                intent_platform: crate::platform::redact_stored_platform_url(&intent.platform_url),
+                requested: crate::platform::redact_platform_url(&self.resolved_api_url()),
             });
         }
         progress(
@@ -1383,7 +1398,7 @@ impl DeployArgs {
         &self,
         config: &CliConfig,
     ) -> Result<dapp_api_client::generated::client::Client, DeployError> {
-        crate::client::authenticated_client(config, &self.api_url)
+        crate::client::authenticated_client(config, &self.resolved_api_url())
             .map_err(crate::apply::client_error_to_apply)
             .map_err(DeployError::Apply)
     }
@@ -1457,7 +1472,14 @@ impl DeployArgs {
         chain_id: Option<u64>,
         findings: &[V2SpecFinding],
     ) -> Vec<Value> {
-        let Some(message) = assertion_spec::deploy_warning(&self.api_url, chain_id, findings)
+        // A `--dry-run` may have no platform at all: it plans locally, so it must
+        // not require one. `chain_id` still decides on its own when it is known.
+        let platform_url = self
+            .api_url
+            .clone()
+            .or_else(crate::platform::active_platform_opt);
+        let Some(message) =
+            assertion_spec::deploy_warning(platform_url.as_ref(), chain_id, findings)
         else {
             return Vec::new();
         };
@@ -1466,7 +1488,7 @@ impl DeployArgs {
         }
         vec![assertion_spec::warning_json(
             &message,
-            &self.api_url,
+            platform_url.as_ref(),
             chain_id,
             findings,
         )]
@@ -2371,6 +2393,7 @@ mod tests {
         let api = ApiArgs::headless(server.url().parse().unwrap());
         let mut config = CliConfig {
             auth: Some(crate::config::UserAuth {
+                issuer_platform_url: Some(server.url()),
                 access_token: "access-token".to_string(),
                 refresh_token: "refresh-token".to_string(),
                 expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),

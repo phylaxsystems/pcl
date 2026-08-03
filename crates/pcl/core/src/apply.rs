@@ -7,7 +7,6 @@ use crate::verify::{
     run_verification,
 };
 use crate::{
-    DEFAULT_PLATFORM_URL,
     abi,
     api::generated_operation_path,
     client::{
@@ -112,13 +111,38 @@ pub struct ApplyArgs {
         long = "api-url",
         env = "PCL_API_URL",
         value_hint = ValueHint::Url,
-        default_value = crate::config::default_platform_url(),
-        help = "Base URL for the platform API. Defaults to the URL remembered from the last login"
+        help = "Base URL for the platform API. Defaults to the platform remembered from the last login or network selection"
     )]
-    pub api_url: url::Url,
+    pub api_url: Option<url::Url>,
 }
 
 impl ApplyArgs {
+    /// Platform URL for this run: the explicit `-u`/`PCL_API_URL` value when
+    /// given, otherwise the platform resolved during startup.
+    fn resolved_api_url(&self) -> url::Url {
+        crate::platform::platform_url_or_active(self.api_url.as_ref())
+    }
+
+    /// Whether this run reaches the platform. `--dry-run` builds and verifies
+    /// locally, so validating assertions must not require choosing a network.
+    ///
+    /// A dry run still needs a platform in one case — selecting a project when
+    /// `credible.toml` records none — which depends on file contents rather
+    /// than the command line, so that path resolves the platform as a
+    /// recoverable error instead.
+    pub fn needs_platform_url(&self) -> bool {
+        !self.dry_run
+    }
+
+    /// Platform URL for a path a dry run may reach, as a recoverable error
+    /// when no platform was resolved at startup.
+    fn try_resolved_api_url(&self) -> Result<url::Url, ApplyError> {
+        match &self.api_url {
+            Some(api_url) => Ok(api_url.clone()),
+            None => Ok(crate::platform::require_active_platform()?),
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     pub async fn run(&self, cli_args: &CliArgs, config: &mut CliConfig) -> Result<(), ApplyError> {
         let output_mode = cli_args.output_mode();
@@ -134,7 +158,8 @@ impl ApplyArgs {
                 ));
             }
             None => {
-                Self::ensure_fresh_auth(config, cli_args, &self.api_url).await?;
+                let api_url = self.try_resolved_api_url()?;
+                Self::ensure_fresh_auth(config, cli_args, &api_url).await?;
                 self.select_project(config).await?
             }
         };
@@ -152,7 +177,7 @@ impl ApplyArgs {
             return Ok(());
         }
 
-        Self::ensure_fresh_auth(config, cli_args, &self.api_url).await?;
+        Self::ensure_fresh_auth(config, cli_args, &self.resolved_api_url()).await?;
         let client = self.build_client(config)?;
         let preview = Self::call_preview(&client, &project_id, &payload).await?;
 
@@ -186,7 +211,7 @@ impl ApplyArgs {
             if output_mode != OutputMode::Human {
                 return Err(ApplyError::JsonConfirmationRequiresYes);
             }
-            if !confirm_apply()? {
+            if !confirm_apply(&self.resolved_api_url())? {
                 return Err(ApplyError::ApplyCancelled);
             }
         }
@@ -214,7 +239,7 @@ impl ApplyArgs {
             return Ok(());
         }
 
-        Self::print_release_success(self.api_url.as_str(), &project_id, &release);
+        Self::print_release_success(self.resolved_api_url().as_str(), &project_id, &release);
         Ok(())
     }
 
@@ -233,15 +258,17 @@ impl ApplyArgs {
         if dry_run {
             parts.push("--dry-run".to_string());
         }
-        if self.api_url.as_str().trim_end_matches('/') != DEFAULT_PLATFORM_URL {
+        // Only an explicit override needs reproducing: without a flag the
+        // re-run resolves the same remembered platform.
+        if let Some(api_url) = &self.api_url {
             parts.push("--api-url".to_string());
-            parts.push(shell_word(self.api_url.as_str()));
+            parts.push(shell_word(api_url.as_str()));
         }
         parts.join(" ")
     }
 
     pub(crate) fn build_client(&self, config: &CliConfig) -> Result<GeneratedClient, ApplyError> {
-        authenticated_client(config, &self.api_url).map_err(client_error_to_apply)
+        authenticated_client(config, &self.resolved_api_url()).map_err(client_error_to_apply)
     }
 
     pub(crate) async fn ensure_fresh_auth(
@@ -629,7 +656,17 @@ pub(crate) fn canonicalize_root(root: &Path) -> Result<PathBuf, ApplyError> {
     })
 }
 
-pub(crate) fn confirm_apply() -> Result<bool, ApplyError> {
+/// Confirmation header naming the platform the release lands on, so a wrong
+/// network is caught by eye before the change is applied.
+pub(crate) fn apply_target_summary(platform_url: &Url) -> String {
+    format!(
+        "Applying to {}",
+        crate::platform::describe_platform(platform_url)
+    )
+}
+
+pub(crate) fn confirm_apply(platform_url: &Url) -> Result<bool, ApplyError> {
+    eprintln!("{}", apply_target_summary(platform_url));
     eprint!("Do you want to apply these changes? [Y/n]: ");
     stderr().flush().map_err(|e| {
         ApplyError::Io {
@@ -688,6 +725,62 @@ mod tests {
         StateMutability,
     };
     use pcl_phoundry::build_and_flatten::BuildAndFlatOutput;
+
+    fn apply_args_with_url(api_url: Option<&str>) -> ApplyArgs {
+        ApplyArgs {
+            root: PathBuf::from("."),
+            config: PathBuf::from("assertions/credible.toml"),
+            yes: false,
+            dry_run: false,
+            api_url: api_url.map(|url| url.parse().expect("test URL parses")),
+        }
+    }
+
+    #[test]
+    fn apply_confirmation_names_the_target_network() {
+        assert_eq!(
+            apply_target_summary(&"https://linea.phylax.systems".parse().expect("test URL")),
+            "Applying to Linea Mainnet (linea.phylax.systems)"
+        );
+        assert_eq!(
+            apply_target_summary(&"https://ethereum.phylax.systems".parse().expect("test URL")),
+            "Applying to Ethereum Mainnet (ethereum.phylax.systems)"
+        );
+        // A shadow or staging target has no network name; show it verbatim
+        // rather than mislabelling it.
+        assert_eq!(
+            apply_target_summary(&"https://shadow.phylax.example/".parse().expect("test URL")),
+            "Applying to https://shadow.phylax.example"
+        );
+    }
+
+    #[test]
+    fn reproduced_command_includes_only_an_explicit_platform() {
+        let root = Path::new("/tmp/project");
+
+        // An explicit override has to be reproduced or the re-run would target
+        // a different platform.
+        let explicit = apply_args_with_url(Some("https://shadow.phylax.example"));
+        let command = explicit.apply_command(root, true, false);
+        assert!(
+            command.contains("--api-url https://shadow.phylax.example"),
+            "{command}"
+        );
+
+        // Without a flag the re-run resolves the same remembered platform, so
+        // there is nothing to pin.
+        let resolved = apply_args_with_url(None);
+        let command = resolved.apply_command(root, true, false);
+        assert!(!command.contains("--api-url"), "{command}");
+    }
+
+    #[test]
+    fn dry_run_needs_no_platform_but_a_real_apply_does() {
+        let mut args = apply_args_with_url(None);
+        assert!(args.needs_platform_url());
+        args.dry_run = true;
+        assert!(!args.needs_platform_url());
+    }
 
     fn make_built(abi: JsonAbi) -> BuildAndFlatOutput {
         BuildAndFlatOutput {

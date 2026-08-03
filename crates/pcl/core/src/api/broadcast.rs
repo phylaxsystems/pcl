@@ -1240,6 +1240,7 @@ mod tests {
         let api = ApiArgs::headless(server.url().parse().unwrap());
         let mut config = CliConfig {
             auth: Some(crate::config::UserAuth {
+                issuer_platform_url: Some(server.url()),
                 access_token: "access-token".to_string(),
                 refresh_token: "refresh-token".to_string(),
                 expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
