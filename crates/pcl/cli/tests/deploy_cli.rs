@@ -78,3 +78,35 @@ fn deploy_delegates_wrapped_apply_errors_to_their_envelope() {
         "{envelope}"
     );
 }
+
+/// `--dry-run` builds and verifies locally and returns before any client is
+/// built, so planning a deploy must not require choosing a network — and must
+/// not prompt for one, since the flag promises to change nothing.
+///
+/// Run with no `--api-url` and an empty config dir on purpose: the failure has to
+/// be the local project error, not `platform.not_selected`.
+#[test]
+fn deploy_dry_run_needs_no_platform() {
+    let temp_dir = tempfile::tempdir().expect("temp config dir");
+    let missing_root = temp_dir.path().join("does-not-exist");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .arg("--config-dir")
+        .arg(temp_dir.path())
+        .args([
+            "--json",
+            "deploy",
+            "--dry-run",
+            "--root",
+            missing_root.to_str().expect("utf-8"),
+        ])
+        .output()
+        .expect("run pcl deploy --dry-run");
+
+    let envelope = error_envelope(&output);
+    assert_ne!(
+        envelope["error"]["code"], "platform.not_selected",
+        "a local dry run must not require a platform: {envelope}"
+    );
+    assert_eq!(envelope["error"]["code"], "apply.failed", "{envelope}");
+}

@@ -209,13 +209,23 @@ impl Commands {
         // `auth status` reads local config only, and `doctor --offline`
         // deliberately makes no network calls.
         #[cfg(feature = "credible")]
-        if matches!(self, Self::Apply(apply) if !apply.needs_platform_url()) {
+        if matches!(self, Self::Apply(apply) if !apply.needs_platform_url())
+            || matches!(self, Self::Deploy(deploy) if !deploy.needs_platform_url())
+        {
             return true;
         }
         if matches!(self, Self::Auth(auth) if !auth.needs_platform_url())
             || matches!(self, Self::Doctor(doctor) if doctor.is_offline())
             || matches!(self, Self::Api(api) if !api.needs_platform_url())
+            || matches!(self, Self::Export(export) if !export.needs_platform_url())
         {
+            return true;
+        }
+        // `--body-template` on a workflow command prints a static, compiled-in
+        // request schema and returns before any client is built. Those runs are
+        // how an agent discovers a body shape, so they have to work before a
+        // network has been chosen.
+        if self.is_local_workflow_template() {
             return true;
         }
         match self {
@@ -231,6 +241,27 @@ impl Commands {
             | Self::Llms(_)
             | Self::Jobs(_)
             | Self::Completions(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Whether this is a workflow command invoked purely to print its local
+    /// request-body schema.
+    ///
+    /// Listed per command rather than as one blanket rule: only these carry a
+    /// `--body-template` flag, and a command that grows one has to opt in here so
+    /// the platform requirement is a decision rather than an accident.
+    fn is_local_workflow_template(&self) -> bool {
+        match self {
+            Self::Assertions(command) => !command.needs_platform_url(),
+            Self::Account(command) => !command.needs_platform_url(),
+            Self::Contracts(command) => !command.needs_platform_url(),
+            Self::Releases(command) => !command.needs_platform_url(),
+            Self::Deployments(command) => !command.needs_platform_url(),
+            Self::Access(command) => !command.needs_platform_url(),
+            Self::Integrations(command) => !command.needs_platform_url(),
+            Self::ProtocolManager(command) => !command.needs_platform_url(),
+            Self::Projects(command) => !command.needs_platform_url(),
             _ => false,
         }
     }

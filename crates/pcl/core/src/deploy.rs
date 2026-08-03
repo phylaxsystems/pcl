@@ -860,6 +860,15 @@ impl DeployArgs {
         crate::platform::platform_url_or_active(self.api_url.as_ref())
     }
 
+    /// Whether this run reaches the platform.
+    ///
+    /// `--dry-run` builds and verifies locally and returns before any client is
+    /// constructed, so planning a deploy must not require choosing a network —
+    /// and must not prompt for one, since the flag promises to change nothing.
+    pub fn needs_platform_url(&self) -> bool {
+        !self.dry_run
+    }
+
     #[allow(clippy::too_many_lines)]
     pub async fn run(&self, cli_args: &CliArgs, config: &mut CliConfig) -> Result<(), DeployError> {
         let output_mode = cli_args.output_mode();
@@ -1309,11 +1318,12 @@ impl DeployArgs {
         let requested = crate::platform::trim_platform_url(&self.resolved_api_url());
         if intent.platform_url != requested {
             // The unresolved create belongs to another platform; matching
-            // this platform's projects against it proves nothing.
+            // this platform's projects against it proves nothing. The comparison
+            // is on the lossless form; only the message is redacted.
             return Err(DeployError::CreateIntentPlatformMismatch {
                 path: intent_path.display().to_string(),
-                intent_platform: intent.platform_url.clone(),
-                requested,
+                intent_platform: crate::platform::redact_stored_platform_url(&intent.platform_url),
+                requested: crate::platform::redact_platform_url(&self.resolved_api_url()),
             });
         }
         progress(
@@ -1462,8 +1472,14 @@ impl DeployArgs {
         chain_id: Option<u64>,
         findings: &[V2SpecFinding],
     ) -> Vec<Value> {
+        // A `--dry-run` may have no platform at all: it plans locally, so it must
+        // not require one. `chain_id` still decides on its own when it is known.
+        let platform_url = self
+            .api_url
+            .clone()
+            .or_else(crate::platform::active_platform_opt);
         let Some(message) =
-            assertion_spec::deploy_warning(&self.resolved_api_url(), chain_id, findings)
+            assertion_spec::deploy_warning(platform_url.as_ref(), chain_id, findings)
         else {
             return Vec::new();
         };
@@ -1472,7 +1488,7 @@ impl DeployArgs {
         }
         vec![assertion_spec::warning_json(
             &message,
-            &self.resolved_api_url(),
+            platform_url.as_ref(),
             chain_id,
             findings,
         )]
@@ -2377,6 +2393,7 @@ mod tests {
         let api = ApiArgs::headless(server.url().parse().unwrap());
         let mut config = CliConfig {
             auth: Some(crate::config::UserAuth {
+                issuer_platform_url: Some(server.url()),
                 access_token: "access-token".to_string(),
                 refresh_token: "refresh-token".to_string(),
                 expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),

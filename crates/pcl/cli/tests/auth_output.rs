@@ -18,19 +18,25 @@ fn write_valid_auth_config(config_dir: &std::path::Path) {
 /// Like [`write_valid_auth_config`], but records the platform that issued the
 /// credentials, so commands aimed at that URL pass the platform-boundary
 /// check.
+///
+/// `issuer_platform_url` under `[auth]` is what the boundary check reads; the
+/// top-level `platform_url` only says which platform is remembered. A fixture
+/// for "logged in to this platform" has to set both, because that is what a
+/// real login writes.
 fn write_valid_auth_config_for_platform(config_dir: &std::path::Path, platform_url: &str) {
+    let platform_url = platform_url.trim_end_matches('/');
     fs::write(
         config_dir.join("config.toml"),
         format!(
-            r#"platform_url = "{}"
+            r#"platform_url = "{platform_url}"
 
 [auth]
 access_token = "test-token"
 refresh_token = "refresh-token"
 expires_at = 4102444800
 email = "agent@example.com"
-"#,
-            platform_url.trim_end_matches('/')
+issuer_platform_url = "{platform_url}"
+"#
         ),
     )
     .expect("write test config");
@@ -53,6 +59,7 @@ fn write_expired_refreshable_auth_config_for_platform(
     config_dir: &std::path::Path,
     platform_url: &str,
 ) {
+    let platform_url = platform_url.trim_end_matches('/');
     fs::write(
         config_dir.join("config.toml"),
         format!(
@@ -63,6 +70,7 @@ access_token = "expired-token"
 refresh_token = "refresh-token"
 expires_at = 1
 email = "agent@example.com"
+issuer_platform_url = "{platform_url}"
 "#
         ),
     )
@@ -672,6 +680,149 @@ fn auth_login_force_starts_fresh_flow_even_with_existing_auth() {
     auth_status.assert();
 }
 
+/// The platform that issued the credentials a boundary test starts from.
+///
+/// `.invalid` never resolves, so a request that escapes to the issuing platform
+/// fails loudly instead of silently succeeding against something real.
+const OTHER_PLATFORM_URL: &str = "https://platform-a.invalid";
+
+#[test]
+fn login_against_another_platform_does_not_short_circuit_on_the_old_token() {
+    // Startup persists an explicit `--auth-url` as the remembered platform
+    // before the login runs. If the boundary check read that field it would be
+    // comparing the target against itself, find no switch, and short-circuit —
+    // leaving the old platform's token bound to the new platform for every
+    // later command.
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_valid_auth_config_for_platform(temp_dir.path(), OTHER_PLATFORM_URL);
+    let mut server = mockito::Server::new();
+    let auth_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2099-12-31T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create();
+    let auth_status = server
+        .mock("GET", "/api/v1/cli/auth/status")
+        .match_query(mockito::Matcher::AllOf(vec![
+            mockito::Matcher::UrlEncoded(
+                "session_id".into(),
+                "550e8400-e29b-41d4-a716-446655440000".into(),
+            ),
+            mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"verified":true,"user_id":"550e8400-e29b-41d4-a716-446655440000","token":"token-from-platform-b","refresh_token":"refresh-from-platform-b","email":"agent@example.com"}"#,
+        )
+        .expect(1)
+        .create();
+    // Created last: mockito matches in creation order, so this only catches
+    // requests the login flow above did not already claim.
+    let never_authenticated = server
+        .mock("GET", mockito::Matcher::Any)
+        .match_header("authorization", "Bearer test-token")
+        .with_status(200)
+        .expect(0)
+        .create();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "login",
+        ])
+        .output()
+        .expect("run pcl auth login against another platform");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // A real device-auth flow ran rather than "already authenticated".
+    auth_code.assert();
+    auth_status.assert();
+    never_authenticated.assert();
+
+    let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
+    assert!(
+        config.contains("access_token = \"token-from-platform-b\""),
+        "the new platform's token must replace the old one: {config}"
+    );
+    assert!(
+        !config.contains("test-token"),
+        "the old platform's token must not survive the switch: {config}"
+    );
+    assert!(
+        config.contains(&format!(
+            "issuer_platform_url = \"{}\"",
+            server.url().trim_end_matches('/')
+        )),
+        "the stored credentials must record the platform that issued them: {config}"
+    );
+}
+
+#[test]
+fn credentials_without_a_recorded_issuer_are_refused_against_a_remembered_platform() {
+    // The upgrade path, and the state a fresh interactive selection leaves
+    // behind: credentials from a release that recorded no issuer, plus a
+    // remembered platform written by resolution rather than by a login. The
+    // promised one-time re-login only happens if the boundary check refuses to
+    // read that remembered value as provenance.
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let mut server = mockito::Server::new();
+    let never_requested = server
+        .mock("GET", mockito::Matcher::Any)
+        .with_status(200)
+        .expect(0)
+        .create();
+    fs::write(
+        temp_dir.path().join("config.toml"),
+        format!(
+            r#"platform_url = "{}"
+
+[auth]
+access_token = "legacy-token"
+refresh_token = "legacy-refresh"
+expires_at = 4102444800
+email = "agent@example.com"
+"#,
+            server.url().trim_end_matches('/')
+        ),
+    )
+    .expect("write legacy config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "projects",
+            "mine",
+        ])
+        .output()
+        .expect("run pcl projects mine");
+
+    assert!(!output.status.success(), "the command must be refused");
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+    let envelope: serde_json::Value =
+        serde_json::from_str(if stdout.is_empty() { &stderr } else { &stdout })
+            .expect("json envelope");
+    assert_eq!(envelope["error"]["code"], "auth.platform_mismatch");
+    never_requested.assert();
+}
+
 #[test]
 fn auth_poll_json_verified_stores_auth_and_returns_terminal_envelope() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
@@ -876,6 +1027,129 @@ fn login_records_its_platform_even_when_the_login_itself_fails() {
     assert!(
         config.contains(r#"platform_url = "http://127.0.0.1:9""#),
         "the resolved platform must survive a failing command: {config}"
+    );
+}
+
+/// A failure while persisting the resolved platform still has to arrive as the
+/// one JSON envelope a machine caller parses. It used to escape the structured
+/// error boundary and print a color-eyre diagnostic instead.
+#[test]
+fn platform_write_failure_under_json_emits_a_single_error_envelope() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    write_valid_auth_config_for_platform(temp_dir.path(), OTHER_PLATFORM_URL);
+    // Read and execute but not write: resolution succeeds, then persisting the
+    // explicitly requested platform fails.
+    let mut permissions = fs::metadata(temp_dir.path())
+        .expect("read temp dir metadata")
+        .permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(temp_dir.path(), permissions).expect("make config dir read-only");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            "http://127.0.0.1:9",
+            "login",
+        ])
+        .output()
+        .expect("run pcl auth login");
+
+    // Restore write access so the temp dir can be cleaned up.
+    let mut permissions = fs::metadata(temp_dir.path())
+        .expect("read temp dir metadata")
+        .permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    permissions.set_readonly(false);
+    fs::set_permissions(temp_dir.path(), permissions).expect("restore config dir permissions");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+    assert!(
+        !stderr.contains("Location:"),
+        "a color-eyre diagnostic escaped the error boundary: {stderr}"
+    );
+    let rendered = if stdout.is_empty() { &stderr } else { &stdout };
+    let envelope: serde_json::Value =
+        serde_json::from_str(rendered.trim()).expect("a single json envelope");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+}
+
+/// A command allowed to repair an unreadable config must not destroy it before
+/// it has actually produced its replacement: a cancelled or failed repair would
+/// take recoverable credentials and RPC settings with it.
+#[test]
+fn a_failed_repair_preserves_the_unreadable_config() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let config_path = temp_dir.path().join("config.toml");
+    let damaged =
+        "platform_url = \"http://127.0.0.1:9\"\n\n[auth]\nexpires_at = \"2099-12-31T00:00:00Z\"\n";
+    fs::write(&config_path, damaged).expect("write damaged config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            "http://127.0.0.1:9",
+            "login",
+        ])
+        .output()
+        .expect("run pcl auth login");
+
+    assert!(
+        !output.status.success(),
+        "login against a dead host should fail"
+    );
+    let after = fs::read_to_string(&config_path).expect("read config");
+    assert_eq!(
+        after, damaged,
+        "a failed repair must leave the original file intact"
+    );
+}
+
+/// A repair that does replace an unreadable config keeps the original bytes
+/// alongside it, so credentials or RPC settings inside remain recoverable.
+#[test]
+fn repairing_an_unreadable_config_preserves_the_original_bytes() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let config_path = temp_dir.path().join("config.toml");
+    let damaged = "platform_url = \"https://linea.phylax.systems\"\n\n[auth]\naccess_token = \"recoverable\"\nexpires_at = \"2099-12-31T00:00:00Z\"\n";
+    fs::write(&config_path, damaged).expect("write damaged config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "config",
+            "delete",
+        ])
+        .output()
+        .expect("run pcl config delete");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let backup = fs::read_to_string(temp_dir.path().join("config.toml.invalid"))
+        .expect("the unreadable config is preserved alongside its replacement");
+    assert_eq!(backup, damaged);
+    assert!(
+        !fs::read_to_string(&config_path)
+            .expect("read replacement")
+            .contains("recoverable"),
+        "the replacement config must not carry the unparsed credentials forward"
     );
 }
 

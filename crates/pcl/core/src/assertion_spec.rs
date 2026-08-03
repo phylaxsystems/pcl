@@ -1,8 +1,9 @@
 //! Which assertion spec a target platform runs, and whether a project's
 //! assertions are written against the V2 spec.
 //!
-//! The production platform (`app.phylax.systems`, Linea) runs the V1 assertion
-//! spec. Assertions written against the V2 triggers and precompiles
+//! The Linea platform (`linea.phylax.systems`) runs the V1 assertion spec;
+//! Ethereum (`ethereum.phylax.systems`) runs V2. Assertions written against the
+//! V2 triggers and precompiles
 //! (`registerTxEndTrigger`, `ph.staticcallAt`, the fork-id reads, the
 //! protection-suite precompiles, the cumulative-flow circuit breakers) do not
 //! run there, so `pcl deploy` and `pcl auth login` warn instead of letting the
@@ -36,7 +37,23 @@ pub const LINEA_SEPOLIA_CHAIN_ID: u64 = 59141;
 const V1_ONLY_CHAIN_IDS: [u64; 2] = [LINEA_MAINNET_CHAIN_ID, LINEA_SEPOLIA_CHAIN_ID];
 
 /// Platform hosts that run the V1 assertion spec.
-const V1_ONLY_PLATFORM_HOSTS: [&str; 1] = ["app.phylax.systems"];
+///
+/// `linea.phylax.systems` serves the Linea platform, which runs V1;
+/// `ethereum.phylax.systems` runs V2 and is deliberately absent.
+/// `app.phylax.systems` is kept because it is now only a router page and no
+/// longer serves the API — an explicit `-u https://app.phylax.systems` from an
+/// older habit or script should still get the notice rather than silently
+/// nothing.
+///
+/// This host list is a proxy, and a poor one: the spec a deploy actually needs is
+/// a property of the executor behind a platform and the chain it serves, not of a
+/// hostname, and it has to be maintained by hand every time a platform moves.
+/// `V1_ONLY_CHAIN_IDS` is the more reliable signal and the only one available
+/// once the chain is known — but `pcl auth login` has no project or chain in
+/// scope, so the host is all it has. Replacing both with a capability the
+/// platform reports is tracked as follow-up work; until then a deploy to a
+/// network that cannot run the assertions is warned about, not blocked.
+const V1_ONLY_PLATFORM_HOSTS: [&str; 2] = ["linea.phylax.systems", "app.phylax.systems"];
 
 /// Warning code used in machine output.
 pub const V2_SPEC_UNSUPPORTED_CODE: &str = "assertion_spec.v2_unsupported";
@@ -227,24 +244,35 @@ fn unique_assertion_paths(credible: &CredibleToml) -> Vec<&str> {
 ///
 /// `chain_id` is `None` when the target chain is not known yet (a `--dry-run`
 /// without `--chain-id`); the platform check alone still decides.
+///
+/// `platform_url` is `None` on a local `--dry-run` that never chose a platform.
+/// The chain check still applies — `--chain-id 59144` is enough to know the
+/// assertions will not run — so a plan does not have to pick a network to be
+/// warned.
 pub fn deploy_warning(
-    platform_url: &Url,
+    platform_url: Option<&Url>,
     chain_id: Option<u64>,
     findings: &[V2SpecFinding],
 ) -> Option<String> {
     if findings.is_empty() {
         return None;
     }
-    let platform_only_v1 = !platform_supports_v2(platform_url);
+    let platform_only_v1 = platform_url.is_some_and(|url| !platform_supports_v2(url));
     let chain_only_v1 = chain_id.is_some_and(|chain_id| !chain_supports_v2(chain_id));
     if !platform_only_v1 && !chain_only_v1 {
         return None;
     }
 
-    let platform = platform_url.as_str().trim_end_matches('/');
-    let target = match chain_id.filter(|chain_id| !chain_supports_v2(*chain_id)) {
-        Some(chain_id) => format!("{platform} ({})", chain_label(chain_id)),
-        None => platform.to_string(),
+    let platform = platform_url.map(crate::platform::redact_platform_url);
+    let target = match (
+        platform,
+        chain_id.filter(|chain_id| !chain_supports_v2(*chain_id)),
+    ) {
+        (Some(platform), Some(chain_id)) => format!("{platform} ({})", chain_label(chain_id)),
+        (Some(platform), None) => platform,
+        (None, Some(chain_id)) => format!("The target chain ({})", chain_label(chain_id)),
+        // Unreachable: one of the two checks above was true to get here.
+        (None, None) => return None,
     };
 
     let mut message =
@@ -264,16 +292,19 @@ pub fn deploy_warning(
 }
 
 /// Machine-output form of a warning message.
+///
+/// `platform_url` is `None` on a local plan that chose no platform, and is
+/// reported as `null` rather than invented.
 pub fn warning_json(
     message: &str,
-    platform_url: &Url,
+    platform_url: Option<&Url>,
     chain_id: Option<u64>,
     findings: &[V2SpecFinding],
 ) -> Value {
     json!({
         "code": V2_SPEC_UNSUPPORTED_CODE,
         "message": message,
-        "platform_url": platform_url.as_str(),
+        "platform_url": platform_url.map(crate::platform::redact_platform_url),
         "chain_id": chain_id,
         "assertion_spec": "v1",
         "files": findings
@@ -291,8 +322,8 @@ pub fn login_notice(platform_url: &Url) -> Option<String> {
         return None;
     }
     Some(format!(
-        "{} (Linea) runs the V1 assertion spec. Do not write assertions against the V2 spec: V2 triggers and precompiles (registerTxEndTrigger, registerFnCallTrigger, ph.staticcallAt, the cumulative-flow circuit breakers) are not supported on this platform.",
-        platform_url.as_str().trim_end_matches('/'),
+        "{} runs the V1 assertion spec. Do not write assertions against the V2 spec: V2 triggers and precompiles (registerTxEndTrigger, registerFnCallTrigger, ph.staticcallAt, the cumulative-flow circuit breakers) are not supported on this platform.",
+        crate::platform::redact_platform_url(platform_url),
     ))
 }
 
@@ -301,7 +332,7 @@ pub fn login_warning_json(message: &str, platform_url: &Url) -> Value {
     json!({
         "code": V2_SPEC_UNSUPPORTED_CODE,
         "message": message,
-        "platform_url": platform_url.as_str(),
+        "platform_url": crate::platform::redact_platform_url(platform_url),
         "assertion_spec": "v1",
     })
 }
@@ -412,17 +443,47 @@ mod tests {
     }
 
     #[test]
-    fn production_and_linea_are_v1_only() {
+    fn linea_is_v1_only_and_ethereum_runs_v2() {
+        // Both networks the selector offers, so neither choice can silently
+        // lose its compatibility notice when a platform is renamed again.
+        assert!(!platform_supports_v2(&url("https://linea.phylax.systems")));
+        assert!(!platform_supports_v2(&url(
+            "https://Linea.Phylax.Systems/dashboard"
+        )));
+        assert!(platform_supports_v2(&url(
+            "https://ethereum.phylax.systems"
+        )));
+
+        // Kept for anyone still passing the old host explicitly.
         assert!(!platform_supports_v2(&url("https://app.phylax.systems")));
         assert!(!platform_supports_v2(&url(
             "https://APP.Phylax.Systems/dashboard"
         )));
+
         assert!(!chain_supports_v2(LINEA_MAINNET_CHAIN_ID));
         assert!(!chain_supports_v2(LINEA_SEPOLIA_CHAIN_ID));
 
         assert!(platform_supports_v2(&url("https://dev.phylax.systems")));
         assert!(platform_supports_v2(&url("http://localhost:3000")));
         assert!(chain_supports_v2(84532));
+    }
+
+    /// Every network in the selector has a decided spec capability. A network
+    /// added to the picker without deciding this would silently inherit "runs
+    /// V2", which is the wrong default: it means no warning at all.
+    #[test]
+    fn every_selectable_network_has_a_decided_spec_capability() {
+        for network in crate::platform::SELECTABLE_NETWORKS {
+            let expected_v2 = match network {
+                crate::platform::Network::EthereumMainnet => true,
+                crate::platform::Network::LineaMainnet => false,
+            };
+            assert_eq!(
+                platform_supports_v2(&network.url()),
+                expected_v2,
+                "{network} has the wrong assertion-spec capability"
+            );
+        }
     }
 
     #[test]
@@ -887,7 +948,7 @@ mod tests {
             ],
         }];
 
-        let warning = deploy_warning(&url("https://app.phylax.systems"), None, &findings)
+        let warning = deploy_warning(Some(&url("https://app.phylax.systems")), None, &findings)
             .expect("warning on the V1-only platform");
         assert!(warning.contains("V1 assertion spec"), "{warning}");
         assert!(warning.contains("assertions/src/V2.a.sol"), "{warning}");
@@ -897,7 +958,7 @@ mod tests {
         );
 
         let with_chain = deploy_warning(
-            &url("https://app.phylax.systems"),
+            Some(&url("https://app.phylax.systems")),
             Some(LINEA_MAINNET_CHAIN_ID),
             &findings,
         )
@@ -917,7 +978,7 @@ mod tests {
 
         assert!(
             deploy_warning(
-                &url("https://dev.phylax.systems"),
+                Some(&url("https://dev.phylax.systems")),
                 Some(LINEA_SEPOLIA_CHAIN_ID),
                 &findings
             )
@@ -932,9 +993,14 @@ mod tests {
             markers: vec!["registerTxEndTrigger".to_string()],
         }];
 
-        assert!(deploy_warning(&url("https://app.phylax.systems"), None, &[]).is_none());
+        assert!(deploy_warning(Some(&url("https://app.phylax.systems")), None, &[]).is_none());
         assert!(
-            deploy_warning(&url("https://dev.phylax.systems"), Some(84532), &findings).is_none()
+            deploy_warning(
+                Some(&url("https://dev.phylax.systems")),
+                Some(84532),
+                &findings
+            )
+            .is_none()
         );
     }
 
@@ -953,10 +1019,15 @@ mod tests {
             markers: vec!["staticcallAt".to_string()],
         }];
         let platform = url("https://app.phylax.systems");
-        let message =
-            deploy_warning(&platform, Some(LINEA_MAINNET_CHAIN_ID), &findings).expect("warning");
+        let message = deploy_warning(Some(&platform), Some(LINEA_MAINNET_CHAIN_ID), &findings)
+            .expect("warning");
 
-        let value = warning_json(&message, &platform, Some(LINEA_MAINNET_CHAIN_ID), &findings);
+        let value = warning_json(
+            &message,
+            Some(&platform),
+            Some(LINEA_MAINNET_CHAIN_ID),
+            &findings,
+        );
 
         assert_eq!(value["code"], V2_SPEC_UNSUPPORTED_CODE);
         assert_eq!(value["chain_id"], 59144);

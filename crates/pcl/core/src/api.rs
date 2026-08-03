@@ -313,6 +313,50 @@ impl ApiArgs {
     }
 }
 
+/// Whether a workflow command's arguments reach the platform.
+///
+/// `--body-template` prints a static, compiled-in JSON schema: the runner
+/// returns it before constructing a client or fetching the spec. Those runs have
+/// to work on a clean install, because they are how an agent discovers the shape
+/// of a request body before it has chosen a network — requiring a platform to
+/// print a local schema is the tail wagging the dog.
+trait NeedsPlatformUrl {
+    fn needs_platform_url(&self) -> bool;
+}
+
+/// `--body-template` is the only local escape hatch on these commands.
+macro_rules! body_template_gates_platform {
+    ($($args:ty),+ $(,)?) => {
+        $(impl NeedsPlatformUrl for $args {
+            fn needs_platform_url(&self) -> bool {
+                !self.body_template
+            }
+        })+
+    };
+}
+
+/// Commands with no local mode: every invocation talks to the platform.
+macro_rules! always_needs_platform {
+    ($($args:ty),+ $(,)?) => {
+        $(impl NeedsPlatformUrl for $args {
+            fn needs_platform_url(&self) -> bool {
+                true
+            }
+        })+
+    };
+}
+
+body_template_gates_platform!(
+    AssertionsArgs,
+    AccountArgs,
+    ContractsArgs,
+    DeploymentsArgs,
+    IntegrationsArgs,
+    ProtocolManagerArgs,
+);
+
+always_needs_platform!(IncidentsArgs, SearchArgs, EventsArgs);
+
 macro_rules! top_level_workflow_command {
     ($name:ident, $args:ty, $variant:ident, $about:literal, $after_help:literal) => {
         #[derive(clap::Args, Debug)]
@@ -329,6 +373,11 @@ macro_rules! top_level_workflow_command {
             /// given. Startup uses this to skip platform resolution.
             pub fn platform_url_flag(&self) -> Option<&url::Url> {
                 self.globals.platform_url_flag()
+            }
+
+            /// Whether this invocation reaches the platform.
+            pub fn needs_platform_url(&self) -> bool {
+                NeedsPlatformUrl::needs_platform_url(&self.args)
             }
 
             pub async fn run(
@@ -693,6 +742,14 @@ impl ProjectsCommand {
         self.globals.platform_url_flag()
     }
 
+    /// Whether this invocation reaches the platform. Read from the subcommand
+    /// rather than the merged args, because merging consumes them.
+    pub fn needs_platform_url(&self) -> bool {
+        self.command
+            .as_ref()
+            .is_none_or(ProjectsSubcommand::needs_platform_url)
+    }
+
     pub async fn run(
         self,
         config: &mut CliConfig,
@@ -714,6 +771,15 @@ impl ProjectsCommand {
 }
 
 impl ProjectsSubcommand {
+    /// Whether this subcommand reaches the platform. `--body-template` on a
+    /// write prints a local schema and returns before any client is built.
+    fn needs_platform_url(&self) -> bool {
+        match self {
+            Self::Create(args) => !args.body_template,
+            _ => true,
+        }
+    }
+
     fn into_args(self) -> ProjectsArgs {
         match self {
             Self::List(args) => {
@@ -1153,6 +1219,12 @@ impl ReleasesCommand {
         self.globals.platform_url_flag()
     }
 
+    /// Whether this invocation reaches the platform. Read from the subcommand
+    /// rather than the merged args, because merging consumes them.
+    pub fn needs_platform_url(&self) -> bool {
+        ReleasesSubcommand::needs_platform_url(&self.command)
+    }
+
     pub async fn run(
         self,
         config: &mut CliConfig,
@@ -1172,6 +1244,18 @@ impl ReleasesCommand {
 }
 
 impl ReleasesSubcommand {
+    /// Whether this subcommand reaches the platform. `--body-template` on a
+    /// body-taking release command prints a local schema and returns before any
+    /// client is built.
+    fn needs_platform_url(&self) -> bool {
+        match self {
+            Self::Create(args) | Self::Preview(args) => !args.body.body_template,
+            Self::Deploy(args) | Self::Remove(args) => !args.body.body_template,
+            Self::RetryCheck(args) => !args.body.body_template,
+            _ => true,
+        }
+    }
+
     fn into_args(self) -> ReleasesArgs {
         match self {
             Self::List(args) => release_project_args(Some(args.project)),
@@ -1421,6 +1505,12 @@ impl AccessCommand {
         self.globals.platform_url_flag()
     }
 
+    /// Whether this invocation reaches the platform. Read from the subcommand
+    /// rather than the merged args, because merging consumes them.
+    pub fn needs_platform_url(&self) -> bool {
+        AccessSubcommand::needs_platform_url(&self.command)
+    }
+
     pub async fn run(
         self,
         config: &mut CliConfig,
@@ -1435,6 +1525,18 @@ impl AccessCommand {
 }
 
 impl AccessSubcommand {
+    /// Whether this subcommand reaches the platform. `--body-template` on a
+    /// body-taking access command prints a local schema and returns before any
+    /// client is built.
+    fn needs_platform_url(&self) -> bool {
+        match self {
+            Self::Accept(args) => !args.body.body_template,
+            Self::Invite(args) => !args.body.body_template,
+            Self::Resend(args) | Self::Revoke(args) => !args.body.body_template,
+            _ => true,
+        }
+    }
+
     fn into_args(self) -> AccessArgs {
         match self {
             Self::Members(args) => {

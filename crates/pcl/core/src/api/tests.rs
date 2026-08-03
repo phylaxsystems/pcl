@@ -76,6 +76,7 @@ fn auth_config(
     CliConfig {
         rpc: BTreeMap::default(),
         auth: Some(UserAuth {
+            issuer_platform_url: None,
             access_token: access_token.to_string(),
             refresh_token: refresh_token.to_string(),
             expires_at: Utc.with_ymd_and_hms(expires_year, 1, 1, 0, 0, 0).unwrap(),
@@ -999,7 +1000,7 @@ async fn authenticated_project_slug_resolution_attaches_auth() {
     let api = test_api(server.url(), false);
     let mut config = valid_auth_config("access-token", "refresh-token");
     // The credentials were issued by the mock platform.
-    config.platform_url = Some(server.url());
+    config.set_test_platform(&server.url());
     let request = test_workflow_request_for_operation(
         WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id")
             .path_param("project_id", "private-slug"),
@@ -1039,7 +1040,7 @@ async fn project_slug_resolution_errors_preserve_http_metadata() {
     let api = test_api(server.url(), false);
     let mut config = valid_auth_config("access-token", "refresh-token");
     // The credentials were issued by the mock platform.
-    config.platform_url = Some(server.url());
+    config.set_test_platform(&server.url());
     let request = test_workflow_request_for_operation(
         WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id")
             .path_param("project_id", "missing-slug"),
@@ -1392,7 +1393,7 @@ async fn authenticated_workflow_retries_once_after_refresh_on_401() {
     };
     let mut config = valid_auth_config("old_access", "old_refresh");
     // The credentials were issued by the mock platform.
-    config.platform_url = Some(server.url());
+    config.set_test_platform(&server.url());
     config.write_to_file(&cli_args).unwrap();
     let request = test_workflow_request(
         HttpMethod::Get,
@@ -1448,7 +1449,7 @@ async fn raw_401_preserves_original_error_when_refresh_endpoint_is_missing() {
     };
     let mut config = valid_auth_config("old_access", "old_refresh");
     // The credentials were issued by the mock platform.
-    config.platform_url = Some(server.url());
+    config.set_test_platform(&server.url());
     config.write_to_file(&cli_args).unwrap();
     let input = ApiRequestInput {
         method: HttpMethod::Get,
@@ -1518,7 +1519,7 @@ async fn incident_stats_401_propagates_original_http_error() {
     };
     let mut config = valid_auth_config("old_access", "old_refresh");
     // The credentials were issued by the mock platform.
-    config.platform_url = Some(server.url());
+    config.set_test_platform(&server.url());
     config.write_to_file(&cli_args).unwrap();
     let args = IncidentsArgs {
         project_id: Some(project_id.to_string()),
@@ -1622,7 +1623,7 @@ async fn uploads_project_image_and_returns_storage_path() {
         .await;
     let api = test_api(server.url(), false);
     let mut config = valid_auth_config("access-token", "refresh-token");
-    config.platform_url = Some(server.url());
+    config.set_test_platform(&server.url());
 
     let dir = tempfile::tempdir().unwrap();
     let image = dir.path().join("logo.png");
@@ -1686,7 +1687,7 @@ async fn project_image_upload_refreshes_auth_before_the_multipart_request() {
         ..CliArgs::default()
     };
     let mut config = expired_auth_config("old-access", "old-refresh");
-    config.platform_url = Some(server.url());
+    config.set_test_platform(&server.url());
     config.write_to_file(&cli_args).unwrap();
     let image_dir = tempfile::tempdir().unwrap();
     let image = image_dir.path().join("logo.png");
@@ -1753,7 +1754,7 @@ async fn project_image_upload_refreshes_and_retries_after_401() {
     // proactive `ensure_request_auth` check leaves it untouched, so only a
     // reactive refresh-on-401 can recover.
     let mut config = valid_auth_config("old-access", "old-refresh");
-    config.platform_url = Some(server.url());
+    config.set_test_platform(&server.url());
     config.write_to_file(&cli_args).unwrap();
 
     let dir = tempfile::tempdir().unwrap();
@@ -1783,7 +1784,7 @@ async fn malformed_project_body_fails_before_image_upload() {
         .await;
     let api = test_api(server.url(), false);
     let mut config = valid_auth_config("access-token", "refresh-token");
-    config.platform_url = Some(server.url());
+    config.set_test_platform(&server.url());
     let dir = tempfile::tempdir().unwrap();
     let image = dir.path().join("logo.png");
     std::fs::write(&image, b"png").unwrap();

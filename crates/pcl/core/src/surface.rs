@@ -513,6 +513,13 @@ impl ExportArgs {
             ExportCommand::Incidents(args) => args.platform_url_flag(),
         }
     }
+
+    /// Whether the selected subcommand reaches the platform.
+    pub fn needs_platform_url(&self) -> bool {
+        match &self.command {
+            ExportCommand::Incidents(args) => args.needs_platform_url(),
+        }
+    }
 }
 
 impl ExportIncidentsArgs {
@@ -520,10 +527,27 @@ impl ExportIncidentsArgs {
         self.api_url.as_ref()
     }
 
+    /// Whether this run reaches the platform. A `--dry-run` prints its plan and
+    /// fetches nothing, so it must work on a clean install without a platform.
+    fn needs_platform_url(&self) -> bool {
+        !self.dry_run
+    }
+
     /// Platform URL for this run: the explicit `--api-url`/`PCL_API_URL` value
     /// when given, otherwise the platform resolved during startup.
     fn resolved_api_url(&self) -> url::Url {
         crate::platform::platform_url_or_active(self.api_url.as_ref())
+    }
+
+    /// Platform URL to pin in the resume command, when one is known.
+    ///
+    /// A dry run may have resolved no platform. Rather than inventing one, the
+    /// resume command omits `--api-url` and lets the real execution resolve it
+    /// the same way any other command would.
+    fn resume_api_url(&self) -> Option<url::Url> {
+        self.api_url
+            .clone()
+            .or_else(crate::platform::active_platform_opt)
     }
 }
 
@@ -1499,9 +1523,15 @@ fn incident_export_resume_command(
         args.max_pages.to_string(),
         "--max-retries".to_string(),
         args.max_retries.to_string(),
-        "--api-url".to_string(),
-        shell_word(args.resolved_api_url().as_str()),
     ];
+
+    // Pinned so a resume targets the same platform this plan described — but
+    // only when there is one to pin. The value is deliberately not redacted:
+    // this line is meant to be copied and run.
+    if let Some(api_url) = args.resume_api_url() {
+        parts.push("--api-url".to_string());
+        parts.push(shell_word(api_url.as_str()));
+    }
 
     if let Some(project_id) = &args.project_id {
         parts.push("--project-id".to_string());
@@ -2488,6 +2518,7 @@ mod tests {
         let config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "expired-token".to_string(),
                 refresh_token: "refresh-token".to_string(),
                 expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
@@ -2540,6 +2571,7 @@ mod tests {
         );
 
         let auth = UserAuth {
+            issuer_platform_url: None,
             access_token: "expired-token".to_string(),
             refresh_token: "refresh-token".to_string(),
             expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
@@ -2828,6 +2860,7 @@ mod tests {
         let mut config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: Some(server.url()),
                 access_token: "old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
                 expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
@@ -2889,6 +2922,7 @@ mod tests {
         };
         let mut config = CliConfig {
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "valid_access".to_string(),
                 refresh_token: "valid_refresh".to_string(),
                 expires_at: chrono::Utc::now() + chrono::Duration::hours(2),
@@ -2944,6 +2978,7 @@ mod tests {
         };
         let mut config = CliConfig {
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
                 expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),

@@ -878,7 +878,12 @@ impl AuthCommand {
                 } else {
                     spinner.finish_with_message("✅ Authentication successful!");
                 }
-                update_config_from_verified_status(config, status, auth_response.expires_at)?;
+                update_config_from_verified_status(
+                    config,
+                    status,
+                    auth_response.expires_at,
+                    &self.effective_auth_url(),
+                )?;
                 self.remember_platform_url(config);
                 if !json_output {
                     Self::display_success_message(config)?;
@@ -909,6 +914,7 @@ impl AuthCommand {
                 config,
                 status,
                 expires_at.unwrap_or_else(default_poll_fallback_expires_at),
+                &self.effective_auth_url(),
             )?;
             self.remember_platform_url(config);
             let mut output = self.with_v2_spec_warning(self.status_envelope(config));
@@ -981,7 +987,9 @@ impl AuthCommand {
                 "mode": "local",
                 "reason": "platform_mismatch",
                 "credential_platform": credential_platform_label(config),
-                "requested_platform": self.effective_auth_url().as_str(),
+                "requested_platform": crate::platform::redact_platform_url(
+                    &self.effective_auth_url()
+                ),
             });
         }
 
@@ -1076,7 +1084,7 @@ impl AuthCommand {
                 expires_at: auth.expires_at,
                 platform_url: self.reportable_auth_url().map_or_else(
                     || "no platform selected".to_string(),
-                    |url| crate::platform::trim_platform_url(&url),
+                    |url| crate::platform::redact_platform_url(&url),
                 ),
             });
         }
@@ -1165,19 +1173,28 @@ impl AuthCommand {
 
 /// The platform the stored credentials were issued by, when one is recorded.
 ///
-/// Credentials stored by an earlier `pcl` — which deliberately left the
-/// remembered platform empty for production logins — have no recorded
-/// platform. There is no longer a default to assume them into, so they belong
-/// to an unknown platform.
+/// Read from the credentials themselves, never from
+/// [`CliConfig::platform_url`]. The remembered platform is *selection* state:
+/// startup rewrites it from `-u`, and an interactive pick writes it before the
+/// command runs. Deriving provenance from it would let either of those rebind a
+/// stored token to a platform that never issued it, and the boundary check
+/// below would then compare a value against itself.
+///
+/// Credentials stored by an earlier `pcl` recorded no issuer. There is no
+/// default to assume them into, so they belong to an unknown platform.
 fn credential_platform(config: &CliConfig) -> Option<&str> {
-    config.platform_url.as_deref()
+    config.auth.as_ref()?.issuer_platform_url.as_deref()
 }
 
 /// Label for the credential platform in operator-facing output.
+///
+/// Redacted: a login through `-u https://user:secret@host` records that URL
+/// verbatim as the issuer, and this label ends up in error messages that reach
+/// terminals and CI logs.
 fn credential_platform_label(config: &CliConfig) -> String {
     credential_platform(config).map_or_else(
         || "an unrecorded platform (logged in with an earlier pcl release)".to_string(),
-        ToString::to_string,
+        crate::platform::redact_stored_platform_url,
     )
 }
 
@@ -1211,7 +1228,7 @@ pub fn ensure_credential_platform(config: &CliConfig, target: &url::Url) -> Resu
     }
     Err(AuthError::PlatformMismatch {
         credential_platform: credential_platform_label(config),
-        requested: target.as_str().trim_end_matches('/').to_string(),
+        requested: crate::platform::redact_platform_url(target),
     })
 }
 
@@ -1256,6 +1273,11 @@ pub async fn refresh_stored_auth(
     let user_id = auth.user_id;
     let wallet_address = auth.wallet_address;
     let email = auth.email.clone();
+    // A refresh rotates the token pair without changing who issued it, so the
+    // recorded issuer carries over. `ensure_credential_platform` above proves
+    // it is present and equal to `auth_url`, so re-deriving it here would be
+    // the same value by a longer route.
+    let issuer_platform_url = auth.issuer_platform_url.clone();
     let refresh_token = auth.refresh_token.clone();
     let refresh_token =
         PostAuthRefreshBodyRefreshToken::try_from(refresh_token.as_str()).map_err(|error| {
@@ -1271,9 +1293,12 @@ pub async fn refresh_stored_auth(
                 config,
                 cli_args,
                 response.into_inner(),
-                user_id,
-                wallet_address,
-                email,
+                RefreshedIdentity {
+                    user_id,
+                    wallet_address,
+                    email,
+                    issuer_platform_url,
+                },
                 request_id,
             )
         }
@@ -1342,13 +1367,20 @@ async fn handle_refresh_error(
     }
 }
 
+/// The parts of the stored credentials a refresh preserves: a rotation replaces
+/// the token pair and its expiry, and nothing else.
+struct RefreshedIdentity {
+    user_id: Option<Uuid>,
+    wallet_address: Option<Address>,
+    email: Option<String>,
+    issuer_platform_url: Option<String>,
+}
+
 fn persist_refreshed_auth(
     config: &mut CliConfig,
     cli_args: &CliArgs,
     body: PostAuthRefreshResponse,
-    user_id: Option<Uuid>,
-    wallet_address: Option<Address>,
-    email: Option<String>,
+    identity: RefreshedIdentity,
     request_id: Option<String>,
 ) -> Result<RefreshOutcome, AuthError> {
     config.auth = Some(UserAuth {
@@ -1356,9 +1388,10 @@ fn persist_refreshed_auth(
         refresh_token: body.refresh_token,
         expires_at: body.expires_at,
         refresh_expires_at: Some(body.refresh_expires_at),
-        user_id,
-        wallet_address,
-        email,
+        user_id: identity.user_id,
+        wallet_address: identity.wallet_address,
+        email: identity.email,
+        issuer_platform_url: identity.issuer_platform_url,
     });
     config
         .write_to_file(cli_args)
@@ -1631,10 +1664,17 @@ fn auth_challenge_reason(config: &CliConfig, force: bool) -> AuthChallengeReason
     }
 }
 
+/// Stores freshly verified credentials, recording the platform that issued
+/// them.
+///
+/// `issuer` is the platform this login actually talked to, so it is the only
+/// correct provenance for the tokens being stored — and the one value the
+/// boundary check may later trust.
 fn update_config_from_verified_status(
     config: &mut CliConfig,
     status: GetCliAuthStatusResponse,
     fallback_expires_at: chrono::DateTime<chrono::Utc>,
+    issuer: &url::Url,
 ) -> Result<(), AuthError> {
     let token = status.token.ok_or_else(|| {
         AuthError::InvalidAuthData("Verified but missing access token".to_string())
@@ -1658,6 +1698,7 @@ fn update_config_from_verified_status(
         user_id: Some(user_id),
         wallet_address,
         email: status.email,
+        issuer_platform_url: Some(crate::platform::trim_platform_url(issuer)),
     });
     Ok(())
 }
@@ -1700,6 +1741,7 @@ mod tests {
         CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "test_token".to_string(),
                 refresh_token: "test_refresh".to_string(),
                 expires_at: Utc.with_ymd_and_hms(2099, 12, 31, 0, 0, 0).unwrap(),
@@ -1731,6 +1773,7 @@ mod tests {
         CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
                 expires_at: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
@@ -2025,7 +2068,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let cli_args = test_cli_args(temp_dir.path());
         let mut config = expired_refreshable_config();
-        config.platform_url = Some(server.url());
+        config.set_test_platform(&server.url());
         config.write_to_file(&cli_args).unwrap();
 
         let outcome = refresh_stored_auth(
@@ -2107,7 +2150,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let cli_args = test_cli_args(temp_dir.path());
         let mut config = expired_refreshable_config();
-        config.platform_url = Some(server.url());
+        config.set_test_platform(&server.url());
         config.write_to_file(&cli_args).unwrap();
 
         let error = refresh_stored_auth(
@@ -2152,7 +2195,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let cli_args = test_cli_args(temp_dir.path());
         let mut config = expired_refreshable_config();
-        config.platform_url = Some(server.url());
+        config.set_test_platform(&server.url());
         config.write_to_file(&cli_args).unwrap();
 
         let error = refresh_stored_auth(
@@ -2320,7 +2363,7 @@ mod tests {
         let auth_url = server.url();
         // The credentials belong to the mock platform, so the remote logout
         // may send the token there.
-        config.platform_url = Some(auth_url.clone());
+        config.set_test_platform(&auth_url);
         let cmd =
             AuthCommand::try_parse_from(vec!["auth", "--auth-url", auth_url.as_str(), "logout"])
                 .unwrap();
@@ -2471,8 +2514,19 @@ mod tests {
         assert!(base_cmd(Some("https://linea.phylax.systems")).switching_platform(&config));
         assert!(base_cmd(Some("https://custom.phylax.example")).switching_platform(&config));
 
-        // Explicit URL matching the credential platform does not switch.
+        // Rewriting only the *remembered* platform must not launder the
+        // credentials: that is the field startup overwrites from `-u` before
+        // the login runs, so trusting it here would compare the target against
+        // itself and short-circuit the switch.
         config.platform_url = Some("https://custom.phylax.example".to_string());
+        assert!(
+            base_cmd(Some("https://custom.phylax.example/")).switching_platform(&config),
+            "a remembered platform is not evidence of who issued the token"
+        );
+
+        // Explicit URL matching the platform that actually issued the
+        // credentials does not switch.
+        config.set_test_platform("https://custom.phylax.example");
         assert!(!base_cmd(Some("https://custom.phylax.example/")).switching_platform(&config));
 
         // Explicit URL for any other platform switches.
@@ -2486,7 +2540,7 @@ mod tests {
         );
         assert!(base_cmd(None).switching_platform(&config));
 
-        config.platform_url = Some("https://linea.phylax.systems".to_string());
+        config.set_test_platform("https://linea.phylax.systems");
         assert!(!base_cmd(None).switching_platform(&config));
     }
 
@@ -2500,7 +2554,15 @@ mod tests {
         let mut config = create_test_config();
         assert!(platform_switch(&resolved, &config));
 
+        // Selection state alone never satisfies the check — an interactive pick
+        // writes this field before the command runs.
         config.platform_url = Some("https://env-selected.phylax.example".to_string());
+        assert!(
+            platform_switch(&resolved, &config),
+            "a remembered platform must not stand in for credential provenance"
+        );
+
+        config.set_test_platform("https://env-selected.phylax.example");
         assert!(!platform_switch(&resolved, &config));
 
         // Without stored credentials there is no boundary to enforce.
@@ -2513,7 +2575,7 @@ mod tests {
         // deliberately not remembered, so these credentials carry no platform.
         // Trusting them against a freshly selected network would send a token
         // to a platform that did not issue it.
-        let config = create_test_config();
+        let mut config = create_test_config();
         assert!(config.platform_url.is_none());
         assert!(config.auth.is_some());
 
@@ -2528,6 +2590,18 @@ mod tests {
                 "unrecorded credentials must not be trusted against {target}"
             );
         }
+
+        // And still after an interactive selection has recorded that network.
+        // Selecting a platform is not logging into it, so the re-login this
+        // upgrade path promises has to survive the selection being remembered.
+        config.platform_url = Some("https://linea.phylax.systems".to_string());
+        assert!(
+            platform_switch(
+                &"https://linea.phylax.systems".parse().expect("test URL"),
+                &config
+            ),
+            "a selection must not re-bind credentials it did not issue"
+        );
 
         let err = ensure_credential_platform(
             &config,
@@ -2593,11 +2667,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_login_when_already_authenticated() {
-        // The stored credentials must record the platform being logged into,
-        // or the platform-boundary check treats this as a switch and starts a
-        // real device-auth flow instead of short-circuiting.
+        // The stored credentials must record the platform being logged into as
+        // their *issuer*, or the platform-boundary check treats this as a
+        // switch and starts a real device-auth flow instead of
+        // short-circuiting.
         let mut config = create_test_config();
-        config.platform_url = Some("https://linea.phylax.systems".to_string());
+        config.set_test_platform("https://linea.phylax.systems");
         let cmd = AuthCommand::try_parse_from(vec![
             "auth",
             "--auth-url",

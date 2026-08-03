@@ -85,6 +85,21 @@ impl CliConfig {
     pub fn rpc_endpoint(&self, chain_id: u64) -> Option<&RpcEndpoint> {
         self.rpc.get(&chain_id.to_string())
     }
+
+    /// Records `platform_url` as both the remembered platform and the issuer of
+    /// the stored credentials — the state a completed login leaves behind.
+    ///
+    /// Test-only, and deliberately one call: a fixture that sets only the
+    /// remembered platform describes credentials of unknown provenance, which
+    /// the platform-boundary check refuses. Tests that mean *that* state set
+    /// `platform_url` on its own.
+    #[cfg(test)]
+    pub(crate) fn set_test_platform(&mut self, platform_url: &str) {
+        self.platform_url = Some(platform_url.to_string());
+        if let Some(auth) = &mut self.auth {
+            auth.issuer_platform_url = Some(platform_url.to_string());
+        }
+    }
 }
 
 /// Command-line arguments for configuration management
@@ -283,6 +298,27 @@ impl CliConfig {
         }
         self.write_to_file(cli_args)?;
         Ok(true)
+    }
+
+    /// Copies an unreadable config file aside before it is replaced.
+    ///
+    /// A repair command (`pcl auth login`, `pcl config delete`) is allowed to
+    /// write a fresh config over a file it could not parse. Those bytes may
+    /// still hold recoverable credentials or RPC settings, so they are kept at
+    /// `config.toml.invalid` rather than dropped. Returns the backup path, or
+    /// `None` when there was no file to preserve.
+    ///
+    /// Only ever reached while the current file is unparseable, so it cannot
+    /// overwrite a backup taken from a good config: once the repair succeeds the
+    /// file parses and this is not called again.
+    pub fn back_up_unreadable(cli_args: &CliArgs) -> Result<Option<PathBuf>, ConfigError> {
+        let source = Self::config_file_path(cli_args);
+        if !source.exists() {
+            return Ok(None);
+        }
+        let backup = source.with_extension("toml.invalid");
+        std::fs::copy(&source, &backup).map_err(ConfigError::WriteError)?;
+        Ok(Some(backup))
     }
 
     /// Writes the configuration to a specific directory
@@ -686,6 +722,22 @@ pub struct UserAuth {
     /// Email address of the user (for email-based auth)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    /// The platform that issued these credentials.
+    ///
+    /// Deliberately stored *with* the credentials rather than alongside the
+    /// remembered platform in [`CliConfig::platform_url`]. The two answer
+    /// different questions — "which platform did I choose?" versus "who issued
+    /// this token?" — and only the second may gate attaching the token to a
+    /// request. Keeping provenance here makes that separation structural: it is
+    /// written only when fresh credentials are stored, cleared with them on
+    /// logout, and cannot be rebound by platform resolution or an interactive
+    /// selection.
+    ///
+    /// `None` for credentials stored by a release that did not record it. There
+    /// is no default to assume those into, so they belong to an unknown
+    /// platform and force a one-time re-login.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer_platform_url: Option<String>,
 }
 
 impl UserAuth {
@@ -821,6 +873,7 @@ mod tests {
         let config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "test_access".to_string(),
                 refresh_token: "test_refresh".to_string(),
                 expires_at: fixed_timestamp,
@@ -1040,6 +1093,7 @@ expires_at = 1672502400
         let old_config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
                 expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
@@ -1053,6 +1107,7 @@ expires_at = 1672502400
         let stale_process_config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "normalized_old_access".to_string(),
                 refresh_token: "old_refresh".to_string(),
                 expires_at: DateTime::from_timestamp(4102444800, 0).unwrap(),
@@ -1066,6 +1121,7 @@ expires_at = 1672502400
         let newer_config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "new_access".to_string(),
                 refresh_token: "new_refresh".to_string(),
                 expires_at: DateTime::from_timestamp(4102444800, 0).unwrap(),
@@ -1137,6 +1193,7 @@ expires_at = 1672502400
     #[test]
     fn test_user_auth_display() {
         let auth = UserAuth {
+            issuer_platform_url: None,
             access_token: "test_access".to_string(),
             refresh_token: "test_refresh".to_string(),
             expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(), // 2022-12-31 16:00:00 UTC
@@ -1159,6 +1216,7 @@ expires_at = 1672502400
 
         // Non-zero wallet address takes priority over everything
         let with_addr = UserAuth {
+            issuer_platform_url: None,
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
@@ -1174,6 +1232,7 @@ expires_at = 1672502400
 
         // Email is next priority when no wallet address
         let with_email = UserAuth {
+            issuer_platform_url: None,
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
@@ -1186,6 +1245,7 @@ expires_at = 1672502400
 
         // User ID is fallback when no address or email
         let with_id = UserAuth {
+            issuer_platform_url: None,
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
@@ -1201,6 +1261,7 @@ expires_at = 1672502400
 
         // "unknown" when nothing is set
         let bare = UserAuth {
+            issuer_platform_url: None,
             access_token: String::new(),
             refresh_token: String::new(),
             expires_at: expires,
@@ -1215,6 +1276,7 @@ expires_at = 1672502400
     #[test]
     fn extracts_expiry_from_jwt_access_token() {
         let auth = UserAuth {
+            issuer_platform_url: None,
             access_token: "e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig".to_string(),
             refresh_token: String::new(),
             expires_at: DateTime::from_timestamp(0, 0).unwrap(),
@@ -1235,6 +1297,7 @@ expires_at = 1672502400
         let mut config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "e30.eyJleHAiOjQxMDI0NDQ4MDB9.sig".to_string(),
                 refresh_token: "refresh".to_string(),
                 expires_at: DateTime::from_timestamp(1, 0).unwrap(),
@@ -1267,6 +1330,7 @@ expires_at = 1672502400
         let mut config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "test".to_string(),
                 refresh_token: "test".to_string(),
                 expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),
@@ -1293,6 +1357,7 @@ expires_at = 1672502400
         let config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "secret-access".to_string(),
                 refresh_token: "secret-refresh".to_string(),
                 expires_at: Utc::now() + chrono::Duration::minutes(10),
@@ -1365,6 +1430,7 @@ expires_at = 1672502400
     #[test]
     fn test_user_auth_serialization() {
         let auth = UserAuth {
+            issuer_platform_url: None,
             access_token: "test_access".to_string(),
             refresh_token: "test_refresh".to_string(),
             expires_at: DateTime::from_timestamp(1672502400, 0).unwrap(),

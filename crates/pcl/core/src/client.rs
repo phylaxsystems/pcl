@@ -176,6 +176,7 @@ mod tests {
         let mut config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: Some(server.url()),
                 access_token: "expired-token".to_string(),
                 refresh_token: "old-refresh".to_string(),
                 expires_at: DateTime::from_timestamp(1, 0).expect("valid timestamp"),
@@ -217,6 +218,7 @@ mod tests {
         // mock platform.
         let mut config = CliConfig {
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "expired-token".to_string(),
                 refresh_token: "old-refresh".to_string(),
                 expires_at: DateTime::from_timestamp(1, 0).expect("valid timestamp"),
@@ -244,6 +246,7 @@ mod tests {
         // Valid production credentials must not be attached to another host.
         let config = CliConfig {
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "valid-token".to_string(),
                 refresh_token: "refresh".to_string(),
                 expires_at: DateTime::from_timestamp(4_102_444_800, 0).expect("valid timestamp"),
@@ -267,6 +270,7 @@ mod tests {
         let config = CliConfig {
             rpc: BTreeMap::default(),
             auth: Some(UserAuth {
+                issuer_platform_url: None,
                 access_token: "expired-token".to_string(),
                 refresh_token: String::new(),
                 expires_at: DateTime::from_timestamp(1, 0).expect("valid timestamp"),

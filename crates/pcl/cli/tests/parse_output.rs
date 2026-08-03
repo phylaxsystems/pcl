@@ -39,25 +39,6 @@ fn run_pcl(args: &[&str]) -> PclOutput {
     }
 }
 
-/// Like [`run_pcl`], but names a platform. Workflow commands resolve a platform
-/// before dispatch and there is no default, so a run with an empty config dir
-/// would otherwise stop at platform resolution.
-fn run_pcl_with_platform(args: &[&str]) -> PclOutput {
-    let config_dir = tempfile::tempdir().expect("temp config dir");
-    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
-        .arg("--config-dir")
-        .arg(config_dir.path())
-        .env("PCL_API_URL", "https://linea.phylax.systems")
-        .args(args)
-        .output()
-        .expect("run pcl");
-    PclOutput {
-        success: output.status.success(),
-        stdout: String::from_utf8(output.stdout).expect("utf-8 stdout"),
-        stderr: String::from_utf8(output.stderr).expect("utf-8 stderr"),
-    }
-}
-
 fn assert_json_error(output: &PclOutput, code: &str) {
     output.assert_failure();
     assert!(output.stdout.is_empty());
@@ -190,6 +171,10 @@ fn machine_help_requests_stay_structured() {
     assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
 }
 
+/// `--body-template` prints a static, compiled-in schema. Run with an *empty*
+/// config dir and no `PCL_API_URL` on purpose: these commands are how an agent
+/// discovers a request body shape, so needing a platform first would make them
+/// unusable on a clean install.
 #[test]
 fn new_workflow_subcommands_parse_and_emit_structured_templates() {
     for args in [
@@ -204,10 +189,15 @@ fn new_workflow_subcommands_parse_and_emit_structured_templates() {
         ["--json", "access", "invite", "project-1", "--body-template"].as_slice(),
         ["--json", "releases", "deploy", "--body-template"].as_slice(),
         ["--json", "access", "invite", "--body-template"].as_slice(),
+        ["--json", "contracts", "--assign-project", "--body-template"].as_slice(),
+        ["--json", "protocol-manager", "--set", "--body-template"].as_slice(),
+        ["--json", "deployments", "--confirm", "--body-template"].as_slice(),
+        ["--json", "projects", "create", "--body-template"].as_slice(),
     ] {
-        let output = run_pcl_with_platform(args);
+        let output = run_pcl(args);
 
         output.assert_success();
+        assert!(output.stderr.is_empty(), "{}", output.stderr);
         let envelope: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("json envelope");
         assert_eq!(envelope["status"], "ok", "{envelope}");
@@ -223,6 +213,26 @@ fn new_workflow_subcommands_parse_and_emit_structured_templates() {
             "{envelope}"
         );
     }
+}
+
+/// `export incidents --dry-run` prints a local plan and fetches nothing, so it
+/// must work on a clean non-interactive install. It also must not invent an
+/// `--api-url` for the resume command it prints: with no platform chosen, the
+/// eventual execution resolves one the same way any other command would.
+#[test]
+fn incident_export_dry_run_needs_no_platform() {
+    let output = run_pcl(&["--json", "export", "incidents", "--dry-run"]);
+
+    output.assert_success();
+    let envelope: serde_json::Value = serde_json::from_str(&output.stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok", "{envelope}");
+    let resume = envelope["data"]["resume_command"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        !resume.contains("--api-url"),
+        "the resume command must not pin a platform that was never chosen: {resume}"
+    );
 }
 
 #[test]

@@ -79,7 +79,25 @@ impl Network {
     /// Recognises a resolved URL as one of the known networks, so it can be
     /// named in output. Unknown hosts (shadow, staging, localhost) return
     /// `None` and are shown as-is.
+    ///
+    /// Matching is on the whole canonical origin, not just the host. Requests
+    /// preserve the scheme, port, userinfo, and query, so a URL that differs in
+    /// any of them is a *different target* — and naming it "Linea Mainnet" would
+    /// hide exactly what the announcement exists to expose:
+    /// `http://linea.phylax.systems:8080` is plaintext to another service, and
+    /// `https://user:secret@linea.phylax.systems` delivers credentials on every
+    /// request. Those render as their (redacted) URL instead.
     pub fn from_url(url: &Url) -> Option<Self> {
+        if url.scheme() != "https"
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.port().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || !matches!(url.path(), "" | "/")
+        {
+            return None;
+        }
         let host = url.host_str()?;
         SELECTABLE_NETWORKS
             .into_iter()
@@ -93,16 +111,70 @@ impl fmt::Display for Network {
     }
 }
 
-/// Human label for a resolved platform: the network name when the host is a
-/// known network, otherwise the bare URL.
+/// Human label for a resolved platform: the network name when the URL is a known
+/// network's canonical origin, otherwise the redacted URL.
 pub fn describe_platform(url: &Url) -> String {
-    Network::from_url(url).map_or_else(|| trim_platform_url(url), |network| network.to_string())
+    Network::from_url(url).map_or_else(|| redact_platform_url(url), |network| network.to_string())
 }
 
 /// Canonical stored form of a platform URL — trailing slash removed so
 /// comparisons against remembered values and credential platforms are stable.
+///
+/// Lossless on purpose: this is an identity, used for storage and for the
+/// platform-boundary comparison. Never print it. Use [`redact_platform_url`] or
+/// [`describe_platform`] for anything a human or a log will see.
 pub fn trim_platform_url(url: &Url) -> String {
     url.as_str().trim_end_matches('/').to_string()
+}
+
+/// Display form of a platform URL with any embedded credentials masked.
+///
+/// `PCL_API_URL=https://user:secret@shadow.example` is a supported way to reach
+/// an internal target, and the per-command announcement plus the apply
+/// confirmation would otherwise copy that password into terminal scrollback and
+/// CI logs. Scheme, host, port, and path stay — they are what the reader needs to
+/// confirm the target — and userinfo and query are *masked rather than dropped*:
+/// both ride along on every request, so a display that silently omitted them
+/// would render two different targets identically, which is the same hiding this
+/// function exists to prevent.
+pub fn redact_platform_url(url: &Url) -> String {
+    let has_userinfo = !url.username().is_empty() || url.password().is_some();
+    if !has_userinfo && url.query().is_none() && url.fragment().is_none() {
+        return trim_platform_url(url);
+    }
+    let mut redacted = url.clone();
+    // Both setters fail only on a cannot-be-a-base URL (`mailto:`), which never
+    // reaches here: platform URLs are http(s). On failure the value is left
+    // untouched, so fall back to showing scheme and host only.
+    if has_userinfo
+        && (redacted.set_username("redacted").is_err() || redacted.set_password(None).is_err())
+    {
+        return format!(
+            "{}://{}",
+            url.scheme(),
+            url.host_str().unwrap_or("<unknown host>")
+        );
+    }
+    if url.query().is_some() {
+        redacted.set_query(Some("redacted"));
+    }
+    // Fragments are never sent to a server, so there is nothing to disclose or
+    // to warn about.
+    redacted.set_fragment(None);
+    trim_platform_url(&redacted)
+}
+
+/// [`redact_platform_url`] for a platform URL that is already stored as a
+/// string — a recorded credential issuer, or the platform on a pending deploy
+/// intent.
+///
+/// A value that no longer parses is shown verbatim: it came from this CLI's own
+/// config or intent file, so a parse failure means the file was hand-edited, and
+/// the raw text is the most useful thing to put in front of the operator.
+pub fn redact_stored_platform_url(stored: &str) -> String {
+    stored
+        .parse::<Url>()
+        .map_or_else(|_| stored.to_string(), |url| redact_platform_url(&url))
 }
 
 /// Whether the resolver is allowed to prompt when nothing is configured.
@@ -412,6 +484,105 @@ mod tests {
             describe_platform(&url("https://shadow.phylax.example/")),
             "https://shadow.phylax.example"
         );
+    }
+
+    #[test]
+    fn only_a_canonical_origin_earns_a_network_name() {
+        // Everything here reaches a different target than the network it looks
+        // like — a different scheme, port, path, or an extra credential or query
+        // that rides along on every request. Labelling any of them "Linea
+        // Mainnet" would hide the very difference the announcement exists to
+        // surface.
+        for imposter in [
+            "http://linea.phylax.systems",
+            "http://linea.phylax.systems:8080",
+            "https://linea.phylax.systems:8443",
+            "https://user:secret@linea.phylax.systems",
+            "https://user@linea.phylax.systems",
+            "https://linea.phylax.systems?token=abc",
+            "https://linea.phylax.systems#frag",
+            "https://linea.phylax.systems/staging",
+            "https://linea.phylax.systems.evil.example",
+        ] {
+            let parsed = url(imposter);
+            assert_eq!(
+                Network::from_url(&parsed),
+                None,
+                "{imposter} must not be recognised as a known network"
+            );
+            assert_ne!(
+                describe_platform(&parsed),
+                Network::LineaMainnet.to_string(),
+                "{imposter} must not be labelled as Linea Mainnet"
+            );
+        }
+
+        // The canonical origin still is, with or without the trailing slash.
+        assert_eq!(
+            Network::from_url(&url("https://linea.phylax.systems")),
+            Some(Network::LineaMainnet)
+        );
+        assert_eq!(
+            Network::from_url(&url("https://linea.phylax.systems/")),
+            Some(Network::LineaMainnet)
+        );
+    }
+
+    #[test]
+    fn display_strips_credentials_but_keeps_the_target_identifiable() {
+        // The announcement and the apply confirmation go to stderr, which lands
+        // in terminal scrollback and CI logs.
+        assert_eq!(
+            redact_platform_url(&url("https://alice:sup3rs3cret@shadow.example")),
+            "https://redacted@shadow.example"
+        );
+        assert_eq!(
+            describe_platform(&url("https://alice:sup3rs3cret@shadow.example/")),
+            "https://redacted@shadow.example"
+        );
+        // A query string can carry a token just as easily, and is masked rather
+        // than dropped: it is still sent, so hiding it would make this render
+        // identically to the same host without it.
+        assert_eq!(
+            redact_platform_url(&url("https://shadow.example/api?token=abc#frag")),
+            "https://shadow.example/api?redacted"
+        );
+        assert_ne!(
+            redact_platform_url(&url("https://shadow.example?token=abc")),
+            redact_platform_url(&url("https://shadow.example")),
+            "a query-bearing target must not render as the bare host"
+        );
+        // Host, port, and path survive: they are what identifies the target.
+        assert_eq!(
+            redact_platform_url(&url("http://127.0.0.1:3000/base")),
+            "http://127.0.0.1:3000/base"
+        );
+        // A credential-bearing URL that looks like a known network is never
+        // laundered into that network's name.
+        assert_eq!(
+            describe_platform(&url("https://alice:secret@linea.phylax.systems")),
+            "https://redacted@linea.phylax.systems"
+        );
+
+        for rendered in [
+            redact_platform_url(&url("https://alice:sup3rs3cret@shadow.example")),
+            describe_platform(&url("https://alice:sup3rs3cret@shadow.example")),
+            redact_stored_platform_url("https://alice:sup3rs3cret@shadow.example"),
+        ] {
+            assert!(
+                !rendered.contains("sup3rs3cret"),
+                "password leaked into output: {rendered}"
+            );
+        }
+
+        // Storage and comparison stay lossless — the boundary check depends on
+        // the exact value.
+        assert_eq!(
+            trim_platform_url(&url("https://alice:sup3rs3cret@shadow.example/")),
+            "https://alice:sup3rs3cret@shadow.example"
+        );
+        // A hand-edited config value that no longer parses is shown as-is.
+        assert_eq!(redact_stored_platform_url("not-a-url"), "not-a-url");
     }
 
     #[test]
