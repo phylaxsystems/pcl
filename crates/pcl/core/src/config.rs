@@ -30,11 +30,17 @@ use serde_json::{
 use std::{
     collections::BTreeMap,
     fmt,
+    fs::OpenOptions,
     io::Write,
     path::{
         Path,
         PathBuf,
     },
+};
+use tokio::time::{
+    Duration,
+    Instant,
+    sleep,
 };
 use uuid::Uuid;
 
@@ -45,6 +51,73 @@ const CONFIG_DIR_NAME: &str = "pcl";
 /// Configuration file name
 pub const CONFIG_FILE: &str = "config.toml";
 pub const AUTH_EXPIRES_SOON_SECONDS: i64 = 300;
+
+/// How long to wait for another process to release the config lock.
+const CONFIG_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often to retry while the config lock is held.
+const CONFIG_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Cross-process guard over the config file, held for a whole
+/// read-modify-write.
+///
+/// Compare-and-write ([`CliConfig::write_to_file_if_unchanged`]) is not enough
+/// on its own: it narrows the window between reading and writing but cannot
+/// close it, so two processes can still interleave and the loser's write is
+/// simply dropped. That is tolerable for a passive rewrite, and *not* tolerable
+/// for the refresh token — there is only ever one valid refresh token, so
+/// losing the write that recorded it logs the user out.
+///
+/// So every writer that merges into whatever is currently on disk takes this
+/// lock, and they all take the *same* one: token refresh and platform selection
+/// are different operations on the same file, and a lock that only refresh
+/// honoured would not serialize them against each other.
+///
+/// Released on drop, including on panic. A stale file left by a killed process
+/// does not wedge the CLI forever: waiting gives up after 30 seconds and
+/// surfaces [`ConfigError::LockTimeout`] instead.
+#[derive(Debug)]
+pub struct ConfigLock {
+    path: PathBuf,
+}
+
+impl ConfigLock {
+    /// Acquires the lock, waiting up to 30 seconds for another process to
+    /// release it before returning [`ConfigError::LockTimeout`].
+    pub async fn acquire(cli_args: &CliArgs) -> Result<Self, ConfigError> {
+        let path = CliConfig::config_file_path(cli_args).with_extension("toml.lock");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(ConfigError::WriteError)?;
+        }
+        let deadline = Instant::now() + CONFIG_LOCK_TIMEOUT;
+        loop {
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut file) => {
+                    let _ = writeln!(
+                        file,
+                        "pid={} acquired_at={}",
+                        std::process::id(),
+                        Utc::now().to_rfc3339()
+                    );
+                    let _ = file.sync_all();
+                    return Ok(Self { path });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if Instant::now() >= deadline {
+                        return Err(ConfigError::LockTimeout);
+                    }
+                    sleep(CONFIG_LOCK_POLL_INTERVAL).await;
+                }
+                Err(error) => return Err(ConfigError::WriteError(error)),
+            }
+        }
+    }
+}
+
+impl Drop for ConfigLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
 
 /// Main configuration structure for PCL
 ///
@@ -282,6 +355,37 @@ impl CliConfig {
                 .clone()
                 .unwrap_or(Self::get_config_dir()),
         )
+    }
+
+    /// Records this process's chosen platform without clobbering a concurrent
+    /// write, then adopts whatever ended up on disk.
+    ///
+    /// The in-memory config was read before the network selector prompted, and
+    /// the prompt stays open for as long as the user takes to answer. Another
+    /// `pcl` can rotate the refresh token in that window, so this process's
+    /// snapshot must not be written wholesale — only `platform_url` is merged
+    /// into the current file.
+    ///
+    /// The read and the write are both inside a [`ConfigLock`] because merging
+    /// is only safe if nothing else writes in between: a token refresh landing
+    /// after the read would be overwritten by the write, discarding the only
+    /// valid refresh token. Holding the same lock refresh takes makes the two
+    /// operations mutually exclusive rather than merely narrow.
+    pub async fn merge_selected_platform(&mut self, cli_args: &CliArgs) -> Result<(), ConfigError> {
+        let _lock = ConfigLock::acquire(cli_args).await?;
+        let Ok(mut current) = Self::read_from_file(cli_args) else {
+            // Unreadable only if it changed under us since startup, where the
+            // caller already parsed it. Nothing to merge, so record the choice.
+            return self.write_to_file(cli_args);
+        };
+        if current == *self {
+            return Ok(());
+        }
+        current.normalize_auth_expiry_from_access_token();
+        current.platform_url.clone_from(&self.platform_url);
+        current.write_to_file(cli_args)?;
+        *self = current;
+        Ok(())
     }
 
     /// Writes the configuration only when the on-disk config still matches
@@ -1008,6 +1112,161 @@ expires_at = 1672502400
             "https://mainnet.infura.io"
         );
         assert_eq!(redacted_rpc_host("not a url"), "<unparseable-url>");
+    }
+
+    /// A config carrying credentials, as another process would have left it.
+    fn authenticated_config(access: &str, refresh: &str) -> CliConfig {
+        CliConfig {
+            auth: Some(UserAuth {
+                access_token: access.to_string(),
+                refresh_token: refresh.to_string(),
+                expires_at: DateTime::from_timestamp(4_102_444_800, 0).expect("timestamp"),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: None,
+                issuer_platform_url: Some("https://linea.phylax.systems".to_string()),
+            }),
+            ..CliConfig::default()
+        }
+    }
+
+    /// Recording a selected platform must not roll back an update that landed
+    /// before the merge started.
+    ///
+    /// The interactive selector can sit open indefinitely, and another `pcl` may
+    /// rotate the refresh token while it does. Writing this process's pre-prompt
+    /// snapshot would discard the rotation and leave a refresh token the
+    /// platform has already invalidated.
+    #[tokio::test]
+    async fn merging_a_selected_platform_keeps_an_already_rotated_token() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+
+        let stale = authenticated_config("old-access", "old-refresh");
+        authenticated_config("rotated-access", "rotated-refresh")
+            .write_to_file(&cli_args)
+            .expect("another process writes the rotated pair");
+
+        let mut config = stale.clone();
+        config.platform_url = Some("https://ethereum.phylax.systems".to_string());
+        config
+            .merge_selected_platform(&cli_args)
+            .await
+            .expect("merge the selection");
+
+        let on_disk = CliConfig::read_from_file(&cli_args).expect("read merged config");
+        let auth = on_disk.auth.as_ref().expect("credentials survive");
+        assert_eq!(
+            auth.refresh_token, "rotated-refresh",
+            "the concurrently rotated refresh token must survive"
+        );
+        assert_eq!(auth.access_token, "rotated-access");
+        assert_eq!(
+            on_disk.platform_url.as_deref(),
+            Some("https://ethereum.phylax.systems"),
+            "the selection still has to be recorded"
+        );
+        assert_eq!(
+            config, on_disk,
+            "this process adopts the merged state for the rest of the run"
+        );
+    }
+
+    /// The rotation that overlaps the merge is the dangerous one.
+    ///
+    /// Reloading before the write only protects updates that finished before the
+    /// reload. Without a lock, a refresh that writes its new pair *after* the
+    /// reload and before the merge's own write is silently overwritten, throwing
+    /// away the only valid refresh token — and the sibling test above cannot
+    /// catch it, because there the rotation is already on disk when the merge
+    /// begins.
+    ///
+    /// The lock itself is the barrier here: holding it forces the merge to wait,
+    /// and the rotation is written while it waits, so the rotation lands strictly
+    /// between the merge being asked for and the merge reading the file.
+    #[tokio::test]
+    async fn merging_a_selected_platform_waits_for_an_overlapping_rotation() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+
+        let stale = authenticated_config("old-access", "old-refresh");
+        stale
+            .write_to_file(&cli_args)
+            .expect("the pre-prompt state is on disk");
+
+        // Stand in for a concurrent `refresh_stored_auth`, which holds this same
+        // lock across its own read-modify-write.
+        let lock = ConfigLock::acquire(&cli_args)
+            .await
+            .expect("the refresher takes the lock first");
+
+        let mut config = stale.clone();
+        config.platform_url = Some("https://ethereum.phylax.systems".to_string());
+        let merge_args = cli_args.clone();
+        let merge = tokio::spawn(async move {
+            config.merge_selected_platform(&merge_args).await?;
+            Ok::<CliConfig, ConfigError>(config)
+        });
+
+        // The merge cannot have read anything yet: it is parked on the lock.
+        tokio::time::sleep(CONFIG_LOCK_POLL_INTERVAL * 3).await;
+        assert!(
+            !merge.is_finished(),
+            "the merge must block until the refresher releases the lock"
+        );
+        authenticated_config("rotated-access", "rotated-refresh")
+            .write_to_file(&cli_args)
+            .expect("the refresher writes its rotated pair");
+        drop(lock);
+
+        let merged = merge
+            .await
+            .expect("merge task joins")
+            .expect("merge the selection");
+
+        let on_disk = CliConfig::read_from_file(&cli_args).expect("read merged config");
+        let auth = on_disk.auth.as_ref().expect("credentials survive");
+        assert_eq!(
+            auth.refresh_token, "rotated-refresh",
+            "a rotation overlapping the merge must survive it"
+        );
+        assert_eq!(auth.access_token, "rotated-access");
+        assert_eq!(
+            on_disk.platform_url.as_deref(),
+            Some("https://ethereum.phylax.systems"),
+            "the selection still has to be recorded"
+        );
+        assert_eq!(merged, on_disk);
+    }
+
+    /// A lock left behind by a killed process must not wedge the CLI forever.
+    ///
+    /// Runs on a paused clock, which tokio auto-advances whenever every task is
+    /// parked on a timer, so the whole `CONFIG_LOCK_TIMEOUT` budget elapses
+    /// instantly instead of costing the suite 30 real seconds.
+    #[tokio::test(start_paused = true)]
+    async fn a_held_config_lock_times_out_rather_than_blocking_forever() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let _held = ConfigLock::acquire(&cli_args).await.expect("first acquire");
+
+        let error = ConfigLock::acquire(&cli_args)
+            .await
+            .expect_err("the lock is still held, so acquiring must fail");
+        assert!(
+            matches!(error, ConfigError::LockTimeout),
+            "expected a lock timeout, got {error:?}"
+        );
     }
 
     #[test]

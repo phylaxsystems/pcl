@@ -773,10 +773,23 @@ impl ProjectsCommand {
 impl ProjectsSubcommand {
     /// Whether this subcommand reaches the platform. `--body-template` on a
     /// write prints a local schema and returns before any client is built.
+    ///
+    /// Matched exhaustively rather than with a `_ => true` catch-all: a new
+    /// body-taking variant would otherwise default to requiring a platform and
+    /// silently break its own `--body-template`.
     fn needs_platform_url(&self) -> bool {
         match self {
             Self::Create(args) => !args.body_template,
-            _ => true,
+            Self::Update(args) => !args.write.body_template,
+            Self::List(_)
+            | Self::Mine
+            | Self::Show(_)
+            | Self::Saved(_)
+            | Self::Delete(_)
+            | Self::Save(_)
+            | Self::Unsave(_)
+            | Self::Resolve(_)
+            | Self::Widget(_) => true,
         }
     }
 
@@ -1252,7 +1265,7 @@ impl ReleasesSubcommand {
             Self::Create(args) | Self::Preview(args) => !args.body.body_template,
             Self::Deploy(args) | Self::Remove(args) => !args.body.body_template,
             Self::RetryCheck(args) => !args.body.body_template,
-            _ => true,
+            Self::List(_) | Self::Show(_) | Self::Calldata(_) | Self::BacktestProgress(_) => true,
         }
     }
 
@@ -1528,12 +1541,30 @@ impl AccessSubcommand {
     /// Whether this subcommand reaches the platform. `--body-template` on a
     /// body-taking access command prints a local schema and returns before any
     /// client is built.
+    ///
+    /// Matched exhaustively, including through the `role` and `member` groups:
+    /// their nested variants carry [`WorkflowBodyArgs`] too, and a catch-all arm
+    /// would leave `--body-template` on them demanding a platform.
     fn needs_platform_url(&self) -> bool {
         match self {
             Self::Accept(args) => !args.body.body_template,
             Self::Invite(args) => !args.body.body_template,
             Self::Resend(args) | Self::Revoke(args) => !args.body.body_template,
-            _ => true,
+            Self::Role(args) => {
+                match &args.command {
+                    AccessRoleSubcommand::Update(args) => !args.body.body_template,
+                }
+            }
+            Self::Member(args) => {
+                match &args.command {
+                    AccessMemberSubcommand::Remove(args) => !args.body.body_template,
+                }
+            }
+            Self::Members(_)
+            | Self::Invitations(_)
+            | Self::Pending
+            | Self::Preview(_)
+            | Self::MyRole(_) => true,
         }
     }
 

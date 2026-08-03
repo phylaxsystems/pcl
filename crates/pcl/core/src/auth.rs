@@ -9,6 +9,7 @@ use crate::{
     config::{
         AUTH_EXPIRES_SOON_SECONDS,
         CliConfig,
+        ConfigLock,
         UserAuth,
         access_token_expires_at,
     },
@@ -52,14 +53,10 @@ use serde_json::{
     Value,
     json,
 };
-use std::{
-    fs::OpenOptions,
-    io::{
-        self,
-        BufRead,
-        Write,
-    },
-    path::PathBuf,
+use std::io::{
+    self,
+    BufRead,
+    Write,
 };
 use tokio::time::{
     Duration,
@@ -74,10 +71,6 @@ const INITIAL_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_POLL_INTERVAL: Duration = Duration::from_secs(10);
 /// Overall polling budget, matching the previous 150 x 2s behavior.
 const POLL_TIMEOUT: Duration = Duration::from_mins(5);
-/// Maximum time to wait for another local CLI process to finish rotating auth.
-const REFRESH_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
-/// Poll interval while waiting on the local refresh lock.
-const REFRESH_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 pub struct RefreshOutcome {
@@ -91,10 +84,6 @@ struct RefreshErrorDetails {
     request_id: Option<String>,
     code: Option<String>,
     message: Option<String>,
-}
-
-struct RefreshLock {
-    path: PathBuf,
 }
 
 /// Authentication commands for the PCL CLI
@@ -1238,7 +1227,15 @@ pub async fn refresh_stored_auth(
     cli_args: &CliArgs,
     force: bool,
 ) -> Result<RefreshOutcome, AuthError> {
-    let _lock = RefreshLock::acquire(cli_args).await?;
+    // The same lock platform selection takes, so the two cannot interleave and
+    // overwrite each other's merge. A timeout keeps its existing auth-shaped
+    // error, since to the user this is still a refresh that could not proceed.
+    let _lock = ConfigLock::acquire(cli_args).await.map_err(|error| {
+        match error {
+            ConfigError::LockTimeout => AuthError::RefreshLockTimeout,
+            other => AuthError::ConfigError(other),
+        }
+    })?;
     let mut disk_config = CliConfig::read_from_file(cli_args).map_err(AuthError::ConfigError)?;
     disk_config.normalize_auth_expiry_from_access_token();
     if disk_config.auth.is_some() || config.auth.is_none() {
@@ -1401,46 +1398,6 @@ fn persist_refreshed_auth(
         reason: "refreshed",
         request_id,
     })
-}
-
-impl RefreshLock {
-    async fn acquire(cli_args: &CliArgs) -> Result<Self, AuthError> {
-        let path = CliConfig::config_file_path(cli_args).with_extension("toml.lock");
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| AuthError::ConfigError(ConfigError::WriteError(error)))?;
-        }
-        let deadline = Instant::now() + REFRESH_LOCK_TIMEOUT;
-        loop {
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(mut file) => {
-                    let _ = writeln!(
-                        file,
-                        "pid={} acquired_at={}",
-                        std::process::id(),
-                        chrono::Utc::now().to_rfc3339()
-                    );
-                    let _ = file.sync_all();
-                    return Ok(Self { path });
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if Instant::now() >= deadline {
-                        return Err(AuthError::RefreshLockTimeout);
-                    }
-                    sleep(REFRESH_LOCK_POLL_INTERVAL).await;
-                }
-                Err(error) => {
-                    return Err(AuthError::ConfigError(ConfigError::WriteError(error)));
-                }
-            }
-        }
-    }
-}
-
-impl Drop for RefreshLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
 }
 
 async fn refresh_error_details(response: reqwest::Response) -> RefreshErrorDetails {

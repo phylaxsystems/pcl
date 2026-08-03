@@ -149,7 +149,7 @@ async fn main() -> Result<()> {
         // produced anything, so a cancelled or failed repair would destroy
         // recoverable credentials; that case is left to the post-command write.
         if platform_recorded && read_valid_config {
-            persist_selected_platform(&cli.args, &mut config)?;
+            config.merge_selected_platform(&cli.args).await?;
             // The write below only fires when the file still matches this
             // snapshot, so it has to reflect what was just written.
             original_config = config.clone();
@@ -239,31 +239,6 @@ async fn run_command(
         Commands::Verify(verify_cmd) => verify_cmd.run(cli_args)?,
         Commands::Download(download_cmd) => download_cmd.run(cli_args, config).await?,
     }
-    Ok(())
-}
-
-/// Writes a freshly chosen platform without clobbering a concurrent update.
-///
-/// The in-memory config was read before the selector prompted, and a prompt sits
-/// open for as long as the user takes to answer. Another `pcl` can rotate the
-/// refresh token or change RPC settings in that window, and writing this
-/// process's snapshot over the result would discard them — losing the only valid
-/// refresh token. So the platform is merged into whatever is on disk *now*, and
-/// this process adopts that state for the rest of the run.
-fn persist_selected_platform(cli_args: &CliArgs, config: &mut CliConfig) -> Result<()> {
-    let Ok(mut current) = CliConfig::read_from_file(cli_args) else {
-        // Unreadable only if it changed under us since startup, where the
-        // caller already parsed it. Nothing to merge, so record the choice.
-        config.write_to_file(cli_args)?;
-        return Ok(());
-    };
-    if current == *config {
-        return Ok(());
-    }
-    current.normalize_auth_expiry_from_access_token();
-    current.platform_url.clone_from(&config.platform_url);
-    current.write_to_file(cli_args)?;
-    *config = current;
     Ok(())
 }
 
@@ -1203,6 +1178,7 @@ fn config_error_code(err: &ConfigError) -> &'static str {
         ConfigError::JsonError(_) => "config.json_failed",
         ConfigError::NotAuthenticated => "config.not_authenticated",
         ConfigError::InvalidValue(_) => "config.invalid_value",
+        ConfigError::LockTimeout => "config.lock_timeout",
     }
 }
 
@@ -1408,68 +1384,6 @@ mod tests {
     use super::*;
     use clap::CommandFactory;
     use pcl_core::api::envelope_output_string;
-
-    /// Recording a selected platform must not roll back a concurrent update.
-    ///
-    /// The interactive selector can sit open indefinitely, and another `pcl` may
-    /// rotate the refresh token while it does. Writing this process's pre-prompt
-    /// snapshot would discard the rotation and leave a refresh token the
-    /// platform has already invalidated.
-    #[test]
-    fn persisting_a_selected_platform_keeps_a_concurrently_rotated_token() {
-        let config_dir = tempfile::tempdir().expect("temp config dir");
-        let cli_args = CliArgs {
-            config_dir: Some(config_dir.path().to_path_buf()),
-            ..CliArgs::default()
-        };
-
-        // What this process read before prompting.
-        let stale = CliConfig {
-            auth: Some(pcl_core::config::UserAuth {
-                access_token: "old-access".to_string(),
-                refresh_token: "old-refresh".to_string(),
-                expires_at: chrono::DateTime::from_timestamp(1_600_000_000, 0).expect("timestamp"),
-                refresh_expires_at: None,
-                user_id: None,
-                wallet_address: None,
-                email: None,
-                issuer_platform_url: Some("https://linea.phylax.systems".to_string()),
-            }),
-            ..CliConfig::default()
-        };
-
-        // What another process wrote while the prompt was open.
-        let mut rotated = stale.clone();
-        if let Some(auth) = &mut rotated.auth {
-            auth.access_token = "rotated-access".to_string();
-            auth.refresh_token = "rotated-refresh".to_string();
-        }
-        rotated
-            .write_to_file(&cli_args)
-            .expect("another process writes the rotated pair");
-
-        // The selection this process made.
-        let mut config = stale.clone();
-        config.platform_url = Some("https://ethereum.phylax.systems".to_string());
-        persist_selected_platform(&cli_args, &mut config).expect("persist the selection");
-
-        let on_disk = CliConfig::read_from_file(&cli_args).expect("read merged config");
-        let auth = on_disk.auth.as_ref().expect("credentials survive");
-        assert_eq!(
-            auth.refresh_token, "rotated-refresh",
-            "the concurrently rotated refresh token must survive"
-        );
-        assert_eq!(auth.access_token, "rotated-access");
-        assert_eq!(
-            on_disk.platform_url.as_deref(),
-            Some("https://ethereum.phylax.systems"),
-            "the selection still has to be recorded"
-        );
-        assert_eq!(
-            config, on_disk,
-            "this process adopts the merged state for the rest of the run"
-        );
-    }
 
     #[test]
     fn detects_output_mode_before_successful_parse() {

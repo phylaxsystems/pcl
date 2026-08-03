@@ -295,6 +295,10 @@ pub enum ConfigError {
     /// Error when a config value supplied on the command line is invalid
     #[error("Invalid config value: {0}")]
     InvalidValue(String),
+
+    /// Error when another local process held the config lock for too long.
+    #[error("Timed out waiting for another PCL process to finish writing the config.")]
+    LockTimeout,
 }
 
 /// Errors that can occur while resolving which platform to talk to.

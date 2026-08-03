@@ -171,29 +171,103 @@ fn machine_help_requests_stay_structured() {
     assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
 }
 
+/// Every `--body-template` invocation the CLI accepts, including the ones whose
+/// flag arrives through a flattened or nested args struct — those are the easy
+/// ones to record as always needing a platform, because the outer subcommand
+/// variant carries no `body_template` field of its own.
+const LOCAL_TEMPLATE_INVOCATIONS: &[&[&str]] = &[
+    &["--json", "assertions", "--body-template"],
+    &["--json", "account", "--body-template"],
+    &["--json", "contracts", "--assign-project", "--body-template"],
+    &["--json", "deployments", "--confirm", "--body-template"],
+    &["--json", "integrations", "--body-template"],
+    &["--json", "protocol-manager", "--set", "--body-template"],
+    &["--json", "projects", "create", "--body-template"],
+    &[
+        "--json",
+        "projects",
+        "update",
+        "project-1",
+        "--body-template",
+    ],
+    &[
+        "--json",
+        "releases",
+        "create",
+        "project-1",
+        "--body-template",
+    ],
+    &[
+        "--json",
+        "releases",
+        "preview",
+        "project-1",
+        "--body-template",
+    ],
+    &["--json", "releases", "deploy", "--body-template"],
+    &[
+        "--json",
+        "releases",
+        "remove",
+        "project-1",
+        "release-1",
+        "--body-template",
+    ],
+    &[
+        "--json",
+        "releases",
+        "retry-check",
+        "project-1",
+        "release-1",
+        "check-1",
+        "--body-template",
+    ],
+    &["--json", "access", "accept", "token-1", "--body-template"],
+    &["--json", "access", "invite", "--body-template"],
+    &["--json", "access", "invite", "project-1", "--body-template"],
+    &[
+        "--json",
+        "access",
+        "resend",
+        "project-1",
+        "invitation-1",
+        "--body-template",
+    ],
+    &[
+        "--json",
+        "access",
+        "revoke",
+        "project-1",
+        "invitation-1",
+        "--body-template",
+    ],
+    &[
+        "--json",
+        "access",
+        "role",
+        "update",
+        "project-1",
+        "user-1",
+        "--body-template",
+    ],
+    &[
+        "--json",
+        "access",
+        "member",
+        "remove",
+        "project-1",
+        "user-1",
+        "--body-template",
+    ],
+];
+
 /// `--body-template` prints a static, compiled-in schema. Run with an *empty*
 /// config dir and no `PCL_API_URL` on purpose: these commands are how an agent
 /// discovers a request body shape, so needing a platform first would make them
 /// unusable on a clean install.
 #[test]
 fn new_workflow_subcommands_parse_and_emit_structured_templates() {
-    for args in [
-        [
-            "--json",
-            "releases",
-            "preview",
-            "project-1",
-            "--body-template",
-        ]
-        .as_slice(),
-        ["--json", "access", "invite", "project-1", "--body-template"].as_slice(),
-        ["--json", "releases", "deploy", "--body-template"].as_slice(),
-        ["--json", "access", "invite", "--body-template"].as_slice(),
-        ["--json", "contracts", "--assign-project", "--body-template"].as_slice(),
-        ["--json", "protocol-manager", "--set", "--body-template"].as_slice(),
-        ["--json", "deployments", "--confirm", "--body-template"].as_slice(),
-        ["--json", "projects", "create", "--body-template"].as_slice(),
-    ] {
+    for args in LOCAL_TEMPLATE_INVOCATIONS {
         let output = run_pcl(args);
 
         output.assert_success();
