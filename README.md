@@ -1,6 +1,32 @@
-# PCL - The Credible CLI
+<div align="center">
 
-The CLI for the [Credible Layer](https://phylax.systems).
+<img src="https://phylax.systems/apple-touch-icon.png" alt="Phylax" width="76" height="76" />
+
+<h1>pcl</h1>
+
+<p><b>The Credible Layer CLI — write, test, verify, and ship assertions.</b></p>
+
+<p><sub>THE POLICY ENGINE FOR PROGRAMMABLE CAPITAL</sub></p>
+
+<p>
+  <img src="https://img.shields.io/badge/Credible_Layer-CLI-0092FF?style=for-the-badge&labelColor=160F0C" alt="Credible Layer CLI" />
+  <img src="https://img.shields.io/github/v/release/phylaxsystems/pcl?style=for-the-badge&label=release&labelColor=160F0C&color=0092FF" alt="Latest release" />
+  <img src="https://img.shields.io/badge/built_with-Rust-160F0C?style=for-the-badge&logo=rust&logoColor=white" alt="Built with Rust" />
+  <img src="https://img.shields.io/badge/license-BSL_1.1-160F0C?style=for-the-badge" alt="License: BSL 1.1" />
+</p>
+
+<p>
+  <a href="https://docs.phylax.systems"><b>Docs</b></a> &nbsp;·&nbsp;
+  <a href="https://github.com/phylaxsystems/pcl/releases"><b>Releases</b></a> &nbsp;·&nbsp;
+  <a href="https://phylax.systems"><b>Website</b></a> &nbsp;·&nbsp;
+  <a href="https://x.com/phylaxsystems"><b>X</b></a>
+</p>
+
+</div>
+
+---
+
+The command-line interface for the [Credible Layer](https://phylax.systems) — write, test, verify, and ship assertions, then inspect what happened after deployment.
 
 ## For Humans
 
@@ -323,3 +349,9 @@ make regenerate
 ## License
 
 BSL 1.1 — see [LICENSE](LICENSE) for details.
+
+---
+
+<div align="center">
+<sub><b>Phylax Systems</b> &nbsp;·&nbsp; <a href="https://docs.phylax.systems">Credible Layer docs</a> &nbsp;·&nbsp; <a href="https://phylax.systems">phylax.systems</a></sub>
+</div>
