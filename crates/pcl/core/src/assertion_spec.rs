@@ -69,7 +69,7 @@ pub const V2_SPEC_UNSUPPORTED_CODE: &str = "assertion_spec.v2_unsupported";
 /// deliberately absent: the V1 `load(address, bytes32)` and the V2
 /// `load(bytes32)` share a name, and telling them apart needs argument
 /// parsing this heuristic does not do.
-const V2_CALL_MARKERS: [&str; 46] = [
+const V2_CALL_MARKERS: [&str; 47] = [
     // Triggers
     "registerTxEndTrigger",
     "registerFnCallTrigger",
@@ -105,6 +105,8 @@ const V2_CALL_MARKERS: [&str; 46] = [
     "outflowContext",
     "inflowRate",
     "outflowRate",
+    // Experimental proof verification
+    "verifyGnarkPlonkProof",
     // Persistent assertion storage
     "ph.store",
     "ph.exists",
@@ -631,7 +633,7 @@ mod tests {
     /// `credible-std` means adding it here and to `V2_CALL_MARKERS` /
     /// `V2_TYPE_MARKERS`, and `v2_surface_is_covered` fails when only one of
     /// the two happens.
-    const V2_SURFACE: [(&str, &str); 60] = [
+    const V2_SURFACE: [(&str, &str); 61] = [
         (
             "AssertionSpec.Reshiram",
             "registerAssertionSpec(AssertionSpec.Reshiram);",
@@ -707,6 +709,10 @@ mod tests {
         ("outflowContext", "ph.outflowContext();"),
         ("inflowRate", "ph.inflowRate();"),
         ("outflowRate", "ph.outflowRate();"),
+        (
+            "verifyGnarkPlonkProof",
+            "ph.verifyGnarkPlonkProof(proof, commitment, verifierKeyId);",
+        ),
         // PhEvm — persistent assertion storage
         ("ph.store", "ph.store(key, value);"),
         ("ph.exists", "ph.exists(key);"),
@@ -865,6 +871,10 @@ mod tests {
                 ),
                 ("outflowRate", PhEvm::outflowRateCall::SELECTOR),
                 ("inflowRate", PhEvm::inflowRateCall::SELECTOR),
+                (
+                    "verifyGnarkPlonkProof",
+                    PhEvm::verifyGnarkPlonkProofCall::SELECTOR,
+                ),
             ];
             let executor_non_legacy: std::collections::BTreeSet<[u8; 4]> =
                 PhEvm::PhEvmCalls::SELECTORS
