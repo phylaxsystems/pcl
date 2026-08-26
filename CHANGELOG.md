@@ -6,7 +6,7 @@ All notable user-facing changes should be recorded here.
 
 ### Fixed
 
-- Broadcasting no longer fails on a brief `assertions are unavailable` refusal. The transaction is signed once and resubmitted byte for byte, so a retry is deduplicated by hash rather than becoming a second transaction on the same nonce. If the retries run out, `onchain.assertions_unavailable` means nothing was submitted, while `onchain.tx_submission_unconfirmed` carries the signed hash to check first.
+- Broadcasting no longer fails on a brief `assertions are unavailable` refusal. The transaction is signed once and resubmitted byte for byte, so a retry is deduplicated by hash rather than becoming a second transaction on the same nonce. `--with-credible-rpc` waits out a Credible RPC's full alignment window; without it an unavailable endpoint still gets a short retry. If the retries run out, `onchain.assertions_unavailable` means nothing was submitted, while `onchain.tx_submission_unconfirmed` carries the signed hash to check first.
 
 ### Added
 

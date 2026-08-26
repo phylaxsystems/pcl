@@ -71,6 +71,10 @@ checks, broadcast `StateOracle.batch`, and confirm — use `pcl deploy`:
 # one-time: store an RPC endpoint for the chain
 pcl config set-rpc <chain-id> <rpc-url> [--confirmations N]
 
+# a Credible RPC endpoint can refuse briefly while its assertion state catches
+# up with the chain; this waits that window out instead of failing
+pcl deploy --with-credible-rpc
+
 pcl deploy --dry-run
 pcl deploy --private-key $PCL_PRIVATE_KEY            # or --account <foundry-keystore>
 pcl deploy --project-name my-protocol --chain-id <id> --private-key ... --yes --json

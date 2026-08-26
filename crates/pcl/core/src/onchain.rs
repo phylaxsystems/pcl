@@ -6,7 +6,7 @@
 //!
 //! Submission signs once and resubmits those exact bytes when an endpoint says
 //! it is unavailable, so a node deduplicates the retry rather than accepting a
-//! second transaction.
+//! second transaction. How long it waits: [`TxArgs::with_credible_rpc`].
 
 use crate::config::CliConfig;
 use alloy_network::{
@@ -54,6 +54,8 @@ use url::Url;
 // Attempts a credible-layer-gated step gets before it is treated as terminal.
 // The alignment window is 0.2-1.2s in practice; the backoff below spans ~6s.
 const ALIGNMENT_ATTEMPTS: u32 = 6;
+// A plain endpoint has no alignment window to wait out, only a blip.
+const PLAIN_ATTEMPTS: u32 = 3;
 const ALIGNMENT_FIRST_DELAY: Duration = Duration::from_millis(250);
 const ALIGNMENT_MAX_DELAY: Duration = Duration::from_secs(2);
 
@@ -178,6 +180,12 @@ pub struct TxArgs {
     /// Seconds to wait for the transaction to confirm before giving up
     #[arg(long, default_value_t = 300)]
     pub tx_timeout_secs: u64,
+
+    /// Broadcast through a Credible RPC endpoint, which can refuse briefly
+    /// while its assertion state catches up with the chain. Set, an unavailable
+    /// endpoint is retried through that window; unset, only past a blip.
+    #[arg(long = "with-credible-rpc", env = "PCL_WITH_CREDIBLE_RPC")]
+    pub with_credible_rpc: bool,
 }
 
 impl TxArgs {
@@ -279,6 +287,7 @@ pub struct TxSender {
     provider: WalletProvider,
     chain_id: u64,
     rpc: Url,
+    credible: bool,
 }
 
 impl TxSender {
@@ -288,6 +297,7 @@ impl TxSender {
         rpc: Url,
         signer: PrivateKeySigner,
         expected_chain_id: u64,
+        credible: bool,
     ) -> Result<Self, OnchainError> {
         let provider = ProviderBuilder::new()
             .wallet(EthereumWallet::from(signer))
@@ -309,6 +319,7 @@ impl TxSender {
             provider,
             chain_id: expected_chain_id,
             rpc,
+            credible,
         })
     }
 
@@ -359,7 +370,7 @@ impl TxSender {
         notify: &dyn Fn(&str),
     ) -> Result<PreparedTx, OnchainError> {
         let started = Instant::now();
-        let attempts = ALIGNMENT_ATTEMPTS;
+        let attempts = self.attempts();
         let mut backoff = Backoff::new();
         let mut message = String::new();
         for attempt in 1..=attempts {
@@ -368,12 +379,7 @@ impl TxSender {
                 Err(error) if assertions_unavailable(&error) => {
                     message = self.scrub(&error);
                     backoff
-                        .wait(
-                            attempt,
-                            attempts,
-                            "Credible layer is realigning while preparing the transaction",
-                            notify,
-                        )
+                        .wait(attempt, attempts, &self.waiting_for("preparing"), notify)
                         .await;
                 }
                 Err(error) => {
@@ -413,7 +419,7 @@ impl TxSender {
         prepared: &PreparedTx,
         notify: &dyn Fn(&str),
     ) -> Result<(), OnchainError> {
-        let attempts = ALIGNMENT_ATTEMPTS;
+        let attempts = self.attempts();
         let mut backoff = Backoff::new();
         let mut message = String::new();
         for attempt in 1..=attempts {
@@ -425,12 +431,7 @@ impl TxSender {
                 Err(error) if assertions_unavailable(&error) => {
                     message = self.scrub(&error);
                     backoff
-                        .wait(
-                            attempt,
-                            attempts,
-                            "Credible layer is realigning while submitting the transaction",
-                            notify,
-                        )
+                        .wait(attempt, attempts, &self.waiting_for("submitting"), notify)
                         .await;
                 }
                 Err(error) => {
@@ -470,6 +471,25 @@ impl TxSender {
                     message: scrub_rpc_error(&source.to_string(), &self.rpc),
                 }
             })
+    }
+
+    // A Credible RPC has an alignment window to wait out; a plain endpoint only
+    // has to get past a blip.
+    fn attempts(&self) -> u32 {
+        if self.credible {
+            ALIGNMENT_ATTEMPTS
+        } else {
+            PLAIN_ATTEMPTS
+        }
+    }
+
+    // What the wait is for, in the terms of the endpoint being waited on.
+    fn waiting_for(&self, step: &str) -> String {
+        if self.credible {
+            format!("Credible layer is realigning while {step} the transaction")
+        } else {
+            format!("Endpoint is unavailable while {step} the transaction")
+        }
     }
 
     fn redacted(&self) -> String {
@@ -797,7 +817,7 @@ mod tests {
         ok(&mut server, "eth_chainId", json!(format!("{CHAIN_ID:#x}"))).await;
         ok(&mut server, "eth_getTransactionReceipt", Value::Null).await;
         ok(&mut server, "eth_blockNumber", json!("0x1")).await;
-        let sender = TxSender::connect(server.url().parse().unwrap(), signer(), CHAIN_ID)
+        let sender = TxSender::connect(server.url().parse().unwrap(), signer(), CHAIN_ID, true)
             .await
             .unwrap();
         let started = Instant::now();
@@ -902,7 +922,8 @@ mod tests {
     }
 
     async fn send(server: &ServerGuard) -> Result<TxOutcome, OnchainError> {
-        let sender = TxSender::connect(server.url().parse().unwrap(), signer(), CHAIN_ID).await?;
+        let sender =
+            TxSender::connect(server.url().parse().unwrap(), signer(), CHAIN_ID, true).await?;
         sender
             .send_and_confirm(
                 TransactionRequest::default()
@@ -945,6 +966,40 @@ mod tests {
         gas.assert_async().await;
         refused.assert_async().await;
         accepted.assert_async().await;
+    }
+
+    // An unavailable endpoint is worth a few attempts either way, but only a
+    // Credible RPC has an alignment window long enough to justify waiting it out.
+    #[tokio::test(start_paused = true)]
+    async fn a_plain_endpoint_stops_short_of_the_alignment_window() {
+        let mut server = mockito::Server::new_async().await;
+        chain(&mut server).await;
+        ok(&mut server, "eth_getTransactionCount", json!("0x8")).await;
+        ok(&mut server, "eth_estimateGas", json!("0x5208")).await;
+        let refused = fails(&mut server, "eth_sendRawTransaction", INTERNAL, UNAVAILABLE)
+            .await
+            .expect(PLAIN_ATTEMPTS as usize);
+
+        let sender = TxSender::connect(server.url().parse().unwrap(), signer(), CHAIN_ID, false)
+            .await
+            .unwrap();
+        let error = sender
+            .send_and_confirm(
+                TransactionRequest::default()
+                    .to(address!("0202020202020202020202020202020202020202"))
+                    .input(Bytes::from_static(&[0x12, 0x34]).into()),
+                1,
+                Duration::from_secs(2),
+                &|_: &str| {},
+            )
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(error, OnchainError::SubmissionUnconfirmed { attempts, .. } if attempts == PLAIN_ATTEMPTS),
+            "{error:?}"
+        );
+        refused.assert_async().await;
     }
 
     #[tokio::test(start_paused = true)]
