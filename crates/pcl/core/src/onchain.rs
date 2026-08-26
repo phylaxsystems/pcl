@@ -3,21 +3,43 @@
 //! The backend computes all calldata (see the `*-calldata` API endpoints);
 //! this module only signs and submits it — either as `StateOracle.batch(bytes[])`
 //! or as a raw `{to, data}` transaction — and waits for confirmations.
+//!
+//! Submission signs once and resubmits those exact bytes when an endpoint says
+//! it is unavailable, so a node deduplicates the retry rather than accepting a
+//! second transaction.
 
 use crate::config::CliConfig;
-use alloy_network::EthereumWallet;
+use alloy_network::{
+    Ethereum,
+    EthereumWallet,
+    eip2718::Encodable2718,
+};
 use alloy_primitives::{
-    Address,
     B256,
     Bytes,
 };
 use alloy_provider::{
-    DynProvider,
+    PendingTransactionBuilder,
     PendingTransactionError,
     Provider,
     ProviderBuilder,
+    RootProvider,
+    SendableTx,
+    fillers::{
+        FillProvider,
+        JoinFill,
+        WalletFiller,
+    },
+    transport::{
+        RpcError,
+        TransportError,
+    },
+    utils::JoinedRecommendedFillers,
 };
-use alloy_rpc_types_eth::TransactionRequest;
+use alloy_rpc_types_eth::{
+    TransactionReceipt,
+    TransactionRequest,
+};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{
     SolCall,
@@ -26,7 +48,14 @@ use alloy_sol_types::{
 use serde::Serialize;
 use std::time::Duration;
 use thiserror::Error;
+use tokio::time::Instant;
 use url::Url;
+
+// Attempts a credible-layer-gated step gets before it is treated as terminal.
+// The alignment window is 0.2-1.2s in practice; the backoff below spans ~6s.
+const ALIGNMENT_ATTEMPTS: u32 = 6;
+const ALIGNMENT_FIRST_DELAY: Duration = Duration::from_millis(250);
+const ALIGNMENT_MAX_DELAY: Duration = Duration::from_secs(2);
 
 sol! {
     /// `StateOracle`'s batch entrypoint; the only function pcl encodes locally.
@@ -106,6 +135,28 @@ pub enum OnchainError {
         tx_hash: B256,
         chain_id: u64,
         redacted_url: String,
+        message: String,
+    },
+
+    #[error(
+        "{redacted_url} could not judge the transaction after {attempts} attempt(s) over {waited_ms}ms ({message}). Nothing was signed or submitted and the nonce is unchanged: re-run the command."
+    )]
+    AssertionsUnavailable {
+        chain_id: u64,
+        redacted_url: String,
+        attempts: u32,
+        waited_ms: u128,
+        message: String,
+    },
+
+    #[error(
+        "Transaction {tx_hash} was submitted to chain {chain_id} {attempts} time(s) without confirmed acceptance ({message}). It may be in flight: check the hash before re-running, which would reuse the same nonce."
+    )]
+    SubmissionUnconfirmed {
+        tx_hash: B256,
+        chain_id: u64,
+        redacted_url: String,
+        attempts: u32,
         message: String,
     },
 
@@ -210,9 +261,22 @@ fn scrub_rpc_error(text: &str, rpc: &Url) -> String {
         .replace(rpc.as_str(), &redacted)
 }
 
+// Concrete rather than erased, so `fill` can build and sign before submitting.
+type WalletProvider = FillProvider<
+    JoinFill<JoinedRecommendedFillers, WalletFiller<EthereumWallet>>,
+    RootProvider<Ethereum>,
+>;
+
+// Built once, so the hash is known before the first submission and identical on
+// every retry.
+struct PreparedTx {
+    tx_hash: B256,
+    raw: Vec<u8>,
+}
+
 /// A connected, chain-checked transaction sender.
 pub struct TxSender {
-    provider: DynProvider,
+    provider: WalletProvider,
     chain_id: u64,
     rpc: Url,
 }
@@ -242,7 +306,7 @@ impl TxSender {
             });
         }
         Ok(Self {
-            provider: provider.erased(),
+            provider,
             chain_id: expected_chain_id,
             rpc,
         })
@@ -258,43 +322,17 @@ impl TxSender {
     /// provider (transactions are strictly sequential in pcl).
     pub async fn send_and_confirm(
         &self,
-        to: Address,
-        data: Bytes,
+        request: TransactionRequest,
         confirmations: u64,
         timeout: Duration,
+        notify: &dyn Fn(&str),
     ) -> Result<TxOutcome, OnchainError> {
-        let request = TransactionRequest::default().to(to).input(data.into());
-
-        let pending = self
-            .provider
-            .send_transaction(request)
-            .await
-            .map_err(|error| {
-                OnchainError::Send {
-                    redacted_url: crate::config::redacted_rpc_host(self.rpc.as_str()),
-                    message: scrub_rpc_error(&error.to_string(), &self.rpc),
-                }
-            })?;
-        let tx_hash = *pending.tx_hash();
-
-        // A failure while waiting for the receipt does NOT mean the
-        // transaction failed — it was already accepted by the RPC. Surface
-        // that ambiguity explicitly (submitted, confirmation unknown) and
-        // scrub the provider error, which can echo the credential-bearing
-        // RPC URL.
-        let receipt = pending
-            .with_required_confirmations(confirmations)
-            .with_timeout(Some(timeout))
-            .get_receipt()
-            .await
-            .map_err(|source: PendingTransactionError| {
-                OnchainError::ConfirmationUnknown {
-                    tx_hash,
-                    chain_id: self.chain_id,
-                    redacted_url: crate::config::redacted_rpc_host(self.rpc.as_str()),
-                    message: scrub_rpc_error(&source.to_string(), &self.rpc),
-                }
-            })?;
+        let prepared = self.prepare(request, notify).await?;
+        self.submit(&prepared, notify).await?;
+        notify("Transaction submitted; waiting for confirmation");
+        let receipt = self
+            .await_receipt(prepared.tx_hash, confirmations, timeout)
+            .await?;
 
         if !receipt.status() {
             return Err(OnchainError::Reverted {
@@ -312,13 +350,209 @@ impl TxSender {
             confirmations_waited: confirmations,
         })
     }
+
+    // `eth_estimateGas` is gated too, so filling hits the same window; retrying
+    // costs nothing while nothing is signed.
+    async fn prepare(
+        &self,
+        request: TransactionRequest,
+        notify: &dyn Fn(&str),
+    ) -> Result<PreparedTx, OnchainError> {
+        let started = Instant::now();
+        let attempts = ALIGNMENT_ATTEMPTS;
+        let mut backoff = Backoff::new();
+        let mut message = String::new();
+        for attempt in 1..=attempts {
+            match self.provider.fill(request.clone()).await {
+                Ok(filled) => return self.signed(filled),
+                Err(error) if assertions_unavailable(&error) => {
+                    message = self.scrub(&error);
+                    backoff
+                        .wait(
+                            attempt,
+                            attempts,
+                            "Credible layer is realigning while preparing the transaction",
+                            notify,
+                        )
+                        .await;
+                }
+                Err(error) => {
+                    return Err(OnchainError::Send {
+                        redacted_url: self.redacted(),
+                        message: self.scrub(&error),
+                    });
+                }
+            }
+        }
+        Err(OnchainError::AssertionsUnavailable {
+            chain_id: self.chain_id,
+            redacted_url: self.redacted(),
+            attempts,
+            waited_ms: started.elapsed().as_millis(),
+            message,
+        })
+    }
+
+    fn signed(&self, filled: SendableTx<Ethereum>) -> Result<PreparedTx, OnchainError> {
+        let envelope = filled.try_into_envelope().map_err(|unsigned| {
+            OnchainError::Send {
+                redacted_url: self.redacted(),
+                message: format!("wallet did not sign the filled transaction: {unsigned}"),
+            }
+        })?;
+        Ok(PreparedTx {
+            tx_hash: *envelope.tx_hash(),
+            raw: envelope.encoded_2718(),
+        })
+    }
+
+    // Every attempt sends the same hash and nonce, so a node already holding the
+    // transaction deduplicates the retry instead of accepting a second one.
+    async fn submit(
+        &self,
+        prepared: &PreparedTx,
+        notify: &dyn Fn(&str),
+    ) -> Result<(), OnchainError> {
+        let attempts = ALIGNMENT_ATTEMPTS;
+        let mut backoff = Backoff::new();
+        let mut message = String::new();
+        for attempt in 1..=attempts {
+            match self.provider.send_raw_transaction(&prepared.raw).await {
+                Ok(_) => return Ok(()),
+                // The node already holds these exact bytes, so an earlier
+                // attempt reached it even if its answer did not reach us.
+                Err(error) if already_submitted(&error) => return Ok(()),
+                Err(error) if assertions_unavailable(&error) => {
+                    message = self.scrub(&error);
+                    backoff
+                        .wait(
+                            attempt,
+                            attempts,
+                            "Credible layer is realigning while submitting the transaction",
+                            notify,
+                        )
+                        .await;
+                }
+                Err(error) => {
+                    return Err(OnchainError::Send {
+                        redacted_url: self.redacted(),
+                        message: self.scrub(&error),
+                    });
+                }
+            }
+        }
+        Err(OnchainError::SubmissionUnconfirmed {
+            tx_hash: prepared.tx_hash,
+            chain_id: self.chain_id,
+            redacted_url: self.redacted(),
+            attempts,
+            message,
+        })
+    }
+
+    // Waits for `tx_hash` to reach `confirmations`.
+    async fn await_receipt(
+        &self,
+        tx_hash: B256,
+        confirmations: u64,
+        timeout: Duration,
+    ) -> Result<TransactionReceipt, OnchainError> {
+        PendingTransactionBuilder::new(self.provider.root().clone(), tx_hash)
+            .with_required_confirmations(confirmations)
+            .with_timeout(Some(timeout))
+            .get_receipt()
+            .await
+            .map_err(|source: PendingTransactionError| {
+                OnchainError::ConfirmationUnknown {
+                    tx_hash,
+                    chain_id: self.chain_id,
+                    redacted_url: self.redacted(),
+                    message: scrub_rpc_error(&source.to_string(), &self.rpc),
+                }
+            })
+    }
+
+    fn redacted(&self) -> String {
+        crate::config::redacted_rpc_host(self.rpc.as_str())
+    }
+
+    fn scrub(&self, error: &TransportError) -> String {
+        scrub_rpc_error(&error.to_string(), &self.rpc)
+    }
+}
+
+/// Doubling delay between attempts at a credible-layer-gated step.
+struct Backoff {
+    delay: Duration,
+}
+
+impl Backoff {
+    fn new() -> Self {
+        Self {
+            delay: ALIGNMENT_FIRST_DELAY,
+        }
+    }
+
+    /// The final attempt has nothing left to wait for.
+    async fn wait(&mut self, attempt: u32, attempts: u32, status: &str, notify: &dyn Fn(&str)) {
+        if attempt >= attempts {
+            return;
+        }
+        notify(&format!(
+            "{status}; retrying in {}ms ({attempt}/{attempts})",
+            self.delay.as_millis()
+        ));
+        tokio::time::sleep(self.delay).await;
+        self.delay = (self.delay * 2).min(ALIGNMENT_MAX_DELAY);
+    }
+}
+
+/// Whether the credible layer refused to judge the call because it has no
+/// assertion state aligned with the block it would judge against — transient by
+/// construction.
+///
+/// Matched on the message, not the code: the refusal reuses the generic
+/// internal-error code, which would sweep in unrelated failures. An assertion
+/// rejection is a revert (code 3) and is never transient, so it cannot match.
+fn assertions_unavailable(error: &TransportError) -> bool {
+    const REVERT: i64 = 3;
+    let RpcError::ErrorResp(payload) = error else {
+        return false;
+    };
+    let message = payload.message.to_ascii_lowercase();
+    payload.code != REVERT && message.contains("credible layer") && message.contains("unavailable")
+}
+
+/// Whether the node is telling us it already holds these exact bytes. reth and
+/// geth both answer a resubmission this way, which is the success case when a
+/// refusal was raised after the transaction had already been forwarded.
+fn already_submitted(error: &TransportError) -> bool {
+    let RpcError::ErrorResp(payload) = error else {
+        return false;
+    };
+    let message = payload.message.to_ascii_lowercase();
+    ["already known", "already imported", "already exists"]
+        .iter()
+        .any(|known| message.contains(known))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::RpcEndpoint;
-    use alloy_primitives::hex;
+    use alloy_primitives::{
+        address,
+        hex,
+    };
+    use mockito::{
+        Matcher,
+        Mock,
+        ServerGuard,
+    };
+    use serde_json::{
+        Value,
+        json,
+    };
 
     fn config_with_rpc(chain_id: u64, url: &str, confirmations: Option<u64>) -> CliConfig {
         let mut config = CliConfig::default();
@@ -555,5 +789,369 @@ mod tests {
         // the guidance must be to check it, never to send again.
         assert!(rendered.contains(&B256::repeat_byte(0xab).to_string()));
         assert!(rendered.contains("Do not re-broadcast"));
+    }
+
+    #[tokio::test]
+    async fn a_receipt_that_never_arrives_stops_at_the_configured_timeout() {
+        let mut server = mockito::Server::new_async().await;
+        ok(&mut server, "eth_chainId", json!(format!("{CHAIN_ID:#x}"))).await;
+        ok(&mut server, "eth_getTransactionReceipt", Value::Null).await;
+        ok(&mut server, "eth_blockNumber", json!("0x1")).await;
+        let sender = TxSender::connect(server.url().parse().unwrap(), signer(), CHAIN_ID)
+            .await
+            .unwrap();
+        let started = Instant::now();
+        let timeout = Duration::from_millis(50);
+
+        let error = sender
+            .await_receipt(RECEIPT_HASH, 1, timeout)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, OnchainError::ConfirmationUnknown { .. }));
+        assert!(started.elapsed() >= timeout);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    const CHAIN_ID: u64 = 31337;
+    /// Verbatim from the Credible RPC gate (`src/simulation/error.rs`).
+    const UNAVAILABLE: &str = "credible layer: assertions are unavailable, try again shortly";
+    const INTERNAL: i64 = -32603;
+    const MINED_BLOCK: u64 = 0x10;
+    const RECEIPT_HASH: B256 = B256::repeat_byte(0xcd);
+
+    fn signer() -> PrivateKeySigner {
+        PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).unwrap()
+    }
+
+    /// Mocks are matched in creation order, and one that has met its `expect`
+    /// count is skipped, so two mocks for the same method answer in sequence.
+    async fn rpc(server: &mut ServerGuard, method: &str, response: Value) -> Mock {
+        server
+            .mock("POST", "/")
+            .match_body(Matcher::PartialJson(json!({ "method": method })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(response.to_string())
+            .create_async()
+            .await
+    }
+
+    async fn ok(server: &mut ServerGuard, method: &str, result: Value) -> Mock {
+        rpc(
+            server,
+            method,
+            json!({ "jsonrpc": "2.0", "id": 1, "result": result }),
+        )
+        .await
+    }
+
+    async fn fails(server: &mut ServerGuard, method: &str, code: i64, message: &str) -> Mock {
+        rpc(
+            server,
+            method,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": { "code": code, "message": message },
+            }),
+        )
+        .await
+    }
+
+    /// The ungated reads a fill and a receipt wait perform.
+    async fn chain(server: &mut ServerGuard) {
+        ok(server, "eth_chainId", json!("0x7a69")).await;
+        ok(
+            server,
+            "eth_blockNumber",
+            json!(format!("{MINED_BLOCK:#x}")),
+        )
+        .await;
+        ok(
+            server,
+            "eth_feeHistory",
+            json!({
+                "oldestBlock": "0xe",
+                "baseFeePerGas": ["0x3b9aca00", "0x3b9aca00", "0x3b9aca00"],
+                "gasUsedRatio": [0.5, 0.5],
+                "reward": [["0x1"], ["0x1"]],
+            }),
+        )
+        .await;
+        ok(server, "eth_getTransactionReceipt", receipt()).await;
+    }
+
+    fn receipt() -> Value {
+        json!({
+            "type": "0x2",
+            "status": "0x1",
+            "cumulativeGasUsed": "0x5208",
+            "logs": [],
+            "logsBloom": format!("0x{}", "0".repeat(512)),
+            "transactionHash": RECEIPT_HASH,
+            "transactionIndex": "0x0",
+            "blockHash": B256::repeat_byte(0xbb),
+            "blockNumber": format!("{MINED_BLOCK:#x}"),
+            "gasUsed": "0x5208",
+            "effectiveGasPrice": "0x3b9aca00",
+            "from": signer().address(),
+            "to": address!("0202020202020202020202020202020202020202"),
+            "contractAddress": Value::Null,
+        })
+    }
+
+    async fn send(server: &ServerGuard) -> Result<TxOutcome, OnchainError> {
+        let sender = TxSender::connect(server.url().parse().unwrap(), signer(), CHAIN_ID).await?;
+        sender
+            .send_and_confirm(
+                TransactionRequest::default()
+                    .to(address!("0202020202020202020202020202020202020202"))
+                    .input(Bytes::from_static(&[0x12, 0x34]).into()),
+                1,
+                Duration::from_secs(2),
+                &|message: &str| {
+                    if message == "Transaction submitted; waiting for confirmation" {
+                        tokio::time::resume();
+                    }
+                },
+            )
+            .await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_refused_submission_resends_the_same_signed_transaction() {
+        let mut server = mockito::Server::new_async().await;
+        chain(&mut server).await;
+        // Exactly one fill: a resubmission must reuse the signed envelope, not
+        // rebuild it, or it could take a second nonce.
+        let nonce = ok(&mut server, "eth_getTransactionCount", json!("0x8"))
+            .await
+            .expect(1);
+        let gas = ok(&mut server, "eth_estimateGas", json!("0x5208"))
+            .await
+            .expect(1);
+        let refused = fails(&mut server, "eth_sendRawTransaction", INTERNAL, UNAVAILABLE)
+            .await
+            .expect(1);
+        let accepted = ok(&mut server, "eth_sendRawTransaction", json!(RECEIPT_HASH))
+            .await
+            .expect(1);
+        let outcome = send(&server).await.unwrap();
+
+        assert_eq!(outcome.tx_hash, RECEIPT_HASH);
+        assert_eq!(outcome.block_number, Some(MINED_BLOCK));
+        nonce.assert_async().await;
+        gas.assert_async().await;
+        refused.assert_async().await;
+        accepted.assert_async().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_deduplicated_resend_counts_as_submitted() {
+        let mut server = mockito::Server::new_async().await;
+        chain(&mut server).await;
+        ok(&mut server, "eth_getTransactionCount", json!("0x8")).await;
+        ok(&mut server, "eth_estimateGas", json!("0x5208")).await;
+        fails(&mut server, "eth_sendRawTransaction", INTERNAL, UNAVAILABLE)
+            .await
+            .expect(1);
+        ok(&mut server, "eth_getTransactionByHash", Value::Null).await;
+        // The resend arrives after the pool took the first copy: same bytes,
+        // same hash, so the node deduplicates instead of queueing a second one.
+        let dedup = fails(
+            &mut server,
+            "eth_sendRawTransaction",
+            -32000,
+            "already known",
+        )
+        .await
+        .expect(1);
+
+        let outcome = send(&server).await.unwrap();
+
+        assert_eq!(outcome.tx_hash, RECEIPT_HASH);
+        dedup.assert_async().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn refused_gas_estimation_is_retried_before_anything_is_signed() {
+        let mut server = mockito::Server::new_async().await;
+        chain(&mut server).await;
+        ok(&mut server, "eth_getTransactionCount", json!("0x8")).await;
+        let refused = fails(&mut server, "eth_estimateGas", INTERNAL, UNAVAILABLE)
+            .await
+            .expect(1);
+        let estimated = ok(&mut server, "eth_estimateGas", json!("0x5208"))
+            .await
+            .expect(1);
+        let submitted = ok(&mut server, "eth_sendRawTransaction", json!(RECEIPT_HASH))
+            .await
+            .expect(1);
+
+        assert_eq!(send(&server).await.unwrap().tx_hash, RECEIPT_HASH);
+        refused.assert_async().await;
+        estimated.assert_async().await;
+        submitted.assert_async().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_lasting_refusal_before_signing_reports_that_nothing_was_submitted() {
+        let mut server = mockito::Server::new_async().await;
+        chain(&mut server).await;
+        ok(&mut server, "eth_getTransactionCount", json!("0x8")).await;
+        fails(&mut server, "eth_estimateGas", INTERNAL, UNAVAILABLE).await;
+        let never = ok(&mut server, "eth_sendRawTransaction", json!(RECEIPT_HASH))
+            .await
+            .expect(0);
+
+        let error = send(&server).await.unwrap_err();
+
+        assert!(matches!(
+            error,
+            OnchainError::AssertionsUnavailable {
+                chain_id: CHAIN_ID,
+                attempts: ALIGNMENT_ATTEMPTS,
+                ..
+            }
+        ));
+        assert!(
+            error
+                .to_string()
+                .contains("Nothing was signed or submitted")
+        );
+        never.assert_async().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_lasting_refusal_after_signing_reports_the_signed_hash() {
+        let mut server = mockito::Server::new_async().await;
+        chain(&mut server).await;
+        ok(&mut server, "eth_getTransactionCount", json!("0x8")).await;
+        ok(&mut server, "eth_estimateGas", json!("0x5208")).await;
+        fails(&mut server, "eth_sendRawTransaction", INTERNAL, UNAVAILABLE).await;
+        ok(&mut server, "eth_getTransactionByHash", Value::Null).await;
+
+        let error = send(&server).await.unwrap_err();
+
+        // The hash is what makes this recoverable: the transaction may be
+        // upstream, so the operator needs it before deciding anything.
+        let OnchainError::SubmissionUnconfirmed { tx_hash, .. } = &error else {
+            panic!("expected an unconfirmed submission, got {error:?}");
+        };
+        assert!(error.to_string().contains(&tx_hash.to_string()));
+        assert!(error.to_string().contains("may be in flight"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_assertion_rejection_is_never_retried() {
+        let mut server = mockito::Server::new_async().await;
+        chain(&mut server).await;
+        ok(&mut server, "eth_getTransactionCount", json!("0x8")).await;
+        ok(&mut server, "eth_estimateGas", json!("0x5208")).await;
+        // A rejection is a verdict about the transaction, not about the node:
+        // it names the credible layer but resending can only fail again.
+        let rejected = fails(
+            &mut server,
+            "eth_sendRawTransaction",
+            3,
+            "execution reverted: credible layer: transaction rejected by an assertion",
+        )
+        .await
+        .expect(1);
+
+        let error = send(&server).await.unwrap_err();
+
+        assert!(matches!(error, OnchainError::Send { .. }));
+        rejected.assert_async().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_ordinary_rejection_is_not_retried() {
+        let mut server = mockito::Server::new_async().await;
+        chain(&mut server).await;
+        ok(&mut server, "eth_getTransactionCount", json!("0x8")).await;
+        ok(&mut server, "eth_estimateGas", json!("0x5208")).await;
+        let rejected = fails(
+            &mut server,
+            "eth_sendRawTransaction",
+            -32000,
+            "insufficient funds for gas * price + value",
+        )
+        .await
+        .expect(1);
+        // No hash probe either: nothing was signed into flight.
+        let probe = ok(&mut server, "eth_getTransactionByHash", Value::Null)
+            .await
+            .expect(0);
+
+        assert!(matches!(
+            send(&server).await.unwrap_err(),
+            OnchainError::Send { .. }
+        ));
+        rejected.assert_async().await;
+        probe.assert_async().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stale_nonce_on_the_first_attempt_is_not_retried() {
+        let mut server = mockito::Server::new_async().await;
+        chain(&mut server).await;
+        ok(&mut server, "eth_getTransactionCount", json!("0x8")).await;
+        ok(&mut server, "eth_estimateGas", json!("0x5208")).await;
+        // Another transaction took the nonce before this one was submitted, so
+        // this envelope can never land; only a resubmission could have spent
+        // its own nonce.
+        let rejected = fails(
+            &mut server,
+            "eth_sendRawTransaction",
+            -32000,
+            "nonce too low",
+        )
+        .await
+        .expect(1);
+
+        assert!(matches!(
+            send(&server).await.unwrap_err(),
+            OnchainError::Send { .. }
+        ));
+        rejected.assert_async().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_reverted_transaction_still_reports_its_receipt() {
+        let mut server = mockito::Server::new_async().await;
+        ok(&mut server, "eth_chainId", json!("0x7a69")).await;
+        ok(
+            &mut server,
+            "eth_blockNumber",
+            json!(format!("{MINED_BLOCK:#x}")),
+        )
+        .await;
+        ok(
+            &mut server,
+            "eth_feeHistory",
+            json!({
+                "oldestBlock": "0xe",
+                "baseFeePerGas": ["0x3b9aca00", "0x3b9aca00", "0x3b9aca00"],
+                "gasUsedRatio": [0.5, 0.5],
+                "reward": [["0x1"], ["0x1"]],
+            }),
+        )
+        .await;
+        ok(&mut server, "eth_getTransactionCount", json!("0x8")).await;
+        ok(&mut server, "eth_estimateGas", json!("0x5208")).await;
+        ok(&mut server, "eth_sendRawTransaction", json!(RECEIPT_HASH)).await;
+        let mut reverted = receipt();
+        reverted["status"] = json!("0x0");
+        ok(&mut server, "eth_getTransactionReceipt", reverted).await;
+
+        assert!(matches!(
+            send(&server).await.unwrap_err(),
+            OnchainError::Reverted {
+                tx_hash: RECEIPT_HASH,
+                block: MINED_BLOCK,
+            }
+        ));
     }
 }

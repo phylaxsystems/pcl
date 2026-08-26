@@ -1254,6 +1254,62 @@ fn confirmation_unknown_envelope_marks_the_mutation_ambiguous() {
     );
 }
 
+#[test]
+fn an_unconfirmed_submission_is_ambiguous_but_a_refused_one_is_not() {
+    let tx_hash = alloy_primitives::B256::repeat_byte(0xef);
+    let unconfirmed =
+        ApiCommandError::Onchain(crate::onchain::OnchainError::SubmissionUnconfirmed {
+            tx_hash,
+            chain_id: 84532,
+            redacted_url: "https://rpc.example.com".to_string(),
+            message: "credible layer: assertions are unavailable".to_string(),
+            attempts: 6,
+        })
+        .json_envelope();
+
+    // The transaction may already be upstream, so the envelope must carry the
+    // hash and refuse to advertise a retry.
+    assert_eq!(
+        unconfirmed["error"]["code"],
+        "onchain.tx_submission_unconfirmed"
+    );
+    assert_eq!(unconfirmed["tx_hash"], serde_json::json!(tx_hash));
+    assert_eq!(
+        unconfirmed["error"]["mutation"]["onchain_landed"],
+        "unknown"
+    );
+    let actions = unconfirmed["next_actions"].as_array().unwrap();
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.as_str().unwrap().contains(&tx_hash.to_string())),
+        "{unconfirmed}"
+    );
+
+    let refused = ApiCommandError::Onchain(crate::onchain::OnchainError::AssertionsUnavailable {
+        chain_id: 84532,
+        redacted_url: "https://rpc.example.com".to_string(),
+        attempts: 6,
+        waited_ms: 5750,
+        message: "credible layer: assertions are unavailable".to_string(),
+    })
+    .json_envelope();
+
+    // Nothing was signed, so there is no hash to reconcile and re-running is
+    // the recovery rather than a risk.
+    assert_eq!(refused["error"]["code"], "onchain.assertions_unavailable");
+    assert_eq!(refused["error"]["recoverable"], true);
+    assert!(refused["tx_hash"].is_null(), "{refused}");
+    assert!(refused["error"]["mutation"].is_null(), "{refused}");
+    assert!(
+        refused["next_actions"][0]
+            .as_str()
+            .unwrap()
+            .contains("Re-run the same command"),
+        "{refused}"
+    );
+}
+
 #[tokio::test]
 async fn authenticated_workflow_refuses_a_foreign_platform_with_a_valid_token() {
     let mut server = mockito::Server::new_async().await;
