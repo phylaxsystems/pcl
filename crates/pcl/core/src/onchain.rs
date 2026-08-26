@@ -12,6 +12,7 @@ use crate::config::CliConfig;
 use alloy_network::{
     Ethereum,
     EthereumWallet,
+    Network,
     eip2718::Encodable2718,
 };
 use alloy_primitives::{
@@ -61,6 +62,15 @@ const PLAIN_ATTEMPTS: u32 = 3;
 const ALIGNMENT_FIRST_DELAY: Duration = Duration::from_millis(250);
 // Cap, so the last attempts stay useful instead of sleeping the budget away.
 const ALIGNMENT_MAX_DELAY: Duration = Duration::from_secs(2);
+
+// The signed transaction the wallet produced: hash and raw bytes both come off it.
+type SignedTx = <Ethereum as Network>::TxEnvelope;
+
+// Concrete rather than erased, so `fill` can build and sign before submitting.
+type WalletProvider = FillProvider<
+    JoinFill<JoinedRecommendedFillers, WalletFiller<EthereumWallet>>,
+    RootProvider<Ethereum>,
+>;
 
 sol! {
     /// `StateOracle`'s batch entrypoint; the only function pcl encodes locally.
@@ -272,19 +282,6 @@ fn scrub_rpc_error(text: &str, rpc: &Url) -> String {
         .replace(rpc.as_str(), &redacted)
 }
 
-// Concrete rather than erased, so `fill` can build and sign before submitting.
-type WalletProvider = FillProvider<
-    JoinFill<JoinedRecommendedFillers, WalletFiller<EthereumWallet>>,
-    RootProvider<Ethereum>,
->;
-
-// Built once, so the hash is known before the first submission and identical on
-// every retry.
-struct PreparedTx {
-    tx_hash: B256,
-    raw: Vec<u8>,
-}
-
 /// A connected, chain-checked transaction sender.
 pub struct TxSender {
     provider: WalletProvider,
@@ -341,11 +338,11 @@ impl TxSender {
         timeout: Duration,
         notify: &dyn Fn(&str),
     ) -> Result<TxOutcome, OnchainError> {
-        let prepared = self.prepare(request, notify).await?;
-        self.submit(&prepared, notify).await?;
+        let signed = self.prepare(request, notify).await?;
+        self.submit(&signed, notify).await?;
         notify("Transaction submitted; waiting for confirmation");
         let receipt = self
-            .await_receipt(prepared.tx_hash, confirmations, timeout)
+            .await_receipt(*signed.tx_hash(), confirmations, timeout)
             .await?;
 
         if !receipt.status() {
@@ -371,7 +368,7 @@ impl TxSender {
         &self,
         request: TransactionRequest,
         notify: &dyn Fn(&str),
-    ) -> Result<PreparedTx, OnchainError> {
+    ) -> Result<SignedTx, OnchainError> {
         let started = Instant::now();
         let attempts = self.attempts();
         let mut backoff = Backoff::new();
@@ -402,31 +399,27 @@ impl TxSender {
         })
     }
 
-    fn signed(&self, filled: SendableTx<Ethereum>) -> Result<PreparedTx, OnchainError> {
-        let envelope = filled.try_into_envelope().map_err(|unsigned| {
+    fn signed(&self, filled: SendableTx<Ethereum>) -> Result<SignedTx, OnchainError> {
+        filled.try_into_envelope().map_err(|unsigned| {
             OnchainError::Send {
                 redacted_url: self.redacted(),
                 message: format!("wallet did not sign the filled transaction: {unsigned}"),
             }
-        })?;
-        Ok(PreparedTx {
-            tx_hash: *envelope.tx_hash(),
-            raw: envelope.encoded_2718(),
         })
     }
 
     // Every attempt sends the same hash and nonce, so a node already holding the
     // transaction deduplicates the retry instead of accepting a second one.
-    async fn submit(
-        &self,
-        prepared: &PreparedTx,
-        notify: &dyn Fn(&str),
-    ) -> Result<(), OnchainError> {
+    async fn submit(&self, signed: &SignedTx, notify: &dyn Fn(&str)) -> Result<(), OnchainError> {
         let attempts = self.attempts();
         let mut backoff = Backoff::new();
         let mut message = String::new();
         for attempt in 1..=attempts {
-            match self.provider.send_raw_transaction(&prepared.raw).await {
+            match self
+                .provider
+                .send_raw_transaction(&signed.encoded_2718())
+                .await
+            {
                 Ok(_) => return Ok(()),
                 // The node already holds these exact bytes, so an earlier
                 // attempt reached it even if its answer did not reach us.
@@ -446,7 +439,7 @@ impl TxSender {
             }
         }
         Err(OnchainError::SubmissionUnconfirmed {
-            tx_hash: prepared.tx_hash,
+            tx_hash: *signed.tx_hash(),
             chain_id: self.chain_id,
             redacted_url: self.redacted(),
             attempts,

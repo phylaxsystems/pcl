@@ -255,7 +255,6 @@ async fn send_tx(
     let rpc = tx_args.resolve_rpc(config, chain_id)?;
     let confirmations = tx_args.resolve_confirmations(config, chain_id, platform_required)?;
     let sender = TxSender::connect(rpc, signer, chain_id, tx_args.with_credible_rpc).await?;
-    // Boxed to keep the fill/submit/confirm state machine off every caller's stack.
     Ok(Box::pin(sender.send_and_confirm(
         request,
         confirmations,
