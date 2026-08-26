@@ -56,7 +56,10 @@ use url::Url;
 const ALIGNMENT_ATTEMPTS: u32 = 6;
 // A plain endpoint has no alignment window to wait out, only a blip.
 const PLAIN_ATTEMPTS: u32 = 3;
+// First delay, doubling from here: short enough that the common sub-second
+// window costs one wait.
 const ALIGNMENT_FIRST_DELAY: Duration = Duration::from_millis(250);
+// Cap, so the last attempts stay useful instead of sleeping the budget away.
 const ALIGNMENT_MAX_DELAY: Duration = Duration::from_secs(2);
 
 sol! {
