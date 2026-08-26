@@ -26,6 +26,7 @@ use alloy_provider::{
     ProviderBuilder,
     RootProvider,
     SendableTx,
+    WalletProvider as _,
     fillers::{
         FillProvider,
         JoinFill,
@@ -362,6 +363,27 @@ impl TxSender {
         })
     }
 
+    // Resolves the nonce once and sets it, so the filler skips its own lookup.
+    // Left to the filler, every retried fill would increment its cached nonce
+    // and the signed transaction would skip one, stranding it as pending.
+    async fn with_pinned_nonce(
+        &self,
+        request: TransactionRequest,
+    ) -> Result<TransactionRequest, OnchainError> {
+        let from = self.provider.default_signer_address();
+        let nonce = self
+            .provider
+            .get_transaction_count(from)
+            .await
+            .map_err(|error| {
+                OnchainError::Send {
+                    redacted_url: self.redacted(),
+                    message: self.scrub(&error),
+                }
+            })?;
+        Ok(request.from(from).nonce(nonce))
+    }
+
     // `eth_estimateGas` is gated too, so filling hits the same window; retrying
     // costs nothing while nothing is signed.
     async fn prepare(
@@ -369,6 +391,7 @@ impl TxSender {
         request: TransactionRequest,
         notify: &dyn Fn(&str),
     ) -> Result<SignedTx, OnchainError> {
+        let request = self.with_pinned_nonce(request).await?;
         let started = Instant::now();
         let attempts = self.attempts();
         let mut backoff = Backoff::new();
@@ -934,6 +957,46 @@ mod tests {
                 },
             )
             .await
+    }
+
+    // A retried fill must not advance the nonce: the signed transaction would
+    // skip one and sit pending behind the gap until something else filled it.
+    #[tokio::test(start_paused = true)]
+    async fn a_retried_estimate_keeps_the_first_nonce() {
+        let mut server = mockito::Server::new_async().await;
+        chain(&mut server).await;
+        let count = ok(&mut server, "eth_getTransactionCount", json!("0x8"))
+            .await
+            .expect(1);
+        let refused = fails(&mut server, "eth_estimateGas", INTERNAL, UNAVAILABLE)
+            .await
+            .expect(1);
+        let estimated = ok(&mut server, "eth_estimateGas", json!("0x5208"))
+            .await
+            .expect(1);
+        // In the signed envelope the chain id is followed by the nonce, so
+        // `827a69` then `08` is nonce 8; a nonce advanced by the retry reads
+        // `827a6909`.
+        let sent = server
+            .mock("POST", "/")
+            .match_body(Matcher::AllOf(vec![
+                Matcher::Regex("eth_sendRawTransaction".into()),
+                Matcher::Regex("827a6908".into()),
+            ]))
+            .with_header("content-type", "application/json")
+            .with_body(json!({"jsonrpc": "2.0", "id": 1, "result": RECEIPT_HASH}).to_string())
+            .create_async()
+            .await
+            .expect(1);
+
+        send(&server)
+            .await
+            .expect("the retried estimate keeps nonce 8");
+
+        count.assert_async().await;
+        refused.assert_async().await;
+        estimated.assert_async().await;
+        sent.assert_async().await;
     }
 
     #[tokio::test(start_paused = true)]
