@@ -374,6 +374,7 @@ impl TxSender {
         let nonce = self
             .provider
             .get_transaction_count(from)
+            .pending()
             .await
             .map_err(|error| {
                 OnchainError::Send {
@@ -957,6 +958,35 @@ mod tests {
                 },
             )
             .await
+    }
+
+    #[tokio::test]
+    async fn nonce_lookup_uses_the_pending_block_tag() {
+        let mut server = mockito::Server::new_async().await;
+        ok(&mut server, "eth_chainId", json!(format!("{CHAIN_ID:#x}"))).await;
+        let count = server
+            .mock("POST", "/")
+            .match_body(Matcher::PartialJson(json!({
+                "method": "eth_getTransactionCount",
+                "params": [signer().address(), "pending"],
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({ "jsonrpc": "2.0", "id": 1, "result": "0x8" }).to_string())
+            .create_async()
+            .await
+            .expect(1);
+        let sender = TxSender::connect(server.url().parse().unwrap(), signer(), CHAIN_ID, true)
+            .await
+            .unwrap();
+
+        let request = sender
+            .with_pinned_nonce(TransactionRequest::default())
+            .await
+            .unwrap();
+
+        assert_eq!(request.nonce, Some(8));
+        count.assert_async().await;
     }
 
     // A retried fill must not advance the nonce: the signed transaction would
