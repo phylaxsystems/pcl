@@ -36,6 +36,7 @@ use alloy_primitives::{
     Address,
     Bytes,
 };
+use alloy_rpc_types_eth::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
 use colored::Colorize;
 use pcl_common::args::CliArgs;
@@ -240,24 +241,27 @@ fn progress(cli_args: &CliArgs, message: &str) {
     }
 }
 
-/// `platform_required` is the confirmation requirement stated by the platform
-/// in the calldata response, when it carries one; it overrides the static
-/// per-chain fallback (the platform's chain profiles differ per deployment).
 async fn send_tx(
     config: &CliConfig,
+    cli_args: &CliArgs,
     tx_args: &TxArgs,
     signer: PrivateKeySigner,
     chain_id: u64,
-    to: Address,
-    data: Bytes,
+    request: TransactionRequest,
+    // The platform's requirement when the calldata response carries one; it
+    // overrides the static per-chain fallback.
     platform_required: Option<u64>,
 ) -> Result<TxOutcome, ApiCommandError> {
     let rpc = tx_args.resolve_rpc(config, chain_id)?;
     let confirmations = tx_args.resolve_confirmations(config, chain_id, platform_required)?;
-    let sender = TxSender::connect(rpc, signer, chain_id).await?;
-    Ok(sender
-        .send_and_confirm(to, data, confirmations, tx_args.timeout())
-        .await?)
+    let sender = TxSender::connect(rpc, signer, chain_id, tx_args.with_credible_rpc).await?;
+    Ok(Box::pin(sender.send_and_confirm(
+        request,
+        confirmations,
+        tx_args.timeout(),
+        &|message: &str| progress(cli_args, message),
+    ))
+    .await?)
 }
 
 fn tx_value(outcome: &TxOutcome) -> Value {
@@ -561,11 +565,13 @@ impl ApiArgs {
         progress(cli_args, "Broadcasting StateOracle.batch transaction");
         let outcome = send_tx(
             config,
+            cli_args,
             &args.broadcast.tx,
             signer,
             calldata.chain_id,
-            calldata.state_oracle_address,
-            encode_batch(calldata.calldata.clone()),
+            TransactionRequest::default()
+                .to(calldata.state_oracle_address)
+                .input(encode_batch(calldata.calldata.clone()).into()),
             calldata.required_confirmations,
         )
         .await?;
@@ -660,11 +666,13 @@ impl ApiArgs {
         progress(cli_args, "Broadcasting removal transaction");
         let outcome = send_tx(
             config,
+            cli_args,
             &args.broadcast.tx,
             signer,
             chain_id,
-            calldata.to,
-            calldata.data.clone(),
+            TransactionRequest::default()
+                .to(calldata.to)
+                .input(calldata.data.clone().into()),
             calldata.required_confirmations,
         )
         .await?;
@@ -913,11 +921,11 @@ impl ApiArgs {
         progress(cli_args, "Broadcasting manager transfer transaction");
         let outcome = send_tx(
             config,
+            cli_args,
             &args.broadcast.tx,
             signer,
             chain_id,
-            to,
-            data,
+            TransactionRequest::default().to(to).input(data.into()),
             calldata.required_confirmations,
         )
         .await?;
@@ -985,11 +993,13 @@ impl ApiArgs {
         let signer_address = signer.address();
         let outcome = send_tx(
             config,
+            cli_args,
             &args.broadcast.tx,
             signer,
             calldata.chain_id,
-            calldata.to,
-            calldata.calldata.clone(),
+            TransactionRequest::default()
+                .to(calldata.to)
+                .input(calldata.calldata.clone().into()),
             calldata.required_confirmations,
         )
         .await?;

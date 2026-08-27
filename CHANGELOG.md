@@ -4,6 +4,10 @@ All notable user-facing changes should be recorded here.
 
 ## Unreleased
 
+### Fixed
+
+- Broadcasting no longer fails on a brief `assertions are unavailable` refusal. The transaction is signed once and resubmitted byte for byte, so a retry is deduplicated by hash rather than becoming a second transaction on the same nonce. `--with-credible-rpc` waits out a Credible RPC's full alignment window; without it an unavailable endpoint still gets a short retry. If the retries run out, `onchain.assertions_unavailable` means nothing was submitted, while `onchain.tx_submission_unconfirmed` carries the signed hash to check first.
+
 ### Added
 
 - `pcl deploy` warns when the assertions it is about to release use the V2 spec but the target does not support it (the `app.phylax.systems` platform, or a Linea chain). The warning names the files and the V2 triggers/precompiles found in them, prints before the protocol-manager step and again at the end, and appears in `--json` output as `data.warnings`. It never blocks a deploy.

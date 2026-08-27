@@ -4,6 +4,15 @@ use crate::{
     abi::ConstructorAbiError,
     credible_config::CredibleConfigError,
 };
+use alloy_primitives::{
+    BlockNumber,
+    ChainId,
+    TxHash,
+};
+use alloy_provider::transport::{
+    RpcError,
+    TransportError,
+};
 use chrono::{
     DateTime,
     Utc,
@@ -14,6 +23,155 @@ use dapp_api_client::generated::client::{
 };
 use pcl_phoundry::error::PhoundryError;
 use thiserror::Error;
+
+/// Errors that can occur while broadcasting transactions.
+///
+/// RPC endpoints in these messages are redacted to their scheme/host/port
+/// origin: stored provider URLs commonly embed API keys, and error envelopes
+/// end up in logs and transcripts.
+#[derive(Error, Debug)]
+pub enum OnchainError {
+    #[error(
+        "No RPC endpoint for chain {chain_id}. Pass --rpc-url (or set PCL_RPC_URL), or store one with `pcl config set-rpc {chain_id} <url>`."
+    )]
+    RpcUrlMissing { chain_id: ChainId },
+
+    #[error("Invalid RPC URL ({redacted_url}) configured for chain {chain_id}: {reason}")]
+    InvalidRpcUrl {
+        chain_id: ChainId,
+        redacted_url: String,
+        reason: String,
+    },
+
+    #[error(
+        "{requested} confirmation(s) is below the {required} required on chain {chain_id}; the platform would reject the confirmation with INSUFFICIENT_CONFIRMATIONS. Raise --confirmations (or the stored per-chain value) to at least {required}."
+    )]
+    InsufficientConfirmations {
+        chain_id: ChainId,
+        requested: u64,
+        required: u64,
+    },
+
+    #[error(
+        "RPC endpoint {redacted_url} serves chain {actual}, but this transaction targets chain {expected}. Refusing to broadcast."
+    )]
+    ChainIdMismatch {
+        redacted_url: String,
+        expected: ChainId,
+        actual: ChainId,
+    },
+
+    #[error("RPC transport error communicating with {redacted_url}: {message}")]
+    Transport {
+        redacted_url: String,
+        message: String,
+    },
+
+    #[error("Failed to send transaction via {redacted_url}: {message}")]
+    Send {
+        redacted_url: String,
+        message: String,
+    },
+
+    #[error(
+        "Transaction {tx_hash} was submitted to chain {chain_id} but its confirmation state is unknown ({message}). Do not re-broadcast: the transaction may still confirm. Check it by hash first, and re-run the command only once its status is known."
+    )]
+    ConfirmationUnknown {
+        tx_hash: TxHash,
+        chain_id: ChainId,
+        redacted_url: String,
+        message: String,
+    },
+
+    #[error(
+        "{redacted_url} could not judge the transaction after {attempts} attempt(s) over {waited_ms}ms ({message}). Nothing was signed or submitted and the nonce is unchanged: re-run the command."
+    )]
+    AssertionsUnavailable {
+        chain_id: ChainId,
+        redacted_url: String,
+        attempts: u32,
+        waited_ms: u128,
+        message: String,
+    },
+
+    #[error(
+        "Transaction {tx_hash} was submitted to chain {chain_id} {attempts} time(s) without confirmed acceptance ({message}). It may be in flight: check the hash before re-running, which would reuse the same nonce."
+    )]
+    SubmissionUnconfirmed {
+        tx_hash: TxHash,
+        chain_id: ChainId,
+        redacted_url: String,
+        attempts: u32,
+        message: String,
+    },
+
+    #[error("Transaction {tx_hash} reverted on-chain (block {block})")]
+    Reverted { tx_hash: TxHash, block: BlockNumber },
+}
+
+// Context required to classify a failed send without losing the signed hash.
+pub(crate) struct SubmissionAttemptError {
+    // Transaction hash.
+    tx_hash: TxHash,
+    // Chain identifier.
+    chain_id: ChainId,
+    // Redacted RPC endpoint.
+    redacted_url: String,
+    // Submission attempt.
+    attempts: u32,
+    // Whether an earlier response made submission ambiguous.
+    previously_ambiguous: bool,
+    // Sanitized error message.
+    message: String,
+    // Transport error.
+    error: TransportError,
+}
+
+impl SubmissionAttemptError {
+    pub(crate) fn new(
+        tx_hash: TxHash,
+        chain_id: ChainId,
+        redacted_url: String,
+        attempts: u32,
+        previously_ambiguous: bool,
+        message: String,
+        error: TransportError,
+    ) -> Self {
+        Self {
+            tx_hash,
+            chain_id,
+            redacted_url,
+            attempts,
+            previously_ambiguous,
+            message,
+            error,
+        }
+    }
+}
+
+impl From<SubmissionAttemptError> for OnchainError {
+    fn from(failure: SubmissionAttemptError) -> Self {
+        let ambiguous = failure.previously_ambiguous
+            || matches!(
+                failure.error,
+                RpcError::Transport(_) | RpcError::NullResp | RpcError::DeserError { .. }
+            );
+        if ambiguous {
+            Self::SubmissionUnconfirmed {
+                tx_hash: failure.tx_hash,
+                chain_id: failure.chain_id,
+                redacted_url: failure.redacted_url,
+                attempts: failure.attempts,
+                message: failure.message,
+            }
+        } else {
+            Self::Send {
+                redacted_url: failure.redacted_url,
+                message: failure.message,
+            }
+        }
+    }
+}
 
 /// Errors that can occur during declarative apply.
 #[derive(Error, Debug)]

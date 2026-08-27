@@ -62,6 +62,6 @@ credible = ["dep:assertion-executor", "dep:assertion-verification"]
 [dev-dependencies]
 mockito = "1.2"
 rand = "0.8"
-# `test-util` lets the config-lock timeout be asserted on a paused clock instead
-# of waiting out the real 30-second budget.
+# `test-util` lets the config-lock timeout and the submission backoff be
+# asserted on a paused clock instead of waiting out real time.
 tokio = { workspace = true, features = ["test-util"] }

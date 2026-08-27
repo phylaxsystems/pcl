@@ -2,6 +2,10 @@ use crate::{
     error::AuthError,
     output::with_envelope_metadata,
 };
+use alloy_primitives::{
+    ChainId,
+    TxHash,
+};
 use serde_json::{
     Map,
     Value,
@@ -132,6 +136,22 @@ pub enum ApiCommandError {
 }
 
 impl ApiCommandError {
+    // A signed transaction whose outcome is unobserved: the hash exists, the
+    // result does not, so a retry could double-broadcast.
+    fn ambiguous_submission(&self) -> Option<(&TxHash, ChainId)> {
+        match self {
+            Self::Onchain(
+                crate::onchain::OnchainError::ConfirmationUnknown {
+                    tx_hash, chain_id, ..
+                }
+                | crate::onchain::OnchainError::SubmissionUnconfirmed {
+                    tx_hash, chain_id, ..
+                },
+            ) => Some((tx_hash, *chain_id)),
+            _ => None,
+        }
+    }
+
     pub fn code(&self) -> &'static str {
         match self {
             Self::NoAuthToken => "auth.no_token",
@@ -187,6 +207,12 @@ impl ApiCommandError {
                     crate::onchain::OnchainError::ConfirmationUnknown { .. } => {
                         "onchain.tx_submitted_confirmation_unknown"
                     }
+                    crate::onchain::OnchainError::AssertionsUnavailable { .. } => {
+                        "onchain.assertions_unavailable"
+                    }
+                    crate::onchain::OnchainError::SubmissionUnconfirmed { .. } => {
+                        "onchain.tx_submission_unconfirmed"
+                    }
                     _ => "onchain.failed",
                 }
             }
@@ -201,6 +227,18 @@ impl ApiCommandError {
     }
 
     pub fn next_actions(&self) -> Vec<String> {
+        // The transaction is signed and may be in flight; re-running now could
+        // broadcast a duplicate while the first is still pending.
+        if let Some((tx_hash, chain_id)) = self.ambiguous_submission() {
+            return vec![
+                    format!(
+                        "Check transaction {tx_hash} on chain {chain_id} first (e.g. cast receipt {tx_hash} --rpc-url <url>, or a block explorer)"
+                    ),
+                    "If it confirmed, re-run the command — landed state reconciles without a new transaction; if it is still pending, wait — do not re-broadcast"
+                        .to_string(),
+            ];
+        }
+
         match self {
             Self::NoAuthToken | Self::ExpiredAuthToken(_) | Self::AuthRefresh(_) => {
                 vec![
@@ -376,19 +414,13 @@ impl ApiCommandError {
                     "Or pass --rpc-url / set PCL_RPC_URL".to_string(),
                 ]
             }
-            Self::Onchain(crate::onchain::OnchainError::ConfirmationUnknown {
-                tx_hash,
-                chain_id,
-                ..
-            }) => {
-                // The transaction was accepted by the RPC; only the receipt
-                // poll failed. Re-running immediately could broadcast a
-                // duplicate mutation while the first is still pending.
+            Self::Onchain(crate::onchain::OnchainError::AssertionsUnavailable { .. }) => {
+                // Nothing was signed or submitted, so the same command is the
+                // recovery: the refusal is transient by construction.
                 vec![
-                    format!(
-                        "Check transaction {tx_hash} on chain {chain_id} first (e.g. cast receipt {tx_hash} --rpc-url <url>, or a block explorer)"
-                    ),
-                    "If it confirmed, re-run the command — landed state reconciles without a new transaction; if it is still pending, wait — do not re-broadcast"
+                    "Re-run the same command; nothing was submitted and the account nonce is unchanged"
+                        .to_string(),
+                    "If it keeps failing, check the Credible RPC endpoint's assertion alignment"
                         .to_string(),
                 ]
             }
@@ -466,12 +498,15 @@ impl ApiCommandError {
             }
             Self::HttpStatus { .. } => vec!["inspect_response_body", "retry"],
             Self::Wallet(_) => vec!["fix_wallet", "retry"],
-            Self::Onchain(crate::onchain::OnchainError::ConfirmationUnknown { .. }) => {
+            _ if self.ambiguous_submission().is_some() => {
                 vec![
                     "check_tx_status",
                     "wait_for_confirmation",
                     "reconcile_mutation",
                 ]
+            }
+            Self::Onchain(crate::onchain::OnchainError::AssertionsUnavailable { .. }) => {
+                vec!["retry_later", "retry"]
             }
             Self::Onchain(_) => vec!["check_chain_config", "retry"],
             Self::BroadcastCancelled => vec!["rerun_with_yes"],
@@ -547,16 +582,7 @@ impl ApiCommandError {
             error.insert("source".to_string(), source.json_envelope());
         }
 
-        // A transaction that was submitted but whose receipt could not be
-        // observed (timeout, transport failure while polling) is an ambiguous
-        // mutation: the hash exists, the outcome does not — a retry could
-        // double-broadcast.
-        if let Self::Onchain(crate::onchain::OnchainError::ConfirmationUnknown {
-            tx_hash,
-            chain_id,
-            ..
-        }) = self
-        {
+        if let Some((tx_hash, chain_id)) = self.ambiguous_submission() {
             error.insert("tx_hash".to_string(), json!(tx_hash));
             error.insert("chain_id".to_string(), json!(chain_id));
             error.insert(
@@ -595,8 +621,11 @@ impl ApiCommandError {
             );
         }
 
-        if let Self::ConfirmAfterTx { tx_hash, .. }
-        | Self::Onchain(crate::onchain::OnchainError::ConfirmationUnknown { tx_hash, .. }) = self
+        let tx_hash = match self {
+            Self::ConfirmAfterTx { tx_hash, .. } => Some(tx_hash),
+            _ => self.ambiguous_submission().map(|(tx_hash, _)| tx_hash),
+        };
+        if let Some(tx_hash) = tx_hash
             && let Some(object) = envelope.as_object_mut()
         {
             object.insert("tx_hash".to_string(), json!(tx_hash));
