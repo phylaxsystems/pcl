@@ -119,6 +119,8 @@ pub(crate) struct SubmissionAttemptError {
     redacted_url: String,
     // Submission attempt.
     attempts: u32,
+    // Whether an earlier response made submission ambiguous.
+    previously_ambiguous: bool,
     // Sanitized error message.
     message: String,
     // Transport error.
@@ -131,6 +133,7 @@ impl SubmissionAttemptError {
         chain_id: ChainId,
         redacted_url: String,
         attempts: u32,
+        previously_ambiguous: bool,
         message: String,
         error: TransportError,
     ) -> Self {
@@ -139,6 +142,7 @@ impl SubmissionAttemptError {
             chain_id,
             redacted_url,
             attempts,
+            previously_ambiguous,
             message,
             error,
         }
@@ -147,23 +151,23 @@ impl SubmissionAttemptError {
 
 impl From<SubmissionAttemptError> for OnchainError {
     fn from(failure: SubmissionAttemptError) -> Self {
-        match failure.error {
-            // The request may have reached the node before its response was lost.
-            RpcError::Transport(_) | RpcError::NullResp | RpcError::DeserError { .. } => {
-                Self::SubmissionUnconfirmed {
-                    tx_hash: failure.tx_hash,
-                    chain_id: failure.chain_id,
-                    redacted_url: failure.redacted_url,
-                    attempts: failure.attempts,
-                    message: failure.message,
-                }
+        let ambiguous = failure.previously_ambiguous
+            || matches!(
+                failure.error,
+                RpcError::Transport(_) | RpcError::NullResp | RpcError::DeserError { .. }
+            );
+        if ambiguous {
+            Self::SubmissionUnconfirmed {
+                tx_hash: failure.tx_hash,
+                chain_id: failure.chain_id,
+                redacted_url: failure.redacted_url,
+                attempts: failure.attempts,
+                message: failure.message,
             }
-            // Other failures happen locally or are definite RPC rejections.
-            _ => {
-                Self::Send {
-                    redacted_url: failure.redacted_url,
-                    message: failure.message,
-                }
+        } else {
+            Self::Send {
+                redacted_url: failure.redacted_url,
+                message: failure.message,
             }
         }
     }

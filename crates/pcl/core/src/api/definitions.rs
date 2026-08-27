@@ -326,6 +326,28 @@ mod tests {
         assert_eq!(broadcast_actions, 4);
     }
 
+    #[test]
+    fn broadcast_actions_expose_the_credible_rpc_retry_flag() {
+        for definition in workflow_definitions() {
+            for action in definition
+                .actions
+                .iter()
+                .filter(|action| action.name.ends_with("_broadcast"))
+            {
+                let manifest = action.manifest_value();
+                let optional_flags = manifest["optional_flags"].as_array().unwrap();
+                assert!(
+                    optional_flags
+                        .iter()
+                        .any(|flag| flag == "--with-credible-rpc"),
+                    "{}.{} omits --with-credible-rpc",
+                    definition.name,
+                    action.name
+                );
+            }
+        }
+    }
+
     /// The regression the metadata exists for: an action anchored to a
     /// read-only calldata GET (`transfer_broadcast`) is still mutating, while
     /// the plain calldata action on the same endpoint stays read-only.

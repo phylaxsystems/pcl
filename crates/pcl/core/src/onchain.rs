@@ -358,6 +358,7 @@ impl TxSender {
         let attempts = self.attempts();
         let mut backoff = Backoff::new();
         let mut message = String::new();
+        let mut previously_ambiguous = false;
         for attempt in 1..=attempts {
             match self.provider.send_tx_envelope(signed.clone()).await {
                 Ok(pending) => return Ok(pending),
@@ -371,6 +372,7 @@ impl TxSender {
                     ));
                 }
                 Err(error) if assertions_unavailable(&error) => {
+                    previously_ambiguous = true;
                     message = self.scrub(&error);
                     backoff
                         .wait(attempt, attempts, &self.waiting_for("submitting"), notify)
@@ -383,6 +385,7 @@ impl TxSender {
                         self.chain_id,
                         self.redacted(),
                         attempt,
+                        previously_ambiguous,
                         message,
                         error,
                     )
@@ -1060,6 +1063,38 @@ mod tests {
 
         assert_eq!(outcome.tx_hash, RECEIPT_HASH);
         dedup.assert_async().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_rejection_after_an_ambiguous_refusal_preserves_the_signed_hash() {
+        let mut server = mockito::Server::new_async().await;
+        chain(&mut server).await;
+        ok(&mut server, "eth_getTransactionCount", json!("0x8")).await;
+        ok(&mut server, "eth_estimateGas", json!("0x5208")).await;
+        fails(&mut server, "eth_sendRawTransaction", INTERNAL, UNAVAILABLE)
+            .await
+            .expect(1);
+        let rejected = fails(
+            &mut server,
+            "eth_sendRawTransaction",
+            -32000,
+            "nonce too low",
+        )
+        .await
+        .expect(1);
+        ok(&mut server, "eth_getTransactionByHash", Value::Null).await;
+
+        let error = send(&server).await.unwrap_err();
+
+        let OnchainError::SubmissionUnconfirmed {
+            tx_hash, attempts, ..
+        } = &error
+        else {
+            panic!("expected an ambiguous submission, got {error:?}");
+        };
+        assert_eq!(*attempts, 2);
+        assert!(error.to_string().contains(&tx_hash.to_string()));
+        rejected.assert_async().await;
     }
 
     #[tokio::test(start_paused = true)]
