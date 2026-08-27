@@ -8,7 +8,11 @@
 //! it is unavailable, so a node deduplicates the retry rather than accepting a
 //! second transaction. How long it waits: [`TxArgs::with_credible_rpc`].
 
-use crate::config::CliConfig;
+pub use crate::error::OnchainError;
+use crate::{
+    config::CliConfig,
+    error::SubmissionAttemptError,
+};
 use alloy_network::{
     Ethereum,
     EthereumWallet,
@@ -49,7 +53,6 @@ use alloy_sol_types::{
 };
 use serde::Serialize;
 use std::time::Duration;
-use thiserror::Error;
 use tokio::time::Instant;
 use url::Url;
 
@@ -93,91 +96,6 @@ pub fn fallback_confirmations(chain_id: u64) -> u64 {
         11_155_111 | 84532 | 59141 | 421_614 | 11_155_420 => 3,
         _ => 12,
     }
-}
-
-/// Errors that can occur while broadcasting transactions.
-///
-/// RPC endpoints in these messages are redacted to their scheme/host/port
-/// origin: stored provider URLs commonly embed API keys, and error envelopes
-/// end up in logs and transcripts.
-#[derive(Error, Debug)]
-pub enum OnchainError {
-    #[error(
-        "No RPC endpoint for chain {chain_id}. Pass --rpc-url (or set PCL_RPC_URL), or store one with `pcl config set-rpc {chain_id} <url>`."
-    )]
-    RpcUrlMissing { chain_id: u64 },
-
-    #[error("Invalid RPC URL ({redacted_url}) configured for chain {chain_id}: {reason}")]
-    InvalidRpcUrl {
-        chain_id: u64,
-        redacted_url: String,
-        reason: String,
-    },
-
-    #[error(
-        "{requested} confirmation(s) is below the {required} required on chain {chain_id}; the platform would reject the confirmation with INSUFFICIENT_CONFIRMATIONS. Raise --confirmations (or the stored per-chain value) to at least {required}."
-    )]
-    InsufficientConfirmations {
-        chain_id: u64,
-        requested: u64,
-        required: u64,
-    },
-
-    #[error(
-        "RPC endpoint {redacted_url} serves chain {actual}, but this transaction targets chain {expected}. Refusing to broadcast."
-    )]
-    ChainIdMismatch {
-        redacted_url: String,
-        expected: u64,
-        actual: u64,
-    },
-
-    #[error("RPC transport error communicating with {redacted_url}: {message}")]
-    Transport {
-        redacted_url: String,
-        message: String,
-    },
-
-    #[error("Failed to send transaction via {redacted_url}: {message}")]
-    Send {
-        redacted_url: String,
-        message: String,
-    },
-
-    #[error(
-        "Transaction {tx_hash} was submitted to chain {chain_id} but its confirmation state is unknown ({message}). Do not re-broadcast: the transaction may still confirm. Check it by hash first, and re-run the command only once its status is known."
-    )]
-    ConfirmationUnknown {
-        tx_hash: B256,
-        chain_id: u64,
-        redacted_url: String,
-        message: String,
-    },
-
-    #[error(
-        "{redacted_url} could not judge the transaction after {attempts} attempt(s) over {waited_ms}ms ({message}). Nothing was signed or submitted and the nonce is unchanged: re-run the command."
-    )]
-    AssertionsUnavailable {
-        chain_id: u64,
-        redacted_url: String,
-        attempts: u32,
-        waited_ms: u128,
-        message: String,
-    },
-
-    #[error(
-        "Transaction {tx_hash} was submitted to chain {chain_id} {attempts} time(s) without confirmed acceptance ({message}). It may be in flight: check the hash before re-running, which would reuse the same nonce."
-    )]
-    SubmissionUnconfirmed {
-        tx_hash: B256,
-        chain_id: u64,
-        redacted_url: String,
-        attempts: u32,
-        message: String,
-    },
-
-    #[error("Transaction {tx_hash} reverted on-chain (block {block})")]
-    Reverted { tx_hash: B256, block: u64 },
 }
 
 /// Transaction arguments shared by every command that broadcasts.
@@ -455,10 +373,16 @@ impl TxSender {
                         .await;
                 }
                 Err(error) => {
-                    return Err(OnchainError::Send {
-                        redacted_url: self.redacted(),
-                        message: self.scrub(&error),
-                    });
+                    let message = self.scrub(&error);
+                    return Err(SubmissionAttemptError::new(
+                        *signed.tx_hash(),
+                        self.chain_id,
+                        self.redacted(),
+                        attempt,
+                        message,
+                        error,
+                    )
+                    .into());
                 }
             }
         }
@@ -1185,6 +1109,37 @@ mod tests {
         };
         assert!(error.to_string().contains(&tx_hash.to_string()));
         assert!(error.to_string().contains("may be in flight"));
+    }
+
+    #[tokio::test]
+    async fn an_aborted_submission_response_preserves_the_signed_hash() {
+        let mut server = mockito::Server::new_async().await;
+        chain(&mut server).await;
+        ok(&mut server, "eth_getTransactionCount", json!("0x8")).await;
+        ok(&mut server, "eth_estimateGas", json!("0x5208")).await;
+        let aborted = server
+            .mock("POST", "/")
+            .match_body(Matcher::PartialJson(json!({
+                "method": "eth_sendRawTransaction",
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_chunked_body(|_| Err(std::io::Error::other("response aborted")))
+            .create_async()
+            .await
+            .expect(1);
+
+        let error = send(&server).await.unwrap_err();
+
+        let OnchainError::SubmissionUnconfirmed {
+            tx_hash, attempts, ..
+        } = &error
+        else {
+            panic!("expected an unconfirmed submission, got {error:?}");
+        };
+        assert_eq!(*attempts, 1);
+        assert!(error.to_string().contains(&tx_hash.to_string()));
+        aborted.assert_async().await;
     }
 
     #[tokio::test(start_paused = true)]
