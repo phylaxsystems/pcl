@@ -17,7 +17,7 @@ use alloy_network::{
     Ethereum,
     EthereumWallet,
     Network,
-    eip2718::Encodable2718,
+    TransactionBuilder,
 };
 use alloy_primitives::{
     B256,
@@ -258,11 +258,9 @@ impl TxSender {
         notify: &dyn Fn(&str),
     ) -> Result<TxOutcome, OnchainError> {
         let signed = self.prepare(request, notify).await?;
-        self.submit(&signed, notify).await?;
+        let pending = self.submit(&signed, notify).await?;
         notify("Transaction submitted; waiting for confirmation");
-        let receipt = self
-            .await_receipt(*signed.tx_hash(), confirmations, timeout)
-            .await?;
+        let receipt = self.await_receipt(pending, confirmations, timeout).await?;
 
         if !receipt.status() {
             return Err(OnchainError::Reverted {
@@ -281,9 +279,9 @@ impl TxSender {
         })
     }
 
-    // Resolves the nonce once and sets it, so the filler skips its own lookup.
-    // Left to the filler, every retried fill would increment its cached nonce
-    // and the signed transaction would skip one, stranding it as pending.
+    // Pins the pending nonce and chain validated at connect, skipping filler lookups.
+    // Retried fills could otherwise advance the cached nonce and skip one,
+    // stranding the signed transaction as pending.
     async fn with_pinned_nonce(
         &self,
         request: TransactionRequest,
@@ -300,7 +298,7 @@ impl TxSender {
                     message: self.scrub(&error),
                 }
             })?;
-        Ok(request.from(from).nonce(nonce))
+        Ok(request.from(from).nonce(nonce).with_chain_id(self.chain_id))
     }
 
     // `eth_estimateGas` is gated too, so filling hits the same window; retrying
@@ -352,20 +350,26 @@ impl TxSender {
 
     // Every attempt sends the same hash and nonce, so a node already holding the
     // transaction deduplicates the retry instead of accepting a second one.
-    async fn submit(&self, signed: &SignedTx, notify: &dyn Fn(&str)) -> Result<(), OnchainError> {
+    async fn submit(
+        &self,
+        signed: &SignedTx,
+        notify: &dyn Fn(&str),
+    ) -> Result<PendingTransactionBuilder<Ethereum>, OnchainError> {
         let attempts = self.attempts();
         let mut backoff = Backoff::new();
         let mut message = String::new();
         for attempt in 1..=attempts {
-            match self
-                .provider
-                .send_raw_transaction(&signed.encoded_2718())
-                .await
-            {
-                Ok(_) => return Ok(()),
+            match self.provider.send_tx_envelope(signed.clone()).await {
+                Ok(pending) => return Ok(pending),
                 // The node already holds these exact bytes, so an earlier
-                // attempt reached it even if its answer did not reach us.
-                Err(error) if already_submitted(&error) => return Ok(()),
+                // attempt reached it even if its answer did not reach us. It
+                // returned no builder, so resume tracking from the known hash.
+                Err(error) if already_submitted(&error) => {
+                    return Ok(PendingTransactionBuilder::new(
+                        self.provider.root().clone(),
+                        *signed.tx_hash(),
+                    ));
+                }
                 Err(error) if assertions_unavailable(&error) => {
                     message = self.scrub(&error);
                     backoff
@@ -395,14 +399,15 @@ impl TxSender {
         })
     }
 
-    // Waits for `tx_hash` to reach `confirmations`.
+    // Waits for the submitted transaction to reach `confirmations`.
     async fn await_receipt(
         &self,
-        tx_hash: B256,
+        pending: PendingTransactionBuilder<Ethereum>,
         confirmations: u64,
         timeout: Duration,
     ) -> Result<TransactionReceipt, OnchainError> {
-        PendingTransactionBuilder::new(self.provider.root().clone(), tx_hash)
+        let tx_hash = *pending.tx_hash();
+        pending
             .with_required_confirmations(confirmations)
             .with_timeout(Some(timeout))
             .get_receipt()
@@ -766,11 +771,9 @@ mod tests {
             .unwrap();
         let started = Instant::now();
         let timeout = Duration::from_millis(50);
+        let pending = PendingTransactionBuilder::new(sender.provider.root().clone(), RECEIPT_HASH);
 
-        let error = sender
-            .await_receipt(RECEIPT_HASH, 1, timeout)
-            .await
-            .unwrap_err();
+        let error = sender.await_receipt(pending, 1, timeout).await.unwrap_err();
 
         assert!(matches!(error, OnchainError::ConfirmationUnknown { .. }));
         assert!(started.elapsed() >= timeout);
@@ -911,6 +914,23 @@ mod tests {
 
         assert_eq!(request.nonce, Some(8));
         count.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn the_validated_chain_id_is_pinned_before_signing() {
+        let mut server = mockito::Server::new_async().await;
+        ok(&mut server, "eth_chainId", json!(format!("{CHAIN_ID:#x}"))).await;
+        ok(&mut server, "eth_getTransactionCount", json!("0x8")).await;
+        let sender = TxSender::connect(server.url().parse().unwrap(), signer(), CHAIN_ID, true)
+            .await
+            .unwrap();
+
+        let request = sender
+            .with_pinned_nonce(TransactionRequest::default())
+            .await
+            .unwrap();
+
+        assert_eq!(request.chain_id, Some(CHAIN_ID));
     }
 
     // A retried fill must not advance the nonce: the signed transaction would
