@@ -2,7 +2,10 @@ use crate::{
     error::AuthError,
     output::with_envelope_metadata,
 };
-use alloy_primitives::B256;
+use alloy_primitives::{
+    ChainId,
+    TxHash,
+};
 use serde_json::{
     Map,
     Value,
@@ -135,7 +138,7 @@ pub enum ApiCommandError {
 impl ApiCommandError {
     // A signed transaction whose outcome is unobserved: the hash exists, the
     // result does not, so a retry could double-broadcast.
-    fn ambiguous_submission(&self) -> Option<(&B256, u64)> {
+    fn ambiguous_submission(&self) -> Option<(&TxHash, ChainId)> {
         match self {
             Self::Onchain(
                 crate::onchain::OnchainError::ConfirmationUnknown {
