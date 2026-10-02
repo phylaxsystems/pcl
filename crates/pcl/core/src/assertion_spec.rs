@@ -13,8 +13,13 @@
 //! `credible.toml`: V2-only identifiers are matched in the project's own
 //! sources with comments stripped. Vendored `credible-std` code is never
 //! scanned, because a V2-capable library declares those identifiers whether or
-//! not an assertion uses them. The result only ever produces a warning, never
-//! a hard failure, so a miss in either direction is recoverable.
+//! not an assertion uses them. V2 usage in general only produces a warning, so
+//! a miss in either direction is recoverable.
+//!
+//! Circuit breakers (`watchCumulativeInflow`/`watchCumulativeOutflow`) are the
+//! exception: a deploy that registers one on a V1-only target is rejected.
+//! There is no V1 equivalent to fall back to, and the failure is silent, so the
+//! protocol would believe it has a breaker that can never trip.
 
 use crate::credible_config::CredibleToml;
 use serde_json::{
@@ -146,6 +151,26 @@ const V2_TYPE_MARKERS: [&str; 14] = [
     "PhEvm.TxObject",
 ];
 
+/// V2 markers that make an assertion a circuit breaker: the cumulative-flow
+/// triggers and the flow contexts and rates that only exist inside one. A
+/// deploy that uses any of these on a V1-only target is rejected rather than
+/// warned about. Every entry is also in [`V2_CALL_MARKERS`] or
+/// [`V2_TYPE_MARKERS`], so detection needs no second pass.
+const CIRCUIT_BREAKER_MARKERS: [&str; 9] = [
+    "watchCumulativeInflow",
+    "watchCumulativeOutflow",
+    "inflowContext",
+    "outflowContext",
+    "inflowRate",
+    "outflowRate",
+    "PhEvm.InflowContext",
+    "PhEvm.OutflowContext",
+    "PhEvm.FlowRateContext",
+];
+
+/// Error code used in machine output when a circuit breaker is rejected.
+pub const CIRCUIT_BREAKER_UNSUPPORTED_CODE: &str = "deploy.circuit_breaker_unsupported";
+
 /// One assertion source that uses the V2 spec.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct V2SpecFinding {
@@ -166,6 +191,35 @@ pub fn platform_supports_v2(platform_url: &Url) -> bool {
 /// Whether `chain_id` is served by a platform that supports the V2 spec.
 pub fn chain_supports_v2(chain_id: u64) -> bool {
     !V1_ONLY_CHAIN_IDS.contains(&chain_id)
+}
+
+/// Whether a deploy to `platform_url` on `chain_id` lands somewhere that only
+/// runs the V1 spec. Either signal is enough; an unknown one never is.
+pub fn target_is_v1_only(platform_url: Option<&Url>, chain_id: Option<u64>) -> bool {
+    platform_url.is_some_and(|url| !platform_supports_v2(url))
+        || chain_id.is_some_and(|chain_id| !chain_supports_v2(chain_id))
+}
+
+/// The subset of `findings` that registers or reads a circuit breaker, keeping
+/// only the circuit-breaker markers. Files without one are dropped.
+pub fn circuit_breaker_findings(findings: &[V2SpecFinding]) -> Vec<V2SpecFinding> {
+    findings
+        .iter()
+        .filter_map(|finding| {
+            let markers: Vec<String> = finding
+                .markers
+                .iter()
+                .filter(|marker| CIRCUIT_BREAKER_MARKERS.contains(&marker.as_str()))
+                .cloned()
+                .collect();
+            (!markers.is_empty()).then(|| {
+                V2SpecFinding {
+                    file: finding.file.clone(),
+                    markers,
+                }
+            })
+        })
+        .collect()
 }
 
 /// Human name for the chains that only run V1, for warning text.
@@ -257,26 +311,68 @@ pub fn deploy_warning(
     if findings.is_empty() {
         return None;
     }
-    let platform_only_v1 = platform_url.is_some_and(|url| !platform_supports_v2(url));
-    let chain_only_v1 = chain_id.is_some_and(|chain_id| !chain_supports_v2(chain_id));
-    if !platform_only_v1 && !chain_only_v1 {
-        return None;
-    }
-
-    let platform = platform_url.map(crate::platform::redact_platform_url);
-    let target = match (
-        platform,
-        chain_id.filter(|chain_id| !chain_supports_v2(*chain_id)),
-    ) {
-        (Some(platform), Some(chain_id)) => format!("{platform} ({})", chain_label(chain_id)),
-        (Some(platform), None) => platform,
-        (None, Some(chain_id)) => format!("The target chain ({})", chain_label(chain_id)),
-        // Unreachable: one of the two checks above was true to get here.
-        (None, None) => return None,
-    };
+    let target = v1_target_label(platform_url, chain_id)?;
 
     let mut message =
         format!("{target} runs the V1 assertion spec, but these assertions use V2:\n");
+    push_findings(&mut message, findings);
+    message.push_str(
+        "V2 triggers and precompiles do not run there: the release can be rejected, or the assertion can deploy and never trigger. Rewrite these assertions against the V1 spec, or deploy to a platform that runs V2.",
+    );
+    Some(message)
+}
+
+/// The rejection for a deploy that registers a circuit breaker on a V1-only
+/// target, or `None` when the target runs V2 or no circuit breaker is used.
+/// `findings` is the full scan; the circuit-breaker subset is taken here.
+///
+/// Unlike [`deploy_warning`] this is a gate: the V1 executor has no cumulative
+/// flow triggers, so the breaker would deploy and never trip.
+pub fn circuit_breaker_rejection(
+    platform_url: Option<&Url>,
+    chain_id: Option<u64>,
+    findings: &[V2SpecFinding],
+) -> Option<(String, Vec<V2SpecFinding>)> {
+    let breakers = circuit_breaker_findings(findings);
+    if breakers.is_empty() {
+        return None;
+    }
+    let target = v1_target_label(platform_url, chain_id)?;
+
+    let mut message = format!(
+        "{target} runs the V1 assertion spec, which does not support circuit breakers, but these assertions use one:\n"
+    );
+    push_findings(&mut message, &breakers);
+    message.push_str(
+        "A circuit breaker deployed there would never trip. Remove the watchCumulativeInflow/watchCumulativeOutflow circuit breakers from these assertions, or deploy to a platform that runs V2.",
+    );
+    Some((message, breakers))
+}
+
+/// How a V1-only deploy target is named in messages, or `None` when the target
+/// is not V1-only.
+///
+/// `platform_url` is `None` on a local `--dry-run` that never chose a platform,
+/// and `chain_id` is `None` when the chain is not known yet; either one alone is
+/// enough to name the target.
+fn v1_target_label(platform_url: Option<&Url>, chain_id: Option<u64>) -> Option<String> {
+    if !target_is_v1_only(platform_url, chain_id) {
+        return None;
+    }
+    let platform = platform_url.map(crate::platform::redact_platform_url);
+    match (
+        platform,
+        chain_id.filter(|chain_id| !chain_supports_v2(*chain_id)),
+    ) {
+        (Some(platform), Some(chain_id)) => Some(format!("{platform} ({})", chain_label(chain_id))),
+        (Some(platform), None) => Some(platform),
+        (None, Some(chain_id)) => Some(format!("The target chain ({})", chain_label(chain_id))),
+        // Unreachable: target_is_v1_only needs one of the two.
+        (None, None) => None,
+    }
+}
+
+fn push_findings(message: &mut String, findings: &[V2SpecFinding]) {
     for finding in findings {
         let _ = writeln!(
             message,
@@ -285,10 +381,6 @@ pub fn deploy_warning(
             finding.markers.join(", ")
         );
     }
-    message.push_str(
-        "V2 triggers and precompiles do not run there: the release can be rejected, or the assertion can deploy and never trigger. Rewrite these assertions against the V1 spec, or deploy to a platform that runs V2.",
-    );
-    Some(message)
 }
 
 /// Machine-output form of a warning message.
@@ -999,6 +1091,97 @@ mod tests {
                 Some(&url("https://dev.phylax.systems")),
                 Some(84532),
                 &findings
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn circuit_breaker_markers_are_all_v2_markers() {
+        for marker in CIRCUIT_BREAKER_MARKERS {
+            assert!(
+                V2_CALL_MARKERS.contains(&marker) || V2_TYPE_MARKERS.contains(&marker),
+                "{marker} is not detected by the V2 scan"
+            );
+        }
+    }
+
+    #[test]
+    fn circuit_breaker_rejection_only_fires_for_breakers_on_v1_targets() {
+        let findings = vec![
+            V2SpecFinding {
+                file: "assertions/src/Breaker.a.sol".to_string(),
+                markers: vec![
+                    "registerTxEndTrigger".to_string(),
+                    "watchCumulativeOutflow".to_string(),
+                    "outflowContext".to_string(),
+                ],
+            },
+            V2SpecFinding {
+                file: "assertions/src/Plain.a.sol".to_string(),
+                markers: vec!["staticcallAt".to_string()],
+            },
+        ];
+
+        let (message, breakers) = circuit_breaker_rejection(
+            Some(&url("https://linea.phylax.systems")),
+            Some(LINEA_MAINNET_CHAIN_ID),
+            &findings,
+        )
+        .expect("rejected on Linea Mainnet");
+        assert_eq!(
+            breakers,
+            vec![V2SpecFinding {
+                file: "assertions/src/Breaker.a.sol".to_string(),
+                markers: vec![
+                    "watchCumulativeOutflow".to_string(),
+                    "outflowContext".to_string(),
+                ],
+            }]
+        );
+        assert!(message.contains("circuit breaker"), "{message}");
+        assert!(
+            message.contains("(Linea Mainnet, chain 59144)"),
+            "{message}"
+        );
+        assert!(
+            message
+                .contains("assertions/src/Breaker.a.sol — watchCumulativeOutflow, outflowContext"),
+            "{message}"
+        );
+        assert!(!message.contains("Plain.a.sol"), "{message}");
+
+        // The chain alone decides, with or without a platform.
+        assert!(
+            circuit_breaker_rejection(
+                Some(&url("https://ethereum.phylax.systems")),
+                Some(LINEA_MAINNET_CHAIN_ID),
+                &findings
+            )
+            .is_some()
+        );
+        assert!(circuit_breaker_rejection(None, Some(LINEA_MAINNET_CHAIN_ID), &findings).is_some());
+        // So does a V1-only platform with the chain still unknown.
+        assert!(
+            circuit_breaker_rejection(Some(&url("https://linea.phylax.systems")), None, &findings)
+                .is_some()
+        );
+
+        // A V2 target, an unknown target, or V2 usage without a breaker passes.
+        assert!(
+            circuit_breaker_rejection(
+                Some(&url("https://ethereum.phylax.systems")),
+                Some(1),
+                &findings
+            )
+            .is_none()
+        );
+        assert!(circuit_breaker_rejection(None, None, &findings).is_none());
+        assert!(
+            circuit_breaker_rejection(
+                Some(&url("https://linea.phylax.systems")),
+                Some(LINEA_MAINNET_CHAIN_ID),
+                &findings[1..]
             )
             .is_none()
         );

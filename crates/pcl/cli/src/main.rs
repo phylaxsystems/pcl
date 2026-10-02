@@ -748,6 +748,18 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
                         vec!["pcl deploy --project-name <name> --chain-id <id>".to_string()],
                     )
                 }
+                DeployError::CircuitBreakerUnsupported { .. } => {
+                    (
+                        pcl_core::assertion_spec::CIRCUIT_BREAKER_UNSUPPORTED_CODE,
+                        true,
+                        vec![
+                            "Remove the circuit breakers listed in error.files, then re-run pcl deploy"
+                                .to_string(),
+                            "pcl deploy --api-url <v2-platform-url> (deploy to a platform that runs V2)"
+                                .to_string(),
+                        ],
+                    )
+                }
                 DeployError::ChainIdMismatch { .. } => {
                     (
                         "deploy.chain_id_mismatch",
@@ -913,6 +925,28 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
             {
                 error.insert("project_id".to_string(), json!(project_id));
                 error.insert("path".to_string(), json!(path));
+            }
+            if let DeployError::CircuitBreakerUnsupported {
+                platform_url,
+                chain_id,
+                files,
+                ..
+            } = err
+            {
+                error.insert("platform_url".to_string(), json!(platform_url));
+                error.insert("chain_id".to_string(), json!(chain_id));
+                error.insert("assertion_spec".to_string(), json!("v1"));
+                error.insert(
+                    "files".to_string(),
+                    json!(
+                        files
+                            .iter()
+                            .map(|finding| {
+                                json!({ "file": finding.file, "markers": finding.markers })
+                            })
+                            .collect::<Vec<_>>()
+                    ),
+                );
             }
             with_envelope_metadata(json!({
                 "status": "error",
@@ -1558,5 +1592,43 @@ mod tests {
             "assertion_spec.v2_unsupported"
         );
         assert_eq!(envelope["error"]["code"], "apply.failed");
+    }
+
+    #[test]
+    fn deploy_circuit_breaker_rejection_names_files_and_target() {
+        let err = DeployError::WithWarnings {
+            source: Box::new(DeployError::CircuitBreakerUnsupported {
+                message: "Linea runs V1".to_string(),
+                platform_url: Some("https://linea.phylax.systems".to_string()),
+                chain_id: Some(59144),
+                files: vec![pcl_core::assertion_spec::V2SpecFinding {
+                    file: "assertions/src/Breaker.a.sol".to_string(),
+                    markers: vec!["watchCumulativeOutflow".to_string()],
+                }],
+            }),
+            warnings: vec![json!({ "code": "assertion_spec.v2_unsupported" })],
+        };
+
+        let envelope = deploy_error_envelope(&err);
+
+        assert_eq!(envelope["status"], "error");
+        assert_eq!(
+            envelope["error"]["code"],
+            "deploy.circuit_breaker_unsupported"
+        );
+        assert_eq!(envelope["error"]["chain_id"], 59144);
+        assert_eq!(envelope["error"]["assertion_spec"], "v1");
+        assert_eq!(
+            envelope["error"]["files"][0]["file"],
+            "assertions/src/Breaker.a.sol"
+        );
+        assert_eq!(
+            envelope["error"]["files"][0]["markers"][0],
+            "watchCumulativeOutflow"
+        );
+        assert_eq!(
+            envelope["warnings"][0]["code"],
+            "assertion_spec.v2_unsupported"
+        );
     }
 }

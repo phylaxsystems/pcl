@@ -40,6 +40,8 @@ Errors use the same shape with `status: "error"` and an `error` object. Do not p
 
 Some commands add non-fatal warnings. On successful `pcl deploy` envelopes they appear in `data.warnings`; if deploy later fails, they appear in the top-level `warnings` array alongside `status: "error"`. `pcl auth login` also reports warnings in a top-level `warnings` array. Each entry has `code` and `message`. `assertion_spec.v2_unsupported` means the target platform or chain runs the V1 assertion spec, so V2 triggers and precompiles are not supported there.
 
+Circuit breakers (`watchCumulativeInflow`/`watchCumulativeOutflow`) are the one V2 feature `pcl deploy` rejects on a V1-only target (the Linea platform, or chains 59144/59141) instead of warning about it, because a breaker deployed there would never trip. The rejection is `error.code: "deploy.circuit_breaker_unsupported"`; `error.files` lists each offending assertion file and its markers. `--dry-run` applies the same check when the target is known.
+
 Output mode rules:
 
 - default: human-readable output for people
