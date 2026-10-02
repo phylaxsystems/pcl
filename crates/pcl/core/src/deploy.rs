@@ -891,15 +891,18 @@ impl DeployArgs {
         };
 
         // Assertions written against the V2 spec do not run on a platform that
-        // serves V1 (production/Linea). That is a warning, not a gate: the
+        // serves V1 (Linea). In general that is a warning, not a gate: the
         // platform decides what it accepts, and a stale marker list must never
-        // be the reason a deploy stops.
+        // be the reason a deploy stops. Circuit breakers are the exception and
+        // are rejected (see `reject_circuit_breakers`).
         let v2_findings = assertion_spec::scan_assertion_sources(&root, &credible);
 
         if self.dry_run {
             // Plan only: build and verify locally, touch nothing remote. The
             // chain is only known here when it was passed as the create input.
             let warnings = self.spec_warnings(false, self.chain_id, &v2_findings);
+            self.reject_circuit_breakers(self.chain_id, &v2_findings)
+                .map_err(|error| attach_warnings(error, warnings.clone()))?;
             let plan =
                 Self::dry_run_plan(&credible, &root, output_mode, signer.as_ref(), &warnings)?;
             return Self::finish_dry_run(plan, output_mode);
@@ -910,11 +913,20 @@ impl DeployArgs {
         let api = ApiArgs::headless(self.resolved_api_url());
         ApplyArgs::ensure_fresh_auth(config, cli_args, &self.resolved_api_url()).await?;
 
-        // Warn before step 1: creating a project POSTs and rewrites
-        // credible.toml, so a warning printed after it would arrive once
+        // Gate and warn before step 1: creating a project POSTs and rewrites
+        // credible.toml, so a rejection or warning after it would arrive once
         // cancelling is no longer free. The platform is always known here; the
         // chain is too whenever it was passed as the create input, and
-        // otherwise comes from the project record below.
+        // otherwise comes from the project record below. The rejection goes
+        // first so a human sees the error alone rather than after a warning
+        // that says the same thing more softly.
+        self.reject_circuit_breakers(self.chain_id, &v2_findings)
+            .map_err(|error| {
+                attach_warnings(
+                    error,
+                    self.spec_warnings(false, self.chain_id, &v2_findings),
+                )
+            })?;
         let warned_early = !self
             .spec_warnings(human, self.chain_id, &v2_findings)
             .is_empty();
@@ -1080,6 +1092,18 @@ impl DeployArgs {
         // only known after the fetch, and this still lands before the
         // protocol-manager step and before any release exists. Printing is
         // suppressed when the pre-step-1 warning already said it.
+        //
+        // The circuit-breaker gate runs again for the same reason: an existing
+        // project on a V1-only chain behind a V2-capable platform URL is only
+        // caught here. Nothing has been mutated for an existing project yet; a
+        // project created in step 1 was already gated on its --chain-id.
+        self.reject_circuit_breakers(Some(project_chain_id), &v2_findings)
+            .map_err(|error| {
+                attach_warnings(
+                    error,
+                    self.spec_warnings(false, Some(project_chain_id), &v2_findings),
+                )
+            })?;
         let spec_warnings =
             self.spec_warnings(human && !warned_early, Some(project_chain_id), &v2_findings);
         let warnings_for_errors = spec_warnings.clone();
@@ -1494,6 +1518,34 @@ impl DeployArgs {
         )]
     }
 
+    /// Rejects a deploy that registers a circuit breaker on a target that only
+    /// runs the V1 spec. The V1 executor has no cumulative-flow triggers, so the
+    /// breaker would deploy cleanly and never trip, which is worse than not
+    /// deploying: the protocol would believe it is protected.
+    fn reject_circuit_breakers(
+        &self,
+        chain_id: Option<u64>,
+        findings: &[V2SpecFinding],
+    ) -> Result<(), DeployError> {
+        let platform_url = self
+            .api_url
+            .clone()
+            .or_else(crate::platform::active_platform_opt);
+        match assertion_spec::circuit_breaker_rejection(platform_url.as_ref(), chain_id, findings) {
+            None => Ok(()),
+            Some((message, files)) => {
+                Err(DeployError::CircuitBreakerUnsupported {
+                    message,
+                    platform_url: platform_url
+                        .as_ref()
+                        .map(crate::platform::redact_platform_url),
+                    chain_id,
+                    files,
+                })
+            }
+        }
+    }
+
     fn dry_run_plan(
         credible: &CredibleToml,
         root: &Path,
@@ -1636,6 +1688,62 @@ mod tests {
                 .is_empty()
         );
         assert!(production.spec_warnings(false, Some(8453), &[]).is_empty());
+    }
+
+    #[test]
+    fn circuit_breakers_are_rejected_on_v1_only_targets() {
+        use clap::Parser as _;
+
+        let deploy = |api_url: &str| {
+            DeployArgs::try_parse_from(["deploy", "--api-url", api_url]).expect("parse deploy args")
+        };
+        let breaker = [V2SpecFinding {
+            file: "assertions/src/Breaker.a.sol".to_string(),
+            markers: vec!["watchCumulativeInflow".to_string()],
+        }];
+        let plain_v2 = [V2SpecFinding {
+            file: "assertions/src/V2.a.sol".to_string(),
+            markers: vec!["registerTxEndTrigger".to_string()],
+        }];
+
+        let linea = deploy("https://linea.phylax.systems");
+        match linea.reject_circuit_breakers(
+            Some(crate::assertion_spec::LINEA_MAINNET_CHAIN_ID),
+            &breaker,
+        ) {
+            Err(DeployError::CircuitBreakerUnsupported {
+                platform_url,
+                chain_id,
+                files,
+                ..
+            }) => {
+                assert_eq!(
+                    platform_url.as_deref(),
+                    Some("https://linea.phylax.systems")
+                );
+                assert_eq!(
+                    chain_id,
+                    Some(crate::assertion_spec::LINEA_MAINNET_CHAIN_ID)
+                );
+                assert_eq!(files, breaker.to_vec());
+            }
+            other => panic!("expected circuit-breaker rejection, got {other:?}"),
+        }
+        // Other V2 usage on Linea is still only a warning.
+        assert!(linea.reject_circuit_breakers(None, &plain_v2).is_ok());
+
+        // A Linea project behind a V2-capable platform URL is still rejected
+        // once its chain is known; a V2 chain is not.
+        let ethereum = deploy("https://ethereum.phylax.systems");
+        assert!(ethereum.reject_circuit_breakers(Some(1), &breaker).is_ok());
+        assert!(
+            ethereum
+                .reject_circuit_breakers(
+                    Some(crate::assertion_spec::LINEA_MAINNET_CHAIN_ID),
+                    &breaker
+                )
+                .is_err()
+        );
     }
 
     #[test]

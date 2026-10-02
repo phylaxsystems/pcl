@@ -314,6 +314,17 @@ pub enum DeployError {
     )]
     MissingProjectInfo,
 
+    /// The assertions register a circuit breaker, but the target platform or
+    /// chain only runs the V1 assertion spec, where it would never trip.
+    #[error("{message}")]
+    CircuitBreakerUnsupported {
+        message: String,
+        /// Redacted target platform, when one was chosen.
+        platform_url: Option<String>,
+        chain_id: Option<u64>,
+        files: Vec<crate::assertion_spec::V2SpecFinding>,
+    },
+
     #[error(
         "--chain-id {flag} does not match the project's chain {project}. --chain-id only applies when creating a project; omit it to deploy to an existing project."
     )]
