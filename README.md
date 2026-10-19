@@ -273,6 +273,18 @@ pcl events --project <project-ref> --audit-log --json
 pcl search --query settler --json
 ```
 
+Contract membership follows releases: include a contract with at least one assertion
+in the applicable active release using `pcl releases create`, `preview`, and `deploy`.
+Inspect membership with `pcl contracts --project <project-ref>`; inspect one contract
+with `--adopter-id`. Use `pcl releases remove` for release removal and
+`pcl contracts --remove-calldata` for on-chain assertion-removal calldata.
+
+The legacy `contracts --assign-project`, `--unassigned`, and `--remove` actions
+and their `--manager`, `--body`, `--field`, `--body-file`, and `--body-template`
+options have been removed. Existing scripts must move to release workflows;
+these obsolete flags now fail locally in both human and JSON modes.
+Generic `pcl api` debugging remains available.
+
 ### Mutation Rules
 
 Use `--body-template` before constructing nested mutation payloads.

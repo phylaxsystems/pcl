@@ -6,6 +6,7 @@
 
 use crate::spec_transform::{
     normalize_error_response_schemas,
+    remove_legacy_contract_assignment,
     retain_client_operations,
 };
 use anyhow::Context;
@@ -58,6 +59,10 @@ pub fn generate_client_code() -> anyhow::Result<()> {
     // Load the spec
     let spec_str = std::fs::read_to_string(SPEC_FILE)?;
     let mut spec_value: serde_json::Value = serde_json::from_str(&spec_str)?;
+
+    // Sanitize both freshly fetched specs and caches from older installations.
+    remove_legacy_contract_assignment(&mut spec_value);
+    std::fs::write(SPEC_FILE, serde_json::to_string_pretty(&spec_value)?)?;
 
     // Remove our custom metadata field that progenitor doesn't understand
     if let Some(obj) = spec_value.as_object_mut() {

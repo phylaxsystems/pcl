@@ -15,6 +15,8 @@ All notable user-facing changes should be recorded here.
 
 ### Breaking changes
 
+- Removed manual contract assignment: `pcl contracts --assign-project`, `--unassigned`, and `--remove`, along with their dedicated body and manager flags. Project membership now follows active releases; use `pcl releases create`, `preview`, and `deploy`. Contract listing/detail, release removal, assertion-removal calldata, and generic raw API debugging remain supported.
+
 - Removed TOON output entirely: the `--toon` flag, the `--format toon` alias, and the TOON envelope renderer are gone. `--json` is the only machine output mode; agent guidance, manifest examples, and `next_actions` hints now use `--json`.
 
 ## 1.5.0 - 2026-05-29

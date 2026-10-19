@@ -110,7 +110,7 @@ Or manually from the crate directory:
 
 1. The build script fetches the OpenAPI spec from the dApp API
 2. Caches it in `openapi/spec.json` (git-ignored)
-3. Generates new client code in `src/generated/client.rs`
+3. Removes the three retired manual-assignment operations from the cached spec, then generates `src/generated/client.rs` and `src/generated/operation_paths.rs`. This also applies to existing caches, so an older Platform API cannot restore the retired bundled surface.
 4. Review the changes with `git diff` before committing
 5. Commit with a message like: "chore: regenerate dapp-api-client from latest spec"
 

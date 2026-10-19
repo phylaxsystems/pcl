@@ -187,18 +187,10 @@ fn contracts_args() -> ContractsArgs {
         project: None,
         adopter_id: None,
         aa_address: None,
-        manager: None,
         network: None,
         environment: None,
         assertion_ids: Vec::new(),
-        unassigned: false,
-        assign_project: false,
-        remove: false,
         remove_calldata: false,
-        body: None,
-        field: Vec::new(),
-        body_file: None,
-        body_template: false,
     }
 }
 
@@ -2034,28 +2026,6 @@ fn projects_mine_uses_authenticated_home_view() {
             "pcl account".to_string(),
             "pcl projects saved --user-id <user-id>".to_string()
         ]
-    );
-}
-
-#[test]
-fn contracts_unassigned_require_and_send_manager() {
-    let error = contracts_request(&ContractsArgs {
-        unassigned: true,
-        ..contracts_args()
-    })
-    .unwrap_err();
-    assert!(error.to_string().contains("--manager is required"));
-
-    let request = contracts_request(&ContractsArgs {
-        unassigned: true,
-        manager: Some("0xmanager".to_string()),
-        ..contracts_args()
-    })
-    .unwrap();
-    assert_eq!(request.path, "/assertion_adopters/no-project");
-    assert_eq!(
-        request.query,
-        vec![("manager".to_string(), "0xmanager".to_string())]
     );
 }
 
@@ -4233,4 +4203,48 @@ fn project_list_next_actions_use_returned_project_id() {
             "pcl incidents --project-id project-1 --limit 10",
         ]
     );
+}
+
+#[test]
+fn contracts_list_and_detail_use_release_views() {
+    let mut args = contracts_args();
+    args.project = Some("project-1".to_string());
+    let list = contracts_request(&args).unwrap();
+    assert_eq!(list.method.openapi_key(), "get");
+    assert_eq!(list.path, "/views/projects/project-1/contracts");
+    args.adopter_id = Some("adopter-1".to_string());
+    let detail = contracts_request(&args).unwrap();
+    assert_eq!(detail.method.openapi_key(), "get");
+    assert_eq!(detail.path, "/views/projects/project-1/contracts/adopter-1");
+}
+
+#[test]
+fn bare_contracts_guides_users_to_release_membership() {
+    let error = contracts_request(&contracts_args()).unwrap_err();
+    let ApiCommandError::InvalidWorkflowWithActions {
+        message,
+        next_actions,
+    } = error
+    else {
+        panic!("expected workflow guidance");
+    };
+    assert!(message.contains("through releases"));
+    assert_eq!(
+        next_actions,
+        [
+            "pcl contracts --project <project-ref>",
+            "pcl releases list <project-ref>"
+        ]
+    );
+}
+
+#[test]
+fn retired_api_operations_have_no_workflow_alternatives() {
+    for (method, path) in [
+        (HttpMethod::Post, "/assertion_adopters/assign-project"),
+        (HttpMethod::Get, "/assertion_adopters/no-project"),
+        (HttpMethod::Delete, "/projects/{project_id}/{aa_contract}"),
+    ] {
+        assert!(workflow_alternatives(method, path).is_empty(), "{path}");
+    }
 }

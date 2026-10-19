@@ -107,7 +107,6 @@ use runtime_types::{
 use templates::{
     access_body_template,
     body_template,
-    contracts_body_template,
     deployment_body_template,
     integration_body_template,
     project_body_template,
@@ -349,13 +348,12 @@ macro_rules! always_needs_platform {
 body_template_gates_platform!(
     AssertionsArgs,
     AccountArgs,
-    ContractsArgs,
     DeploymentsArgs,
     IntegrationsArgs,
     ProtocolManagerArgs,
 );
 
-always_needs_platform!(IncidentsArgs, SearchArgs, EventsArgs);
+always_needs_platform!(IncidentsArgs, ContractsArgs, SearchArgs, EventsArgs);
 
 macro_rules! top_level_workflow_command {
     ($name:ident, $args:ty, $variant:ident, $about:literal, $after_help:literal) => {
@@ -1032,11 +1030,6 @@ struct AccountArgs {
 }
 
 #[derive(clap::Args, Debug)]
-#[command(group(
-    ArgGroup::new("contracts_action")
-        .args(["unassigned", "assign_project", "remove", "remove_calldata"])
-        .multiple(false)
-))]
 struct ContractsArgs {
     #[arg(long, visible_alias = "project-id", help = "Project UUID or slug")]
     project: Option<String>,
@@ -1044,8 +1037,6 @@ struct ContractsArgs {
     adopter_id: Option<String>,
     #[arg(long, help = "Assertion adopter contract address")]
     aa_address: Option<String>,
-    #[arg(long, help = "Manager address for --unassigned")]
-    manager: Option<String>,
     #[arg(long, help = "Network/chain ID for adopter calldata requests")]
     network: Option<String>,
     #[arg(long, help = "Environment for adopter calldata requests")]
@@ -1056,26 +1047,8 @@ struct ContractsArgs {
         help = "Assertion ID to include in --remove-calldata; repeat for multiple assertions"
     )]
     assertion_ids: Vec<String>,
-    #[arg(long, help = "List unassigned assertion adopters")]
-    unassigned: bool,
-    #[arg(long, help = "Assign adopters to a project")]
-    assign_project: bool,
-    #[arg(long, help = "Remove assertion adopter from --project")]
-    remove: bool,
     #[arg(long, help = "Get remove assertions calldata")]
     remove_calldata: bool,
-    #[arg(long, help = "JSON request body")]
-    body: Option<String>,
-    #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
-    field: Vec<String>,
-    #[arg(
-        long = "body-file",
-        conflicts_with = "body",
-        help = "Path to JSON body, or - for stdin"
-    )]
-    body_file: Option<PathBuf>,
-    #[arg(long, help = "Print a JSON body template")]
-    body_template: bool,
 }
 
 #[derive(Debug, Default)]
@@ -1820,8 +1793,8 @@ top_level_workflow_command!(
     ContractsCommand,
     ContractsArgs,
     Contracts,
-    "List or manage project contracts and assertion adopters",
-    "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl contracts --unassigned --manager <manager-address>\n  pcl contracts --assign-project --body-template"
+    "Inspect release-based project contracts and assertion-removal calldata",
+    "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl releases list <project-ref>"
 );
 
 top_level_workflow_command!(
