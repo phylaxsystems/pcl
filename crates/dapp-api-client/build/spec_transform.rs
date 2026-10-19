@@ -16,27 +16,6 @@ struct ComponentRef {
     name: String,
 }
 
-/// Keep retired manual membership operations out of regenerated artifacts,
-/// including when regeneration starts from a pre-retirement platform cache.
-/// Raw API discovery/calls still use the server's unmodified live contract.
-pub(crate) fn remove_legacy_contract_assignment(spec: &mut Value) {
-    let Some(paths) = spec.get_mut("paths").and_then(Value::as_object_mut) else {
-        return;
-    };
-    for (path, method) in [
-        ("/assertion_adopters/assign-project", "post"),
-        ("/assertion_adopters/no-project", "get"),
-        ("/projects/{project_id}/{aa_contract}", "delete"),
-    ] {
-        if let Some(item) = paths.get_mut(path).and_then(Value::as_object_mut) {
-            item.remove(method);
-            if !item.keys().any(|key| is_http_method(key)) {
-                paths.remove(path);
-            }
-        }
-    }
-}
-
 pub(crate) fn retain_client_operations(spec: &mut Value, operation_ids: &[&str]) {
     let operation_ids: BTreeSet<&str> = operation_ids.iter().copied().collect();
     retain_paths(spec, &operation_ids);
