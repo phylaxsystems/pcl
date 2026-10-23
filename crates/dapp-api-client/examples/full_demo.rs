@@ -15,7 +15,7 @@ use dapp_api_client::{
         Error as GeneratedError,
         types::{
             ApiError,
-            GetProjectsResponseItem,
+            ProjectsGetProjectsResponseItem,
         },
     },
 };
@@ -81,7 +81,7 @@ async fn run_authenticated_demo(
 
     println!("\n4. API Usage - GET /projects:");
     let api = client.inner();
-    match api.get_projects(None, None, None).await {
+    match api.projects_get_projects(None, None, None).await {
         Ok(response) => {
             let projects = response.into_inner();
             println!("   ✓ Successfully retrieved projects");
@@ -107,7 +107,7 @@ async fn run_unauthenticated_demo(config: Config) -> Result<(), Box<dyn std::err
 
     println!("\n4. API Usage - GET /projects (public endpoint):");
     let api = client.inner();
-    match api.get_projects(None, None, None).await {
+    match api.projects_get_projects(None, None, None).await {
         Ok(response) => {
             let projects = response.into_inner();
             println!("   ✓ Successfully retrieved projects without authentication!");
@@ -122,7 +122,7 @@ async fn run_unauthenticated_demo(config: Config) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-fn print_authenticated_project_details(projects: &[GetProjectsResponseItem]) {
+fn print_authenticated_project_details(projects: &[ProjectsGetProjectsResponseItem]) {
     if projects.is_empty() {
         println!("   📝 No projects found");
         return;
@@ -153,7 +153,7 @@ fn print_authenticated_project_details(projects: &[GetProjectsResponseItem]) {
     }
 }
 
-fn print_public_project_details(projects: &[GetProjectsResponseItem]) {
+fn print_public_project_details(projects: &[ProjectsGetProjectsResponseItem]) {
     if projects.is_empty() {
         println!("   📝 No projects found");
         return;
@@ -185,10 +185,12 @@ fn print_project_error(e: &GeneratedError<ApiError>) {
 
 fn print_additional_methods() {
     println!("\n5. Additional Available Methods:");
-    println!("   - api.get_projects(network_id, user, show_archived) - List projects with filters");
-    println!("   - api.get_projects_saved(user_id) - Get saved projects");
-    println!("   - api.get_projects_project_id(project_id, include) - Get specific project");
-    println!("   - api.get_health() - Check API health");
+    println!(
+        "   - api.projects_get_projects(network_id, user, show_archived) - List projects with filters"
+    );
+    println!("   - api.projects_get_saved_projects(user_id) - Get saved projects");
+    println!("   - api.projects_get_project(project_id, include) - Get specific project");
+    println!("   - api.health() - Check API health");
 }
 
 fn print_error_handling() {

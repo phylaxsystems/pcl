@@ -26,11 +26,11 @@ use dapp_api_client::generated::client::{
     Error as GeneratedError,
     types::{
         ApiError as GeneratedApiErrorBody,
-        GetCliAuthCodeResponse,
-        GetCliAuthStatusResponse,
-        PostAuthRefreshBody,
-        PostAuthRefreshBodyRefreshToken,
-        PostAuthRefreshResponse,
+        AuthRefreshBody,
+        AuthRefreshBodyRefreshToken,
+        AuthRefreshResponse,
+        CliAuthRequestCodeResponse,
+        CliAuthStatusResponse,
     },
 };
 use indicatif::{
@@ -616,16 +616,16 @@ impl AuthCommand {
     /// Request an authentication code from the server
     async fn request_auth_code(
         client: &GeneratedClient,
-    ) -> Result<GetCliAuthCodeResponse, AuthError> {
+    ) -> Result<CliAuthRequestCodeResponse, AuthError> {
         client
-            .get_cli_auth_code()
+            .cli_auth_request_code()
             .await
             .map(dapp_api_client::generated::client::ResponseValue::into_inner)
             .map_err(|e| AuthError::AuthRequestFailed(e.to_string()))
     }
 
     /// Display the device-login details, then open the browser after confirmation.
-    fn display_login_instructions(&self, auth_response: &GetCliAuthCodeResponse) {
+    fn display_login_instructions(&self, auth_response: &CliAuthRequestCodeResponse) {
         let device_url = self.device_url(auth_response);
         println!(
             "\nTo authenticate:\n\n📝 {}\n🔗 {}\n",
@@ -638,7 +638,7 @@ impl AuthCommand {
         }
     }
 
-    fn device_url(&self, auth_response: &GetCliAuthCodeResponse) -> url::Url {
+    fn device_url(&self, auth_response: &CliAuthRequestCodeResponse) -> url::Url {
         let mut device_url = self.effective_auth_url();
         device_url.set_path("/device");
         device_url
@@ -669,7 +669,7 @@ impl AuthCommand {
 
     fn login_instructions_envelope(
         &self,
-        auth_response: &GetCliAuthCodeResponse,
+        auth_response: &CliAuthRequestCodeResponse,
         previous_token_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Value {
         let device_url = self.device_url(auth_response);
@@ -699,7 +699,7 @@ impl AuthCommand {
 
     fn login_challenge_envelope(
         &self,
-        auth_response: &GetCliAuthCodeResponse,
+        auth_response: &CliAuthRequestCodeResponse,
         reason: AuthChallengeReason,
         json_output: bool,
     ) -> Value {
@@ -777,7 +777,11 @@ impl AuthCommand {
         }))
     }
 
-    fn poll_command(&self, auth_response: &GetCliAuthCodeResponse, json_output: bool) -> String {
+    fn poll_command(
+        &self,
+        auth_response: &CliAuthRequestCodeResponse,
+        json_output: bool,
+    ) -> String {
         let output_flag = if json_output { " --json" } else { "" };
         let auth_url = self.effective_auth_url();
         format!(
@@ -799,7 +803,7 @@ impl AuthCommand {
         &self,
         config: &mut CliConfig,
         client: &GeneratedClient,
-        auth_response: &GetCliAuthCodeResponse,
+        auth_response: &CliAuthRequestCodeResponse,
         json_output: bool,
     ) -> Result<(), AuthError> {
         let spinner = if json_output {
@@ -940,9 +944,9 @@ impl AuthCommand {
         client: &GeneratedClient,
         device_secret: &str,
         session_id: &Uuid,
-    ) -> Result<GetCliAuthStatusResponse, AuthError> {
+    ) -> Result<CliAuthStatusResponse, AuthError> {
         client
-            .get_cli_auth_status(device_secret, session_id)
+            .cli_auth_status(device_secret, session_id)
             .await
             .map(dapp_api_client::generated::client::ResponseValue::into_inner)
             .map_err(AuthError::from)
@@ -985,7 +989,7 @@ impl AuthCommand {
         let client = match self.authenticated_api_client(&auth.access_token) {
             Ok(client) => client,
             Err(error) => {
-                let endpoint = generated_api_endpoint("post_web_auth_logout");
+                let endpoint = generated_api_endpoint("web.auth.logout");
                 return json!({
                     "attempted": true,
                     "success": false,
@@ -995,9 +999,9 @@ impl AuthCommand {
                 });
             }
         };
-        let endpoint = generated_api_endpoint("post_web_auth_logout");
+        let endpoint = generated_api_endpoint("web.auth.logout");
         let body = serde_json::Map::new();
-        let response = client.post_web_auth_logout(&body).await;
+        let response = client.web_auth_logout(&body).await;
         let response = match response {
             Ok(response) => response,
             Err(error) => {
@@ -1277,13 +1281,13 @@ pub async fn refresh_stored_auth(
     let issuer_platform_url = auth.issuer_platform_url.clone();
     let refresh_token = auth.refresh_token.clone();
     let refresh_token =
-        PostAuthRefreshBodyRefreshToken::try_from(refresh_token.as_str()).map_err(|error| {
+        AuthRefreshBodyRefreshToken::try_from(refresh_token.as_str()).map_err(|error| {
             AuthError::InvalidAuthData(format!("Invalid stored refresh token: {error}"))
         })?;
-    let body = PostAuthRefreshBody { refresh_token };
+    let body = AuthRefreshBody { refresh_token };
     let client = AuthCommand::api_client_for_url(auth_url);
 
-    match client.post_auth_refresh(&body).await {
+    match client.auth_refresh(&body).await {
         Ok(response) => {
             let request_id = request_id_from_headers(response.headers());
             persist_refreshed_auth(
@@ -1376,7 +1380,7 @@ struct RefreshedIdentity {
 fn persist_refreshed_auth(
     config: &mut CliConfig,
     cli_args: &CliArgs,
-    body: PostAuthRefreshResponse,
+    body: AuthRefreshResponse,
     identity: RefreshedIdentity,
     request_id: Option<String>,
 ) -> Result<RefreshOutcome, AuthError> {
@@ -1629,7 +1633,7 @@ fn auth_challenge_reason(config: &CliConfig, force: bool) -> AuthChallengeReason
 /// boundary check may later trust.
 fn update_config_from_verified_status(
     config: &mut CliConfig,
-    status: GetCliAuthStatusResponse,
+    status: CliAuthStatusResponse,
     fallback_expires_at: chrono::DateTime<chrono::Utc>,
     issuer: &url::Url,
 ) -> Result<(), AuthError> {
@@ -1854,7 +1858,7 @@ mod tests {
             },
             auth_url: Some("https://app.phylax.systems".parse().unwrap()),
         };
-        let auth_response: GetCliAuthCodeResponse =
+        let auth_response: CliAuthRequestCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
         assert_eq!(
             cmd.device_url(&auth_response).as_str(),
@@ -1890,7 +1894,7 @@ mod tests {
             },
             auth_url: Some("https://app.phylax.systems".parse().unwrap()),
         };
-        let auth_response: GetCliAuthCodeResponse =
+        let auth_response: CliAuthRequestCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
         let output = cmd.login_instructions_envelope(
@@ -1933,7 +1937,7 @@ mod tests {
             },
             auth_url: Some("https://app.phylax.systems".parse().unwrap()),
         };
-        let auth_response: GetCliAuthCodeResponse =
+        let auth_response: CliAuthRequestCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
         let human =
@@ -1966,7 +1970,7 @@ mod tests {
             },
             auth_url: Some("https://app.phylax.systems".parse().unwrap()),
         };
-        let mut auth_response: GetCliAuthCodeResponse =
+        let mut auth_response: CliAuthRequestCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
         auth_response.device_secret = "-dash_secret".to_string();
 
@@ -2197,7 +2201,7 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
         let client = cmd.api_client();
-        let auth_response: GetCliAuthCodeResponse =
+        let auth_response: CliAuthRequestCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
         let result = AuthCommand::check_auth_status(
@@ -2240,7 +2244,7 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
         let client = cmd.api_client();
-        let auth_response: GetCliAuthCodeResponse =
+        let auth_response: CliAuthRequestCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
         let result = AuthCommand::check_auth_status(
@@ -2275,7 +2279,7 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
         let client = cmd.api_client();
-        let auth_response: GetCliAuthCodeResponse =
+        let auth_response: CliAuthRequestCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
         let result = AuthCommand::check_auth_status(
@@ -2673,7 +2677,7 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
         let client = cmd.api_client();
-        let auth_response: GetCliAuthCodeResponse =
+        let auth_response: CliAuthRequestCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
         let result = AuthCommand::check_auth_status(
@@ -2703,7 +2707,7 @@ mod tests {
         let mut config = CliConfig::default();
 
         // Build an auth response with expiresAt in the past
-        let expired_response: GetCliAuthCodeResponse = serde_json::from_str(
+        let expired_response: CliAuthRequestCodeResponse = serde_json::from_str(
             r#"{"code":"999999","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2020-01-01T00:00:00Z"}"#,
         )
         .unwrap();
@@ -2745,7 +2749,7 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
         let client = cmd.api_client();
-        let auth_response: GetCliAuthCodeResponse =
+        let auth_response: CliAuthRequestCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
         let result = AuthCommand::check_auth_status(
@@ -2783,7 +2787,7 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
         let client = cmd.api_client();
-        let auth_response: GetCliAuthCodeResponse =
+        let auth_response: CliAuthRequestCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
         let result = AuthCommand::check_auth_status(
@@ -2821,7 +2825,7 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
         let client = cmd.api_client();
-        let auth_response: GetCliAuthCodeResponse =
+        let auth_response: CliAuthRequestCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
         let result = AuthCommand::check_auth_status(
@@ -2859,7 +2863,7 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
         let client = cmd.api_client();
-        let auth_response: GetCliAuthCodeResponse =
+        let auth_response: CliAuthRequestCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
         let result = AuthCommand::check_auth_status(
@@ -2916,7 +2920,7 @@ mod tests {
         let mut config = CliConfig::default();
 
         // Use a far-future expiresAt so the client-side check doesn't trigger
-        let auth_response: GetCliAuthCodeResponse = serde_json::from_str(
+        let auth_response: CliAuthRequestCodeResponse = serde_json::from_str(
             r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2099-12-31T00:00:00Z"}"#,
         )
         .unwrap();
@@ -2974,7 +2978,7 @@ mod tests {
         let client = cmd.api_client();
         let mut config = CliConfig::default();
 
-        let auth_response: GetCliAuthCodeResponse = serde_json::from_str(
+        let auth_response: CliAuthRequestCodeResponse = serde_json::from_str(
             r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2099-12-31T00:00:00Z"}"#,
         )
         .unwrap();
@@ -3013,7 +3017,7 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
             .unwrap();
         let client = cmd.api_client();
-        let auth_response: GetCliAuthCodeResponse =
+        let auth_response: CliAuthRequestCodeResponse =
             serde_json::from_str(test_auth_response_json()).unwrap();
 
         let result = AuthCommand::check_auth_status(
@@ -3052,7 +3056,7 @@ mod tests {
         let client = cmd.api_client();
         let mut config = CliConfig::default();
 
-        let auth_response: GetCliAuthCodeResponse = serde_json::from_str(
+        let auth_response: CliAuthRequestCodeResponse = serde_json::from_str(
             r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2099-12-31T00:00:00Z"}"#,
         )
         .unwrap();

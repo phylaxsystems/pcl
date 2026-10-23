@@ -5,6 +5,8 @@
 //! including spec transformations and fixes.
 
 use crate::spec_transform::{
+    CLIENT_OPERATION_IDS,
+    missing_client_operations,
     normalize_error_response_schemas,
     retain_client_operations,
 };
@@ -16,25 +18,6 @@ use std::{
         PathBuf,
     },
 };
-
-const CLIENT_OPERATION_IDS: &[&str] = &[
-    "get_cli_auth_code",
-    "get_cli_auth_status",
-    "get_health",
-    "get_openapi",
-    "get_projects",
-    "get_projects_project_id",
-    "get_projects_resolve_project_ref",
-    "get_projects_saved",
-    "get_views_projects_project_id_assertions",
-    "get_views_projects_project_id_assertions_assertion_id",
-    "get_views_projects_project_id_incidents",
-    "get_views_public_incidents",
-    "post_auth_refresh",
-    "post_projects_project_id_releases",
-    "post_projects_project_id_releases_preview",
-    "post_web_auth_logout",
-];
 
 pub fn generate_client_code() -> anyhow::Result<()> {
     const SPEC_FILE: &str = "openapi/spec.json";
@@ -73,6 +56,12 @@ pub fn generate_client_code() -> anyhow::Result<()> {
     // Add missing operation IDs
     add_operation_ids(&mut spec_value);
 
+    let missing = missing_client_operations(&spec_value, CLIENT_OPERATION_IDS);
+    anyhow::ensure!(
+        missing.is_empty(),
+        "Required typed client operations missing from OpenAPI: {}",
+        missing.join(", ")
+    );
     write_operation_paths(&spec_value, &out_dir)?;
 
     // Give standard non-2xx JSON error bodies a stable component name before

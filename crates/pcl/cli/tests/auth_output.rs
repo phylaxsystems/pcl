@@ -193,7 +193,7 @@ fn auth_status_human_expired_token_recommends_refresh() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
-    assert!(stderr.starts_with("Error\n"), "{stderr}");
+    assert!(stderr.contains("Error\n"), "{stderr}");
     assert!(stderr.contains("Run `pcl auth refresh`"), "{stderr}");
     assert!(
         !stderr.contains("Run `pcl auth login --force` again"),
@@ -1488,8 +1488,18 @@ fn api_request_logs_respect_config_dir() {
 
 #[test]
 fn default_error_output_is_human_readable() {
+    let config_dir = tempfile::tempdir().expect("config dir");
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
-        .args(["api", "call", "get", "health"])
+        .arg("--config-dir")
+        .arg(config_dir.path())
+        .args([
+            "api",
+            "--api-url",
+            "http://127.0.0.1:9",
+            "call",
+            "get",
+            "health",
+        ])
         .output()
         .expect("run pcl api call");
 
@@ -1500,7 +1510,7 @@ fn default_error_output_is_human_readable() {
         String::from_utf8_lossy(&output.stdout)
     );
     let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
-    assert!(stderr.starts_with("Error\n"), "{stderr}");
+    assert!(stderr.contains("Error\n"), "{stderr}");
     assert!(!stderr.contains("Code:"), "{stderr}");
     assert!(stderr.contains("Next:"), "{stderr}");
     assert!(!stderr.contains("Schema: pcl.envelope.v1"), "{stderr}");

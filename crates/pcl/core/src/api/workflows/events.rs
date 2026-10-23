@@ -17,14 +17,14 @@ pub(in crate::api) fn events_request(
     let project = required_project_arg(args.project.as_deref(), "events", "--project")?;
     let mut request = if args.audit_log {
         workflow_operation_get(
-            WorkflowOperation::new(HttpMethod::Get, "get_views_projects_project_id_audit_log")
+            WorkflowOperation::new(HttpMethod::Get, "views.auditLog.getAuditLog")
                 .path_param("projectId", &project),
             true,
             vec![format!("pcl events --project {project}")],
         )?
     } else {
         workflow_operation_get(
-            WorkflowOperation::new(HttpMethod::Get, "get_views_projects_project_id_events")
+            WorkflowOperation::new(HttpMethod::Get, "views.projectEvents.getProjectEvents")
                 .path_param("projectId", &project),
             true,
             vec![format!("pcl events --project {project} --audit-log")],
@@ -47,7 +47,7 @@ workflow_definition!(
     output: "event or audit log data",
     policy: MachineRaw,
     actions: [
-        action!("events", true, "get_views_projects_project_id_events", "pcl events --project <project-ref>", required: ["--project"], optional: ["--page", "--limit", "--environment"]),
-        action!("audit_log", true, "get_views_projects_project_id_audit_log", "pcl events --project <project-ref> --audit-log", required: ["--project"], optional: ["--page", "--limit", "--environment"]),
+        action!("events", true, "views.projectEvents.getProjectEvents", "pcl events --project <project-ref>", required: ["--project"], optional: ["--page", "--limit", "--environment"]),
+        action!("audit_log", true, "views.auditLog.getAuditLog", "pcl events --project <project-ref> --audit-log", required: ["--project"], optional: ["--page", "--limit", "--environment"]),
     ],
 );

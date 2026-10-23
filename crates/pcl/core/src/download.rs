@@ -23,7 +23,7 @@ use crate::{
 use dapp_api_client::generated::client::{
     Client as GeneratedClient,
     Error as GeneratedError,
-    types::GetViewsProjectsProjectIdAssertionsAssertionIdAssertionId,
+    types::ViewsAssertionDetailGetAssertionDetailAssertionId,
 };
 use pcl_common::args::{
     CliArgs,
@@ -343,16 +343,16 @@ impl DownloadArgs {
         client: &GeneratedClient,
     ) -> Result<(Uuid, String), DownloadError> {
         let pid = self.project_id.ok_or(DownloadError::MissingIdentifier)?;
-        let project = match client.get_projects_project_id(&pid, None).await {
+        let project = match client.projects_get_project(&pid, None).await {
             Ok(response) => response.into_inner(),
             Err(error) => {
                 let pid = pid.to_string();
                 return Err(generated_api_error(
                     generated_operation_path(
-                        "get_projects_project_id",
+                        "projects.getProject",
                         &[("project_id", pid.as_str())],
                     )
-                    .unwrap_or_else(|| "get_projects_project_id".to_string()),
+                    .unwrap_or_else(|| "projects.getProject".to_string()),
                     error,
                 )
                 .await);
@@ -383,7 +383,7 @@ impl DownloadArgs {
         project_id: &Uuid,
     ) -> Result<Vec<AssertionSummary>, DownloadError> {
         let response = match client
-            .get_views_projects_project_id_assertions(project_id, None)
+            .views_project_assertions_get_project_assertions(project_id, None, None)
             .await
         {
             Ok(response) => response.into_inner(),
@@ -391,10 +391,10 @@ impl DownloadArgs {
                 let project_id = project_id.to_string();
                 return Err(generated_api_error(
                     generated_operation_path(
-                        "get_views_projects_project_id_assertions",
+                        "views.projectAssertions.getProjectAssertions",
                         &[("projectId", project_id.as_str())],
                     )
-                    .unwrap_or_else(|| "get_views_projects_project_id_assertions".to_string()),
+                    .unwrap_or_else(|| "views.projectAssertions.getProjectAssertions".to_string()),
                     error,
                 )
                 .await);
@@ -445,15 +445,12 @@ impl DownloadArgs {
         assertion_id: &str,
     ) -> Result<Value, DownloadError> {
         let generated_assertion_id = assertion_id
-            .parse::<GetViewsProjectsProjectIdAssertionsAssertionIdAssertionId>()
+            .parse::<ViewsAssertionDetailGetAssertionDetailAssertionId>()
             .map_err(|error| {
                 DownloadError::InvalidConfig(format!("Invalid assertion ID: {error}"))
             })?;
         let response = match client
-            .get_views_projects_project_id_assertions_assertion_id(
-                project_id,
-                &generated_assertion_id,
-            )
+            .views_assertion_detail_get_assertion_detail(project_id, &generated_assertion_id)
             .await
         {
             Ok(response) => response.into_inner(),
@@ -461,15 +458,13 @@ impl DownloadArgs {
                 let project_id = project_id.to_string();
                 return Err(generated_api_error(
                     generated_operation_path(
-                        "get_views_projects_project_id_assertions_assertion_id",
+                        "views.assertionDetail.getAssertionDetail",
                         &[
                             ("projectId", project_id.as_str()),
                             ("assertionId", assertion_id),
                         ],
                     )
-                    .unwrap_or_else(|| {
-                        "get_views_projects_project_id_assertions_assertion_id".to_string()
-                    }),
+                    .unwrap_or_else(|| "views.assertionDetail.getAssertionDetail".to_string()),
                     error,
                 )
                 .await);

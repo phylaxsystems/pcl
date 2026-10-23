@@ -24,11 +24,8 @@ pub(in crate::api) fn protocol_manager_request(
     if args.nonce {
         let address = required_arg(args.address.as_deref(), "--address")?;
         let mut request = workflow_operation_get(
-            WorkflowOperation::new(
-                HttpMethod::Get,
-                "get_projects_project_id_protocol_manager_nonce",
-            )
-            .path_param("project_id", &project),
+            WorkflowOperation::new(HttpMethod::Get, "projects.getProtocolManagerNonce")
+                .path_param("project_id", &project),
             true,
             vec![format!(
                 "pcl protocol-manager --project {project} --set --body-template"
@@ -40,11 +37,8 @@ pub(in crate::api) fn protocol_manager_request(
     }
     if args.set {
         return workflow_operation_with_body(
-            WorkflowOperation::new(
-                HttpMethod::Post,
-                "post_projects_project_id_protocol_manager",
-            )
-            .path_param("project_id", &project),
+            WorkflowOperation::new(HttpMethod::Post, "projects.setProtocolManager")
+                .path_param("project_id", &project),
             true,
             body,
             vec![format!(
@@ -54,11 +48,8 @@ pub(in crate::api) fn protocol_manager_request(
     }
     if args.clear {
         return workflow_operation_with_body(
-            WorkflowOperation::new(
-                HttpMethod::Delete,
-                "delete_projects_project_id_protocol_manager",
-            )
-            .path_param("project_id", &project),
+            WorkflowOperation::new(HttpMethod::Delete, "projects.deleteProtocolManager")
+                .path_param("project_id", &project),
             true,
             body,
             vec![format!(
@@ -69,11 +60,8 @@ pub(in crate::api) fn protocol_manager_request(
     if args.transfer_calldata {
         let new_manager = required_arg(args.new_manager.as_deref(), "--new-manager")?;
         let mut request = workflow_operation_get(
-            WorkflowOperation::new(
-                HttpMethod::Get,
-                "get_projects_project_id_protocol_manager_transfer_calldata",
-            )
-            .path_param("project_id", &project),
+            WorkflowOperation::new(HttpMethod::Get, "projects.getTransferManagerCalldata")
+                .path_param("project_id", &project),
             true,
             vec![format!(
                 "pcl protocol-manager --project {project} --set --body-template"
@@ -84,11 +72,8 @@ pub(in crate::api) fn protocol_manager_request(
     }
     if args.accept_calldata {
         return workflow_operation_get(
-            WorkflowOperation::new(
-                HttpMethod::Get,
-                "get_projects_project_id_protocol_manager_accept_calldata",
-            )
-            .path_param("project_id", &project),
+            WorkflowOperation::new(HttpMethod::Get, "projects.getAcceptTransferCalldata")
+                .path_param("project_id", &project),
             true,
             vec![format!(
                 "pcl protocol-manager --project {project} --confirm-transfer --body-template"
@@ -97,11 +82,8 @@ pub(in crate::api) fn protocol_manager_request(
     }
     if args.confirm_transfer {
         return workflow_operation_with_body(
-            WorkflowOperation::new(
-                HttpMethod::Post,
-                "post_projects_project_id_protocol_manager_confirm_transfer",
-            )
-            .path_param("project_id", &project),
+            WorkflowOperation::new(HttpMethod::Post, "projects.confirmTransfer")
+                .path_param("project_id", &project),
             true,
             body,
             vec![format!(
@@ -110,11 +92,8 @@ pub(in crate::api) fn protocol_manager_request(
         );
     }
     workflow_operation_get(
-        WorkflowOperation::new(
-            HttpMethod::Get,
-            "get_projects_project_id_protocol_manager_pending_transfer",
-        )
-        .path_param("project_id", &project),
+        WorkflowOperation::new(HttpMethod::Get, "projects.getPendingTransfer")
+            .path_param("project_id", &project),
         true,
         vec![
             format!("pcl protocol-manager --project {project} --nonce --address <manager-address>"),
@@ -181,14 +160,14 @@ workflow_definition!(
     output: "manager state, nonce, calldata, pending transfer, or mutation result",
     policy: MachineRaw,
     actions: [
-        action!("pending_transfer", true, "get_projects_project_id_protocol_manager_pending_transfer", "pcl protocol-manager --project <project-ref> --pending-transfer", required: ["--project"]),
-        action!("nonce", true, "get_projects_project_id_protocol_manager_nonce", "pcl protocol-manager --project <project-ref> --nonce --address 0x...", required: ["--project", "--address"], optional: ["--chain-id"], query: {"address" => "<address>", "chain_id" => "<chain-id>"}),
-        action!("set", true, "post_projects_project_id_protocol_manager", "pcl protocol-manager --project <project-ref> --set --body-template", required: ["--project"], body_template: "protocol_manager_set"),
-        action!("clear", true, "delete_projects_project_id_protocol_manager", "pcl protocol-manager --project <project-ref> --clear", required: ["--project"], body_template: "empty_object"),
-        action!("transfer_calldata", true, "get_projects_project_id_protocol_manager_transfer_calldata", "pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...", required: ["--project", "--new-manager"], query: {"new_manager" => "<address>"}),
-        action!("transfer_broadcast", true, "get_projects_project_id_protocol_manager_transfer_calldata", "pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x... --broadcast --private-key <key> --rpc-url <url> --yes", required: ["--project", "--new-manager", "--broadcast"], optional: ["--private-key", "--account", "--keystore-password-file", "--rpc-url", "--confirmations", "--with-credible-rpc", "--yes"], query: {"new_manager" => "<address>"}, side_effect: "onchain_transaction"),
-        action!("accept_calldata", true, "get_projects_project_id_protocol_manager_accept_calldata", "pcl protocol-manager --project <project-ref> --accept-calldata", required: ["--project"]),
-        action!("accept_broadcast", true, "post_projects_project_id_protocol_manager_confirm_transfer", "pcl protocol-manager --project <project-ref> --accept-calldata --broadcast --private-key <key> --rpc-url <url> --yes", required: ["--project", "--broadcast"], optional: ["--private-key", "--account", "--keystore-password-file", "--rpc-url", "--confirmations", "--with-credible-rpc", "--yes"], side_effect: "onchain_transaction"),
-        action!("confirm_transfer", true, "post_projects_project_id_protocol_manager_confirm_transfer", "pcl protocol-manager --project <project-ref> --confirm-transfer --body-template", required: ["--project"], body_template: "protocol_manager_confirm"),
+        action!("pending_transfer", true, "projects.getPendingTransfer", "pcl protocol-manager --project <project-ref> --pending-transfer", required: ["--project"]),
+        action!("nonce", true, "projects.getProtocolManagerNonce", "pcl protocol-manager --project <project-ref> --nonce --address 0x...", required: ["--project", "--address"], optional: ["--chain-id"], query: {"address" => "<address>", "chain_id" => "<chain-id>"}),
+        action!("set", true, "projects.setProtocolManager", "pcl protocol-manager --project <project-ref> --set --body-template", required: ["--project"], body_template: "protocol_manager_set"),
+        action!("clear", true, "projects.deleteProtocolManager", "pcl protocol-manager --project <project-ref> --clear", required: ["--project"], body_template: "empty_object"),
+        action!("transfer_calldata", true, "projects.getTransferManagerCalldata", "pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x...", required: ["--project", "--new-manager"], query: {"new_manager" => "<address>"}),
+        action!("transfer_broadcast", true, "projects.getTransferManagerCalldata", "pcl protocol-manager --project <project-ref> --transfer-calldata --new-manager 0x... --broadcast --private-key <key> --rpc-url <url> --yes", required: ["--project", "--new-manager", "--broadcast"], optional: ["--private-key", "--account", "--keystore-password-file", "--rpc-url", "--confirmations", "--with-credible-rpc", "--yes"], query: {"new_manager" => "<address>"}, side_effect: "onchain_transaction"),
+        action!("accept_calldata", true, "projects.getAcceptTransferCalldata", "pcl protocol-manager --project <project-ref> --accept-calldata", required: ["--project"]),
+        action!("accept_broadcast", true, "projects.confirmTransfer", "pcl protocol-manager --project <project-ref> --accept-calldata --broadcast --private-key <key> --rpc-url <url> --yes", required: ["--project", "--broadcast"], optional: ["--private-key", "--account", "--keystore-password-file", "--rpc-url", "--confirmations", "--with-credible-rpc", "--yes"], side_effect: "onchain_transaction"),
+        action!("confirm_transfer", true, "projects.confirmTransfer", "pcl protocol-manager --project <project-ref> --confirm-transfer --body-template", required: ["--project"], body_template: "protocol_manager_confirm"),
     ],
 );

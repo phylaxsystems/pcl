@@ -1101,7 +1101,7 @@ impl ApiArgs {
         config: &CliConfig,
     ) -> Result<Value, ApiCommandError> {
         let client = self.generated_client(config, false, false)?;
-        match client.get_openapi().await {
+        match client.openapi().await {
             Ok(response) => Ok(response.into_inner()),
             Err(error) => Err(generated_error_to_api_error("GET", "/openapi", error).await),
         }
@@ -1436,7 +1436,7 @@ impl ApiArgs {
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         let mut json_body: Value = serde_json::from_str(body)?;
-        if operation_id == "post_projects_saved"
+        if operation_id == "projects.saveProject"
             && let Some(project_ref) = json_body.get("project_id").and_then(Value::as_str)
             && project_ref.parse::<uuid::Uuid>().is_err()
         {
@@ -1499,11 +1499,11 @@ impl ApiArgs {
         require_auth: bool,
         request_log_path: &Path,
     ) -> Result<String, ApiCommandError> {
-        let operation = WorkflowOperation::new(HttpMethod::Get, "get_projects_resolve_project_ref")
+        let operation = WorkflowOperation::new(HttpMethod::Get, "projects.resolveProjectRef")
             .path_param("project_ref", project_ref);
         let path = operation.path()?;
         let client = self.generated_client(config, attach_auth, require_auth)?;
-        match client.get_projects_resolve_project_ref(project_ref).await {
+        match client.projects_resolve_project_ref(project_ref).await {
             Ok(response) => {
                 let request_id = request_id_from_headers(response.headers());
                 write_request_log(

@@ -20,24 +20,20 @@ fn main() {
     println!("cargo:rerun-if-env-changed=DAPP_OPENAPI_URL");
 
     #[cfg(feature = "regenerate")]
-    regenerate_client();
+    if let Err(error) = regenerate_client() {
+        println!("cargo:warning=Failed to regenerate OpenAPI client: {error:#}");
+        std::process::exit(1);
+    }
 
     #[cfg(not(feature = "regenerate"))]
     use_cached_client();
 }
 
 #[cfg(feature = "regenerate")]
-fn regenerate_client() {
+fn regenerate_client() -> anyhow::Result<()> {
     println!("cargo:warning=Running OpenAPI spec regeneration...");
-    if let Err(e) = regenerate::check_and_fetch_spec() {
-        println!("cargo:warning=Failed to fetch OpenAPI spec: {e}");
-        std::process::exit(1);
-    }
-
-    if let Err(e) = codegen::generate_client_code() {
-        println!("cargo:warning=Failed to generate client code: {e}");
-        std::process::exit(1);
-    }
+    regenerate::check_and_fetch_spec()?;
+    codegen::generate_client_code()
 }
 
 #[cfg(not(feature = "regenerate"))]

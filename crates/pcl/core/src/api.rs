@@ -423,7 +423,7 @@ enum ApiCommand {
 
     #[command(
         about = "List OpenAPI operations",
-        after_help = "Examples:\n  pcl api list\n  pcl api list --filter incidents\n  pcl api list --method get\n  pcl api list --json"
+        after_help = "Examples:\n  pcl api list\n  pcl api list --filter invalidations\n  pcl api list --method get\n  pcl api list --json"
     )]
     List {
         #[arg(long, help = "Filter operation id, summary, tags, or path")]
@@ -434,7 +434,7 @@ enum ApiCommand {
 
     #[command(
         about = "Inspect one OpenAPI operation",
-        after_help = "Examples:\n  pcl api inspect get_views_projects_project_id_incidents\n  pcl api inspect get /views/public/incidents\n  pcl api inspect get_views_projects_project_id_incidents --json"
+        after_help = "Examples:\n  pcl api inspect views.projectInvalidations.getProjectInvalidations\n  pcl api inspect get /views/public/invalidations\n  pcl api inspect views.projectInvalidations.getProjectInvalidations --json"
     )]
     Inspect {
         #[arg(help = "Operation id, or HTTP method when PATH is also provided")]
@@ -464,7 +464,7 @@ enum ApiCommand {
 
     #[command(
         about = "Call any platform API endpoint",
-        after_help = "Examples:\n  pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/incidents --query environment=production\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json\n  pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json"
+        after_help = "Examples:\n  pcl api call get '/views/public/invalidations?limit=5' --allow-unauthenticated\n  pcl api call get /views/projects/<uuid>/invalidations --query environment=production\n  pcl api call get /views/public/invalidations --paginate items --limit 50 --allow-unauthenticated --output incidents.json\n  pcl api call get /views/public/invalidations --paginate items --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl\n  pcl api call get /views/public/invalidations --query limit=5 --allow-unauthenticated --output incidents.json\n  pcl api call post /web/auth/logout --body '{}'\n  pcl api call get /views/public/invalidations --query limit=5 --allow-unauthenticated --json"
     )]
     Call(Box<ApiCallArgs>),
 }
@@ -473,7 +473,7 @@ enum ApiCommand {
 struct ApiCallArgs {
     #[arg(value_enum, ignore_case = true, help = "HTTP method")]
     method: HttpMethod,
-    #[arg(help = "API path below /api/v1, for example /views/public/incidents")]
+    #[arg(help = "API path below /api/v1, for example /views/public/invalidations")]
     path: String,
     #[arg(long = "query", short = 'q', help = "Query parameter as KEY=VALUE")]
     query: Vec<String>,
@@ -566,7 +566,7 @@ struct IncidentsArgs {
     network: Option<u64>,
     #[arg(long, help = "Sort direction for public incidents")]
     sort: Option<String>,
-    #[arg(long, help = "Include development-mode public incidents")]
+    #[arg(long, help = "Legacy option; unavailable in OpenAPI 22")]
     dev_mode: Option<String>,
     #[arg(long, help = "Return incident stats for --project-id")]
     stats: bool,

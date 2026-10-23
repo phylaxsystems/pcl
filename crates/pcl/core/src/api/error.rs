@@ -257,13 +257,13 @@ impl ApiCommandError {
             Self::InvalidPath(_) => {
                 vec![
                     "pcl api list --json".to_string(),
-                    "pcl api call get /views/public/incidents --allow-unauthenticated --json"
+                    "pcl api call get /views/public/invalidations --allow-unauthenticated --json"
                         .to_string(),
                 ]
             }
             Self::InvalidKeyValue { kind, .. } => {
                 vec![format!(
-                    "Use --{kind} key=value, for example: pcl api call get /views/public/incidents --{kind} limit=5"
+                    "Use --{kind} key=value, for example: pcl api call get /views/public/invalidations --{kind} limit=5"
                 )]
             }
             Self::InvalidHeaderName { .. } | Self::InvalidHeaderValue { .. } => {
@@ -280,7 +280,7 @@ impl ApiCommandError {
             Self::OperationNotFound(_) => {
                 vec![
                     "pcl api list --json".to_string(),
-                    "pcl api inspect get /views/public/incidents --json".to_string(),
+                    "pcl api inspect get /views/public/invalidations --json".to_string(),
                 ]
             }
             Self::InvalidWorkflowWithActions { next_actions, .. } => next_actions.clone(),

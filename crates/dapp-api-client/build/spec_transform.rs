@@ -5,6 +5,25 @@ use serde_json::{
 };
 use std::collections::BTreeSet;
 
+pub(crate) const CLIENT_OPERATION_IDS: &[&str] = &[
+    "cli.auth.requestCode",
+    "cli.auth.status",
+    "health",
+    "openapi",
+    "projects.getProjects",
+    "projects.getProject",
+    "projects.resolveProjectRef",
+    "projects.getSavedProjects",
+    "views.projectAssertions.getProjectAssertions",
+    "views.assertionDetail.getAssertionDetail",
+    "views.projectInvalidations.getProjectInvalidations",
+    "views.publicInvalidations.getPublicInvalidations",
+    "auth.refresh",
+    "projects.createRelease",
+    "projects.previewRelease",
+    "web.auth.logout",
+];
+
 const API_ERROR_SCHEMA_NAME: &str = "ApiError";
 const API_ERROR_SCHEMA_REF: &str = "#/components/schemas/ApiError";
 const API_MESSAGE_ERROR_SCHEMA_NAME: &str = "ApiMessageError";
@@ -14,6 +33,29 @@ const API_MESSAGE_ERROR_SCHEMA_REF: &str = "#/components/schemas/ApiMessageError
 struct ComponentRef {
     section: String,
     name: String,
+}
+
+pub(crate) fn missing_client_operations<'a>(
+    spec: &Value,
+    operation_ids: &[&'a str],
+) -> Vec<&'a str> {
+    let mut present = BTreeSet::new();
+    if let Some(paths) = spec.get("paths").and_then(Value::as_object) {
+        for path_item in paths.values().filter_map(Value::as_object) {
+            for (method, operation) in path_item {
+                if is_http_method(method)
+                    && let Some(id) = operation.get("operationId").and_then(Value::as_str)
+                {
+                    present.insert(id);
+                }
+            }
+        }
+    }
+    operation_ids
+        .iter()
+        .copied()
+        .filter(|id| !present.contains(id))
+        .collect()
 }
 
 pub(crate) fn retain_client_operations(spec: &mut Value, operation_ids: &[&str]) {
@@ -87,6 +129,7 @@ fn ensure_api_error_schema(spec: &mut Value) {
         .or_insert_with(api_message_error_schema);
 }
 
+// An empty additional-properties schema preserves conflict fields; `true` discards them in Progenitor.
 fn api_error_schema() -> Value {
     json!({
         "type": "object",
@@ -101,7 +144,8 @@ fn api_error_schema() -> Value {
                 "type": "string"
             }
         },
-        "required": ["error"]
+        "required": ["error"],
+        "additionalProperties": {}
     })
 }
 
@@ -164,7 +208,7 @@ fn is_error_code_details_schema(schema: &Value) -> bool {
         return false;
     }
     properties.iter().all(|(name, property)| {
-        matches!(name.as_str(), "error" | "code" | "details") && is_string_schema(property)
+        !matches!(name.as_str(), "error" | "code" | "details") || is_string_schema(property)
     })
 }
 

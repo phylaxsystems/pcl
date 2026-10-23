@@ -363,7 +363,7 @@ impl ApiArgs {
         project: &str,
         request_log_path: &Path,
     ) -> Result<u64, ApiCommandError> {
-        let request = get_operation("get_projects_project_id", project, None, Vec::new())?;
+        let request = get_operation("projects.getProject", project, None, Vec::new())?;
         let result = self
             .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
@@ -499,7 +499,7 @@ impl ApiArgs {
 
         progress(cli_args, "Fetching deploy calldata");
         let request = get_operation(
-            "get_projects_project_id_releases_release_id_deploy_calldata",
+            "projects.getReleaseDeployCalldata",
             project,
             Some(release_id),
             vec![("signerAddress".to_string(), signer_address.to_string())],
@@ -529,7 +529,7 @@ impl ApiArgs {
                 "No on-chain changes needed; confirming noop deploy",
             );
             let confirm_request = post_operation(
-                "post_projects_project_id_releases_release_id_deploy",
+                "projects.deployRelease",
                 project,
                 Some(release_id),
                 &json!({ "mode": "noop" }),
@@ -578,7 +578,7 @@ impl ApiArgs {
 
         progress(cli_args, "Confirming deployment with the platform");
         let confirm_request = post_operation(
-            "post_projects_project_id_releases_release_id_deploy",
+            "projects.deployRelease",
             project,
             Some(release_id),
             &json!({ "mode": "transaction", "txHash": outcome.tx_hash }),
@@ -623,7 +623,7 @@ impl ApiArgs {
 
         progress(cli_args, "Fetching remove calldata");
         let request = get_operation(
-            "get_projects_project_id_releases_release_id_remove_calldata",
+            "projects.removeCalldata",
             project,
             Some(release_id),
             Vec::new(),
@@ -679,7 +679,7 @@ impl ApiArgs {
 
         progress(cli_args, "Confirming removal with the platform");
         let confirm_request = post_operation(
-            "post_projects_project_id_releases_release_id_remove",
+            "projects.confirmRemove",
             project,
             Some(release_id),
             &json!({ "txHash": outcome.tx_hash }),
@@ -779,7 +779,7 @@ impl ApiArgs {
             attempts += 1;
             progress(cli_args, "Fetching protocol-manager challenge nonce");
             let nonce_request = get_operation(
-                "get_projects_project_id_protocol_manager_nonce",
+                "projects.getProtocolManagerNonce",
                 project,
                 None,
                 vec![
@@ -798,7 +798,7 @@ impl ApiArgs {
 
             progress(cli_args, "Submitting signed challenge");
             let set_request = post_operation(
-                "post_projects_project_id_protocol_manager",
+                "projects.setProtocolManager",
                 project,
                 None,
                 &json!({
@@ -848,7 +848,7 @@ impl ApiArgs {
 
         progress(cli_args, "Fetching manager transfer calldata");
         let request = get_operation(
-            "get_projects_project_id_protocol_manager_transfer_calldata",
+            "projects.getTransferManagerCalldata",
             project,
             None,
             vec![("new_manager".to_string(), new_manager.clone())],
@@ -872,7 +872,7 @@ impl ApiArgs {
             )?;
             progress(cli_args, "No on-chain transfer needed; confirming directly");
             let confirm_request = post_operation(
-                "post_projects_project_id_protocol_manager_confirm_transfer",
+                "projects.confirmTransfer",
                 project,
                 None,
                 &json!({ "mode": "direct", "new_manager_address": new_manager }),
@@ -969,7 +969,7 @@ impl ApiArgs {
 
         progress(cli_args, "Fetching manager acceptance calldata");
         let request = get_operation(
-            "get_projects_project_id_protocol_manager_accept_calldata",
+            "projects.getAcceptTransferCalldata",
             project,
             None,
             Vec::new(),
@@ -1009,7 +1009,7 @@ impl ApiArgs {
         // to confirm with, and the accepting signer is the new manager.
         progress(cli_args, "Confirming transfer with the platform");
         let confirm_request = post_operation(
-            "post_projects_project_id_protocol_manager_confirm_transfer",
+            "projects.confirmTransfer",
             project,
             None,
             &json!({

@@ -172,16 +172,16 @@ mod tests {
     fn generated_operations_expand_and_encode_path_segments() {
         let path = WorkflowOperation::new(
             HttpMethod::Get,
-            "get_views_incidents_incident_id_transactions_invalidating_transaction_id_trace",
+            "views.invalidationTrace.getInvalidationTrace",
         )
-        .path_param("incidentId", "incident 1")
+        .path_param("invalidationId", "incident 1")
         .path_param("invalidatingTransactionId", "0xabc/def")
         .path()
         .unwrap();
 
         assert_eq!(
             path,
-            "/views/incidents/incident%201/transactions/0xabc%2Fdef/trace"
+            "/views/invalidations/incident%201/transactions/0xabc%2Fdef/trace"
         );
     }
 }

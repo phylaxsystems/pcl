@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example: Get health status (assuming there's a health endpoint)
     // Uncomment and adjust based on actual API endpoints:
     /*
-    match api.get_health().await {
+    match api.health().await {
         Ok(response) => {
             println!("API Health: {:?}", response);
         }
@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example: List projects (assuming there's a projects endpoint)
     // Uncomment and adjust based on actual API endpoints:
     /*
-    match api.get_projects().await {
+    match api.projects_get_projects(None, None, None).await {
         Ok(projects) => {
             println!("Found {} projects", projects.len());
             for project in projects.iter().take(5) {

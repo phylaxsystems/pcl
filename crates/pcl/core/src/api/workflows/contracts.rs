@@ -33,7 +33,7 @@ pub(in crate::api) fn contracts_request(
         return workflow_operation_get_with_query(
             WorkflowOperation::new(
                 HttpMethod::Get,
-                "get_assertion_adopters_aa_address_remove_assertions_calldata",
+                "assertionAdopters.removeAssertionsCalldata",
             )
             .path_param("aa_address", &address),
             query,
@@ -44,19 +44,19 @@ pub(in crate::api) fn contracts_request(
     if let Some(project) = &args.project {
         if let Some(adopter_id) = &args.adopter_id {
             return workflow_operation_get(
-                WorkflowOperation::new(
-                    HttpMethod::Get,
-                    "get_views_projects_project_id_contracts_adopter_id",
-                )
-                .path_param("projectId", project)
-                .path_param("adopterId", adopter_id),
+                WorkflowOperation::new(HttpMethod::Get, "views.contractDetail.getContractDetail")
+                    .path_param("projectId", project)
+                    .path_param("adopterId", adopter_id),
                 true,
                 vec![format!("pcl contracts --project {project}")],
             );
         }
         return workflow_operation_get(
-            WorkflowOperation::new(HttpMethod::Get, "get_views_projects_project_id_contracts")
-                .path_param("projectId", project),
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "views.projectContracts.getProjectContracts",
+            )
+            .path_param("projectId", project),
             true,
             vec![format!(
                 "pcl contracts --project {project} --adopter-id <adopter-id>"
@@ -110,8 +110,8 @@ workflow_definition!(
     output: "release-based contract views or assertion-removal calldata",
     policy: MachineRaw,
     actions: [
-        action!("list_project", true, "get_views_projects_project_id_contracts", "pcl contracts --project <project-ref>", required: ["--project"]),
-        action!("detail", true, "get_views_projects_project_id_contracts_adopter_id", "pcl contracts --project <project-ref> --adopter-id <adopter-id>", required: ["--project", "--adopter-id"]),
-        action!("remove_calldata", true, "get_assertion_adopters_aa_address_remove_assertions_calldata", "pcl contracts --aa-address 0x... --remove-calldata --network 1 --assertion-id 0x...", required: ["--aa-address", "--assertion-id"], optional: ["--network", "--environment"], query: {"assertion_ids" => "<assertion-id>", "network" => "<chain-id>", "environment" => "production|staging"}),
+        action!("list_project", true, "views.projectContracts.getProjectContracts", "pcl contracts --project <project-ref>", required: ["--project"]),
+        action!("detail", true, "views.contractDetail.getContractDetail", "pcl contracts --project <project-ref> --adopter-id <adopter-id>", required: ["--project", "--adopter-id"]),
+        action!("remove_calldata", true, "assertionAdopters.removeAssertionsCalldata", "pcl contracts --aa-address 0x... --remove-calldata --network 1 --assertion-id 0x...", required: ["--aa-address", "--assertion-id"], optional: ["--network", "--environment"], query: {"assertion_ids" => "<assertion-id>", "network" => "<chain-id>", "environment" => "production|staging"}),
     ],
 );

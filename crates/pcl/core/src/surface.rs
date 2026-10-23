@@ -30,7 +30,7 @@ use dapp_api_client::generated::client::{
     ResponseValue,
     types::{
         ApiError as GeneratedApiErrorBody,
-        GetViewsProjectsProjectIdIncidentsEnvironment,
+        ViewsProjectInvalidationsGetProjectInvalidationsEnvironment,
     },
 };
 use pcl_common::args::{
@@ -1042,7 +1042,7 @@ async fn export_incidents(
     let environment = args
         .environment
         .as_deref()
-        .map(GetViewsProjectsProjectIdIncidentsEnvironment::try_from)
+        .map(ViewsProjectInvalidationsGetProjectInvalidationsEnvironment::try_from)
         .transpose()
         .map_err(|error| {
             ProductSurfaceError::InvalidInput(format!("Invalid export environment: {error}"))
@@ -1614,11 +1614,11 @@ fn llms_guide() -> Value {
             },
             {
                 "goal": "Debug raw API shape",
-                "commands": ["pcl api list --filter incidents --json", "pcl api inspect <operation-id> --json"]
+                "commands": ["pcl api list --filter invalidations --json", "pcl api inspect <operation-id> --json"]
             },
             {
                 "goal": "Run raw calls only for debugging or unsupported/internal endpoints",
-                "commands": ["pcl api call get /health --allow-unauthenticated --json", "pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated --json"]
+                "commands": ["pcl api call get /health --allow-unauthenticated --json", "pcl api call get '/views/public/invalidations?limit=5' --allow-unauthenticated --json"]
             },
             {
                 "goal": "Export resumable incident data",
@@ -1919,11 +1919,11 @@ async fn resolve_export_project_id(
         return Ok(project_id);
     }
     let path = generated_operation_path(
-        "get_projects_resolve_project_ref",
+        "projects.resolveProjectRef",
         &[("project_ref", project_ref)],
     )
-    .unwrap_or_else(|| "get_projects_resolve_project_ref".to_string());
-    let response = match client.get_projects_resolve_project_ref(project_ref).await {
+    .unwrap_or_else(|| "projects.resolveProjectRef".to_string());
+    let response = match client.projects_resolve_project_ref(project_ref).await {
         Ok(response) => response.into_inner(),
         Err(error) => return Err(generated_product_surface_error("GET", &path, error).await),
     };
@@ -1939,18 +1939,18 @@ fn export_incidents_operation_path(project_id: Option<&Uuid>) -> String {
     if let Some(project_id) = project_id {
         let project_id = project_id.to_string();
         return generated_operation_path(
-            "get_views_projects_project_id_incidents",
+            "views.projectInvalidations.getProjectInvalidations",
             &[("projectId", project_id.as_str())],
         )
-        .unwrap_or_else(|| "get_views_projects_project_id_incidents".to_string());
+        .unwrap_or_else(|| "views.projectInvalidations.getProjectInvalidations".to_string());
     }
-    generated_operation_path("get_views_public_incidents", &[])
-        .unwrap_or_else(|| "get_views_public_incidents".to_string())
+    generated_operation_path("views.publicInvalidations.getPublicInvalidations", &[])
+        .unwrap_or_else(|| "views.publicInvalidations.getPublicInvalidations".to_string())
 }
 
 async fn health_check(api_url: &url::Url) -> Value {
     let client = generated_client(api_url);
-    match client.get_health().await {
+    match client.health().await {
         Ok(response) => {
             let status = response.status();
             json!({
@@ -1975,7 +1975,7 @@ async fn health_check(api_url: &url::Url) -> Value {
 
 async fn auth_capability_check(api_url: &url::Url) -> Value {
     let client = generated_client(api_url);
-    let response = match client.get_openapi().await {
+    let response = match client.openapi().await {
         Ok(response) => response,
         Err(error) => {
             let http_status = error.status();
@@ -2176,7 +2176,7 @@ fn default_headers(
 async fn fetch_export_page(
     client: &GeneratedClient,
     project_id: Option<&Uuid>,
-    environment: Option<GetViewsProjectsProjectIdIncidentsEnvironment>,
+    environment: Option<ViewsProjectInvalidationsGetProjectInvalidationsEnvironment>,
     page: NonZeroU64,
     limit: NonZeroU64,
     max_retries: u64,
@@ -2186,14 +2186,16 @@ async fn fetch_export_page(
         let response = if let Some(project_id) = project_id {
             generated_export_page_response(
                 client
-                    .get_views_projects_project_id_incidents(
+                    .views_project_invalidations_get_project_invalidations(
                         project_id,
                         None,
                         None,
                         environment,
                         None,
                         Some(limit),
+                        None,
                         Some(page),
+                        None,
                         None,
                     )
                     .await,
@@ -2203,7 +2205,12 @@ async fn fetch_export_page(
         } else {
             generated_export_page_response(
                 client
-                    .get_views_public_incidents(None, Some(limit), None, Some(page), None)
+                    .views_public_invalidations_get_public_invalidations(
+                        Some(limit),
+                        None,
+                        Some(page),
+                        None,
+                    )
                     .await,
                 attempt,
             )
@@ -2479,7 +2486,8 @@ mod tests {
                     "contractName": null,
                     "createdAt": "2026-01-01T00:00:00Z",
                     "environment": "production",
-                    "incidentId": id,
+                    "invalidationId": id,
+                    "outcome": "prevented",
                     "tracesCompleted": 0,
                     "tracesPending": 0,
                     "transactionCount": 1,
@@ -2764,7 +2772,7 @@ mod tests {
             Matcher::UrlEncoded("limit".into(), "50".into()),
         ]);
         let transient = server
-            .mock("GET", "/api/v1/views/public/incidents")
+            .mock("GET", "/api/v1/views/public/invalidations")
             .match_query(query.clone())
             .with_status(500)
             .with_header("content-type", "application/json")
@@ -2773,7 +2781,7 @@ mod tests {
             .create_async()
             .await;
         let success = server
-            .mock("GET", "/api/v1/views/public/incidents")
+            .mock("GET", "/api/v1/views/public/invalidations")
             .match_query(query)
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -2841,7 +2849,7 @@ mod tests {
         let export = server
             .mock(
                 "GET",
-                format!("/api/v1/views/projects/{project_id}/incidents").as_str(),
+                format!("/api/v1/views/projects/{project_id}/invalidations").as_str(),
             )
             .match_header("authorization", "Bearer new_access")
             .match_query(query)
@@ -3084,7 +3092,7 @@ mod tests {
             Matcher::UrlEncoded("limit".into(), "50".into()),
         ]);
         let failure = server
-            .mock("GET", "/api/v1/views/public/incidents")
+            .mock("GET", "/api/v1/views/public/invalidations")
             .match_query(query)
             .with_status(500)
             .with_header("content-type", "application/json")

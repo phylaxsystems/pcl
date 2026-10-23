@@ -6,6 +6,8 @@ All notable user-facing changes should be recorded here.
 
 ### Fixed
 
+- Regeneration supports OpenAPI 22.0.0 operation IDs and fails explicitly if required typed methods disappear. Existing `pcl incidents` commands and exports use the API's invalidation routes. Raw API scripts must use the new operation IDs and `/invalidations` routes; JSON responses retain the server's invalidation field names. The unsupported `--dev-mode` filter returns a local error with migration guidance.
+
 - Broadcasting no longer fails on a brief `assertions are unavailable` refusal. The transaction is signed once and resubmitted byte for byte, so a retry is deduplicated by hash rather than becoming a second transaction on the same nonce. `--with-credible-rpc` waits out a Credible RPC's full alignment window; without it an unavailable endpoint still gets a short retry. If the retries run out, `onchain.assertions_unavailable` means nothing was submitted, while `onchain.tx_submission_unconfirmed` carries the signed hash to check first.
 
 ### Added

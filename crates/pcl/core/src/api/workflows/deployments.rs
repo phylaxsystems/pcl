@@ -21,19 +21,19 @@ pub(in crate::api) fn deployments_request(
     let project = required_project_arg(args.project.as_deref(), "deployments", "--project")?;
     if args.confirm {
         return workflow_operation_with_body(
-            WorkflowOperation::new(
-                HttpMethod::Post,
-                "post_projects_project_id_confirm_deployment",
-            )
-            .path_param("project_id", &project),
+            WorkflowOperation::new(HttpMethod::Post, "projects.confirmDeployment")
+                .path_param("project_id", &project),
             true,
             body,
             vec![format!("pcl deployments --project {project}")],
         );
     }
     workflow_operation_get(
-        WorkflowOperation::new(HttpMethod::Get, "get_views_projects_project_id_deployments")
-            .path_param("projectId", &project),
+        WorkflowOperation::new(
+            HttpMethod::Get,
+            "views.projectDeployments.getProjectDeployments",
+        )
+        .path_param("projectId", &project),
         true,
         vec![format!("pcl releases list {project}")],
     )
@@ -50,7 +50,7 @@ workflow_definition!(
     output: "deployment view or confirmation result",
     policy: MachineRawHumanCompactArtifacts,
     actions: [
-        action!("list", true, "get_views_projects_project_id_deployments", "pcl deployments --project <project-ref>", required: ["--project"]),
-        action!("confirm", true, "post_projects_project_id_confirm_deployment", "pcl deployments --project <project-ref> --confirm --body-template", required: ["--project"], body_template: "deployment_confirmation"),
+        action!("list", true, "views.projectDeployments.getProjectDeployments", "pcl deployments --project <project-ref>", required: ["--project"]),
+        action!("confirm", true, "projects.confirmDeployment", "pcl deployments --project <project-ref> --confirm --body-template", required: ["--project"], body_template: "deployment_confirmation"),
     ],
 );

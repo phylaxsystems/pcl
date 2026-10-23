@@ -34,12 +34,12 @@ use dapp_api_client::generated::client::{
     Client as GeneratedClient,
     Error as GeneratedError,
     types::{
-        GetProjectsResponseItem,
-        PostProjectsProjectIdReleasesBody,
-        PostProjectsProjectIdReleasesBodyContractsValue,
-        PostProjectsProjectIdReleasesBodyContractsValueAssertionsItem,
-        PostProjectsProjectIdReleasesPreviewBody,
-        PostProjectsProjectIdReleasesResponse,
+        ProjectsCreateReleaseBody,
+        ProjectsCreateReleaseBodyContractsValue,
+        ProjectsCreateReleaseBodyContractsValueAssertionsItem,
+        ProjectsCreateReleaseResponse,
+        ProjectsGetProjectsResponseItem,
+        ProjectsPreviewReleaseBody,
     },
 };
 use inquire::Select;
@@ -287,7 +287,7 @@ impl ApplyArgs {
         output_mode: OutputMode,
         root: &Path,
         project_id: Uuid,
-        payload: &PostProjectsProjectIdReleasesBody,
+        payload: &ProjectsCreateReleaseBody,
         verification: &VerificationSummary,
     ) -> Result<(), ApplyError> {
         if output_mode == OutputMode::Human {
@@ -318,7 +318,7 @@ impl ApplyArgs {
         output_mode: OutputMode,
         root: &Path,
         project_id: Uuid,
-        payload: &PostProjectsProjectIdReleasesBody,
+        payload: &ProjectsCreateReleaseBody,
     ) -> Result<(), ApplyError> {
         if output_mode == OutputMode::Human {
             println!("Dry run complete. Built release payload for project {project_id}.");
@@ -335,18 +335,18 @@ impl ApplyArgs {
     pub(crate) async fn call_preview(
         client: &GeneratedClient,
         project_id: &Uuid,
-        payload: &PostProjectsProjectIdReleasesBody,
+        payload: &ProjectsCreateReleaseBody,
     ) -> Result<PreviewResponse, ApplyError> {
         let project_id_string = project_id.to_string();
         let endpoint = generated_operation_path(
-            "post_projects_project_id_releases_preview",
+            "projects.previewRelease",
             &[("project_id", project_id_string.as_str())],
         )
-        .unwrap_or_else(|| "post_projects_project_id_releases_preview".to_string());
-        let body: PostProjectsProjectIdReleasesPreviewBody =
+        .unwrap_or_else(|| "projects.previewRelease".to_string());
+        let body: ProjectsPreviewReleaseBody =
             serde_json::from_value(serde_json::to_value(payload)?)?;
         let response = match client
-            .post_projects_project_id_releases_preview(project_id, None, &body)
+            .projects_preview_release(project_id, None, &body)
             .await
         {
             Ok(response) => response.into_inner(),
@@ -367,16 +367,16 @@ impl ApplyArgs {
     pub(crate) async fn call_create_release(
         client: &GeneratedClient,
         project_id: &Uuid,
-        payload: &PostProjectsProjectIdReleasesBody,
-    ) -> Result<PostProjectsProjectIdReleasesResponse, ApplyError> {
+        payload: &ProjectsCreateReleaseBody,
+    ) -> Result<ProjectsCreateReleaseResponse, ApplyError> {
         let project_id_string = project_id.to_string();
         let endpoint = generated_operation_path(
-            "post_projects_project_id_releases",
+            "projects.createRelease",
             &[("project_id", project_id_string.as_str())],
         )
-        .unwrap_or_else(|| "post_projects_project_id_releases".to_string());
+        .unwrap_or_else(|| "projects.createRelease".to_string());
         match client
-            .post_projects_project_id_releases(project_id, None, payload)
+            .projects_create_release(project_id, None, payload)
             .await
         {
             Ok(response) => Ok(response.into_inner()),
@@ -387,7 +387,7 @@ impl ApplyArgs {
     pub(crate) fn build_payload(
         credible: &CredibleToml,
         root: &Path,
-    ) -> Result<(PostProjectsProjectIdReleasesBody, Vec<(String, Bytes)>), ApplyError> {
+    ) -> Result<(ProjectsCreateReleaseBody, Vec<(String, Bytes)>), ApplyError> {
         let mut built_assertions = HashMap::new();
         let mut payload_contracts = HashMap::new();
         #[allow(unused_mut)]
@@ -438,7 +438,7 @@ impl ApplyArgs {
         let assertions_dir = parse_field("assertions", "assertions dir")?;
 
         Ok((
-            PostProjectsProjectIdReleasesBody {
+            ProjectsCreateReleaseBody {
                 environment,
                 assertions_dir,
                 contracts: payload_contracts,
@@ -482,18 +482,20 @@ impl ApplyArgs {
         })?;
 
         let client = self.build_client(config)?;
-        let projects: Vec<GetProjectsResponseItem> =
-            match client.get_projects(None, Some(user_id), None).await {
-                Ok(response) => response.into_inner(),
-                Err(error) => {
-                    return Err(generated_apply_api_error(
-                        generated_operation_path("get_projects", &[])
-                            .unwrap_or_else(|| "get_projects".to_string()),
-                        error,
-                    )
-                    .await);
-                }
-            };
+        let projects: Vec<ProjectsGetProjectsResponseItem> = match client
+            .projects_get_projects(None, Some(user_id), None)
+            .await
+        {
+            Ok(response) => response.into_inner(),
+            Err(error) => {
+                return Err(generated_apply_api_error(
+                    generated_operation_path("projects.getProjects", &[])
+                        .unwrap_or_else(|| "projects.getProjects".to_string()),
+                    error,
+                )
+                .await);
+            }
+        };
 
         if projects.is_empty() {
             return Err(ApplyError::NoProjectsFound);
@@ -517,7 +519,7 @@ impl ApplyArgs {
     fn print_release_success(
         platform_url: &str,
         project_id: &Uuid,
-        release: &PostProjectsProjectIdReleasesResponse,
+        release: &ProjectsCreateReleaseResponse,
     ) {
         let review_url = Url::parse(platform_url).map(|mut url| {
             url.set_path(&format!(
@@ -548,10 +550,10 @@ fn apply_data(
     outcome: &'static str,
     project_id: Uuid,
     verification: Option<&VerificationSummary>,
-    payload: Option<&PostProjectsProjectIdReleasesBody>,
+    payload: Option<&ProjectsCreateReleaseBody>,
     preview: Option<&PreviewResponse>,
     applied: bool,
-    release: Option<&PostProjectsProjectIdReleasesResponse>,
+    release: Option<&ProjectsCreateReleaseResponse>,
 ) -> Value {
     json!({
         "outcome": outcome,
@@ -568,10 +570,10 @@ fn apply_data(
 fn apply_data(
     outcome: &'static str,
     project_id: Uuid,
-    payload: Option<&PostProjectsProjectIdReleasesBody>,
+    payload: Option<&ProjectsCreateReleaseBody>,
     preview: Option<&PreviewResponse>,
     applied: bool,
-    release: Option<&PostProjectsProjectIdReleasesResponse>,
+    release: Option<&ProjectsCreateReleaseResponse>,
 ) -> Value {
     json!({
         "outcome": outcome,
@@ -609,38 +611,36 @@ fn build_assertion_item(
     assertion: &crate::credible_config::CredibleAssertion,
     built: &pcl_phoundry::build_and_flatten::BuildAndFlatOutput,
     contract_name: &str,
-) -> Result<PostProjectsProjectIdReleasesBodyContractsValueAssertionsItem, ApplyError> {
+) -> Result<ProjectsCreateReleaseBodyContractsValueAssertionsItem, ApplyError> {
     let constructor_abi_signature = abi::build_signature(&built.abi, &assertion.args)?;
 
-    Ok(
-        PostProjectsProjectIdReleasesBodyContractsValueAssertionsItem {
-            file: parse_field(&assertion.file, "assertion file")?,
-            args: assertion.args.clone(),
-            constructor_abi_signature: Some(parse_field(
-                &constructor_abi_signature,
-                "constructor abi signature",
-            )?),
-            bytecode: parse_field(&built.bytecode, "bytecode")?,
-            flattened_source: parse_field(&built.flattened_source, "flattened source")?,
-            compiler_version: parse_field(&built.compiler_version, "compiler version")?,
-            contract_name: parse_field(contract_name, "contract name")?,
-            evm_version: parse_field(&built.evm_version, "evm version")?,
-            optimizer_runs: built.optimizer_runs,
-            optimizer_enabled: built.optimizer_enabled,
-            metadata_bytecode_hash: parse_field(
-                &built.metadata_bytecode_hash.to_string(),
-                "metadata bytecode hash",
-            )?,
-            libraries: built.libraries.clone(),
-        },
-    )
+    Ok(ProjectsCreateReleaseBodyContractsValueAssertionsItem {
+        file: parse_field(&assertion.file, "assertion file")?,
+        args: assertion.args.clone(),
+        constructor_abi_signature: Some(parse_field(
+            &constructor_abi_signature,
+            "constructor abi signature",
+        )?),
+        bytecode: parse_field(&built.bytecode, "bytecode")?,
+        flattened_source: parse_field(&built.flattened_source, "flattened source")?,
+        compiler_version: parse_field(&built.compiler_version, "compiler version")?,
+        contract_name: parse_field(contract_name, "contract name")?,
+        evm_version: parse_field(&built.evm_version, "evm version")?,
+        optimizer_runs: built.optimizer_runs,
+        optimizer_enabled: built.optimizer_enabled,
+        metadata_bytecode_hash: parse_field(
+            &built.metadata_bytecode_hash.to_string(),
+            "metadata bytecode hash",
+        )?,
+        libraries: built.libraries.clone(),
+    })
 }
 
 fn build_contract_value(
     contract: &crate::credible_config::CredibleContract,
-    assertions: Vec<PostProjectsProjectIdReleasesBodyContractsValueAssertionsItem>,
-) -> Result<PostProjectsProjectIdReleasesBodyContractsValue, ApplyError> {
-    Ok(PostProjectsProjectIdReleasesBodyContractsValue {
+    assertions: Vec<ProjectsCreateReleaseBodyContractsValueAssertionsItem>,
+) -> Result<ProjectsCreateReleaseBodyContractsValue, ApplyError> {
+    Ok(ProjectsCreateReleaseBodyContractsValue {
         address: parse_field(&contract.address, "contract address")?,
         name: Some(parse_field(&contract.name, "contract name")?),
         assertions,

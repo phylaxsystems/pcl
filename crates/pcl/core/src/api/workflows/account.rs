@@ -18,7 +18,7 @@ pub(in crate::api) fn account_request(
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     if args.accept_terms {
         return workflow_operation_with_body(
-            WorkflowOperation::new(HttpMethod::Post, "post_web_auth_accept_terms"),
+            WorkflowOperation::new(HttpMethod::Post, "web.auth.acceptTerms"),
             true,
             Some(body_or_empty(body)),
             ["pcl account", "pcl projects mine"],
@@ -26,14 +26,14 @@ pub(in crate::api) fn account_request(
     }
     if args.logout {
         return workflow_operation_with_body(
-            WorkflowOperation::new(HttpMethod::Post, "post_web_auth_logout"),
+            WorkflowOperation::new(HttpMethod::Post, "web.auth.logout"),
             true,
             Some(body_or_empty(body)),
             ["pcl auth logout"],
         );
     }
     workflow_operation_get(
-        WorkflowOperation::new(HttpMethod::Get, "get_web_auth_me"),
+        WorkflowOperation::new(HttpMethod::Get, "web.auth.me"),
         true,
         ["pcl account --accept-terms", "pcl projects mine"],
     )
@@ -46,8 +46,8 @@ workflow_definition!(
     output: "current user account state, terms acceptance result, or logout result",
     policy: MachineRaw,
     actions: [
-        action!("me", true, "get_web_auth_me", "pcl account"),
-        action!("accept_terms", true, "post_web_auth_accept_terms", "pcl account --accept-terms", body_template: "empty_object"),
-        action!("logout", true, "post_web_auth_logout", "pcl account --logout", body_template: "empty_object"),
+        action!("me", true, "web.auth.me", "pcl account"),
+        action!("accept_terms", true, "web.auth.acceptTerms", "pcl account --accept-terms", body_template: "empty_object"),
+        action!("logout", true, "web.auth.logout", "pcl account --logout", body_template: "empty_object"),
     ],
 );

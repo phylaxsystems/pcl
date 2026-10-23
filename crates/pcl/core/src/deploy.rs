@@ -264,7 +264,7 @@ async fn inactive_release_summaries(
             .workflow_get_json_with_query(
                 config,
                 cli_args,
-                "get_projects_project_id_releases",
+                "projects.listReleases",
                 &[("project_id", project_ref)],
                 &[
                     ("environment", environment),
@@ -943,7 +943,7 @@ impl DeployArgs {
                     config,
                     cli_args,
                     HttpMethod::Get,
-                    "get_projects_project_id",
+                    "projects.getProject",
                     &[("project_id", project_id_string.as_str())],
                     None,
                 )
@@ -1030,7 +1030,7 @@ impl DeployArgs {
                         config,
                         cli_args,
                         HttpMethod::Post,
-                        "post_projects",
+                        "projects.createProject",
                         &[],
                         Some(&body),
                     )
@@ -1189,7 +1189,7 @@ impl DeployArgs {
                         config,
                         cli_args,
                         HttpMethod::Get,
-                        "get_projects_project_id_releases_release_id",
+                        "projects.getRelease",
                         &[
                             ("project_id", project_ref.as_str()),
                             ("release_id", candidate.id.as_str()),
@@ -1362,7 +1362,7 @@ impl DeployArgs {
                 config,
                 cli_args,
                 HttpMethod::Get,
-                "get_views_projects_home",
+                "views.projectsHome.getProjectsHome",
                 &[],
                 None,
             )
@@ -1380,7 +1380,7 @@ impl DeployArgs {
                 config,
                 cli_args,
                 HttpMethod::Get,
-                "get_projects_project_id",
+                "projects.getProject",
                 &[("project_id", project_id_string.as_str())],
                 None,
             )
@@ -1444,7 +1444,7 @@ impl DeployArgs {
                     config,
                     cli_args,
                     HttpMethod::Get,
-                    "get_projects_project_id_releases_release_id",
+                    "projects.getRelease",
                     &[("project_id", project_ref), ("release_id", release_id)],
                     None,
                 )

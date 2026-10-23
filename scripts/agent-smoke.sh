@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 cargo build -q -p pcl
-bin="$repo_root/target/debug/pcl"
+bin="${CARGO_TARGET_DIR:-$repo_root/target}/debug/pcl"
 config_dir="$(mktemp -d)"
 missing_auth_config_dir="$(mktemp -d)"
 expired_auth_config_dir="$(mktemp -d)"

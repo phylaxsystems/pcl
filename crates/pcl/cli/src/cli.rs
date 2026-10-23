@@ -429,7 +429,7 @@ mod tests {
             "api",
             "call",
             "get",
-            "/views/public/incidents",
+            "/views/public/invalidations",
             "--query",
             "limit=5",
             "--json",

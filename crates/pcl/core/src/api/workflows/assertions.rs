@@ -54,7 +54,7 @@ pub(in crate::api) fn assertions_request(
             args.include_onchain_only,
         );
         return workflow_operation_get_with_query(
-            WorkflowOperation::new(HttpMethod::Get, "get_assertions"),
+            WorkflowOperation::new(HttpMethod::Get, "assertions.getAssertions"),
             query,
             false,
             ["pcl contracts --project <project-ref>"],
@@ -77,8 +77,11 @@ pub(in crate::api) fn assertions_request(
             args.environment.as_deref(),
         );
         return WorkflowRequest::from_operation(
-            WorkflowOperation::new(HttpMethod::Get, "get_views_projects_project_id_assertions")
-                .path_param("projectId", &project_id),
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "views.projectAssertions.getProjectAssertions",
+            )
+            .path_param("projectId", &project_id),
             registered_query,
             None,
             true,
@@ -87,11 +90,8 @@ pub(in crate::api) fn assertions_request(
     }
     if args.remove_info {
         return workflow_operation_get(
-            WorkflowOperation::new(
-                HttpMethod::Get,
-                "get_projects_project_id_remove_assertions_info",
-            )
-            .path_param("project_id", &project_id),
+            WorkflowOperation::new(HttpMethod::Get, "projects.removeAssertionsInfo")
+                .path_param("project_id", &project_id),
             true,
             vec![format!(
                 "pcl assertions --project-id {project_id} --remove-calldata"
@@ -100,11 +100,8 @@ pub(in crate::api) fn assertions_request(
     }
     if args.remove_calldata {
         return workflow_operation_get(
-            WorkflowOperation::new(
-                HttpMethod::Get,
-                "get_projects_project_id_remove_assertions_calldata",
-            )
-            .path_param("project_id", &project_id),
+            WorkflowOperation::new(HttpMethod::Get, "projects.removeAssertionsCalldata")
+                .path_param("project_id", &project_id),
             true,
             vec![format!("pcl releases list {project_id}")],
         );
@@ -112,12 +109,9 @@ pub(in crate::api) fn assertions_request(
 
     if let Some(assertion_id) = &args.assertion_id {
         return workflow_operation_get_with_query(
-            WorkflowOperation::new(
-                HttpMethod::Get,
-                "get_views_projects_project_id_assertions_assertion_id",
-            )
-            .path_param("projectId", &project_id)
-            .path_param("assertionId", assertion_id),
+            WorkflowOperation::new(HttpMethod::Get, "views.assertionDetail.getAssertionDetail")
+                .path_param("projectId", &project_id)
+                .path_param("assertionId", assertion_id),
             query,
             true,
             vec![format!(
@@ -127,8 +121,11 @@ pub(in crate::api) fn assertions_request(
     }
 
     workflow_operation_get_with_query(
-        WorkflowOperation::new(HttpMethod::Get, "get_views_projects_project_id_assertions")
-            .path_param("projectId", &project_id),
+        WorkflowOperation::new(
+            HttpMethod::Get,
+            "views.projectAssertions.getProjectAssertions",
+        )
+        .path_param("projectId", &project_id),
         query,
         true,
         vec![
@@ -145,11 +142,11 @@ workflow_definition!(
     output: "assertion index/detail, registered assertions, or removal info/calldata",
     policy: MachineRaw,
     actions: [
-        action!("index", true, "get_views_projects_project_id_assertions", "pcl assertions --project <project-ref>", required: ["--project"]),
-        action!("detail", true, "get_views_projects_project_id_assertions_assertion_id", "pcl assertions --project <project-ref> --assertion-id <assertion-id>", required: ["--project", "--assertion-id"]),
-        action!("adopter_lookup", false, "get_assertions", "pcl assertions --adopter-address 0x... --network 1", required: ["--adopter-address"], optional: ["--network", "--environment", "--include-onchain-only"]),
-        action!("registered", true, "get_views_projects_project_id_assertions", "pcl assertions --project <project-ref> --registered", required: ["--project"]),
-        action!("remove_info", true, "get_projects_project_id_remove_assertions_info", "pcl assertions --project <project-ref> --remove-info", required: ["--project"]),
-        action!("remove_calldata", true, "get_projects_project_id_remove_assertions_calldata", "pcl assertions --project <project-ref> --remove-calldata", required: ["--project"]),
+        action!("index", true, "views.projectAssertions.getProjectAssertions", "pcl assertions --project <project-ref>", required: ["--project"]),
+        action!("detail", true, "views.assertionDetail.getAssertionDetail", "pcl assertions --project <project-ref> --assertion-id <assertion-id>", required: ["--project", "--assertion-id"]),
+        action!("adopter_lookup", false, "assertions.getAssertions", "pcl assertions --adopter-address 0x... --network 1", required: ["--adopter-address"], optional: ["--network", "--environment", "--include-onchain-only"]),
+        action!("registered", true, "views.projectAssertions.getProjectAssertions", "pcl assertions --project <project-ref> --registered", required: ["--project"]),
+        action!("remove_info", true, "projects.removeAssertionsInfo", "pcl assertions --project <project-ref> --remove-info", required: ["--project"]),
+        action!("remove_calldata", true, "projects.removeAssertionsCalldata", "pcl assertions --project <project-ref> --remove-calldata", required: ["--project"]),
     ],
 );
