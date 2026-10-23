@@ -3,6 +3,7 @@
 # carry known transitive advisories. Revisit these ignores during dependency
 # upgrade work; do not add new ignores without recording the upstream owner.
 ignore = [
+    { id = "RUSTSEC-2026-0385", reason = "Transitive through pinned Commonware; fixing this requires an upstream dependency update." },
     { id = "RUSTSEC-2024-0436", reason = "Transitive through Foundry/Alloy; paste is unmaintained but no direct PCL usage." },
     { id = "RUSTSEC-2024-0449", reason = "Build-time transitive through progenitor -> progenitor-macro -> serde_yaml; unsafe-libyaml is unmaintained with no patched release. Removal requires upstream Progenitor to replace serde_yaml." },
     { id = "RUSTSEC-2025-0141", reason = "Transitive through credible-sdk assertion-executor optional credible feature; bincode 1.x is complete upstream but unmaintained." },
