@@ -2,7 +2,6 @@
 
 pub const OPERATION_PATHS: &[(&str, &str, &str)] = &[
     ("delete_projects_project_id", "DELETE", "/projects/{project_id}"),
-    ("delete_projects_project_id_aa_contract", "DELETE", "/projects/{project_id}/{aa_contract}"),
     ("delete_projects_project_id_integrations_pagerduty", "DELETE", "/projects/{project_id}/integrations/pagerduty"),
     ("delete_projects_project_id_integrations_slack", "DELETE", "/projects/{project_id}/integrations/slack"),
     ("delete_projects_project_id_invitations_invitation_id", "DELETE", "/projects/{project_id}/invitations/{invitation_id}"),
@@ -12,7 +11,6 @@ pub const OPERATION_PATHS: &[(&str, &str, &str)] = &[
     ("get_admin_reviewables", "GET", "/admin/reviewables"),
     ("get_admin_reviewables_reviewable_ref", "GET", "/admin/reviewables/{reviewable_ref}"),
     ("get_assertion_adopters_aa_address_remove_assertions_calldata", "GET", "/assertion_adopters/{aa_address}/remove-assertions-calldata"),
-    ("get_assertion_adopters_no_project", "GET", "/assertion_adopters/no-project"),
     ("get_assertions", "GET", "/assertions"),
     ("get_cli_auth_code", "GET", "/cli/auth/code"),
     ("get_cli_auth_status", "GET", "/cli/auth/status"),
@@ -68,7 +66,6 @@ pub const OPERATION_PATHS: &[(&str, &str, &str)] = &[
     ("patch_projects_project_id_members_member_user_id", "PATCH", "/projects/{project_id}/members/{member_user_id}"),
     ("post_admin_reviewables_reviewable_ref_decision", "POST", "/admin/reviewables/{reviewable_ref}/decision"),
     ("post_agentic_events", "POST", "/agentic/events"),
-    ("post_assertion_adopters_assign_project", "POST", "/assertion_adopters/assign-project"),
     ("post_auth_refresh", "POST", "/auth/refresh"),
     ("post_backtesting_events", "POST", "/backtesting/events"),
     ("post_cli_auth_verify", "POST", "/cli/auth/verify"),

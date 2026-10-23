@@ -28,7 +28,6 @@ use super::{
     assertions_request,
     body_template,
     command_next_actions,
-    contracts_body_template,
     contracts_next_actions,
     contracts_request,
     deployment_body_template,
@@ -252,12 +251,6 @@ impl ApiArgs {
                 )?;
             }
             WorkflowCommand::Contracts(args) => {
-                if args.body_template {
-                    return print_api_value(
-                        template_envelope(contracts_body_template(args)),
-                        json_output,
-                    );
-                }
                 print_api_value(
                     self.run_contracts(config, cli_args, args, &request_log_path)
                         .await?,

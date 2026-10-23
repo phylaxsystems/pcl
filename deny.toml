@@ -3,10 +3,15 @@
 # carry known transitive advisories. Revisit these ignores during dependency
 # upgrade work; do not add new ignores without recording the upstream owner.
 ignore = [
+    { id = "RUSTSEC-2026-0385", reason = "Transitive through pinned Commonware; fixing this requires an upstream dependency update." },
     { id = "RUSTSEC-2024-0436", reason = "Transitive through Foundry/Alloy; paste is unmaintained but no direct PCL usage." },
+    { id = "RUSTSEC-2024-0449", reason = "Build-time transitive through progenitor -> progenitor-macro -> serde_yaml; unsafe-libyaml is unmaintained with no patched release. Removal requires upstream Progenitor to replace serde_yaml." },
     { id = "RUSTSEC-2025-0141", reason = "Transitive through credible-sdk assertion-executor optional credible feature; bincode 1.x is complete upstream but unmaintained." },
     { id = "RUSTSEC-2026-0173", reason = "Transitive build-time-only proc-macro via alloy-sol-macro; proc-macro-error2 unmaintained, no safe upgrade per advisory. Same ignore as credible-sdk/phoundry." },
     { id = "RUSTSEC-2026-0194", reason = "Transitive through phoundry forge -> quick-junit/inferno; quick-xml DoS-class fix requires >=0.41.0, blocked until upstream dependents bump their semver reqs." },
     { id = "RUSTSEC-2026-0195", reason = "Transitive through phoundry forge -> quick-junit/inferno; quick-xml DoS-class fix requires >=0.41.0, blocked until upstream dependents bump their semver reqs." },
     { id = "RUSTSEC-2025-0172", reason = "Transitive through phoundry forge/foundry-config -> soldeer-core; zip-extract unmaintained, no safe upgrade per advisory." },
+    { id = "RUSTSEC-2026-0367", reason = "Transitive through Phoundry/Foundry -> soldeer-core, zip-extract and svm-rs; zip fixes require >=9.0.0, outside upstream dependency requirements. Remove when those upstreams upgrade ZIP extraction." },
+    { id = "RUSTSEC-2026-0368", reason = "Transitive through Phoundry/Foundry -> soldeer-core, zip-extract and svm-rs; zip fixes require >=9.0.0, outside upstream dependency requirements. Remove when those upstreams upgrade ZIP extraction." },
+    { id = "RUSTSEC-2026-0369", reason = "Transitive through Phoundry/Foundry -> soldeer-core, zip-extract and svm-rs; zip fixes require >=9.0.0, outside upstream dependency requirements. Remove when those upstreams upgrade ZIP extraction." },
 ]

@@ -178,7 +178,6 @@ fn machine_help_requests_stay_structured() {
 const LOCAL_TEMPLATE_INVOCATIONS: &[&[&str]] = &[
     &["--json", "assertions", "--body-template"],
     &["--json", "account", "--body-template"],
-    &["--json", "contracts", "--assign-project", "--body-template"],
     &["--json", "deployments", "--confirm", "--body-template"],
     &["--json", "integrations", "--body-template"],
     &["--json", "protocol-manager", "--set", "--body-template"],

@@ -1,6 +1,5 @@
 use super::{
     AccessArgs,
-    ContractsArgs,
     DeploymentsArgs,
     IntegrationsArgs,
     ProjectsArgs,
@@ -47,13 +46,6 @@ pub(super) fn project_body_template(args: &ProjectsArgs) -> Value {
         return body_template("empty_object");
     }
     body_template("project_create")
-}
-
-pub(super) fn contracts_body_template(args: &ContractsArgs) -> Value {
-    if args.assign_project {
-        return body_template("contracts_assign_project");
-    }
-    body_template("empty_object")
 }
 
 pub(super) fn release_body_template(args: &ReleasesArgs) -> Value {
@@ -269,12 +261,6 @@ pub(super) fn body_template(kind: &str) -> Value {
                         }
                     }
                 ]
-            })
-        }
-        "contracts_assign_project" => {
-            json!({
-                "project_id": "<project-uuid>",
-                "assertion_adopter_ids": ["<adopter-id>"]
             })
         }
         "empty_object" => json!({}),

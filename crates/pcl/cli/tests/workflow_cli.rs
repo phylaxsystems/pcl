@@ -168,18 +168,6 @@ fn workflow_body_templates_cover_project_release_families() {
     );
     assert_body_template_fields(
         temp_dir.path(),
-        "contracts",
-        &[
-            "contracts",
-            "--api-url",
-            api,
-            "--assign-project",
-            "--body-template",
-        ],
-        &["project_id", "assertion_adopter_ids"],
-    );
-    assert_body_template_fields(
-        temp_dir.path(),
         "releases",
         &[
             "releases",
@@ -466,4 +454,43 @@ fn export_incidents_cli_writes_checkpoint_errors_and_resume_command() {
     page_1.assert();
     page_2.assert();
     page_3.assert();
+}
+
+#[test]
+fn contract_views_keep_envelopes_and_detail_guidance() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let mut server = mockito::Server::new();
+    write_valid_auth_config_for_platform(config_dir.path(), &server.url());
+    let project = "11111111-1111-4111-8111-111111111111";
+    let body = serde_json::json!({"data": {"contracts": [{"adopterId": "adopter-1"}]}});
+    for (suffix, detail) in [("", false), ("/adopter-1", true)] {
+        let path = format!("/api/v1/views/projects/{project}/contracts{suffix}");
+        let request = server
+            .mock("GET", path.as_str())
+            .match_header("authorization", "Bearer test-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body.to_string())
+            .expect(1)
+            .create();
+        let url = server.url();
+        let mut args = vec!["contracts", "--api-url", &url, "--project", project];
+        if detail {
+            args.extend(["--adopter-id", "adopter-1"]);
+        }
+        let envelope = assert_json_success(&run_pcl(config_dir.path(), &args), "contracts");
+        assert_eq!(envelope["status"], "ok");
+        assert_eq!(envelope["schema_version"], "pcl.envelope.v1");
+        assert_eq!(envelope["data"], body);
+        let expected = if detail {
+            format!("pcl contracts --project {project}")
+        } else {
+            format!("pcl contracts --project {project} --adopter-id adopter-1")
+        };
+        assert_eq!(
+            envelope["next_actions"],
+            serde_json::json!([format!("{expected} --json")])
+        );
+        request.assert();
+    }
 }
