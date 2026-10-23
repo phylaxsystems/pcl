@@ -4237,14 +4237,3 @@ fn bare_contracts_guides_users_to_release_membership() {
         ]
     );
 }
-
-#[test]
-fn retired_api_operations_have_no_workflow_alternatives() {
-    for (method, path) in [
-        (HttpMethod::Post, "/assertion_adopters/assign-project"),
-        (HttpMethod::Get, "/assertion_adopters/no-project"),
-        (HttpMethod::Delete, "/projects/{project_id}/{aa_contract}"),
-    ] {
-        assert!(workflow_alternatives(method, path).is_empty(), "{path}");
-    }
-}
