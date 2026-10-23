@@ -274,11 +274,11 @@ fn parses_key_values() {
 #[test]
 fn parses_inline_query_strings() {
     let (path, query) = split_path_and_inline_query(
-        "/projects/project-1/incidents?environment=production&limit=50",
+        "/projects/project-1/invalidations?environment=production&limit=50",
     )
     .unwrap();
 
-    assert_eq!(path, "/projects/project-1/incidents");
+    assert_eq!(path, "/projects/project-1/invalidations");
     assert_eq!(
         query,
         vec![
@@ -292,9 +292,9 @@ fn parses_inline_query_strings() {
 fn lists_and_inspects_operations() {
     let spec = json!({
         "paths": {
-            "/views/public/incidents": {
+            "/views/public/invalidations": {
                 "get": {
-                    "operationId": "get_views_public_incidents",
+                    "operationId": "views.publicInvalidations.getPublicInvalidations",
                     "summary": "Get public incidents",
                     "tags": ["views"]
                 }
@@ -304,11 +304,20 @@ fn lists_and_inspects_operations() {
 
     let operations = list_operations(&spec, Some("incidents"), Some(HttpMethod::Get)).unwrap();
     assert_eq!(operations.len(), 1);
-    assert_eq!(operations[0].operation_id, "get_views_public_incidents");
+    assert_eq!(
+        operations[0].operation_id,
+        "views.publicInvalidations.getPublicInvalidations"
+    );
 
-    let operation = inspect_operation(&spec, "get_views_public_incidents", None, false).unwrap();
+    let operation = inspect_operation(
+        &spec,
+        "views.publicInvalidations.getPublicInvalidations",
+        None,
+        false,
+    )
+    .unwrap();
     assert_eq!(operation["method"], "GET");
-    assert_eq!(operation["path"], "/views/public/incidents");
+    assert_eq!(operation["path"], "/views/public/invalidations");
 }
 
 #[test]
@@ -385,18 +394,18 @@ fn openapi_call_commands_include_required_inputs() {
 fn openapi_next_actions_prefer_runnable_safe_workflow_examples() {
     let spec = json!({
         "paths": {
-            "/incidents/{incident_id}": {
+            "/invalidations/{invalidation_id}": {
                 "get": {
-                    "operationId": "get_incidents_incident_id",
+                    "operationId": "getInvalidation",
                     "summary": "Get incident details",
                     "parameters": [
-                        {"name": "incident_id", "in": "path", "required": true, "schema": {"type": "string"}}
+                        {"name": "invalidation_id", "in": "path", "required": true, "schema": {"type": "string"}}
                     ]
                 }
             },
-            "/views/public/incidents": {
+            "/views/public/invalidations": {
                 "get": {
-                    "operationId": "get_views_public_incidents",
+                    "operationId": "views.publicInvalidations.getPublicInvalidations",
                     "summary": "Get public incidents"
                 }
             }
@@ -409,7 +418,7 @@ fn openapi_next_actions_prefer_runnable_safe_workflow_examples() {
         next_actions_for_operations(&operations),
         vec![
             "pcl incidents --limit 5 --json".to_string(),
-            "pcl api inspect get_views_public_incidents --json".to_string(),
+            "pcl api inspect views.publicInvalidations.getPublicInvalidations --json".to_string(),
         ]
     );
 }
@@ -420,7 +429,7 @@ fn openapi_next_actions_skip_destructive_workflow_examples() {
         "paths": {
             "/projects/{project_id}/protocol-manager": {
                 "delete": {
-                    "operationId": "delete_projects_project_id_protocol_manager",
+                    "operationId": "projects.deleteProtocolManager",
                     "summary": "Clear protocol manager for a project",
                     "tags": ["projects"],
                     "parameters": [
@@ -428,7 +437,7 @@ fn openapi_next_actions_skip_destructive_workflow_examples() {
                     ]
                 },
                 "post": {
-                    "operationId": "post_projects_project_id_protocol_manager",
+                    "operationId": "projects.setProtocolManager",
                     "summary": "Set protocol manager for a project",
                     "tags": ["projects"],
                     "parameters": [
@@ -452,17 +461,12 @@ fn openapi_next_actions_skip_destructive_workflow_examples() {
         next_actions_for_operations(&operations),
         vec![
             "pcl protocol-manager --project <project-ref> --set --body-template --json".to_string(),
-            "pcl api inspect post_projects_project_id_protocol_manager --json".to_string(),
+            "pcl api inspect projects.setProtocolManager --json".to_string(),
         ]
     );
 
-    let inspected_delete = inspect_operation(
-        &spec,
-        "delete_projects_project_id_protocol_manager",
-        None,
-        false,
-    )
-    .unwrap();
+    let inspected_delete =
+        inspect_operation(&spec, "projects.deleteProtocolManager", None, false).unwrap();
     assert_eq!(
         command_next_actions(&inspected_delete),
         vec!["Review data.workflow_alternatives before running mutating workflow commands"]
@@ -569,22 +573,22 @@ fn public_openapi_call_commands_opt_out_of_local_auth() {
     assert_eq!(
         example_call(
             HttpMethod::Get,
-            "/views/public/incidents",
+            "/views/public/invalidations",
             &public_incidents
         ),
-        "pcl api call get /views/public/incidents --allow-unauthenticated --query 'limit=<limit>'"
+        "pcl api call get /views/public/invalidations --allow-unauthenticated --query 'limit=<limit>'"
     );
     assert_eq!(
-        example_call(HttpMethod::Get, "/public/incidents", &public_incidents),
-        "pcl api call get /public/incidents --allow-unauthenticated --query 'limit=<limit>'"
+        example_call(HttpMethod::Get, "/public/invalidations", &public_incidents),
+        "pcl api call get /public/invalidations --allow-unauthenticated --query 'limit=<limit>'"
     );
     assert_eq!(
-        example_call(HttpMethod::Get, "/views/incidents/incident-1", &health),
-        "pcl api call get /views/incidents/incident-1"
+        example_call(HttpMethod::Get, "/views/invalidations/incident-1", &health),
+        "pcl api call get /views/invalidations/incident-1"
     );
     assert_eq!(
-        example_call(HttpMethod::Get, "/incidents/incident-1", &health),
-        "pcl api call get /incidents/incident-1"
+        example_call(HttpMethod::Get, "/invalidations/incident-1", &health),
+        "pcl api call get /invalidations/incident-1"
     );
 
     let public_with_optional_auth = json!({
@@ -670,7 +674,7 @@ fn api_coverage_matches_request_log_to_openapi_operations() {
             "timestamp": "2026-05-07T00:00:00Z",
             "kind": "raw",
             "method": "GET",
-            "path": "/views/projects/project-1/incidents",
+            "path": "/views/projects/project-1/invalidations",
             "status": 200,
             "success": true,
             "request_id": "req_ok",
@@ -687,26 +691,26 @@ fn api_coverage_matches_request_log_to_openapi_operations() {
             "status": 500,
             "success": false,
             "request_id": "req_500",
-            "operation_id": "post_projects",
+            "operation_id": "projects.createProject",
         }),
     )
     .expect("append second request");
 
     let spec = json!({
         "paths": {
-            "/views/projects/{projectId}/incidents": {
+            "/views/projects/{projectId}/invalidations": {
                 "get": {
                     "operationId": "get_project_incidents"
                 }
             },
             "/projects": {
                 "post": {
-                    "operationId": "post_projects"
+                    "operationId": "projects.createProject"
                 }
             },
             "/health": {
                 "get": {
-                    "operationId": "get_health"
+                    "operationId": "health"
                 }
             }
         }
@@ -720,9 +724,9 @@ fn api_coverage_matches_request_log_to_openapi_operations() {
     assert_eq!(coverage["write_no_2xx_count"], 1);
     assert_eq!(
         coverage["no_2xx"][0]["operation_id"],
-        json!("post_projects")
+        json!("projects.createProject")
     );
-    assert_eq!(coverage["no_hit"][0]["operation_id"], json!("get_health"));
+    assert_eq!(coverage["no_hit"][0]["operation_id"], json!("health"));
 }
 
 #[test]
@@ -741,7 +745,7 @@ fn builds_public_incidents_workflow_request() {
     })
     .unwrap();
 
-    assert_eq!(request.path, "/views/public/incidents");
+    assert_eq!(request.path, "/views/public/invalidations");
     assert!(!request.require_auth);
     assert_eq!(request.query, vec![("limit".to_string(), "5".to_string())]);
 }
@@ -757,7 +761,7 @@ fn builds_project_incidents_workflow_request() {
     })
     .unwrap();
 
-    assert_eq!(request.path, "/views/projects/project-1/incidents");
+    assert_eq!(request.path, "/views/projects/project-1/invalidations");
     assert!(request.require_auth);
     assert!(
         request
@@ -785,7 +789,7 @@ fn builds_project_incident_stats_workflow_request() {
     })
     .unwrap();
 
-    assert_eq!(request.path, "/projects/project-1/incidents/stats");
+    assert_eq!(request.path, "/projects/project-1/invalidations/stats");
     assert_eq!(request.method.openapi_key(), "get");
     assert!(request.require_auth);
 }
@@ -797,7 +801,7 @@ fn incident_detail_and_trace_require_auth() {
         ..incidents_args()
     })
     .unwrap();
-    assert_eq!(detail.path, "/views/incidents/incident-1");
+    assert_eq!(detail.path, "/views/invalidations/incident-1");
     assert!(detail.require_auth);
 
     let trace = incidents_request(&IncidentsArgs {
@@ -808,7 +812,7 @@ fn incident_detail_and_trace_require_auth() {
     .unwrap();
     assert_eq!(
         trace.path,
-        "/views/incidents/incident-1/transactions/tx-1/trace"
+        "/views/invalidations/incident-1/transactions/tx-1/trace"
     );
     assert!(trace.require_auth);
 }
@@ -825,7 +829,7 @@ fn builds_incident_trace_retry_request() {
 
     assert_eq!(
         request.path,
-        "/incidents/incident-1/transactions/tx-1/trace/retry"
+        "/invalidations/incident-1/transactions/tx-1/trace/retry"
     );
     assert_eq!(request.method.openapi_key(), "post");
     assert_eq!(request.body.as_deref(), Some("{}"));
@@ -863,7 +867,7 @@ fn incident_detail_next_action_uses_invalidating_transaction_id() {
 async fn paginates_incident_list_workflows() {
     let mut server = mockito::Server::new_async().await;
     let page_1 = server
-        .mock("GET", "/api/v1/views/public/incidents")
+        .mock("GET", "/api/v1/views/public/invalidations")
         .match_query(mockito::Matcher::AllOf(vec![
             mockito::Matcher::UrlEncoded("page".into(), "1".into()),
             mockito::Matcher::UrlEncoded("limit".into(), "2".into()),
@@ -874,7 +878,7 @@ async fn paginates_incident_list_workflows() {
         .create_async()
         .await;
     let page_2 = server
-        .mock("GET", "/api/v1/views/public/incidents")
+        .mock("GET", "/api/v1/views/public/invalidations")
         .match_query(mockito::Matcher::AllOf(vec![
             mockito::Matcher::UrlEncoded("page".into(), "2".into()),
             mockito::Matcher::UrlEncoded("limit".into(), "2".into()),
@@ -887,7 +891,7 @@ async fn paginates_incident_list_workflows() {
     let api = test_api(server.url(), true);
     let request = test_workflow_request(
         HttpMethod::Get,
-        "get_views_public_incidents",
+        "views.publicInvalidations.getPublicInvalidations",
         false,
         Vec::<String>::new(),
     );
@@ -922,7 +926,7 @@ async fn incident_workflow_pagination_rejects_zero_limit() {
     let api = test_api("https://app.phylax.systems", true);
     let request = test_workflow_request(
         HttpMethod::Get,
-        "get_views_public_incidents",
+        "views.publicInvalidations.getPublicInvalidations",
         false,
         Vec::<String>::new(),
     );
@@ -959,13 +963,13 @@ async fn authenticated_project_slug_resolution_attaches_auth() {
     let resolve_path = format!(
         "/api/v1{}",
         generated_operation_path(
-            "get_projects_resolve_project_ref",
+            "projects.resolveProjectRef",
             &[("project_ref", "private-slug")]
         )
         .unwrap()
     );
     let detail_path =
-        generated_operation_path("get_projects_project_id", &[("project_id", project_id)]).unwrap();
+        generated_operation_path("projects.getProject", &[("project_id", project_id)]).unwrap();
     let detail_mock_path = format!("/api/v1{detail_path}");
     let resolve = server
         .mock("GET", resolve_path.as_str())
@@ -994,7 +998,7 @@ async fn authenticated_project_slug_resolution_attaches_auth() {
     // The credentials were issued by the mock platform.
     config.set_test_platform(&server.url());
     let request = test_workflow_request_for_operation(
-        WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id")
+        WorkflowOperation::new(HttpMethod::Get, "projects.getProject")
             .path_param("project_id", "private-slug"),
         true,
         Vec::<String>::new(),
@@ -1034,7 +1038,7 @@ async fn project_slug_resolution_errors_preserve_http_metadata() {
     // The credentials were issued by the mock platform.
     config.set_test_platform(&server.url());
     let request = test_workflow_request_for_operation(
-        WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id")
+        WorkflowOperation::new(HttpMethod::Get, "projects.getProject")
             .path_param("project_id", "missing-slug"),
         true,
         Vec::<String>::new(),
@@ -1132,7 +1136,7 @@ async fn public_workflows_do_not_attach_expired_stored_tokens() {
             "search",
             test_workflow_request(
                 HttpMethod::Get,
-                "get_health",
+                "health",
                 false,
                 vec!["pcl search --health".to_string()],
             ),
@@ -1320,7 +1324,7 @@ async fn authenticated_workflow_refuses_a_foreign_platform_with_a_valid_token() 
             &mut config,
             &CliArgs::default(),
             "search",
-            test_workflow_request(HttpMethod::Get, "get_health", true, Vec::<String>::new()),
+            test_workflow_request(HttpMethod::Get, "health", true, Vec::<String>::new()),
             test_request_log_path(),
         )
         .await
@@ -1349,7 +1353,7 @@ async fn authenticated_workflow_refuses_to_refresh_against_a_foreign_platform() 
             &mut config,
             &CliArgs::default(),
             "search",
-            test_workflow_request(HttpMethod::Get, "get_health", true, Vec::<String>::new()),
+            test_workflow_request(HttpMethod::Get, "health", true, Vec::<String>::new()),
             test_request_log_path(),
         )
         .await
@@ -1364,7 +1368,7 @@ async fn authenticated_workflow_refuses_to_refresh_against_a_foreign_platform() 
 async fn public_raw_calls_do_not_attach_expired_stored_tokens() {
     let mut server = mockito::Server::new_async().await;
     let mock = server
-        .mock("GET", "/api/v1/views/public/incidents")
+        .mock("GET", "/api/v1/views/public/invalidations")
         .match_header("authorization", Matcher::Missing)
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -1376,14 +1380,14 @@ async fn public_raw_calls_do_not_attach_expired_stored_tokens() {
 
     let input = ApiRequestInput {
         method: HttpMethod::Get,
-        path: "/views/public/incidents",
+        path: "/views/public/invalidations",
         query: &[],
         header: &[],
         body: None,
         body_file: None,
         field: &[],
         require_auth: api
-            .raw_call_requires_auth(HttpMethod::Get, "/views/public/incidents")
+            .raw_call_requires_auth(HttpMethod::Get, "/views/public/invalidations")
             .unwrap(),
     };
     let output = api
@@ -1443,12 +1447,7 @@ async fn authenticated_workflow_retries_once_after_refresh_on_401() {
     // The credentials were issued by the mock platform.
     config.set_test_platform(&server.url());
     config.write_to_file(&cli_args).unwrap();
-    let request = test_workflow_request(
-        HttpMethod::Get,
-        "get_web_auth_me",
-        true,
-        Vec::<String>::new(),
-    );
+    let request = test_workflow_request(HttpMethod::Get, "web.auth.me", true, Vec::<String>::new());
 
     let result = api
         .call_workflow_result(&mut config, &cli_args, &request, test_request_log_path())
@@ -1469,7 +1468,7 @@ async fn raw_401_preserves_original_error_when_refresh_endpoint_is_missing() {
     let original = server
         .mock(
             "GET",
-            "/api/v1/projects/550e8400-e29b-41d4-a716-446655440000/incidents/stats",
+            "/api/v1/projects/550e8400-e29b-41d4-a716-446655440000/invalidations/stats",
         )
         .match_header("authorization", "Bearer old_access")
         .with_status(401)
@@ -1501,7 +1500,7 @@ async fn raw_401_preserves_original_error_when_refresh_endpoint_is_missing() {
     config.write_to_file(&cli_args).unwrap();
     let input = ApiRequestInput {
         method: HttpMethod::Get,
-        path: "/projects/550e8400-e29b-41d4-a716-446655440000/incidents/stats",
+        path: "/projects/550e8400-e29b-41d4-a716-446655440000/invalidations/stats",
         query: &[],
         header: &[],
         body: None,
@@ -1540,7 +1539,7 @@ async fn incident_stats_401_propagates_original_http_error() {
     let original = server
         .mock(
             "GET",
-            format!("/api/v1/projects/{project_id}/incidents/stats").as_str(),
+            format!("/api/v1/projects/{project_id}/invalidations/stats").as_str(),
         )
         .match_header("authorization", "Bearer old_access")
         .with_status(401)
@@ -1608,7 +1607,7 @@ fn builds_project_create_body_from_typed_flags() {
 
     assert_eq!(request.path, "/projects");
     assert_eq!(request.method.openapi_key(), "post");
-    assert_eq!(request.operation_id, "post_projects");
+    assert_eq!(request.operation_id, "projects.createProject");
     assert_eq!(
         serde_json::from_str::<Value>(request.body.as_deref().unwrap()).unwrap(),
         json!({
@@ -2001,7 +2000,7 @@ fn saved_projects_require_and_send_user_id() {
     })
     .unwrap();
     assert_eq!(request.path, "/projects/saved");
-    assert_eq!(request.operation_id, "get_projects_saved");
+    assert_eq!(request.operation_id, "projects.getSavedProjects");
     assert_eq!(
         request.query,
         vec![("user_id".to_string(), "user-1".to_string())]
@@ -2018,7 +2017,7 @@ fn projects_mine_uses_authenticated_home_view() {
 
     assert_eq!(request.path, "/views/projects/home");
     assert_eq!(request.method.openapi_key(), "get");
-    assert_eq!(request.operation_id, "get_views_projects_home");
+    assert_eq!(request.operation_id, "views.projectsHome.getProjectsHome");
     assert!(request.require_auth);
     assert_eq!(
         request.next_actions,
@@ -2084,10 +2083,7 @@ fn release_deploy_calldata_requires_and_sends_signer_address() {
         request.path,
         "/projects/project-1/releases/release-1/deploy-calldata"
     );
-    assert_eq!(
-        request.operation_id,
-        "get_projects_project_id_releases_release_id_deploy_calldata"
-    );
+    assert_eq!(request.operation_id, "projects.getReleaseDeployCalldata");
     assert_eq!(
         request.query,
         vec![("signerAddress".to_string(), "0xsigner".to_string())]
@@ -2106,10 +2102,7 @@ fn release_check_progress_and_retry_are_first_class_workflows() {
         progress.path,
         "/projects/project-1/releases/release-1/backtest-progress"
     );
-    assert_eq!(
-        progress.operation_id,
-        "get_projects_project_id_releases_release_id_backtest_progress"
-    );
+    assert_eq!(progress.operation_id, "projects.getBacktestProgress");
     assert!(progress.body.is_none());
 
     let error = releases_request(&ReleasesArgs {
@@ -2131,10 +2124,7 @@ fn release_check_progress_and_retry_are_first_class_workflows() {
         retry.path,
         "/projects/project-1/releases/release-1/checks/check-1/retry"
     );
-    assert_eq!(
-        retry.operation_id,
-        "post_projects_project_id_releases_release_id_checks_check_id_retry"
-    );
+    assert_eq!(retry.operation_id, "projects.retryReleaseCheck");
     assert_eq!(retry.method, HttpMethod::Post);
     assert_eq!(retry.body, Some(json!({}).to_string()));
 }
@@ -2165,7 +2155,7 @@ fn raw_operations_advertise_workflow_alternatives_when_available() {
                 .is_some_and(|example| example.contains("--provider slack --test"))
     }));
 
-    let legacy = workflow_alternatives(HttpMethod::Get, "/public/incidents");
+    let legacy = workflow_alternatives(HttpMethod::Get, "/public/invalidations");
     assert!(legacy.iter().any(|alternative| {
         alternative["workflow"] == "incidents"
             && alternative["example"] == "pcl incidents --limit 5 --json"
@@ -2231,7 +2221,7 @@ fn raw_api_policy_classifies_only_real_raw_fallbacks() {
     );
     assert_policy(
         HttpMethod::Get,
-        "/public/incidents",
+        "/public/invalidations",
         json!({}),
         true,
         "prefer_workflow",
@@ -2379,7 +2369,7 @@ fn empty_object_workflows_send_body_by_default() {
     assert_eq!(retry_trace.method.openapi_key(), "post");
     assert_eq!(
         retry_trace.path,
-        "/incidents/incident-1/transactions/tx-1/trace/retry"
+        "/invalidations/incident-1/transactions/tx-1/trace/retry"
     );
     assert_eq!(retry_trace.body.as_deref(), Some("{}"));
 
@@ -2429,7 +2419,7 @@ async fn workflow_http_errors_include_response_body() {
         .await;
     let api = test_api(server.url(), true);
     let mut config = CliConfig::default();
-    let request = test_workflow_request(HttpMethod::Get, "get_health", false, Vec::<String>::new());
+    let request = test_workflow_request(HttpMethod::Get, "health", false, Vec::<String>::new());
 
     let error = api
         .call_workflow_result(
@@ -2476,12 +2466,7 @@ async fn workflow_success_envelopes_include_request_provenance() {
         .create_async()
         .await;
     let api = test_api(server.url(), true);
-    let request = test_workflow_request(
-        HttpMethod::Get,
-        "get_health",
-        false,
-        vec!["next".to_string()],
-    );
+    let request = test_workflow_request(HttpMethod::Get, "health", false, vec!["next".to_string()]);
     let mut config = CliConfig::default();
 
     let envelope = api
@@ -2511,7 +2496,7 @@ async fn workflow_success_envelopes_include_request_provenance() {
 async fn raw_api_call_accepts_inline_query_strings() {
     let mut server = mockito::Server::new_async().await;
     let mock = server
-        .mock("GET", "/api/v1/projects/project-1/incidents")
+        .mock("GET", "/api/v1/projects/project-1/invalidations")
         .match_query(mockito::Matcher::AllOf(vec![
             mockito::Matcher::UrlEncoded("environment".into(), "production".into()),
             mockito::Matcher::UrlEncoded("limit".into(), "50".into()),
@@ -2530,7 +2515,7 @@ async fn raw_api_call_accepts_inline_query_strings() {
             &CliArgs::default(),
             ApiRequestInput {
                 method: HttpMethod::Get,
-                path: "/projects/project-1/incidents?environment=production",
+                path: "/projects/project-1/invalidations?environment=production",
                 query: &["limit=50".to_string()],
                 header: &[],
                 body: None,
@@ -2543,7 +2528,10 @@ async fn raw_api_call_accepts_inline_query_strings() {
         .await
         .unwrap();
 
-    assert_eq!(response["request"]["path"], "/projects/project-1/incidents");
+    assert_eq!(
+        response["request"]["path"],
+        "/projects/project-1/invalidations"
+    );
     assert_eq!(
         response["request"]["query"],
         json!([
@@ -2558,7 +2546,7 @@ async fn raw_api_call_accepts_inline_query_strings() {
 async fn raw_api_call_paginates_any_array_response() {
     let mut server = mockito::Server::new_async().await;
     let page_1 = server
-        .mock("GET", "/api/v1/views/public/incidents")
+        .mock("GET", "/api/v1/views/public/invalidations")
         .match_query(mockito::Matcher::AllOf(vec![
             mockito::Matcher::UrlEncoded("environment".into(), "production".into()),
             mockito::Matcher::UrlEncoded("page".into(), "1".into()),
@@ -2570,7 +2558,7 @@ async fn raw_api_call_paginates_any_array_response() {
         .create_async()
         .await;
     let page_2 = server
-        .mock("GET", "/api/v1/views/public/incidents")
+        .mock("GET", "/api/v1/views/public/invalidations")
         .match_query(mockito::Matcher::AllOf(vec![
             mockito::Matcher::UrlEncoded("environment".into(), "production".into()),
             mockito::Matcher::UrlEncoded("page".into(), "2".into()),
@@ -2590,7 +2578,7 @@ async fn raw_api_call_paginates_any_array_response() {
             &CliArgs::default(),
             ApiRequestInput {
                 method: HttpMethod::Get,
-                path: "/views/public/incidents?environment=production",
+                path: "/views/public/invalidations?environment=production",
                 query: &[],
                 header: &[],
                 body: None,
@@ -2684,7 +2672,7 @@ async fn raw_api_call_pagination_rejects_non_get_requests() {
             &CliArgs::default(),
             ApiRequestInput {
                 method: HttpMethod::Post,
-                path: "/views/public/incidents",
+                path: "/views/public/invalidations",
                 query: &[],
                 header: &[],
                 body: None,
@@ -2994,7 +2982,7 @@ fn human_api_output_formats_incident_lists_for_people() {
                     "fetchedAt": "2026-05-09T23:30:09.618Z"
                 }
             },
-            "request": {"method": "GET", "path": "/views/public/incidents"},
+            "request": {"method": "GET", "path": "/views/public/invalidations"},
             "response": {"status": 200, "request_id": "req_123"},
             "next_actions": ["pcl incidents --incident-id 7dfe71ee-9d69-41bb-b33c-992c0fbd684f"],
         }),
@@ -3630,7 +3618,7 @@ fn human_incident_detail_uses_readable_sections() {
             "status": "ok",
             "data": {
                 "data": {
-                    "incident_id": "incident-1",
+                    "invalidation_id": "incident-1",
                     "public_reference_id": "ref-1",
                     "assertion_id": "assertion-1",
                     "assertion_adopter_id": "adopter-1",
@@ -3650,7 +3638,7 @@ fn human_incident_detail_uses_readable_sections() {
                     "invalidating_transactions": [{
                         "id": "tx-row-1",
                         "transaction_hash": "0x8b42e518623666080dcda9fdc5bdd73473834372ccfc8d634d0836f4a55308a1",
-                        "incident_timestamp": "2026-05-11T18:17:01+00:00",
+                        "invalidation_timestamp": "2026-05-11T18:17:01+00:00",
                         "landed_on_chain": false,
                         "debug_traces": [{"status": "completed"}]
                     }],
@@ -3722,7 +3710,7 @@ fn human_output_formats_schema_action_for_people() {
                     "name": "list_public",
                     "auth": false,
                     "method": "GET",
-                    "path": "/views/public/incidents",
+                    "path": "/views/public/invalidations",
                     "optional_flags": ["--page", "--limit"],
                     "example": "pcl incidents --limit 5 --json"
                 }
@@ -3738,7 +3726,7 @@ fn human_output_formats_schema_action_for_people() {
         &[
             "Schema: incidents",
             "Action: list_public",
-            "Request: GET /views/public/incidents",
+            "Request: GET /views/public/invalidations",
             "Example: pcl incidents --limit 5",
         ],
     );
@@ -3752,14 +3740,14 @@ fn human_output_formats_api_discovery_for_people() {
             "data": {
                 "operations": [
                     {
-                        "operation_id": "get_views_public_incidents",
+                        "operation_id": "views.publicInvalidations.getPublicInvalidations",
                         "method": "GET",
-                        "path": "/views/public/incidents",
+                        "path": "/views/public/invalidations",
                         "raw_api_use": {"policy": "prefer_workflow"}
                     }
                 ]
             },
-            "next_actions": ["pcl api inspect get_views_public_incidents --json"],
+            "next_actions": ["pcl api inspect views.publicInvalidations.getPublicInvalidations --json"],
         }),
         false,
     )
@@ -3770,7 +3758,7 @@ fn human_output_formats_api_discovery_for_people() {
         &[
             "Operations\n",
             "GET",
-            "/views/public/incidents",
+            "/views/public/invalidations",
             "Prefer workflow",
         ],
     );
@@ -3972,7 +3960,7 @@ fn manifest_lists_structured_actions_for_every_workflow() {
     assert!(
         incident_actions.iter().any(|action| {
             action["name"] == "stats"
-                && action["path"] == "/projects/{project_id}/incidents/stats"
+                && action["path"] == "/projects/{project_id}/invalidations/stats"
                 && action["required_flags"] == json!(["--project"])
         }),
         "manifest must include project incident stats workflow"
@@ -4102,7 +4090,7 @@ fn raw_api_parser_rejects_workflow_aliases() {
 
 #[test]
 fn parser_accepts_uppercase_http_methods_for_raw_api_calls() {
-    assert!(ApiArgs::try_parse_from(["api", "call", "GET", "/views/public/incidents"]).is_ok());
+    assert!(ApiArgs::try_parse_from(["api", "call", "GET", "/views/public/invalidations"]).is_ok());
     assert!(ApiArgs::try_parse_from(["api", "list", "--method", "GET"]).is_ok());
 }
 
@@ -4235,5 +4223,31 @@ fn bare_contracts_guides_users_to_release_membership() {
             "pcl contracts --project <project-ref>",
             "pcl releases list <project-ref>"
         ]
+    );
+}
+
+#[test]
+fn invalidation_list_ids_keep_incident_cli_guidance() {
+    for key in ["invalidationId", "invalidation_id"] {
+        let actions = incidents_next_actions(
+            &json!({"data": {"items": [{key: "invalidation-1"}]}}),
+            &incidents_args(),
+            vec![],
+        );
+        assert_eq!(actions[0], "pcl incidents --incident-id invalidation-1");
+    }
+}
+
+#[test]
+fn public_incidents_reject_unsupported_dev_mode_without_a_request() {
+    let result = incidents_request(&IncidentsArgs {
+        dev_mode: Some("true".to_string()),
+        ..incidents_args()
+    });
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("no longer supports --dev-mode")
     );
 }

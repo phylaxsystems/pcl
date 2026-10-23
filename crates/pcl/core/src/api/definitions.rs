@@ -210,7 +210,7 @@ pub(super) fn agent_examples() -> Vec<Value> {
         "pcl releases list <project-ref>",
         "pcl access members <project-ref>",
         "pcl integrations --project <project-ref> --provider slack",
-        "pcl api list --filter incidents",
+        "pcl api list --filter invalidations",
     ]
     .into_iter()
     .map(agent_command)
@@ -238,9 +238,9 @@ fn raw_api_command_manifests() -> Vec<Value> {
             "description": "Execute any endpoint below /api/v1. Query strings in PATH and repeated --query flags are both accepted; --field merges simple JSON object body fields; GET calls can paginate any array response with --paginate.",
             "output": "request and response status/body; non-2xx responses return structured error envelopes with request_id when the API provides one. Raw calls log operation_id when the live OpenAPI manifest can resolve the method/path.",
             "actions": [
-                {"name": "execute", "method": "*", "path": "<path>", "auth": "default", "example": agent_command("pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated")},
-                {"name": "paginate", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate"], "optional_flags": ["--all", "--page", "--limit", "--page-param", "--limit-param", "--max-pages", "--jsonl", "--output"], "example": agent_command("pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --output incidents.json")},
-                {"name": "export_jsonl", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate", "--jsonl", "--output"], "example": agent_command("pcl api call get /views/public/incidents --paginate incidents --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl")}
+                {"name": "execute", "method": "*", "path": "<path>", "auth": "default", "example": agent_command("pcl api call get /views/public/invalidations --query limit=5 --allow-unauthenticated")},
+                {"name": "paginate", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate"], "optional_flags": ["--all", "--page", "--limit", "--page-param", "--limit-param", "--max-pages", "--jsonl", "--output"], "example": agent_command("pcl api call get /views/public/invalidations --paginate items --limit 50 --allow-unauthenticated --output incidents.json")},
+                {"name": "export_jsonl", "method": "GET", "path": "<path>", "auth": "default", "required_flags": ["--paginate", "--jsonl", "--output"], "example": agent_command("pcl api call get /views/public/invalidations --paginate items --limit 50 --allow-unauthenticated --jsonl --output incidents.jsonl")}
             ],
         }),
         json!({

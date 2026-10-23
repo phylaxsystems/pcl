@@ -539,7 +539,11 @@ fn render_project_detail(output: &mut String, data: &Value) -> bool {
 }
 
 fn render_incident_detail(output: &mut String, data: &Value) -> bool {
-    let Some(incident_id) = data.get("incident_id").and_then(Value::as_str) else {
+    let Some(incident_id) = data
+        .get("invalidation_id")
+        .or_else(|| data.get("incident_id"))
+        .and_then(Value::as_str)
+    else {
         return false;
     };
     if data.get("invalidating_transactions").is_none() && data.get("transaction_count").is_none() {
@@ -614,7 +618,8 @@ fn render_incident_detail(output: &mut String, data: &Value) -> bool {
         .expect("write to string");
         for (index, tx) in transactions.iter().take(shown).enumerate() {
             let time = tx
-                .get("incident_timestamp")
+                .get("invalidation_timestamp")
+                .or_else(|| tx.get("incident_timestamp"))
                 .and_then(Value::as_str)
                 .map_or_else(|| "-".to_string(), format_timestamp);
             let hash = first_string_field(tx, &["transaction_hash", "hash", "tx_hash"])

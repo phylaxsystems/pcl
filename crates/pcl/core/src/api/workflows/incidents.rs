@@ -16,6 +16,12 @@ use serde_json::Value;
 pub(in crate::api) fn incidents_request(
     args: &IncidentsArgs,
 ) -> Result<WorkflowRequest, ApiCommandError> {
+    if args.dev_mode.is_some() {
+        return Err(ApiCommandError::InvalidWorkflowWithActions {
+            message: "OpenAPI 22 no longer supports --dev-mode for public incidents".to_string(),
+            next_actions: vec!["pcl incidents --limit 5".to_string()],
+        });
+    }
     if args.all && (args.incident_id.is_some() || args.stats || args.retry_trace) {
         return Err(ApiCommandError::InvalidWorkflow {
             message: "--all is only supported for incident list workflows".to_string(),
@@ -45,12 +51,9 @@ pub(in crate::api) fn incidents_request(
         if args.retry_trace {
             let tx_id = required_arg(args.tx_id.as_deref(), "--tx-id")?;
             return workflow_operation_with_body(
-                WorkflowOperation::new(
-                    HttpMethod::Post,
-                    "post_incidents_incident_id_transactions_invalidating_transaction_id_trace_retry",
-                )
-                .path_param("incident_id", incident_id)
-                .path_param("invalidating_transaction_id", &tx_id),
+                WorkflowOperation::new(HttpMethod::Post, "retryTrace")
+                    .path_param("invalidation_id", incident_id)
+                    .path_param("invalidating_transaction_id", &tx_id),
                 true,
                 Some("{}".to_string()),
                 vec![format!(
@@ -62,29 +65,31 @@ pub(in crate::api) fn incidents_request(
             WorkflowRequest::from_operation(
                 WorkflowOperation::new(
                     HttpMethod::Get,
-                    "get_views_incidents_incident_id_transactions_invalidating_transaction_id_trace",
+                    "views.invalidationTrace.getInvalidationTrace",
                 )
-                .path_param("incidentId", incident_id)
+                .path_param("invalidationId", incident_id)
                 .path_param("invalidatingTransactionId", tx_id),
                 query,
                 None,
                 true,
                 vec![
                     "pcl incidents --limit 5".to_string(),
-                    "pcl api inspect get_views_incidents_incident_id_transactions_invalidating_transaction_id_trace"
-                        .to_string(),
+                    "pcl api inspect views.invalidationTrace.getInvalidationTrace".to_string(),
                 ],
             )?
         } else {
             WorkflowRequest::from_operation(
-                WorkflowOperation::new(HttpMethod::Get, "get_views_incidents_incident_id")
-                    .path_param("incidentId", incident_id),
+                WorkflowOperation::new(
+                    HttpMethod::Get,
+                    "views.invalidationDetail.getInvalidationDetail",
+                )
+                .path_param("invalidationId", incident_id),
                 query,
                 None,
                 true,
                 vec![
                     "pcl incidents --limit 5".to_string(),
-                    "pcl api inspect get_views_incidents_incident_id".to_string(),
+                    "pcl api inspect views.invalidationDetail.getInvalidationDetail".to_string(),
                 ],
             )?
         };
@@ -94,7 +99,7 @@ pub(in crate::api) fn incidents_request(
     if let Some(project_id) = &args.project_id {
         if args.stats {
             return WorkflowRequest::from_operation(
-                WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id_incidents_stats")
+                WorkflowOperation::new(HttpMethod::Get, "getInvalidationStats")
                     .path_param("project_id", project_id),
                 query,
                 None,
@@ -114,8 +119,11 @@ pub(in crate::api) fn incidents_request(
         push_query(&mut query, "fromDate", args.from_date.as_deref());
         push_query(&mut query, "toDate", args.to_date.as_deref());
         return WorkflowRequest::from_operation(
-            WorkflowOperation::new(HttpMethod::Get, "get_views_projects_project_id_incidents")
-                .path_param("projectId", project_id),
+            WorkflowOperation::new(
+                HttpMethod::Get,
+                "views.projectInvalidations.getProjectInvalidations",
+            )
+            .path_param("projectId", project_id),
             query,
             None,
             true,
@@ -128,9 +136,11 @@ pub(in crate::api) fn incidents_request(
 
     push_query(&mut query, "network", args.network);
     push_query(&mut query, "sort", args.sort.as_deref());
-    push_query(&mut query, "devMode", args.dev_mode.as_deref());
     WorkflowRequest::from_operation(
-        WorkflowOperation::new(HttpMethod::Get, "get_views_public_incidents"),
+        WorkflowOperation::new(
+            HttpMethod::Get,
+            "views.publicInvalidations.getPublicInvalidations",
+        ),
         query,
         None,
         false,
@@ -172,7 +182,17 @@ pub(in crate::api) fn incidents_next_actions(
         }
         return fallback;
     }
-    first_string_field(data, &["id", "incidentId", "incident_id"]).map_or(fallback, |incident_id| {
+    first_string_field(
+        data,
+        &[
+            "id",
+            "invalidationId",
+            "invalidation_id",
+            "incidentId",
+            "incident_id",
+        ],
+    )
+    .map_or(fallback, |incident_id| {
         vec![
             format!("pcl incidents --incident-id {incident_id}"),
             "pcl projects list --limit 10".to_string(),
@@ -184,14 +204,14 @@ workflow_definition!(
     "incidents",
     command: "pcl incidents [--project-id <id>] [--incident-id <id>] [--stats] [--limit <n>] [--all --output <file>]",
     description: "List public incidents, project incidents, fetch all incident pages, inspect incident detail, incident stats, or incident trace.",
-    output: "incident data from /views/public/incidents, /views/projects/{projectId}/incidents, /views/incidents/{incidentId}, or /projects/{project_id}/incidents/stats",
+    output: "incident data from /views/public/invalidations, /views/projects/{projectId}/invalidations, /views/invalidations/{invalidationId}, or /projects/{project_id}/invalidations/stats",
     policy: MachineRaw,
     actions: [
-        action!("list_public", false, "get_views_public_incidents", "pcl incidents --limit 5", optional: ["--page", "--limit", "--network", "--sort", "--dev-mode", "--all", "--max-pages", "--output"]),
-        action!("list_project", true, "get_views_projects_project_id_incidents", "pcl incidents --project <project-ref> --all --limit 50 --output incidents.json", required: ["--project"], optional: ["--page", "--limit", "--assertion-id", "--adopter-id", "--environment", "--from", "--to", "--all", "--max-pages", "--output"]),
-        action!("stats", true, "get_projects_project_id_incidents_stats", "pcl incidents --project <project-ref> --stats", required: ["--project"]),
-        action!("detail", true, "get_views_incidents_incident_id", "pcl incidents --incident-id <incident-id>", required: ["--incident-id"]),
-        action!("trace", true, "get_views_incidents_incident_id_transactions_invalidating_transaction_id_trace", "pcl incidents --incident-id <incident-id> --tx-id <invalidating-transaction-id>", required: ["--incident-id", "--tx-id"]),
-        action!("retry_trace", true, "post_incidents_incident_id_transactions_invalidating_transaction_id_trace_retry", "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace", required: ["--incident-id", "--tx-id"], body_template: "empty_object"),
+        action!("list_public", false, "views.publicInvalidations.getPublicInvalidations", "pcl incidents --limit 5", optional: ["--page", "--limit", "--network", "--sort", "--all", "--max-pages", "--output"]),
+        action!("list_project", true, "views.projectInvalidations.getProjectInvalidations", "pcl incidents --project <project-ref> --all --limit 50 --output incidents.json", required: ["--project"], optional: ["--page", "--limit", "--assertion-id", "--adopter-id", "--environment", "--from", "--to", "--all", "--max-pages", "--output"]),
+        action!("stats", true, "getInvalidationStats", "pcl incidents --project <project-ref> --stats", required: ["--project"]),
+        action!("detail", true, "views.invalidationDetail.getInvalidationDetail", "pcl incidents --incident-id <incident-id>", required: ["--incident-id"]),
+        action!("trace", true, "views.invalidationTrace.getInvalidationTrace", "pcl incidents --incident-id <incident-id> --tx-id <invalidating-transaction-id>", required: ["--incident-id", "--tx-id"]),
+        action!("retry_trace", true, "retryTrace", "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace", required: ["--incident-id", "--tx-id"], body_template: "empty_object"),
     ],
 );

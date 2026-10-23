@@ -19,21 +19,21 @@ pub(in crate::api) fn search_request(
 ) -> Result<WorkflowRequest, ApiCommandError> {
     if args.health {
         return workflow_operation_get(
-            WorkflowOperation::new(HttpMethod::Get, "get_health"),
+            WorkflowOperation::new(HttpMethod::Get, "health"),
             false,
             ["pcl search --stats"],
         );
     }
     if args.stats {
         return workflow_operation_get(
-            WorkflowOperation::new(HttpMethod::Get, "get_stats"),
+            WorkflowOperation::new(HttpMethod::Get, "stats"),
             false,
             ["pcl projects list --limit 10"],
         );
     }
     if args.whitelist {
         return workflow_operation_get(
-            WorkflowOperation::new(HttpMethod::Get, "get_whitelist"),
+            WorkflowOperation::new(HttpMethod::Get, "whitelist"),
             true,
             ["pcl projects mine"],
         );
@@ -54,7 +54,7 @@ pub(in crate::api) fn search_request(
         push_query(&mut query, "address", Some(address));
         push_query(&mut query, "chainId", Some(chain_id));
         return workflow_operation_get_with_query(
-            WorkflowOperation::new(HttpMethod::Get, "get_web_verified_contract"),
+            WorkflowOperation::new(HttpMethod::Get, "web.verifiedContract"),
             query,
             false,
             ["pcl contracts --project <project-ref>"],
@@ -82,7 +82,7 @@ pub(in crate::api) fn search_request(
     let mut query_params = Vec::new();
     push_query(&mut query_params, "query", Some(query));
     workflow_operation_get_with_query(
-        WorkflowOperation::new(HttpMethod::Get, "get_search"),
+        WorkflowOperation::new(HttpMethod::Get, "search"),
         query_params,
         false,
         [
@@ -130,12 +130,12 @@ workflow_definition!(
     output: "search results, stats, health, whitelist, or verified contract data",
     policy: MachineRaw,
     actions: [
-        action!("query", false, "get_search", "pcl search --query settler", optional: ["--query"]),
-        action!("stats", false, "get_stats", "pcl search --stats"),
-        action!("health", false, "get_health", "pcl search --health"),
-        action!("whitelist", true, "get_whitelist",
+        action!("query", false, "search", "pcl search --query settler", optional: ["--query"]),
+        action!("stats", false, "stats", "pcl search --stats"),
+        action!("health", false, "health", "pcl search --health"),
+        action!("whitelist", true, "whitelist",
             "pcl search --whitelist"
         ),
-        action!("verified_contract", false, "get_web_verified_contract", "pcl search --verified-contract --address 0x... --chain-id 1", required: ["--address", "--chain-id"]),
+        action!("verified_contract", false, "web.verifiedContract", "pcl search --verified-contract --address 0x... --chain-id 1", required: ["--address", "--chain-id"]),
     ],
 );

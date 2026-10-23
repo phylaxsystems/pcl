@@ -46,11 +46,11 @@ async fn test_public_endpoint_without_auth() {
 
     // Call public endpoint without auth
     let api = client.inner();
-    let result = api.get_projects(None, None, None).await;
+    let result = api.projects_get_projects(None, None, None).await;
 
     // Should succeed
     if let Err(ref e) = result {
-        eprintln!("Error calling get_projects: {e:?}");
+        eprintln!("Error calling projects.getProjects: {e:?}");
         eprintln!("Error status: {:?}", e.status());
     }
     assert!(result.is_ok(), "Public endpoint should work without auth");
@@ -97,7 +97,7 @@ async fn test_public_endpoint_with_auth() {
 
     // Call public endpoint with auth
     let api = client.inner();
-    let result = api.get_projects(None, None, None).await;
+    let result = api.projects_get_projects(None, None, None).await;
 
     // Should succeed
     assert!(result.is_ok(), "Public endpoint should work with auth");
@@ -129,7 +129,7 @@ async fn test_private_endpoint_without_auth() {
 
     // Call private endpoint without auth
     let api = client.inner();
-    let result = api.get_projects_saved(None).await;
+    let result = api.projects_get_saved_projects(None).await;
 
     // Should fail with 401
     assert!(result.is_err(), "Private endpoint should fail without auth");
@@ -166,8 +166,7 @@ async fn test_private_endpoint_with_auth() {
                     "is_private": false,
                     "created_at": "2025-01-01T00:00:00Z",
                     "updated_at": "2025-01-01T00:00:00Z",
-                    "saved_count": 1,
-                    "saved_at": "2025-01-02T00:00:00Z"
+                    "saved_count": 1
                 }
             ]));
     });
@@ -180,10 +179,13 @@ async fn test_private_endpoint_with_auth() {
 
     // Call private endpoint with auth
     let api = client.inner();
-    let result = api.get_projects_saved(None).await;
+    let result = api.projects_get_saved_projects(None).await;
 
     // Should succeed
-    assert!(result.is_ok(), "Private endpoint should work with auth");
+    assert!(
+        result.is_ok(),
+        "Private endpoint should work with auth: {result:?}"
+    );
     let response = result.unwrap().into_inner();
     assert_eq!(response.len(), 1);
     assert_eq!(response[0].project_name.as_str(), "Saved Project");
@@ -213,11 +215,11 @@ async fn test_health_endpoint_without_auth() {
 
     // Call health endpoint without auth
     let api = client.inner();
-    let result = api.get_health().await;
+    let result = api.health().await;
 
     // Should succeed
     if let Err(ref e) = result {
-        eprintln!("Error calling get_health: {e:?}");
+        eprintln!("Error calling health: {e:?}");
         eprintln!("Error status: {:?}", e.status());
     }
     assert!(result.is_ok(), "Health endpoint should work without auth");

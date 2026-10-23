@@ -45,7 +45,7 @@ pub(in crate::api) fn projects_request(
 
     if args.create {
         return workflow_operation_with_body(
-            WorkflowOperation::new(HttpMethod::Post, "post_projects"),
+            WorkflowOperation::new(HttpMethod::Post, "projects.createProject"),
             true,
             body,
             vec!["pcl projects mine".to_string()],
@@ -54,7 +54,7 @@ pub(in crate::api) fn projects_request(
 
     if args.mine {
         return WorkflowRequest::from_operation(
-            WorkflowOperation::new(HttpMethod::Get, "get_views_projects_home"),
+            WorkflowOperation::new(HttpMethod::Get, "views.projectsHome.getProjectsHome"),
             query,
             None,
             true,
@@ -68,7 +68,7 @@ pub(in crate::api) fn projects_request(
         let user_id = required_arg(args.user_id.as_deref(), "--user-id")?;
         push_query(&mut query, "user_id", Some(user_id));
         return WorkflowRequest::from_operation(
-            WorkflowOperation::new(HttpMethod::Get, "get_projects_saved"),
+            WorkflowOperation::new(HttpMethod::Get, "projects.getSavedProjects"),
             query,
             None,
             true,
@@ -83,7 +83,7 @@ pub(in crate::api) fn projects_request(
     if let Some(project_id) = &args.project_id {
         if args.resolve {
             return Ok(WorkflowRequest::from_operation(
-                WorkflowOperation::new(HttpMethod::Get, "get_projects_resolve_project_ref")
+                WorkflowOperation::new(HttpMethod::Get, "projects.resolveProjectRef")
                     .path_param("project_ref", project_id),
                 query,
                 None,
@@ -94,7 +94,7 @@ pub(in crate::api) fn projects_request(
         }
         if args.widget {
             return WorkflowRequest::from_operation(
-                WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id_widget")
+                WorkflowOperation::new(HttpMethod::Get, "projects.getProjectWidget")
                     .path_param("project_id", project_id),
                 Vec::new(),
                 None,
@@ -105,9 +105,9 @@ pub(in crate::api) fn projects_request(
         if args.save || args.unsave {
             return workflow_operation_with_body(
                 if args.save {
-                    WorkflowOperation::new(HttpMethod::Post, "post_projects_saved")
+                    WorkflowOperation::new(HttpMethod::Post, "projects.saveProject")
                 } else {
-                    WorkflowOperation::new(HttpMethod::Delete, "delete_projects_saved")
+                    WorkflowOperation::new(HttpMethod::Delete, "projects.unsaveProject")
                 },
                 true,
                 Some(json!({ "project_id": project_id }).to_string()),
@@ -119,7 +119,7 @@ pub(in crate::api) fn projects_request(
         }
         if args.update {
             return workflow_operation_with_body(
-                WorkflowOperation::new(HttpMethod::Put, "put_projects_project_id")
+                WorkflowOperation::new(HttpMethod::Put, "projects.updateProject")
                     .path_param("project_id", project_id),
                 true,
                 body,
@@ -128,7 +128,7 @@ pub(in crate::api) fn projects_request(
         }
         if args.delete {
             return workflow_operation_with_body(
-                WorkflowOperation::new(HttpMethod::Delete, "delete_projects_project_id")
+                WorkflowOperation::new(HttpMethod::Delete, "projects.deleteProject")
                     .path_param("project_id", project_id),
                 true,
                 body,
@@ -136,7 +136,7 @@ pub(in crate::api) fn projects_request(
             );
         }
         return WorkflowRequest::from_operation(
-            WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id")
+            WorkflowOperation::new(HttpMethod::Get, "projects.getProject")
                 .path_param("project_id", project_id),
             query,
             None,
@@ -149,7 +149,10 @@ pub(in crate::api) fn projects_request(
     }
 
     WorkflowRequest::from_operation(
-        WorkflowOperation::new(HttpMethod::Get, "get_views_projects"),
+        WorkflowOperation::new(
+            HttpMethod::Get,
+            "views.projectsExplorer.getProjectsExplorer",
+        ),
         query,
         None,
         false,
@@ -164,18 +167,18 @@ workflow_definition!(
     output: "project explorer, your projects, project detail, saved projects, widget, or mutation result",
     policy: MachineRaw,
     actions: [
-        action!("explorer", false, "get_views_projects",
+        action!("explorer", false, "views.projectsExplorer.getProjectsExplorer",
             "pcl projects list --limit 10"
         ),
-        action!("mine", true, "get_views_projects_home", "pcl projects mine"),
-        action!("saved", true, "get_projects_saved", "pcl projects saved --user-id <user-id>", required: ["--user-id"], query: {"user_id" => "<user-id>"}),
-        action!("detail", true, "get_projects_project_id", "pcl projects show <project-ref>", required: ["<project-ref>"]),
-        action!("create", true, "post_projects", "pcl projects create --project-name demo --chain-id 1", body_template: "project_create", required_body: ["project_name", "chain_id"]),
-        action!("update", true, "put_projects_project_id", "pcl projects update <project-ref> --field github_url=https://github.com/org/repo", required: ["<project-ref>"], body_template: "project_update"),
-        action!("delete", true, "delete_projects_project_id", "pcl projects delete <project-ref>", required: ["<project-ref>"]),
-        action!("save", true, "post_projects_saved", "pcl projects save <project-ref>", required: ["<project-ref>"], body_template: "project_saved"),
-        action!("unsave", true, "delete_projects_saved", "pcl projects unsave <project-ref>", required: ["<project-ref>"], body_template: "project_saved"),
-        action!("resolve", false, "get_projects_resolve_project_ref", "pcl projects resolve <project-ref>", required: ["<project-ref>"]),
-        action!("widget", true, "get_projects_project_id_widget", "pcl projects widget <project-ref>", required: ["<project-ref>"]),
+        action!("mine", true, "views.projectsHome.getProjectsHome", "pcl projects mine"),
+        action!("saved", true, "projects.getSavedProjects", "pcl projects saved --user-id <user-id>", required: ["--user-id"], query: {"user_id" => "<user-id>"}),
+        action!("detail", true, "projects.getProject", "pcl projects show <project-ref>", required: ["<project-ref>"]),
+        action!("create", true, "projects.createProject", "pcl projects create --project-name demo --chain-id 1", body_template: "project_create", required_body: ["project_name", "chain_id"]),
+        action!("update", true, "projects.updateProject", "pcl projects update <project-ref> --field github_url=https://github.com/org/repo", required: ["<project-ref>"], body_template: "project_update"),
+        action!("delete", true, "projects.deleteProject", "pcl projects delete <project-ref>", required: ["<project-ref>"]),
+        action!("save", true, "projects.saveProject", "pcl projects save <project-ref>", required: ["<project-ref>"], body_template: "project_saved"),
+        action!("unsave", true, "projects.unsaveProject", "pcl projects unsave <project-ref>", required: ["<project-ref>"], body_template: "project_saved"),
+        action!("resolve", false, "projects.resolveProjectRef", "pcl projects resolve <project-ref>", required: ["<project-ref>"]),
+        action!("widget", true, "projects.getProjectWidget", "pcl projects widget <project-ref>", required: ["<project-ref>"]),
     ],
 );

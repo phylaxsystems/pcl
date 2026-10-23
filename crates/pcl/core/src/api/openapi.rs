@@ -743,7 +743,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
                 "Project exploration uses the normalized project view endpoint.",
             )
         }
-        (HttpMethod::Get, "/public/incidents") => {
+        (HttpMethod::Get, "/public/invalidations") => {
             single_special_workflow(
                 "incidents",
                 "list_public",
@@ -751,7 +751,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
                 "Public incident listing uses the normalized incident view endpoint.",
             )
         }
-        (HttpMethod::Get, "/projects/{}/incidents") => {
+        (HttpMethod::Get, "/projects/{}/invalidations") => {
             single_special_workflow(
                 "incidents",
                 "list_project",
@@ -759,7 +759,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
                 "Project incident listing uses the normalized incident view endpoint.",
             )
         }
-        (HttpMethod::Get, "/incidents/{}") => {
+        (HttpMethod::Get, "/invalidations/{}") => {
             single_special_workflow(
                 "incidents",
                 "detail",
@@ -767,7 +767,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
                 "Incident detail uses the normalized incident view endpoint.",
             )
         }
-        (HttpMethod::Get, "/incidents/{}/transactions/{}/trace") => {
+        (HttpMethod::Get, "/invalidations/{}/transactions/{}/trace") => {
             single_special_workflow(
                 "incidents",
                 "trace",
@@ -1182,7 +1182,7 @@ pub(super) fn public_raw_call_path(method: HttpMethod, path: &str) -> bool {
                 || path == "/cli/auth/status"
                 || path == "/openapi"
                 || path == "/projects"
-                || path == "/public/incidents"
+                || path == "/public/invalidations"
                 || path == "/stats"
                 || path == "/search"
                 || path == "/assertions"

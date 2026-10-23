@@ -49,7 +49,7 @@ async fn test_public_endpoint_without_auth_real_api() {
 
     // Call public endpoint without auth
     let api = client.inner();
-    let result = api.get_health().await;
+    let result = api.health().await;
 
     // Health endpoint should work without auth
     assert!(
@@ -79,7 +79,7 @@ async fn test_private_endpoint_without_auth_real_api() {
 
     // Try to call a private endpoint without auth
     let api = client.inner();
-    let result = api.get_projects_saved(None).await;
+    let result = api.projects_get_saved_projects(None).await;
 
     // The API returns an empty array for unauthenticated requests
     // rather than a 401/403 error - this is valid API design
@@ -118,8 +118,7 @@ async fn test_private_endpoint_with_auth_real_api() {
                     "is_private": false,
                     "created_at": "2025-01-01T00:00:00Z",
                     "updated_at": "2025-01-01T00:00:00Z",
-                    "saved_count": 1,
-                    "saved_at": "2025-01-02T00:00:00Z"
+                    "saved_count": 1
                 }
             ]));
     });
@@ -132,7 +131,7 @@ async fn test_private_endpoint_with_auth_real_api() {
 
     // Call private endpoint with auth
     let api = client.inner();
-    let result = api.get_projects_saved(None).await;
+    let result = api.projects_get_saved_projects(None).await;
 
     // Should succeed with valid auth
     assert!(
@@ -173,7 +172,7 @@ async fn test_public_endpoint_with_auth_real_api() {
 
     // Call public endpoint with auth (even invalid auth should work for public endpoints)
     let api = client.inner();
-    let result = api.get_health().await;
+    let result = api.health().await;
 
     // Should succeed even with invalid auth for public endpoints
     assert!(

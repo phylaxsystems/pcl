@@ -54,7 +54,7 @@ jobs:
       - name: Enforce allowed file set
         if: steps.diff.outputs.changed == 'true'
         run: |
-          allowed='^crates/dapp-api-client/src/generated/(client|mod)\.rs$'
+          allowed='^crates/dapp-api-client/src/generated/(client|mod|operation_paths)\.rs$'
           unexpected=$(git diff --name-only crates/dapp-api-client/ | grep -vE "$allowed" || true)
           if [ -n "$unexpected" ]; then
             echo "::error::Regeneration touched unexpected files. If expected, update the allow-list in .github/workflows/regenerate-dapp-client.yaml:"

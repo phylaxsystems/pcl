@@ -89,52 +89,28 @@ fn integration_operation(
 ) -> WorkflowOperation {
     match (provider, action) {
         (IntegrationProvider::Slack, IntegrationAction::Get) => {
-            WorkflowOperation::new(
-                HttpMethod::Get,
-                "get_projects_project_id_integrations_slack",
-            )
+            WorkflowOperation::new(HttpMethod::Get, "getSlackIntegration")
         }
         (IntegrationProvider::Slack, IntegrationAction::Configure) => {
-            WorkflowOperation::new(
-                HttpMethod::Post,
-                "post_projects_project_id_integrations_slack",
-            )
+            WorkflowOperation::new(HttpMethod::Post, "configureSlackIntegration")
         }
         (IntegrationProvider::Slack, IntegrationAction::Test) => {
-            WorkflowOperation::new(
-                HttpMethod::Post,
-                "post_projects_project_id_integrations_slack_test",
-            )
+            WorkflowOperation::new(HttpMethod::Post, "testSlackIntegration")
         }
         (IntegrationProvider::Slack, IntegrationAction::Delete) => {
-            WorkflowOperation::new(
-                HttpMethod::Delete,
-                "delete_projects_project_id_integrations_slack",
-            )
+            WorkflowOperation::new(HttpMethod::Delete, "deleteSlackIntegration")
         }
         (IntegrationProvider::Pagerduty, IntegrationAction::Get) => {
-            WorkflowOperation::new(
-                HttpMethod::Get,
-                "get_projects_project_id_integrations_pagerduty",
-            )
+            WorkflowOperation::new(HttpMethod::Get, "getPagerDutyIntegration")
         }
         (IntegrationProvider::Pagerduty, IntegrationAction::Configure) => {
-            WorkflowOperation::new(
-                HttpMethod::Post,
-                "post_projects_project_id_integrations_pagerduty",
-            )
+            WorkflowOperation::new(HttpMethod::Post, "configurePagerDutyIntegration")
         }
         (IntegrationProvider::Pagerduty, IntegrationAction::Test) => {
-            WorkflowOperation::new(
-                HttpMethod::Post,
-                "post_projects_project_id_integrations_pagerduty_test",
-            )
+            WorkflowOperation::new(HttpMethod::Post, "testPagerDutyIntegration")
         }
         (IntegrationProvider::Pagerduty, IntegrationAction::Delete) => {
-            WorkflowOperation::new(
-                HttpMethod::Delete,
-                "delete_projects_project_id_integrations_pagerduty",
-            )
+            WorkflowOperation::new(HttpMethod::Delete, "deletePagerDutyIntegration")
         }
     }
 }
@@ -146,13 +122,13 @@ workflow_definition!(
     output: "integration status or mutation/test results",
     policy: MachineRaw,
     actions: [
-        action!("get_slack", true, "get_projects_project_id_integrations_slack", "pcl integrations --project <project-ref> --provider slack", required: ["--project", "--provider"]),
-        action!("configure_slack", true, "post_projects_project_id_integrations_slack", "pcl integrations --project <project-ref> --provider slack --configure --body-template", required: ["--project", "--provider"], body_template: "slack"),
-        action!("test_slack", true, "post_projects_project_id_integrations_slack_test", "pcl integrations --project <project-ref> --provider slack --test", required: ["--project", "--provider"], body_template: "slack"),
-        action!("delete_slack", true, "delete_projects_project_id_integrations_slack", "pcl integrations --project <project-ref> --provider slack --delete", required: ["--project", "--provider"]),
-        action!("get_pagerduty", true, "get_projects_project_id_integrations_pagerduty", "pcl integrations --project <project-ref> --provider pagerduty", required: ["--project", "--provider"]),
-        action!("configure_pagerduty", true, "post_projects_project_id_integrations_pagerduty", "pcl integrations --project <project-ref> --provider pagerduty --configure --body-template", required: ["--project", "--provider"], body_template: "pagerduty"),
-        action!("test_pagerduty", true, "post_projects_project_id_integrations_pagerduty_test", "pcl integrations --project <project-ref> --provider pagerduty --test", required: ["--project", "--provider"], body_template: "pagerduty"),
-        action!("delete_pagerduty", true, "delete_projects_project_id_integrations_pagerduty", "pcl integrations --project <project-ref> --provider pagerduty --delete", required: ["--project", "--provider"]),
+        action!("get_slack", true, "getSlackIntegration", "pcl integrations --project <project-ref> --provider slack", required: ["--project", "--provider"]),
+        action!("configure_slack", true, "configureSlackIntegration", "pcl integrations --project <project-ref> --provider slack --configure --body-template", required: ["--project", "--provider"], body_template: "slack"),
+        action!("test_slack", true, "testSlackIntegration", "pcl integrations --project <project-ref> --provider slack --test", required: ["--project", "--provider"], body_template: "slack"),
+        action!("delete_slack", true, "deleteSlackIntegration", "pcl integrations --project <project-ref> --provider slack --delete", required: ["--project", "--provider"]),
+        action!("get_pagerduty", true, "getPagerDutyIntegration", "pcl integrations --project <project-ref> --provider pagerduty", required: ["--project", "--provider"]),
+        action!("configure_pagerduty", true, "configurePagerDutyIntegration", "pcl integrations --project <project-ref> --provider pagerduty --configure --body-template", required: ["--project", "--provider"], body_template: "pagerduty"),
+        action!("test_pagerduty", true, "testPagerDutyIntegration", "pcl integrations --project <project-ref> --provider pagerduty --test", required: ["--project", "--provider"], body_template: "pagerduty"),
+        action!("delete_pagerduty", true, "deletePagerDutyIntegration", "pcl integrations --project <project-ref> --provider pagerduty --delete", required: ["--project", "--provider"]),
     ],
 );

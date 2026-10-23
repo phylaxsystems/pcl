@@ -109,8 +109,8 @@ When debugging or checking an endpoint that is not yet first-class, use the raw 
 If `pcl api list` or `pcl api inspect` returns `workflow_alternatives`, use that workflow command for normal work.
 
 ```bash
-pcl api list --filter incidents
-pcl api inspect get_views_projects_project_id_incidents
+pcl api list --filter invalidations
+pcl api inspect views_project_invalidations_get_project_invalidations
 pcl incidents --project <project-id> --environment production
 pcl api coverage --json
 ```
@@ -296,7 +296,7 @@ pcl assertions --project-id <project-ref> --body-template --json
 pcl releases preview <project-ref> --body-template --json
 pcl access role update <project-ref> <user-id> --body-template --json
 pcl protocol-manager --project <project-ref> --confirm-transfer --body-template --json
-pcl api inspect post_projects --json
+pcl api inspect projects_create_project --json
 ```
 
 For complex bodies:
@@ -315,7 +315,7 @@ For simple JSON object bodies, repeated `--field key=value` works on raw `pcl ap
 
 ```bash
 pcl api list --filter integrations --json
-pcl api inspect get_views_projects_project_id_incidents --json
+pcl api inspect views_project_invalidations_get_project_invalidations --json
 pcl incidents --limit 5 --json
 pcl projects create --body-template --json
 pcl incidents --project <project-id> --environment production --json

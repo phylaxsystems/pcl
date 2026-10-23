@@ -23,11 +23,8 @@ pub(in crate::api) fn releases_request(
     let project = required_project_arg(args.project.as_deref(), "releases", "--project")?;
     if args.preview {
         return workflow_operation_with_body(
-            WorkflowOperation::new(
-                HttpMethod::Post,
-                "post_projects_project_id_releases_preview",
-            )
-            .path_param("project_id", &project),
+            WorkflowOperation::new(HttpMethod::Post, "projects.previewRelease")
+                .path_param("project_id", &project),
             true,
             body,
             vec![format!(
@@ -37,7 +34,7 @@ pub(in crate::api) fn releases_request(
     }
     if args.create {
         return workflow_operation_with_body(
-            WorkflowOperation::new(HttpMethod::Post, "post_projects_project_id_releases")
+            WorkflowOperation::new(HttpMethod::Post, "projects.createRelease")
                 .path_param("project_id", &project),
             true,
             body,
@@ -54,12 +51,9 @@ pub(in crate::api) fn releases_request(
         let release_id = required_arg(args.release_id.as_deref(), "--release-id")?;
         if args.backtest_progress {
             return WorkflowRequest::from_operation(
-                WorkflowOperation::new(
-                    HttpMethod::Get,
-                    "get_projects_project_id_releases_release_id_backtest_progress",
-                )
-                .path_param("project_id", &project)
-                .path_param("release_id", &release_id),
+                WorkflowOperation::new(HttpMethod::Get, "projects.getBacktestProgress")
+                    .path_param("project_id", &project)
+                    .path_param("release_id", &release_id),
                 Vec::new(),
                 None,
                 true,
@@ -69,13 +63,10 @@ pub(in crate::api) fn releases_request(
         if args.retry_check {
             let check_id = required_arg(args.check_id.as_deref(), "--check-id")?;
             return workflow_operation_with_body(
-                WorkflowOperation::new(
-                    HttpMethod::Post,
-                    "post_projects_project_id_releases_release_id_checks_check_id_retry",
-                )
-                .path_param("project_id", &project)
-                .path_param("release_id", &release_id)
-                .path_param("check_id", &check_id),
+                WorkflowOperation::new(HttpMethod::Post, "projects.retryReleaseCheck")
+                    .path_param("project_id", &project)
+                    .path_param("release_id", &release_id)
+                    .path_param("check_id", &check_id),
                 true,
                 Some(body_or_empty(body)),
                 vec![format!(
@@ -85,12 +76,9 @@ pub(in crate::api) fn releases_request(
         }
         if args.deploy {
             return workflow_operation_with_body(
-                WorkflowOperation::new(
-                    HttpMethod::Post,
-                    "post_projects_project_id_releases_release_id_deploy",
-                )
-                .path_param("project_id", &project)
-                .path_param("release_id", &release_id),
+                WorkflowOperation::new(HttpMethod::Post, "projects.deployRelease")
+                    .path_param("project_id", &project)
+                    .path_param("release_id", &release_id),
                 true,
                 body,
                 vec![format!("pcl releases show {project} {release_id}")],
@@ -98,12 +86,9 @@ pub(in crate::api) fn releases_request(
         }
         if args.remove {
             return workflow_operation_with_body(
-                WorkflowOperation::new(
-                    HttpMethod::Post,
-                    "post_projects_project_id_releases_release_id_remove",
-                )
-                .path_param("project_id", &project)
-                .path_param("release_id", &release_id),
+                WorkflowOperation::new(HttpMethod::Post, "projects.confirmRemove")
+                    .path_param("project_id", &project)
+                    .path_param("release_id", &release_id),
                 true,
                 body,
                 vec![format!("pcl releases list {project}")],
@@ -112,12 +97,9 @@ pub(in crate::api) fn releases_request(
         if args.deploy_calldata {
             let signer_address = required_arg(args.signer_address.as_deref(), "--signer-address")?;
             let mut request = WorkflowRequest::from_operation(
-                WorkflowOperation::new(
-                    HttpMethod::Get,
-                    "get_projects_project_id_releases_release_id_deploy_calldata",
-                )
-                .path_param("project_id", &project)
-                .path_param("release_id", &release_id),
+                WorkflowOperation::new(HttpMethod::Get, "projects.getReleaseDeployCalldata")
+                    .path_param("project_id", &project)
+                    .path_param("release_id", &release_id),
                 Vec::new(),
                 None,
                 true,
@@ -127,12 +109,9 @@ pub(in crate::api) fn releases_request(
             return Ok(request);
         }
         return WorkflowRequest::from_operation(
-            WorkflowOperation::new(
-                HttpMethod::Get,
-                "get_projects_project_id_releases_release_id_remove_calldata",
-            )
-            .path_param("project_id", &project)
-            .path_param("release_id", &release_id),
+            WorkflowOperation::new(HttpMethod::Get, "projects.removeCalldata")
+                .path_param("project_id", &project)
+                .path_param("release_id", &release_id),
             Vec::new(),
             None,
             true,
@@ -141,7 +120,7 @@ pub(in crate::api) fn releases_request(
     }
     let Some(release_id) = &args.release_id else {
         return WorkflowRequest::from_operation(
-            WorkflowOperation::new(HttpMethod::Get, "get_projects_project_id_releases")
+            WorkflowOperation::new(HttpMethod::Get, "projects.listReleases")
                 .path_param("project_id", &project),
             Vec::new(),
             None,
@@ -150,12 +129,9 @@ pub(in crate::api) fn releases_request(
         );
     };
     WorkflowRequest::from_operation(
-        WorkflowOperation::new(
-            HttpMethod::Get,
-            "get_projects_project_id_releases_release_id",
-        )
-        .path_param("project_id", &project)
-        .path_param("release_id", release_id),
+        WorkflowOperation::new(HttpMethod::Get, "projects.getRelease")
+            .path_param("project_id", &project)
+            .path_param("release_id", release_id),
         Vec::new(),
         None,
         true,
@@ -207,17 +183,17 @@ workflow_definition!(
     output: "release data, diffs, check progress, deployment confirmations, or calldata",
     policy: MachineRaw,
     actions: [
-        action!("list", true, "get_projects_project_id_releases", "pcl releases list <project-ref>", required: ["<project-ref>"]),
-        action!("detail", true, "get_projects_project_id_releases_release_id", "pcl releases show <project-ref> <release-id>", required: ["<project-ref>", "<release-id>"]),
-        action!("preview", true, "post_projects_project_id_releases_preview", "pcl releases preview <project-ref> --body-file release.json", required: ["<project-ref>"], body_template: "release"),
-        action!("create", true, "post_projects_project_id_releases", "pcl releases create <project-ref> --body-file release.json", required: ["<project-ref>"], body_template: "release"),
-        action!("backtest_progress", true, "get_projects_project_id_releases_release_id_backtest_progress", "pcl releases backtest-progress <project-ref> <release-id>", required: ["<project-ref>", "<release-id>"]),
-        action!("retry_check", true, "post_projects_project_id_releases_release_id_checks_check_id_retry", "pcl releases retry-check <project-ref> <release-id> <check-id>", required: ["<project-ref>", "<release-id>", "<check-id>"], body_template: "empty_object"),
-        action!("deploy_calldata", true, "get_projects_project_id_releases_release_id_deploy_calldata", "pcl releases calldata deploy <project-ref> <release-id> --signer-address <signer-address>", required: ["<project-ref>", "<release-id>", "--signer-address"], query: {"signerAddress" => "<signer-address>"}),
-        action!("deploy_broadcast", true, "post_projects_project_id_releases_release_id_deploy", "pcl releases calldata deploy <project-ref> <release-id> --broadcast --private-key <key> --rpc-url <url> --yes", required: ["<project-ref>", "<release-id>", "--broadcast"], optional: ["--private-key", "--account", "--keystore-password-file", "--rpc-url", "--confirmations", "--with-credible-rpc", "--yes", "--signer-address"], side_effect: "onchain_transaction"),
-        action!("deploy", true, "post_projects_project_id_releases_release_id_deploy", "pcl releases deploy <project-ref> <release-id> --body-template", required: ["<project-ref>", "<release-id>"], body_template: "release_deploy"),
-        action!("remove_calldata", true, "get_projects_project_id_releases_release_id_remove_calldata", "pcl releases calldata remove <project-ref> <release-id>", required: ["<project-ref>", "<release-id>"]),
-        action!("remove_broadcast", true, "post_projects_project_id_releases_release_id_remove", "pcl releases calldata remove <project-ref> <release-id> --broadcast --private-key <key> --rpc-url <url> --yes", required: ["<project-ref>", "<release-id>", "--broadcast"], optional: ["--private-key", "--account", "--keystore-password-file", "--rpc-url", "--confirmations", "--with-credible-rpc", "--yes"], side_effect: "onchain_transaction"),
-        action!("remove", true, "post_projects_project_id_releases_release_id_remove", "pcl releases remove <project-ref> <release-id> --body-template", required: ["<project-ref>", "<release-id>"], body_template: "release_remove"),
+        action!("list", true, "projects.listReleases", "pcl releases list <project-ref>", required: ["<project-ref>"]),
+        action!("detail", true, "projects.getRelease", "pcl releases show <project-ref> <release-id>", required: ["<project-ref>", "<release-id>"]),
+        action!("preview", true, "projects.previewRelease", "pcl releases preview <project-ref> --body-file release.json", required: ["<project-ref>"], body_template: "release"),
+        action!("create", true, "projects.createRelease", "pcl releases create <project-ref> --body-file release.json", required: ["<project-ref>"], body_template: "release"),
+        action!("backtest_progress", true, "projects.getBacktestProgress", "pcl releases backtest-progress <project-ref> <release-id>", required: ["<project-ref>", "<release-id>"]),
+        action!("retry_check", true, "projects.retryReleaseCheck", "pcl releases retry-check <project-ref> <release-id> <check-id>", required: ["<project-ref>", "<release-id>", "<check-id>"], body_template: "empty_object"),
+        action!("deploy_calldata", true, "projects.getReleaseDeployCalldata", "pcl releases calldata deploy <project-ref> <release-id> --signer-address <signer-address>", required: ["<project-ref>", "<release-id>", "--signer-address"], query: {"signerAddress" => "<signer-address>"}),
+        action!("deploy_broadcast", true, "projects.deployRelease", "pcl releases calldata deploy <project-ref> <release-id> --broadcast --private-key <key> --rpc-url <url> --yes", required: ["<project-ref>", "<release-id>", "--broadcast"], optional: ["--private-key", "--account", "--keystore-password-file", "--rpc-url", "--confirmations", "--with-credible-rpc", "--yes", "--signer-address"], side_effect: "onchain_transaction"),
+        action!("deploy", true, "projects.deployRelease", "pcl releases deploy <project-ref> <release-id> --body-template", required: ["<project-ref>", "<release-id>"], body_template: "release_deploy"),
+        action!("remove_calldata", true, "projects.removeCalldata", "pcl releases calldata remove <project-ref> <release-id>", required: ["<project-ref>", "<release-id>"]),
+        action!("remove_broadcast", true, "projects.confirmRemove", "pcl releases calldata remove <project-ref> <release-id> --broadcast --private-key <key> --rpc-url <url> --yes", required: ["<project-ref>", "<release-id>", "--broadcast"], optional: ["--private-key", "--account", "--keystore-password-file", "--rpc-url", "--confirmations", "--with-credible-rpc", "--yes"], side_effect: "onchain_transaction"),
+        action!("remove", true, "projects.confirmRemove", "pcl releases remove <project-ref> <release-id> --body-template", required: ["<project-ref>", "<release-id>"], body_template: "release_remove"),
     ],
 );

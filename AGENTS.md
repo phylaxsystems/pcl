@@ -78,8 +78,8 @@ Raw calls are not the normal product path. Use them for debugging, API parity ch
 Both query forms are valid:
 
 ```bash
-pcl api call get '/views/public/incidents?limit=5' --allow-unauthenticated --json
-pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated --json
+pcl api call get '/views/public/invalidations?limit=5' --allow-unauthenticated --json
+pcl api call get /views/public/invalidations --query limit=5 --allow-unauthenticated --json
 ```
 
 For simple raw request bodies, `pcl api call` accepts repeated `--field key=value` and merges those fields into a JSON object, matching workflow command behavior. Use `--body-file` for nested payloads.

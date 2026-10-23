@@ -104,7 +104,7 @@ fn mock_incident_export_page(
     server
         .mock(
             "GET",
-            format!("/api/v1/views/projects/{project_id}/incidents").as_str(),
+            format!("/api/v1/views/projects/{project_id}/invalidations").as_str(),
         )
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("environment".into(), "production".into()),
@@ -131,7 +131,8 @@ fn project_incidents_body(ids: &[&str], page: u64, limit: u64) -> String {
                 "contractName": null,
                 "createdAt": "2026-01-01T00:00:00Z",
                 "environment": "production",
-                "incidentId": id,
+                "invalidationId": id,
+                "outcome": "prevented",
                 "id": id,
                 "tracesCompleted": 0,
                 "tracesPending": 0,
@@ -436,9 +437,18 @@ fn export_incidents_cli_writes_checkpoint_errors_and_resume_command() {
     );
 
     let out_lines = fs::read_to_string(&out).expect("read export output");
-    assert!(out_lines.contains(r#""incidentId":"i1""#), "{out_lines}");
-    assert!(out_lines.contains(r#""incidentId":"i2""#), "{out_lines}");
-    assert!(out_lines.contains(r#""incidentId":"i3""#), "{out_lines}");
+    assert!(
+        out_lines.contains(r#""invalidationId":"i1""#),
+        "{out_lines}"
+    );
+    assert!(
+        out_lines.contains(r#""invalidationId":"i2""#),
+        "{out_lines}"
+    );
+    assert!(
+        out_lines.contains(r#""invalidationId":"i3""#),
+        "{out_lines}"
+    );
 
     let error_lines = fs::read_to_string(&errors).expect("read export errors");
     assert!(error_lines.contains(r#""page":2"#), "{error_lines}");

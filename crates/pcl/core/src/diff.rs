@@ -7,11 +7,11 @@
 
 use colored::Colorize;
 use dapp_api_client::generated::client::types::{
-    PostProjectsProjectIdReleasesResponseDiff as ReleaseDiff,
-    PostProjectsProjectIdReleasesResponseDiffContractsValue as ContractDiffEntry,
-    PostProjectsProjectIdReleasesResponseDiffContractsValueAssertionsItem as AssertionDiffEntry,
-    PostProjectsProjectIdReleasesResponseDiffContractsValueAssertionsItemChangeType as AssertionChangeType,
-    PostProjectsProjectIdReleasesResponseDiffContractsValueChangeType as ContractChangeType,
+    ProjectsCreateReleaseResponseDiff as ReleaseDiff,
+    ProjectsCreateReleaseResponseDiffContractsValue as ContractDiffEntry,
+    ProjectsCreateReleaseResponseDiffContractsValueAssertionsItem as AssertionDiffEntry,
+    ProjectsCreateReleaseResponseDiffContractsValueAssertionsItemChangeType as AssertionChangeType,
+    ProjectsCreateReleaseResponseDiffContractsValueChangeType as ContractChangeType,
 };
 use serde::{
     Deserialize,
@@ -234,7 +234,7 @@ mod tests {
                             "file": "PriceFeedAssertion.a.sol",
                             "args": [],
                             "changeType": "added",
-                            "assertionId": "0xabc",
+                            "assertionId": "0x0000000000000000000000000000000000000000000000000000000000000abc",
                             "previousAssertionId": null,
                             "compilerVersionChange": null
                         }]
@@ -248,7 +248,7 @@ mod tests {
                             "file": "OldAssertion.sol",
                             "args": [],
                             "changeType": "removed",
-                            "assertionId": "0xdef",
+                            "assertionId": "0x0000000000000000000000000000000000000000000000000000000000000def",
                             "previousAssertionId": null,
                             "compilerVersionChange": null
                         }]
@@ -265,7 +265,7 @@ mod tests {
                                 "file": "SimpleLendingAssertion.a.sol",
                                 "args": [],
                                 "changeType": "added",
-                                "assertionId": "0x111",
+                                "assertionId": "0x0000000000000000000000000000000000000000000000000000000000000111",
                                 "previousAssertionId": null,
                                 "compilerVersionChange": null
                             },
@@ -273,7 +273,7 @@ mod tests {
                                 "file": "OldAssertion.sol",
                                 "args": [],
                                 "changeType": "removed",
-                                "assertionId": "0x222",
+                                "assertionId": "0x0000000000000000000000000000000000000000000000000000000000000222",
                                 "previousAssertionId": null,
                                 "compilerVersionChange": null
                             },
@@ -281,8 +281,8 @@ mod tests {
                                 "file": "MockAssertion.sol",
                                 "args": ["0x1234"],
                                 "changeType": "modified",
-                                "assertionId": "0x333",
-                                "previousAssertionId": "0x444",
+                                "assertionId": "0x0000000000000000000000000000000000000000000000000000000000000333",
+                                "previousAssertionId": "0x0000000000000000000000000000000000000000000000000000000000000444",
                                 "compilerVersionChange": null
                             }
                         ]
@@ -296,7 +296,7 @@ mod tests {
                             "file": "Stable.sol",
                             "args": [],
                             "changeType": "unchanged",
-                            "assertionId": "0x555",
+                            "assertionId": "0x0000000000000000000000000000000000000000000000000000000000000555",
                             "previousAssertionId": null,
                             "compilerVersionChange": null
                         }]
@@ -564,8 +564,8 @@ mod tests {
                             "file": "Upgraded.sol",
                             "args": [],
                             "changeType": "modified",
-                            "assertionId": "0x1",
-                            "previousAssertionId": "0x0",
+                            "assertionId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                            "previousAssertionId": "0x0000000000000000000000000000000000000000000000000000000000000000",
                             "compilerVersionChange": { "from": "0.8.20", "to": "0.8.24" }
                         }]
                     }
@@ -738,10 +738,10 @@ mod tests {
                         "changeType": "unchanged",
                         "metadataChanges": null,
                         "assertions": [
-                            { "file": "New.a.sol", "args": [], "changeType": "added", "assertionId": "0x1", "previousAssertionId": null, "compilerVersionChange": null },
-                            { "file": "Old.a.sol", "args": [], "changeType": "removed", "assertionId": null, "previousAssertionId": "0x2", "compilerVersionChange": null },
-                            { "file": "Tweaked.a.sol", "args": [], "changeType": "modified", "assertionId": "0x3", "previousAssertionId": "0x4", "compilerVersionChange": { "from": "0.8.20", "to": "0.8.24" } },
-                            { "file": "Untouched.a.sol", "args": [], "changeType": "unchanged", "assertionId": "0x5", "previousAssertionId": null, "compilerVersionChange": null }
+                            { "file": "New.a.sol", "args": [], "changeType": "added", "assertionId": "0x0000000000000000000000000000000000000000000000000000000000000001", "previousAssertionId": null, "compilerVersionChange": null },
+                            { "file": "Old.a.sol", "args": [], "changeType": "removed", "assertionId": null, "previousAssertionId": "0x0000000000000000000000000000000000000000000000000000000000000002", "compilerVersionChange": null },
+                            { "file": "Tweaked.a.sol", "args": [], "changeType": "modified", "assertionId": "0x0000000000000000000000000000000000000000000000000000000000000003", "previousAssertionId": "0x0000000000000000000000000000000000000000000000000000000000000004", "compilerVersionChange": { "from": "0.8.20", "to": "0.8.24" } },
+                            { "file": "Untouched.a.sol", "args": [], "changeType": "unchanged", "assertionId": "0x0000000000000000000000000000000000000000000000000000000000000005", "previousAssertionId": null, "compilerVersionChange": null }
                         ]
                     }
                 },

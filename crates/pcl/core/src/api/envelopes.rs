@@ -19,8 +19,8 @@ pub(in crate::api) fn ok_envelope(data: Value) -> Value {
         "data": data,
         "next_actions": [
             "pcl api list",
-            "pcl api inspect get_views_public_incidents",
-            "pcl api call get /views/public/incidents --query limit=5 --allow-unauthenticated",
+            "pcl api inspect views.publicInvalidations.getPublicInvalidations",
+            "pcl api call get /views/public/invalidations --query limit=5 --allow-unauthenticated",
         ],
     }))
 }
