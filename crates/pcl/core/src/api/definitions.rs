@@ -181,12 +181,14 @@ pub(super) fn workflow_definitions() -> &'static [WorkflowDefinition] {
     WORKFLOW_DEFINITIONS
 }
 
+#[cfg(test)]
 pub(super) fn workflow_definition(name: &str) -> Option<&'static WorkflowDefinition> {
     WORKFLOW_DEFINITIONS
         .iter()
         .find(|definition| definition.name == name)
 }
 
+#[cfg(test)]
 pub(super) fn workflow_output_policy(name: &str) -> WorkflowOutputPolicy {
     workflow_definition(name).map_or(WorkflowOutputPolicy::MachineRaw, |definition| {
         definition.output_policy

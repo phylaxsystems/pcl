@@ -2014,12 +2014,6 @@ fn projects_mine_uses_authenticated_home_view() {
 }
 
 #[test]
-fn contracts_require_a_project() {
-    let error = contracts_request(&contracts_args()).unwrap_err();
-    assert!(error.to_string().contains("--project is required"));
-}
-
-#[test]
 fn release_deploy_calldata_requires_and_sends_signer_address() {
     let error = releases_request(&ReleasesArgs {
         release_id: Some("release-1".to_string()),

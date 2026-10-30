@@ -7,7 +7,6 @@ use super::{
         WorkflowRequest,
     },
     first_string_field,
-    required_project_arg,
     workflow_operation_get,
 };
 use serde_json::Value;
@@ -15,7 +14,16 @@ use serde_json::Value;
 pub(in crate::api) fn contracts_request(
     args: &ContractsArgs,
 ) -> Result<WorkflowRequest, ApiCommandError> {
-    let project = required_project_arg(args.project.as_deref(), "contracts", "--project")?;
+    let Some(project) = args.project.as_deref() else {
+        return Err(ApiCommandError::InvalidWorkflowWithActions {
+            message: "Choose a contracts workflow with --project; manage project membership through releases"
+                .to_string(),
+            next_actions: vec![
+                "pcl contracts --project <project-ref>".to_string(),
+                "pcl releases list <project-ref>".to_string(),
+            ],
+        });
+    };
     if let Some(adopter_id) = &args.adopter_id {
         return workflow_operation_get(
             WorkflowOperation::new(HttpMethod::Get, "views.contractDetail.getContractDetail")
