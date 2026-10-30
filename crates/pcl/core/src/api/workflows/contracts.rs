@@ -27,7 +27,7 @@ pub(in crate::api) fn contracts_request(
     if let Some(adopter_id) = &args.adopter_id {
         return workflow_operation_get(
             WorkflowOperation::new(HttpMethod::Get, "views.contractDetail.getContractDetail")
-                .path_param("projectId", &project)
+                .path_param("projectId", project)
                 .path_param("adopterId", adopter_id),
             true,
             vec![format!("pcl contracts --project {project}")],
@@ -38,7 +38,7 @@ pub(in crate::api) fn contracts_request(
             HttpMethod::Get,
             "views.projectContracts.getProjectContracts",
         )
-        .path_param("projectId", &project),
+        .path_param("projectId", project),
         true,
         vec![format!(
             "pcl contracts --project {project} --adopter-id <adopter-id>"
