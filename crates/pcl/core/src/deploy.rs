@@ -1316,7 +1316,7 @@ impl DeployArgs {
                 data,
                 vec![
                     format!("pcl releases show {project_id} {release_id}"),
-                    format!("pcl deployments --project {project_id}"),
+                    format!("pcl releases list {project_id}"),
                 ],
             )
         }

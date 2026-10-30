@@ -58,7 +58,6 @@ pub(in crate::api) mod access;
 pub(in crate::api) mod account;
 pub(in crate::api) mod assertions;
 pub(in crate::api) mod contracts;
-pub(in crate::api) mod deployments;
 pub(in crate::api) mod events;
 pub(in crate::api) mod incidents;
 pub(in crate::api) mod integrations;
@@ -76,10 +75,6 @@ pub(super) use assertions::{
 pub(super) use contracts::{
     contracts_next_actions,
     contracts_request,
-};
-pub(super) use deployments::{
-    compact_deployment_data,
-    deployments_request,
 };
 pub(super) use events::events_request;
 pub(super) use incidents::{
@@ -304,65 +299,6 @@ pub(super) fn first_string_field(value: &Value, keys: &[&str]) -> Option<String>
                 .find_map(|value| first_string_field(value, keys))
         }
         _ => None,
-    }
-}
-
-fn redact_large_artifacts(value: &Value) -> Value {
-    match value {
-        Value::Object(object) => {
-            let mut redacted = Map::new();
-            for (key, value) in object {
-                let value = if is_large_artifact_key(key) {
-                    artifact_redaction(value)
-                } else {
-                    redact_large_artifacts(value)
-                };
-                redacted.insert(key.clone(), value);
-            }
-            Value::Object(redacted)
-        }
-        Value::Array(values) => Value::Array(values.iter().map(redact_large_artifacts).collect()),
-        _ => value.clone(),
-    }
-}
-
-fn is_large_artifact_key(key: &str) -> bool {
-    let normalized = key.replace(['_', '-'], "").to_ascii_lowercase();
-    matches!(
-        normalized.as_str(),
-        "sourcecode"
-            | "soliditysource"
-            | "bytecode"
-            | "deploymentbytecode"
-            | "runtimebytecode"
-            | "creationbytecode"
-    )
-}
-
-fn artifact_redaction(value: &Value) -> Value {
-    match value {
-        Value::String(source) => {
-            json!({
-                "redacted": true,
-                "bytes": source.len(),
-                "reason": "large_artifact"
-            })
-        }
-        Value::Array(values) => {
-            json!({
-                "redacted": true,
-                "items": values.len(),
-                "reason": "large_artifact"
-            })
-        }
-        Value::Object(object) => {
-            json!({
-                "redacted": true,
-                "fields": object.len(),
-                "reason": "large_artifact"
-            })
-        }
-        _ => Value::Null,
     }
 }
 

@@ -17,14 +17,12 @@ use super::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum WorkflowOutputPolicy {
     MachineRaw,
-    MachineRawHumanCompactArtifacts,
 }
 
 impl WorkflowOutputPolicy {
     pub(super) const fn as_str(self) -> &'static str {
         match self {
             Self::MachineRaw => "machine_raw",
-            Self::MachineRawHumanCompactArtifacts => "machine_raw_human_compact_artifacts",
         }
     }
 }
@@ -276,7 +274,6 @@ const WORKFLOW_DEFINITIONS: &[WorkflowDefinition] = &[
     workflows::account::DEFINITION,
     workflows::contracts::DEFINITION,
     workflows::releases::DEFINITION,
-    workflows::deployments::DEFINITION,
     workflows::access::DEFINITION,
     workflows::integrations::DEFINITION,
     workflows::protocol_manager::DEFINITION,

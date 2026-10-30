@@ -21,7 +21,6 @@ use pcl_core::{
         ApiArgs,
         AssertionsCommand,
         ContractsCommand,
-        DeploymentsCommand,
         EventsCommand,
         IncidentsCommand,
         IntegrationsCommand,
@@ -101,8 +100,6 @@ pub enum Commands {
     Contracts(ContractsCommand),
     #[command(name = "releases")]
     Releases(ReleasesCommand),
-    #[command(name = "deployments")]
-    Deployments(DeploymentsCommand),
     #[command(name = "access")]
     Access(AccessCommand),
     #[command(name = "integrations")]
@@ -257,7 +254,6 @@ impl Commands {
             Self::Account(command) => !command.needs_platform_url(),
             Self::Contracts(command) => !command.needs_platform_url(),
             Self::Releases(command) => !command.needs_platform_url(),
-            Self::Deployments(command) => !command.needs_platform_url(),
             Self::Access(command) => !command.needs_platform_url(),
             Self::Integrations(command) => !command.needs_platform_url(),
             Self::ProtocolManager(command) => !command.needs_platform_url(),
@@ -291,7 +287,6 @@ impl Commands {
             Self::Account(command) => command.platform_url_flag(),
             Self::Contracts(command) => command.platform_url_flag(),
             Self::Releases(command) => command.platform_url_flag(),
-            Self::Deployments(command) => command.platform_url_flag(),
             Self::Access(command) => command.platform_url_flag(),
             Self::Integrations(command) => command.platform_url_flag(),
             Self::ProtocolManager(command) => command.platform_url_flag(),

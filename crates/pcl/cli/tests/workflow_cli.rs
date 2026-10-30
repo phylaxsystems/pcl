@@ -182,17 +182,17 @@ fn workflow_body_templates_cover_project_release_families() {
     );
     assert_body_template_fields(
         temp_dir.path(),
-        "deployments",
+        "releases-deploy",
         &[
-            "deployments",
+            "releases",
             "--api-url",
             api,
-            "--project",
+            "deploy",
             "project-1",
-            "--confirm",
+            "release-1",
             "--body-template",
         ],
-        &["tx_hash", "chainId", "assertions"],
+        &["chainId", "txHash"],
     );
 }
 
@@ -502,5 +502,160 @@ fn contract_views_keep_envelopes_and_detail_guidance() {
             serde_json::json!([format!("{expected} --json")])
         );
         request.assert();
+    }
+}
+
+fn assert_local_parse_error(config_dir: &std::path::Path, args: &[&str], code: &str) {
+    let output = run_pcl(config_dir, args);
+    assert!(
+        !output.status.success(),
+        "{args:?} succeeded:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stderr).unwrap_or_else(|error| {
+            panic!(
+                "{args:?} did not return JSON ({error}):\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+    assert_eq!(envelope["error"]["code"], code, "{args:?}: {envelope}");
+}
+
+#[test]
+fn retired_commands_fail_before_any_request() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let mut server = mockito::Server::new();
+    let unexpected_get = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+    let unexpected_post = server
+        .mock("POST", mockito::Matcher::Any)
+        .expect(0)
+        .create();
+    write_valid_auth_config_for_platform(config_dir.path(), &server.url());
+    let url = server.url();
+    let rejected = [
+        (
+            "cli.invalid_subcommand",
+            vec!["deployments", "--api-url", url.as_str(), "--project", "p"],
+        ),
+        (
+            "cli.invalid_subcommand",
+            vec![
+                "deployments",
+                "--api-url",
+                url.as_str(),
+                "--project",
+                "p",
+                "--confirm",
+            ],
+        ),
+        (
+            "cli.unknown_argument",
+            vec![
+                "assertions",
+                "--api-url",
+                url.as_str(),
+                "--project-id",
+                "p",
+                "--remove-info",
+            ],
+        ),
+        (
+            "cli.unknown_argument",
+            vec![
+                "assertions",
+                "--api-url",
+                url.as_str(),
+                "--project-id",
+                "p",
+                "--remove-calldata",
+            ],
+        ),
+        (
+            "cli.unknown_argument",
+            vec![
+                "contracts",
+                "--api-url",
+                url.as_str(),
+                "--remove-calldata",
+                "--aa-address",
+                "0xabc",
+                "--assertion-id",
+                "a",
+                "--network",
+                "1",
+                "--environment",
+                "production",
+            ],
+        ),
+        (
+            "cli.unknown_argument",
+            vec![
+                "contracts",
+                "--api-url",
+                url.as_str(),
+                "--project",
+                "p",
+                "--aa-address",
+                "0xabc",
+            ],
+        ),
+    ];
+    for (code, args) in &rejected {
+        assert_local_parse_error(config_dir.path(), args, code);
+    }
+    unexpected_get.assert();
+    unexpected_post.assert();
+}
+
+#[test]
+fn discovery_omits_retired_workflows() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let forbidden = [
+        "pcl deployments",
+        "\"deployments\"",
+        "--remove-info",
+        "--remove-calldata",
+        "removeAssertionsInfo",
+        "removeAssertionsCalldata",
+        "confirmDeployment",
+        "getProjectDeployments",
+    ];
+    for args in [
+        &["schema", "list"][..],
+        &["workflows"],
+        &["api", "manifest"],
+        &["assertions", "--help"],
+        &["contracts", "--help"],
+        &["--help"],
+    ] {
+        let output = run_pcl(config_dir.path(), args);
+        assert!(
+            output.status.success(),
+            "{args:?} failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8_lossy(&output.stdout);
+        for needle in forbidden {
+            assert!(
+                !text.contains(needle),
+                "{args:?} still advertises {needle:?}:\n{text}"
+            );
+        }
+    }
+
+    let contracts_help = run_pcl(config_dir.path(), &["contracts", "--help"]);
+    assert!(contracts_help.status.success());
+    let contracts_help = String::from_utf8_lossy(&contracts_help.stdout);
+    for needle in [
+        "--aa-address",
+        "--assertion-id",
+        "--network",
+        "--environment",
+    ] {
+        assert!(
+            !contracts_help.contains(needle),
+            "contracts help still advertises {needle}:\n{contracts_help}"
+        );
     }
 }

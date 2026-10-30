@@ -513,7 +513,7 @@ impl ApiArgs {
 
         let next_actions = vec![
             format!("pcl releases show {project} {release_id}"),
-            format!("pcl deployments --project {project}"),
+            format!("pcl releases list {project}"),
         ];
 
         if calldata.is_noop {

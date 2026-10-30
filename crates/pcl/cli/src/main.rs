@@ -214,7 +214,6 @@ async fn run_command(
         Commands::Account(command) => command.run(config, cli_args, json_output).await?,
         Commands::Contracts(command) => command.run(config, cli_args, json_output).await?,
         Commands::Releases(command) => command.run(config, cli_args, json_output).await?,
-        Commands::Deployments(command) => command.run(config, cli_args, json_output).await?,
         Commands::Access(command) => command.run(config, cli_args, json_output).await?,
         Commands::Integrations(command) => command.run(config, cli_args, json_output).await?,
         Commands::ProtocolManager(command) => command.run(config, cli_args, json_output).await?,
@@ -1356,7 +1355,6 @@ fn is_known_top_level_command(command: &str) -> bool {
             | "account"
             | "contracts"
             | "releases"
-            | "deployments"
             | "access"
             | "integrations"
             | "protocol-manager"

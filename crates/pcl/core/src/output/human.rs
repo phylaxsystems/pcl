@@ -266,7 +266,6 @@ fn render_human_special(output: &mut String, envelope: &Value) -> bool {
         render_incident_detail,
         render_search_results,
         render_account_detail,
-        render_deployment_state,
         render_integration_status,
         render_protocol_manager_status,
     ] {
@@ -751,33 +750,6 @@ fn render_account_detail(output: &mut String, data: &Value) -> bool {
     write_bool_field(output, "Whitelisted", data, "whitelisted");
     write_bool_field(output, "Terms accepted", data, "terms_accepted");
     write_timestamp_field(output, "Terms accepted at", data, "terms_accepted_at");
-    true
-}
-
-fn render_deployment_state(output: &mut String, data: &Value) -> bool {
-    let Some(project) = data.get("project") else {
-        return false;
-    };
-    if data.get("available_contracts").is_none()
-        || data.get("submitted_assertions").is_none()
-        || data.get("staging_assertions").is_none()
-    {
-        return false;
-    }
-    output.push_str("\nDeployments\n");
-    if let Some(name) = project.get("project_name").and_then(Value::as_str) {
-        writeln!(output, "Project: {name}").expect("write to string");
-    }
-    if let Some(id) = project.get("project_id").and_then(Value::as_str) {
-        writeln!(output, "Project ID: {id}").expect("write to string");
-    }
-    write_network_list_for_value(output, project);
-    write_count_field(output, "Available contracts", data, "available_contracts");
-    write_count_field(output, "Submitted assertions", data, "submitted_assertions");
-    write_count_field(output, "Staging assertions", data, "staging_assertions");
-    if let Some(meta) = data.get("_meta") {
-        render_collection_meta(output, meta);
-    }
     true
 }
 
@@ -1287,12 +1259,7 @@ fn write_count_field(output: &mut String, label: &str, data: &Value, field: &str
 
 fn count_field_unit(label: &str, field: &str) -> &'static str {
     match (label, field) {
-        ("Available contracts", _) => "contract",
-        ("Submitted assertions", _) | ("Staging assertions", _) => "assertion",
-        (_, "available_contracts") => "contract",
-        (_, "submitted_assertions" | "staging_assertions" | "submitted_assertion_ids") => {
-            "assertion"
-        }
+        ("Submitted assertions", _) | (_, "submitted_assertion_ids") => "assertion",
         _ => "item",
     }
 }
