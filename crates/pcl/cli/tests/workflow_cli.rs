@@ -710,3 +710,69 @@ fn retired_deployments_points_at_releases_not_deploy() {
     unexpected_get.assert();
     unexpected_post.assert();
 }
+
+#[test]
+fn release_deploy_broadcast_next_actions_use_releases_commands() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let mut server = mockito::Server::new();
+    write_valid_auth_config_for_platform(config_dir.path(), &server.url());
+    let project = "11111111-1111-4111-8111-111111111111";
+    let calldata = server
+        .mock(
+            "GET",
+            format!("/api/v1/projects/{project}/releases/release-1/deploy-calldata").as_str(),
+        )
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "chainId": 1,
+                "stateOracleAddress": "0x0101010101010101010101010101010101010101",
+                "operations": [],
+                "calldata": [],
+                "isNoop": true,
+                "message": "Everything already deployed",
+            })
+            .to_string(),
+        )
+        .expect(1)
+        .create();
+    let confirm = server
+        .mock(
+            "POST",
+            format!("/api/v1/projects/{project}/releases/release-1/deploy").as_str(),
+        )
+        .match_body(Matcher::PartialJson(serde_json::json!({"mode": "noop"})))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body("{}")
+        .expect(1)
+        .create();
+
+    let output = run_pcl(
+        config_dir.path(),
+        &[
+            "releases",
+            "calldata",
+            "deploy",
+            project,
+            "release-1",
+            "--broadcast",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--yes",
+        ],
+    );
+    let envelope = assert_json_success(&output, "release deploy broadcast");
+    assert_eq!(envelope["data"]["noop"], true, "{envelope}");
+    assert_eq!(
+        envelope["next_actions"],
+        serde_json::json!([
+            format!("pcl releases show {project} release-1 --json"),
+            format!("pcl releases list {project} --json")
+        ])
+    );
+    calldata.assert();
+    confirm.assert();
+}

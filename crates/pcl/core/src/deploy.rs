@@ -15,6 +15,7 @@ use crate::{
         ApiArgs,
         BroadcastArgs,
         HttpMethod,
+        release_next_actions,
     },
     apply::{
         ApplyArgs,
@@ -1314,10 +1315,7 @@ impl DeployArgs {
             Self::finish(
                 output_mode,
                 data,
-                vec![
-                    format!("pcl releases show {project_id} {release_id}"),
-                    format!("pcl releases list {project_id}"),
-                ],
+                release_next_actions(project_id, &release_id),
             )
         }
         .await;
