@@ -3957,8 +3957,7 @@ fn workflow_definitions_are_the_manifest_source_of_truth() {
             .find(|command| command["command"] == definition.command)
             .unwrap_or_else(|| panic!("missing manifest command {}", definition.command));
         assert_eq!(
-            command["output_policy"],
-            definition.output_policy.as_str(),
+            command["output_policy"], "machine_raw",
             "manifest should expose output policy from workflow definition {}",
             definition.name
         );
@@ -3971,10 +3970,6 @@ fn workflow_definitions_are_the_manifest_source_of_truth() {
     }
 
     assert!(definitions::workflow_definition("deployments").is_none());
-    assert_eq!(
-        definitions::workflow_output_policy("projects"),
-        definitions::WorkflowOutputPolicy::MachineRaw
-    );
     for definition in definitions::workflow_definitions() {
         for action in definition.actions {
             assert!(

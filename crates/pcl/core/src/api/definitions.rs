@@ -12,28 +12,14 @@ use super::{
     workflows,
 };
 
-// Workflow metadata lives here so schema, manifest, OpenAPI alternatives, and
-// output policies cannot silently diverge as new API functionality is added.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum WorkflowOutputPolicy {
-    MachineRaw,
-}
-
-impl WorkflowOutputPolicy {
-    pub(super) const fn as_str(self) -> &'static str {
-        match self {
-            Self::MachineRaw => "machine_raw",
-        }
-    }
-}
-
+// Workflow metadata lives here so schema, manifest, and OpenAPI alternatives
+// cannot silently diverge as new API functionality is added.
 #[derive(Debug)]
 pub(super) struct WorkflowDefinition {
     pub(super) name: &'static str,
     pub(super) command: &'static str,
     pub(in crate::api) description: &'static str,
     pub(in crate::api) output: &'static str,
-    pub(super) output_policy: WorkflowOutputPolicy,
     pub(super) actions: &'static [WorkflowActionDefinition],
 }
 
@@ -61,10 +47,8 @@ impl WorkflowDefinition {
         object.insert("command".to_string(), json!(self.command));
         object.insert("description".to_string(), json!(self.description));
         object.insert("output".to_string(), json!(self.output));
-        object.insert(
-            "output_policy".to_string(),
-            json!(self.output_policy.as_str()),
-        );
+        // Every workflow returns the raw API body; the field stays for contract stability.
+        object.insert("output_policy".to_string(), json!("machine_raw"));
         object.insert(
             "actions".to_string(),
             Value::Array(
@@ -186,13 +170,6 @@ pub(super) fn workflow_definition(name: &str) -> Option<&'static WorkflowDefinit
     WORKFLOW_DEFINITIONS
         .iter()
         .find(|definition| definition.name == name)
-}
-
-#[cfg(test)]
-pub(super) fn workflow_output_policy(name: &str) -> WorkflowOutputPolicy {
-    workflow_definition(name).map_or(WorkflowOutputPolicy::MachineRaw, |definition| {
-        definition.output_policy
-    })
 }
 
 pub(super) fn command_manifests() -> Vec<Value> {

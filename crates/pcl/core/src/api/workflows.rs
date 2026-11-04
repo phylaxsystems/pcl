@@ -30,7 +30,6 @@ macro_rules! workflow_definition {
         command: $command:literal,
         description: $description:literal,
         output: $output:literal,
-        policy: $policy:ident,
         actions: [$($action:expr),* $(,)?],
     ) => {
         pub(in crate::api) const DEFINITION: super::super::definitions::WorkflowDefinition =
@@ -39,7 +38,6 @@ macro_rules! workflow_definition {
                 command: $command,
                 description: $description,
                 output: $output,
-                output_policy: super::super::definitions::WorkflowOutputPolicy::$policy,
                 actions: &[$($action),*],
             };
     };

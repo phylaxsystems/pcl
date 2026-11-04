@@ -79,7 +79,6 @@ workflow_definition!(
     command: "pcl contracts --project <ref> [--adopter-id <id>]",
     description: "Inspect release-based project contracts.",
     output: "release-based contract views",
-    policy: MachineRaw,
     actions: [
         action!("list_project", true, "views.projectContracts.getProjectContracts", "pcl contracts --project <project-ref>", required: ["--project"]),
         action!("detail", true, "views.contractDetail.getContractDetail", "pcl contracts --project <project-ref> --adopter-id <adopter-id>", required: ["--project", "--adopter-id"]),

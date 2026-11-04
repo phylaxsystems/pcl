@@ -121,7 +121,6 @@ workflow_definition!(
     command: "pcl assertions --project <ref> [--assertion-id <id>|--registered]",
     description: "List and inspect project assertions.",
     output: "assertion index, detail, registered assertions, or adopter lookup",
-    policy: MachineRaw,
     actions: [
         action!("index", true, "views.projectAssertions.getProjectAssertions", "pcl assertions --project <project-ref>", required: ["--project"]),
         action!("detail", true, "views.assertionDetail.getAssertionDetail", "pcl assertions --project <project-ref> --assertion-id <assertion-id>", required: ["--project", "--assertion-id"]),
