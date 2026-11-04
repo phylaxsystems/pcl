@@ -64,7 +64,6 @@ use super::{
     template_envelope,
     upsert_query,
     workflow_success_envelope,
-    workflow_success_envelope_with_data,
     write_api_coverage_markdown,
     write_json_output_file,
     write_jsonl_items_output_file,
@@ -986,12 +985,7 @@ impl ApiArgs {
             .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
         let next_actions = next_actions_for(&result.body, request.next_actions);
-        let data = result.body.clone();
-        Ok(workflow_success_envelope_with_data(
-            result,
-            data,
-            next_actions,
-        ))
+        Ok(workflow_success_envelope(result, next_actions))
     }
 
     pub(in crate::api) fn auth_plan(

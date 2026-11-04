@@ -30,20 +30,6 @@ pub(in crate::api) fn workflow_success_envelope(
     }))
 }
 
-pub(in crate::api) fn workflow_success_envelope_with_data(
-    result: WorkflowCallResult,
-    data: Value,
-    next_actions: Vec<String>,
-) -> Value {
-    with_envelope_metadata(json!({
-        "status": "ok",
-        "data": data,
-        "request": result.request,
-        "response": result.response,
-        "next_actions": next_actions,
-    }))
-}
-
 pub(in crate::api) fn query_pairs_value(query: &[(String, String)]) -> Value {
     Value::Array(
         query
