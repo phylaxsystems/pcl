@@ -2509,26 +2509,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bzip2"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdb116a6ef3f6c3698828873ad02c3014b3c85cadb88496095628e3ef1e347f8"
-dependencies = [
- "bzip2-sys",
- "libc",
-]
-
-[[package]]
-name = "bzip2-sys"
-version = "0.1.13+1.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "225bff33b2141874fe80d71e07d6eec4f85c5c216453dd96388240f96e1acc14"
-dependencies = [
- "cc",
- "pkg-config",
-]
-
-[[package]]
 name = "c-kzg"
 version = "2.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2546,8 +2526,6 @@ dependencies = [
 [[package]]
 name = "candle-core"
 version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bd9895436c1ba5dc1037a19935d084b838db066ff4e15ef7dded020b7c12a4a"
 dependencies = [
  "byteorder",
  "float8",
@@ -2564,7 +2542,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokenizers",
  "yoke",
- "zip 7.2.0",
+ "zip",
 ]
 
 [[package]]
@@ -3423,12 +3401,6 @@ dependencies = [
 
 [[package]]
 name = "constant_time_eq"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "245097e9a4535ee1e3e3931fcfcd55a796a44c643e8596ff6566d68f09b87bbc"
-
-[[package]]
-name = "constant_time_eq"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
@@ -3751,7 +3723,7 @@ dependencies = [
  "ciborium",
  "derive-new",
  "derive_more",
- "dirs",
+ "dirs 6.0.0",
  "embassy-futures",
  "embassy-time",
  "float4",
@@ -3980,7 +3952,7 @@ dependencies = [
  "cubecl-zspace",
  "derive-new",
  "derive_more",
- "dirs",
+ "dirs 6.0.0",
  "enumset",
  "hashbrown 0.16.1",
  "log",
@@ -4558,10 +4530,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "digest-io"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2de63d600bc7fab91180bc17385f29b342468dc8ef2af09dceba450a293de3da"
+dependencies = [
+ "digest 0.11.3",
+]
+
+[[package]]
 name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
+name = "dirs"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d57d423b3c82e89b9a24ca3091fee61f456a26edbd28d26c65906f4bc1dcd8f"
 dependencies = [
  "dirs-sys",
 ]
@@ -5726,7 +5716,7 @@ dependencies = [
  "ciborium",
  "clap",
  "comfy-table",
- "dirs",
+ "dirs 6.0.0",
  "dunce",
  "eyre",
  "flate2",
@@ -5883,7 +5873,7 @@ dependencies = [
  "alloy-chains",
  "alloy-primitives",
  "clap",
- "dirs",
+ "dirs 6.0.0",
  "dunce",
  "eyre",
  "figment2",
@@ -6252,7 +6242,7 @@ dependencies = [
  "axum",
  "clap",
  "derive_builder",
- "dirs",
+ "dirs 6.0.0",
  "eth-keystore",
  "eyre",
  "hidapi-rusb",
@@ -9250,7 +9240,7 @@ dependencies = [
  "color-eyre",
  "colored",
  "dapp-api-client",
- "dirs",
+ "dirs 6.0.0",
  "indicatif",
  "inquire",
  "mockito",
@@ -12727,8 +12717,6 @@ dependencies = [
 [[package]]
 name = "soldeer-core"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d32eb6865b1ba187930003d4bbcfb6bdc71747a55845f9807aa06bbf35ea1fb"
 dependencies = [
  "bon",
  "chrono",
@@ -12751,8 +12739,7 @@ dependencies = [
  "tokio",
  "toml_edit 0.25.12+spec-1.1.0",
  "uuid 1.23.1",
- "zip 4.6.1",
- "zip-extract",
+ "zip",
 ]
 
 [[package]]
@@ -12996,28 +12983,29 @@ dependencies = [
 
 [[package]]
 name = "svm-rs"
-version = "0.5.25"
+version = "0.5.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4572dd9845e37ca0293acb5fe591a7f61b51f1b7b62d3dc6fb8e99e2664f3755"
+checksum = "491d458a758a179f6768cc5bad5e5382ae22efb06a36fb4c24833a638fae990f"
 dependencies = [
  "const-hex",
- "dirs",
+ "digest-io",
+ "dirs 7.0.0",
  "reqwest 0.13.4",
  "semver 1.0.28",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.18",
  "url",
- "zip 4.6.1",
+ "zip",
 ]
 
 [[package]]
 name = "svm-rs-builds"
-version = "0.5.25"
+version = "0.5.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74224f62f19c1309caa071de7c1c9c1ad1d7551d2f881af4046f3d71880c820a"
+checksum = "05a309edebb5529cf0b11756dd29e0eea2a36b021c93c86979b1fc6658685d04"
 dependencies = [
  "const-hex",
  "semver 1.0.28",
@@ -13177,8 +13165,6 @@ dependencies = [
 [[package]]
 name = "tch"
 version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e09b91610202dc4820c21eb474a42b386ef69f323b1c0902b5472ba7456ebb5"
 dependencies = [
  "half",
  "lazy_static",
@@ -13188,7 +13174,7 @@ dependencies = [
  "safetensors 0.3.3",
  "thiserror 1.0.69",
  "torch-sys",
- "zip 0.6.6",
+ "zip",
 ]
 
 [[package]]
@@ -13906,8 +13892,6 @@ dependencies = [
 [[package]]
 name = "torch-sys"
 version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aef40c585e342df95b66a1fa7c923188623999c2b657227befb481dfb03a6a42"
 dependencies = [
  "anyhow",
  "cc",
@@ -13915,7 +13899,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ureq",
- "zip 0.6.6",
+ "zip",
 ]
 
 [[package]]
@@ -14001,7 +13985,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "constcat",
- "dirs",
+ "dirs 6.0.0",
  "liblzma",
  "regex",
  "reqwest 0.12.28",
@@ -14331,9 +14315,9 @@ checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typed-path"
-version = "0.12.3"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
+checksum = "9ce898823d8cd0f028662d2f349694b1af0a5cc9be83f1d213a00d3147445e1e"
 
 [[package]]
 name = "typeid"
@@ -15932,59 +15916,20 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "0.6.6"
+version = "9.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "760394e246e4c28189f19d488c058bf16f564016aefac5d32bb1f3b51d5e9261"
+checksum = "eaeb7f16d2605b49aef586996ded29e65642fab7259a3077e537351df6d80426"
 dependencies = [
- "aes",
- "byteorder",
- "bzip2",
- "constant_time_eq 0.1.5",
- "crc32fast",
- "crossbeam-utils",
- "flate2",
- "hmac 0.12.1",
- "pbkdf2 0.11.0",
- "sha1",
- "time",
- "zstd 0.11.2+zstd.1.5.2",
-]
-
-[[package]]
-name = "zip"
-version = "4.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "caa8cd6af31c3b31c6631b8f483848b91589021b28fffe50adada48d4f4d2ed1"
-dependencies = [
- "arbitrary",
  "crc32fast",
  "flate2",
+ "getrandom 0.4.2",
  "indexmap 2.14.0",
+ "libc",
  "memchr",
- "zopfli",
-]
-
-[[package]]
-name = "zip"
-version = "7.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c42e33efc22a0650c311c2ef19115ce232583abbe80850bc8b66509ebef02de0"
-dependencies = [
- "crc32fast",
- "indexmap 2.14.0",
- "memchr",
+ "nix 0.31.3",
  "typed-path",
-]
-
-[[package]]
-name = "zip-extract"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fa5b9958fd0b5b685af54f2c3fa21fca05fe295ebaf3e77b6d24d96c4174037"
-dependencies = [
- "log",
- "thiserror 2.0.18",
- "zip 4.6.1",
+ "windows-sys 0.61.2",
+ "zopfli",
 ]
 
 [[package]]
@@ -16013,30 +15958,11 @@ dependencies = [
 
 [[package]]
 name = "zstd"
-version = "0.11.2+zstd.1.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20cc960326ece64f010d2d2107537f26dc589a6573a316bd5b1dba685fa5fde4"
-dependencies = [
- "zstd-safe 5.0.2+zstd.1.5.2",
-]
-
-[[package]]
-name = "zstd"
 version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
 dependencies = [
  "zstd-safe 7.2.4",
-]
-
-[[package]]
-name = "zstd-safe"
-version = "5.0.2+zstd.1.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d2a5585e04f9eea4b2a3d1eca508c4dee9592a89ef6f450c11719da0726f4db"
-dependencies = [
- "libc",
- "zstd-sys",
 ]
 
 [[package]]

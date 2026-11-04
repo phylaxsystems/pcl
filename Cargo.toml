@@ -89,6 +89,15 @@ debug = "line-tables-only"
 
 # Patches required when consuming Phoundry as a git dependency.
 [patch.crates-io]
+# Transitive zip copies are pinned by parents that have no semver-compatible
+# release on zip >= 9.0.5 (GHSA-m665-v7pm-7grj, GHSA-q7v9-x93c-xqv3). These
+# path crates keep the versions those parents require and depend on zip >= 9.0.5.
+# svm-rs is bumped in Cargo.lock instead; 0.5.32 already depends on zip ^9.
+soldeer-core = { path = "patches/soldeer-core" }
+candle-core = { path = "patches/candle-core" }
+tch = { path = "patches/tch" }
+torch-sys = { path = "patches/torch-sys" }
+
 solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 
