@@ -659,3 +659,54 @@ fn discovery_omits_retired_workflows() {
         );
     }
 }
+
+#[test]
+fn retired_deployments_points_at_releases_not_deploy() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let mut server = mockito::Server::new();
+    let unexpected_get = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+    let unexpected_post = server
+        .mock("POST", mockito::Matcher::Any)
+        .expect(0)
+        .create();
+    write_valid_auth_config_for_platform(config_dir.path(), &server.url());
+    let args = ["deployments", "--project", "p"];
+
+    let output = run_pcl(config_dir.path(), &args);
+    assert_eq!(output.status.code(), Some(2));
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stderr).expect("json error");
+    assert_eq!(envelope["error"]["code"], "cli.invalid_subcommand");
+    assert!(
+        !envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("'deploy'")
+    );
+    assert_eq!(
+        envelope["next_actions"],
+        serde_json::json!([
+            "pcl releases list <project-ref> --json",
+            "pcl releases show <project-ref> <release-id> --json"
+        ])
+    );
+
+    let human = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .arg("--config-dir")
+        .arg(config_dir.path())
+        .args(args)
+        .output()
+        .expect("run pcl");
+    assert_eq!(human.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&human.stderr);
+    assert!(!stderr.contains("'deploy'"), "{stderr}");
+    assert!(
+        stderr.contains("pcl releases list <project-ref>"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("pcl releases show <project-ref> <release-id>"),
+        "{stderr}"
+    );
+    unexpected_get.assert();
+    unexpected_post.assert();
+}
