@@ -41,7 +41,8 @@ regenerate-pinned:
 	mkdir -p $(dir $(DAPP_SPEC_FILE))
 	gh api -H "Accept: application/vnd.github.raw" "repos/phylaxsystems/credible-layer-dapp/contents/packages/dapp-api/openapi.json?ref=$(DAPP_SPEC_REV)" > $(DAPP_SPEC_FILE)
 	echo "$(DAPP_SPEC_SHA256)  $(DAPP_SPEC_FILE)" | shasum -a 256 -c
-	cd crates/dapp-api-client && cargo build --features regenerate
+	# Force off: a forced build refetches from the live API over the verified spec.
+	cd crates/dapp-api-client && FORCE_SPEC_REGENERATE=false cargo build --features regenerate
 	@echo "Client regenerated! Review changes with: git diff crates/dapp-api-client/src/generated/"
 
 # Regenerate dapp-api-client from whatever production serves now (not pinned;
