@@ -531,77 +531,48 @@ fn retired_commands_fail_before_any_request() {
         .mock("POST", mockito::Matcher::Any)
         .expect(0)
         .create();
+    // Requests would reach the mock: the config's platform URL is the server.
     write_valid_auth_config_for_platform(config_dir.path(), &server.url());
-    let url = server.url();
-    let rejected = [
+    let rejected: &[(&str, &[&str])] = &[
+        ("cli.invalid_subcommand", &["deployments", "--project", "p"]),
         (
             "cli.invalid_subcommand",
-            vec!["deployments", "--api-url", url.as_str(), "--project", "p"],
-        ),
-        (
-            "cli.invalid_subcommand",
-            vec![
-                "deployments",
-                "--api-url",
-                url.as_str(),
-                "--project",
-                "p",
-                "--confirm",
-            ],
+            &["deployments", "--project", "p", "--confirm"],
         ),
         (
             "cli.unknown_argument",
-            vec![
-                "assertions",
-                "--api-url",
-                url.as_str(),
-                "--project-id",
-                "p",
-                "--remove-info",
-            ],
+            &["assertions", "--project-id", "p", "--remove-info"],
         ),
         (
             "cli.unknown_argument",
-            vec![
-                "assertions",
-                "--api-url",
-                url.as_str(),
-                "--project-id",
-                "p",
-                "--remove-calldata",
-            ],
+            &["assertions", "--project-id", "p", "--remove-calldata"],
         ),
         (
             "cli.unknown_argument",
-            vec![
-                "contracts",
-                "--api-url",
-                url.as_str(),
-                "--remove-calldata",
-                "--aa-address",
-                "0xabc",
-                "--assertion-id",
-                "a",
-                "--network",
-                "1",
-                "--environment",
-                "production",
-            ],
+            &["contracts", "--project", "p", "--remove-calldata"],
         ),
         (
             "cli.unknown_argument",
-            vec![
-                "contracts",
-                "--api-url",
-                url.as_str(),
-                "--project",
-                "p",
-                "--aa-address",
-                "0xabc",
-            ],
+            &["contracts", "--project", "p", "--aa-address", "0xabc"],
+        ),
+        (
+            "cli.unknown_argument",
+            &["contracts", "--project", "p", "--assertion-id", "a"],
+        ),
+        (
+            "cli.unknown_argument",
+            &["contracts", "--project", "p", "--assertion-ids", "a"],
+        ),
+        (
+            "cli.unknown_argument",
+            &["contracts", "--project", "p", "--network", "1"],
+        ),
+        (
+            "cli.unknown_argument",
+            &["contracts", "--project", "p", "--environment", "production"],
         ),
     ];
-    for (code, args) in &rejected {
+    for (code, args) in rejected {
         assert_local_parse_error(config_dir.path(), args, code);
     }
     unexpected_get.assert();
@@ -612,8 +583,7 @@ fn retired_commands_fail_before_any_request() {
 fn discovery_omits_retired_workflows() {
     let config_dir = tempfile::tempdir().expect("config dir");
     let forbidden = [
-        "pcl deployments",
-        "\"deployments\"",
+        "deployments",
         "--remove-info",
         "--remove-calldata",
         "removeAssertionsInfo",
@@ -621,14 +591,26 @@ fn discovery_omits_retired_workflows() {
         "confirmDeployment",
         "getProjectDeployments",
     ];
-    for args in [
-        &["schema", "list"][..],
-        &["workflows"],
-        &["api", "manifest"],
-        &["assertions", "--help"],
-        &["contracts", "--help"],
-        &["--help"],
-    ] {
+    let contracts_only: &[&str] = &[
+        "--aa-address",
+        "--assertion-id",
+        "--network",
+        "--environment",
+    ];
+    let surfaces: &[(&[&str], &[&str])] = &[
+        (&["schema", "list"], &[]),
+        (&["workflows"], &[]),
+        (&["api", "manifest"], &[]),
+        (&["--llms"], &[]),
+        (&["llms"], &[]),
+        (&["completions", "bash"], &[]),
+        (&["completions", "zsh"], &[]),
+        (&["completions", "fish"], &[]),
+        (&["assertions", "--help"], &[]),
+        (&["contracts", "--help"], contracts_only),
+        (&["--help"], &[]),
+    ];
+    for (args, extra) in surfaces {
         let output = run_pcl(config_dir.path(), args);
         assert!(
             output.status.success(),
@@ -636,27 +618,12 @@ fn discovery_omits_retired_workflows() {
             String::from_utf8_lossy(&output.stderr)
         );
         let text = String::from_utf8_lossy(&output.stdout);
-        for needle in forbidden {
+        for needle in forbidden.iter().chain(extra.iter()) {
             assert!(
                 !text.contains(needle),
                 "{args:?} still advertises {needle:?}:\n{text}"
             );
         }
-    }
-
-    let contracts_help = run_pcl(config_dir.path(), &["contracts", "--help"]);
-    assert!(contracts_help.status.success());
-    let contracts_help = String::from_utf8_lossy(&contracts_help.stdout);
-    for needle in [
-        "--aa-address",
-        "--assertion-id",
-        "--network",
-        "--environment",
-    ] {
-        assert!(
-            !contracts_help.contains(needle),
-            "contracts help still advertises {needle}:\n{contracts_help}"
-        );
     }
 }
 
