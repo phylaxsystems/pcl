@@ -20,4 +20,5 @@ ignore = [
     { id = "RUSTSEC-2026-0398", reason = "Transitive zstd-safe 7.2.4 through Reth/Foundry. The fix is >=8.2.0, outside the pinned upstream requirement." },
     { id = "RUSTSEC-2026-0403", reason = "Transitive zstd-safe 7.2.4 through Reth/Foundry. The fix is >=8.2.0, outside the pinned upstream requirement." },
     { id = "RUSTSEC-2026-0410", reason = "Transitive zstd-sys 2.0.16 through Reth/Foundry. The fix is >=2.1.2, outside the pinned upstream requirement." },
+    { id = "RUSTSEC-2026-0429", reason = "Transitive zip 4.6.1 through Phoundry/Foundry -> soldeer-core and svm-rs. The fix is zip >=9.0.0, outside upstream dependency requirements. Remove with the other zip ignores." },
 ]
