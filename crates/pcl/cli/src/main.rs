@@ -1248,7 +1248,7 @@ fn should_show_root_help(err: &clap::Error, args: &[OsString]) -> bool {
     ) && parsed_command_name(args).is_none()
 }
 
-/// Removed in OpenAPI 24.0.0; clap would otherwise suggest the mutating `deploy`.
+/// Removed in `OpenAPI` 24.0.0; clap would otherwise suggest the mutating `deploy`.
 fn is_retired_command(err: &clap::Error, args: &[OsString]) -> bool {
     err.kind() == ErrorKind::InvalidSubcommand
         && parsed_command_name(args).as_deref() == Some("deployments")
