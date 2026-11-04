@@ -527,12 +527,17 @@ fn render_project_detail(output: &mut String, data: &Value) -> bool {
     } else {
         output.push_str("Protocol manager: not set\n");
     }
-    write_count_field(
-        output,
-        "Submitted assertions",
-        data,
-        "submitted_assertion_ids",
-    );
+    if let Some(ids) = data
+        .get("submitted_assertion_ids")
+        .and_then(Value::as_array)
+    {
+        writeln!(
+            output,
+            "Submitted assertions: {}",
+            plural_count(ids.len(), "assertion")
+        )
+        .expect("write to string");
+    }
     write_u64_field(output, "Saved by", data, "saved_count", Some("users"));
     true
 }
@@ -1243,24 +1248,6 @@ fn write_u64_field(
         } else {
             writeln!(output, "{label}: {value}").expect("write to string");
         }
-    }
-}
-
-fn write_count_field(output: &mut String, label: &str, data: &Value, field: &str) {
-    if let Some(values) = data.get(field).and_then(Value::as_array) {
-        writeln!(
-            output,
-            "{label}: {}",
-            plural_count(values.len(), count_field_unit(label, field))
-        )
-        .expect("write to string");
-    }
-}
-
-fn count_field_unit(label: &str, field: &str) -> &'static str {
-    match (label, field) {
-        ("Submitted assertions", _) | (_, "submitted_assertion_ids") => "assertion",
-        _ => "item",
     }
 }
 
