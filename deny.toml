@@ -14,4 +14,11 @@ ignore = [
     { id = "RUSTSEC-2026-0367", reason = "Transitive through Phoundry/Foundry -> soldeer-core, zip-extract and svm-rs; zip fixes require >=9.0.0, outside upstream dependency requirements. Remove when those upstreams upgrade ZIP extraction." },
     { id = "RUSTSEC-2026-0368", reason = "Transitive through Phoundry/Foundry -> soldeer-core, zip-extract and svm-rs; zip fixes require >=9.0.0, outside upstream dependency requirements. Remove when those upstreams upgrade ZIP extraction." },
     { id = "RUSTSEC-2026-0369", reason = "Transitive through Phoundry/Foundry -> soldeer-core, zip-extract and svm-rs; zip fixes require >=9.0.0, outside upstream dependency requirements. Remove when those upstreams upgrade ZIP extraction." },
+    { id = "RUSTSEC-2026-0387", reason = "Transitive crypto-bigint 0.5.5 through Foundry/Alloy. Fix is >=0.7.6, which those pins do not allow. Remove when upstream bumps crypto-bigint." },
+    { id = "RUSTSEC-2026-0386", reason = "Transitive tokio 1.52.3. Fix is >=1.53.3, blocked on the workspace tokio pin and Foundry. Remove when that pin moves." },
+    { id = "RUSTSEC-2026-0429", reason = "Transitive zip 4.6.1 through Phoundry/Foundry. Same upstream block as RUSTSEC-2026-0367. Fix requires zip >=9.0.0." },
+    { id = "RUSTSEC-2026-0391", reason = "Transitive zstd 0.13.3 through reth/Foundry. Fix is zstd >=0.13.4, outside those dependency requirements. Remove when upstream bumps zstd." },
+    { id = "RUSTSEC-2026-0398", reason = "Transitive zstd-safe 7.2.4 through reth/Foundry. Fix is >=7.4.0. Remove when upstream bumps zstd-safe." },
+    { id = "RUSTSEC-2026-0403", reason = "Transitive zstd-safe 7.2.4 through reth/Foundry. Same bump as RUSTSEC-2026-0398." },
+    { id = "RUSTSEC-2026-0410", reason = "Transitive zstd-sys 2.0.16 through reth/Foundry. Fix is >=2.1.2. Remove when upstream bumps zstd-sys." },
 ]
