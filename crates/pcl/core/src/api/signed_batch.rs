@@ -196,6 +196,16 @@ pub(crate) fn validate_manager_batch(
     // either of the chain's active oracles may be the target.
     check_target(platform, chain_id, None, to)?;
 
+    // A repeated contract's second call reverts (NoPendingManager), failing
+    // the whole batch after the operator approved it.
+    let mut seen = std::collections::HashSet::with_capacity(contracts.len());
+    if let Some((contract, _)) = contracts
+        .iter()
+        .find(|(contract, _)| !seen.insert(*contract))
+    {
+        return Err(format!("contract {contract} is listed more than once"));
+    }
+
     let mut expected = Vec::with_capacity(contracts.len());
     for (index, (contract, inner)) in contracts.iter().enumerate() {
         let (call, function): (Bytes, _) = match new_manager {
@@ -639,6 +649,54 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn duplicate_manager_contracts_are_refused() {
+        let linea: Url = LINEA_URL.parse().unwrap();
+        let requested = address!("0303030303030303030303030303030303030303");
+        let lower: Address = format!("{ADOPTER}").to_lowercase().parse().unwrap();
+        let accept: Bytes = accept_entry().into();
+        let transfer: Bytes = transferManagerCall {
+            contractAddress: ADOPTER,
+            newManager: requested,
+        }
+        .abi_encode()
+        .into();
+        for (inner, new_manager) in [(accept, None), (transfer, Some(requested))] {
+            let reason = validate_manager_batch(
+                &linea,
+                59_144,
+                LINEA_PRODUCTION,
+                &encode_batch(vec![inner.clone(), inner.clone()]),
+                &[(ADOPTER, inner.clone()), (lower, inner)],
+                new_manager,
+            )
+            .unwrap_err();
+            assert!(reason.contains("more than once"), "{reason}");
+        }
+
+        let other = address!("0202020202020202020202020202020202020202");
+        let accept_other: Bytes = acceptManagerTransferCall {
+            contractAddress: other,
+        }
+        .abi_encode()
+        .into();
+        let accept: Bytes = accept_entry().into();
+        let reason = validate_manager_batch(
+            &linea,
+            59_144,
+            LINEA_PRODUCTION,
+            &encode_batch(vec![accept.clone(), accept_other.clone(), accept.clone()]),
+            &[
+                (ADOPTER, accept.clone()),
+                (other, accept_other),
+                (ADOPTER, accept),
+            ],
+            None,
+        )
+        .unwrap_err();
+        assert!(reason.contains("more than once"), "{reason}");
     }
 
     #[test]
