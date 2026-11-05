@@ -108,8 +108,9 @@ const MAX_IMAGE_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
 fn log_body_failure(
     result: Result<ApiResponsePayload, ApiCommandError>,
     request_log_path: &Path,
-    request: &WorkflowRequest,
+    method: &str,
     path: &str,
+    operation_id: &str,
 ) -> Result<ApiResponsePayload, ApiCommandError> {
     if let Err(ApiCommandError::ResponseBody {
         status, request_id, ..
@@ -118,17 +119,17 @@ fn log_body_failure(
         write_request_log(
             request_log_path,
             BODY_FAILED_KIND,
-            request.method.as_str(),
+            method,
             path,
             *status,
             request_id.as_deref(),
-            Some(request.operation_id),
+            Some(operation_id),
         );
     }
     result
 }
-/// Upper bound for one workflow or generated-client GET (OpenAPI fetch,
-/// project-ref resolution), connect through the last body byte, so
+/// Upper bound for one workflow, project-ref resolution or generated-client
+/// (OpenAPI fetch) GET, connect through the last body byte, so
 /// a stalled server cannot hang a command (such as a broadcast's metadata
 /// fetches) forever. Mutations are left unbounded: a timed-out POST would
 /// leave its outcome ambiguous.
@@ -146,14 +147,6 @@ fn image_mime_for_path(path: &Path) -> Option<&'static str> {
         "jpg" | "jpeg" => Some("image/jpeg"),
         "webp" => Some("image/webp"),
         "svg" => Some("image/svg+xml"),
-        _ => None,
-    }
-}
-
-fn generated_error_request_id<E>(error: &GeneratedError<E>) -> Option<String> {
-    match error {
-        GeneratedError::ErrorResponse(response) => request_id_from_headers(response.headers()),
-        GeneratedError::UnexpectedResponse(response) => request_id_from_headers(response.headers()),
         _ => None,
     }
 }
@@ -199,7 +192,13 @@ where
                 .to_string();
             let bytes = match response.bytes().await {
                 Ok(bytes) => bytes,
-                Err(error) => return ApiCommandError::Request(error),
+                Err(source) => {
+                    return ApiCommandError::ResponseBody {
+                        status,
+                        request_id,
+                        source,
+                    };
+                }
             };
             ApiCommandError::HttpStatus {
                 method,
@@ -1331,8 +1330,9 @@ impl ApiArgs {
             )
             .await,
             request_log_path,
-            request,
+            request.method.as_str(),
             &path,
+            request.operation_id,
         )?;
         write_request_log(
             request_log_path,
@@ -1355,8 +1355,9 @@ impl ApiArgs {
                 )
                 .await,
                 request_log_path,
-                request,
+                request.method.as_str(),
                 &path,
+                request.operation_id,
             )?;
             retried_after_refresh = true;
             write_request_log(
@@ -1547,43 +1548,45 @@ impl ApiArgs {
         let operation = WorkflowOperation::new(HttpMethod::Get, "projects.resolveProjectRef")
             .path_param("project_ref", project_ref);
         let path = operation.path()?;
-        let client = self.generated_client(config, attach_auth, require_auth)?;
-        match client.projects_resolve_project_ref(project_ref).await {
-            Ok(response) => {
-                let request_id = request_id_from_headers(response.headers());
-                write_request_log(
-                    request_log_path,
-                    "workflow_project_resolution",
-                    "GET",
-                    &path,
-                    response.status().as_u16(),
-                    request_id.as_deref(),
-                    Some(operation.operation_id),
-                );
-                let project_id = response.into_inner().project_id;
-                if project_id.is_empty() {
-                    Err(ApiCommandError::InvalidWorkflow {
-                        message: format!("Could not resolve project reference `{project_ref}`"),
-                    })
-                } else {
-                    Ok(project_id)
-                }
-            }
-            Err(error) => {
-                let status = error.status().map(|status| status.as_u16());
-                let request_id = generated_error_request_id(&error);
-                if let Some(status) = status {
-                    write_request_log(
-                        request_log_path,
-                        "workflow_project_resolution",
-                        "GET",
-                        &path,
-                        status,
-                        request_id.as_deref(),
-                        Some(operation.operation_id),
-                    );
-                }
-                Err(generated_error_to_api_error("GET", &path, error).await)
+        // Plain transport rather than the generated client, so a failed body
+        // keeps its status and request id in the error and request history.
+        let response = self
+            .http_client(config, attach_auth, require_auth)?
+            .get(self.api_url(&path)?)
+            .timeout(WORKFLOW_GET_TIMEOUT)
+            .send()
+            .await?;
+        let response = log_body_failure(
+            read_api_response(response).await,
+            request_log_path,
+            "GET",
+            &path,
+            operation.operation_id,
+        )?;
+        write_request_log(
+            request_log_path,
+            "workflow_project_resolution",
+            "GET",
+            &path,
+            response.status.as_u16(),
+            response.request_id.as_deref(),
+            Some(operation.operation_id),
+        );
+        if !response.status.is_success() {
+            return Err(ApiCommandError::HttpStatus {
+                method: "GET",
+                path,
+                status: response.status.as_u16(),
+                request_id: response.request_id,
+                body: Box::new(response.body),
+            });
+        }
+        match response.body.get("project_id").and_then(Value::as_str) {
+            Some(project_id) if !project_id.is_empty() => Ok(project_id.to_string()),
+            _ => {
+                Err(ApiCommandError::InvalidWorkflow {
+                    message: format!("Could not resolve project reference `{project_ref}`"),
+                })
             }
         }
     }
@@ -1735,8 +1738,8 @@ impl ApiArgs {
     ) -> Result<GeneratedClient, ApiCommandError> {
         let mut base = self.resolved_api_url();
         base.set_path("/api/v1");
-        // Only GETs go through the generated client (OpenAPI fetch and
-        // project-ref resolution), so a client-wide deadline bounds no mutation.
+        // Only GETs go through the generated client (the OpenAPI fetch), so a
+        // client-wide deadline bounds no mutation.
         let http_client = self
             .http_client_builder(config, attach_auth, require_auth)?
             .timeout(WORKFLOW_GET_TIMEOUT)

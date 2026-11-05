@@ -2438,6 +2438,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn slug_resolution_keeps_the_received_request_id() {
+        let url = stalling_server(true).await;
+        let mut h = Harness::new(&url);
+        let log = h.log();
+        let resolve = h
+            .api
+            .resolve_project_id(&h.config, "my-protocol", true, true, &log)
+            .await
+            .unwrap_err();
+        let args = ReleasesArgs {
+            broadcast: signing(),
+            ..ReleasesArgs::default()
+        };
+        let removal = h
+            .api
+            .broadcast_release_remove(
+                &mut h.config,
+                &h.cli_args,
+                &args,
+                "my-protocol",
+                RELEASE,
+                &log,
+            )
+            .await
+            .unwrap_err();
+        for err in [resolve, removal] {
+            let envelope = err.json_envelope();
+            assert_eq!(envelope["error"]["request_id"], "req-stalled", "{envelope}");
+            assert_eq!(envelope["error"]["http"]["status"], 200, "{envelope}");
+            assert!(timed_out(&err), "{err:?}");
+        }
+    }
+
+    #[tokio::test]
     async fn project_slug_resolution_has_a_deadline() {
         for send_headers in [false, true] {
             let url = stalling_server(send_headers).await;
