@@ -399,7 +399,7 @@ impl ApiCommandError {
                 };
                 if let Some(request_id) = request_id {
                     actions.push(format!(
-                        "Include request_id {request_id} when reporting this server error"
+                        "Include request_id {request_id} when reporting this error"
                     ));
                 }
                 actions
