@@ -30,6 +30,7 @@ mod operations;
 mod render;
 mod runner;
 mod runtime_types;
+mod signed_batch;
 mod spec;
 mod templates;
 mod transport;

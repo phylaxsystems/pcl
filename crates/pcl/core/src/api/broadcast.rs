@@ -1,11 +1,9 @@
 //! Broadcast glue: fetch backend-computed calldata, sign and submit it
 //! on-chain, then confirm the mutation with the API.
 //!
-//! Mirrors the dapp's browser-wallet flows (see
-//! `packages/hooks/src/hooks/api/use-release-deploy.ts` and friends in the
-//! credible-layer-dapp repo). The backend remains the only calldata encoder;
-//! pcl only wraps operation calldata in `StateOracle.batch(bytes[])` or sends
-//! raw `{to, data}` transactions.
+//! Removal and manager-accept transactions are checked against the compiled
+//! active StateOracle and decoded as `StateOracle.batch` before signing.
+//! Deploy still wraps operation calldata in that batch locally.
 
 use super::{
     ApiArgs,
@@ -94,6 +92,8 @@ struct ReleaseDeployCalldataResponse {
 struct ReleaseRemoveCalldataResponse {
     to: Address,
     data: Bytes,
+    #[serde(default, alias = "chainId")]
+    chain_id: Option<u64>,
     #[serde(default)]
     assertions: Vec<Value>,
     #[serde(default, alias = "requiredConfirmations")]
@@ -132,12 +132,22 @@ struct TransferCalldataResponse {
     required_confirmations: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct BoundContractCall {
+    address: Address,
+    calldata: Bytes,
+}
+
 /// `GET /projects/{id}/protocol-manager/accept-calldata`
 #[derive(Debug, Deserialize)]
 struct AcceptCalldataResponse {
     chain_id: u64,
     to: Address,
     calldata: Bytes,
+    #[serde(default)]
+    contracts: Vec<BoundContractCall>,
+    #[serde(default)]
+    total_contracts: Option<u64>,
     #[serde(default, alias = "requiredConfirmations")]
     required_confirmations: Option<u64>,
 }
@@ -634,10 +644,9 @@ impl ApiArgs {
         let calldata: ReleaseRemoveCalldataResponse =
             parse_response("remove-calldata", &calldata_result.body)?;
 
-        // The remove-calldata response carries no chain id and its `{to,
-        // data}` would look valid on any network, so the project record is
-        // authoritative. An explicit --chain-id may only confirm it, never
-        // rebind the broadcast to another chain.
+        // The project record picks the chain. The release record picks the
+        // environment, and therefore which active StateOracle may be signed.
+        // An explicit --chain-id may only confirm the project chain.
         let chain_id = self
             .project_chain_id(config, cli_args, project, request_log_path)
             .await?;
@@ -650,6 +659,38 @@ impl ApiArgs {
                 ),
             });
         }
+        if let Some(response_chain) = calldata.chain_id
+            && response_chain != chain_id
+        {
+            return Err(ApiCommandError::UnexpectedResponse {
+                endpoint: "remove-calldata",
+                reason: format!(
+                    "chain_id {response_chain} does not match the project's chain {chain_id}"
+                ),
+            });
+        }
+
+        let release_request =
+            get_operation("projects.getRelease", project, Some(release_id), Vec::new())?;
+        let release = self
+            .call_workflow_result(config, cli_args, &release_request, request_log_path)
+            .await?;
+        let environment = super::signed_batch::release_environment(&release.body)?;
+        let platform = self.resolved_api_url();
+        let host = platform.host_str().ok_or_else(|| {
+            ApiCommandError::UnexpectedResponse {
+                endpoint: "remove-calldata",
+                reason: "platform URL has no host".to_string(),
+            }
+        })?;
+        super::signed_batch::validate_removal_batch(
+            host,
+            chain_id,
+            environment,
+            calldata.to,
+            &calldata.data,
+            &calldata.assertions,
+        )?;
 
         confirm_send(
             cli_args,
@@ -979,6 +1020,57 @@ impl ApiArgs {
             .await?;
         let calldata: AcceptCalldataResponse =
             parse_response("protocol-manager/accept-calldata", &calldata_result.body)?;
+        let project_chain = self
+            .project_chain_id(config, cli_args, project, request_log_path)
+            .await?;
+        if calldata.chain_id != project_chain {
+            return Err(ApiCommandError::UnexpectedResponse {
+                endpoint: "protocol-manager/accept-calldata",
+                reason: format!(
+                    "chain_id {} does not match the project's chain {project_chain}",
+                    calldata.chain_id
+                ),
+            });
+        }
+        if let Some(explicit) = args.chain_id
+            && explicit != project_chain
+        {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "--chain-id {explicit} does not match the project's chain {project_chain}; omit --chain-id to broadcast the acceptance"
+                ),
+            });
+        }
+        if let Some(total) = calldata.total_contracts
+            && total != calldata.contracts.len() as u64
+        {
+            return Err(ApiCommandError::UnexpectedResponse {
+                endpoint: "protocol-manager/accept-calldata",
+                reason: format!(
+                    "total_contracts {total} does not match {} contract entries",
+                    calldata.contracts.len()
+                ),
+            });
+        }
+        let platform = self.resolved_api_url();
+        let host = platform.host_str().ok_or_else(|| {
+            ApiCommandError::UnexpectedResponse {
+                endpoint: "protocol-manager/accept-calldata",
+                reason: "platform URL has no host".to_string(),
+            }
+        })?;
+        let contracts = calldata
+            .contracts
+            .iter()
+            .map(|contract| (contract.address, contract.calldata.clone()))
+            .collect::<Vec<_>>();
+        super::signed_batch::validate_accept_batch(
+            host,
+            calldata.chain_id,
+            calldata.to,
+            &calldata.calldata,
+            &contracts,
+        )?;
 
         confirm_send(
             cli_args,
@@ -1481,5 +1573,109 @@ mod tests {
         };
         assert!(!challenge_expired(&other));
         assert!(!challenge_expired(&ApiCommandError::BroadcastCancelled));
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_refuses_an_unknown_platform_before_sending() {
+        let mut server = mockito::Server::new_async().await;
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let release_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+        let project = server
+            .mock("GET", format!("/api/v1/projects/{project_id}").as_str())
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"chain_id":1}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let release = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/releases/{release_id}").as_str(),
+            )
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"environment":"production"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let remove = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/releases/{release_id}/remove-calldata")
+                    .as_str(),
+            )
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "to": "0x2222222222222222222222222222222222222222",
+                    "data": "0x01",
+                    "chainId": 1,
+                    "assertions": []
+                })
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+
+        let api = ApiArgs::headless(server.url().parse().unwrap());
+        let mut config = CliConfig {
+            auth: Some(crate::config::UserAuth {
+                issuer_platform_url: Some(server.url()),
+                access_token: "access-token".to_string(),
+                refresh_token: "refresh-token".to_string(),
+                expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: Some("agent@example.com".to_string()),
+            }),
+            platform_url: Some(server.url()),
+            rpc: BTreeMap::new(),
+        };
+        let config_dir = tempfile::tempdir().unwrap();
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let args = ReleasesArgs {
+            broadcast: BroadcastArgs {
+                broadcast: true,
+                yes: true,
+                wallet: crate::wallet::WalletArgs {
+                    private_key: Some(
+                        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                            .to_string(),
+                    ),
+                    ..crate::wallet::WalletArgs::default()
+                },
+                ..BroadcastArgs::default()
+            },
+            ..ReleasesArgs::default()
+        };
+
+        let err = api
+            .broadcast_release_remove(
+                &mut config,
+                &cli_args,
+                &args,
+                project_id,
+                release_id,
+                &config_dir.path().join("requests.jsonl"),
+            )
+            .await
+            .unwrap_err();
+        let ApiCommandError::UnexpectedResponse { reason, .. } = err else {
+            panic!("expected the oracle check to refuse the mock platform, got {err:?}");
+        };
+        assert!(reason.contains("127.0.0.1"), "{reason}");
+        project.assert_async().await;
+        release.assert_async().await;
+        remove.assert_async().await;
     }
 }
