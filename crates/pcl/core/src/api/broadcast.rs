@@ -2111,7 +2111,7 @@ mod tests {
                     }
                     if send_headers {
                         let _ = stream
-                            .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{")
+                            .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nx-request-id: req-stalled\r\ncontent-length: 100\r\n\r\n{")
                             .await;
                     }
                     std::future::pending::<()>().await;
@@ -2121,7 +2121,36 @@ mod tests {
         url
     }
 
-    #[tokio::test(start_paused = true)]
+    fn timed_out(err: &ApiCommandError) -> bool {
+        match err {
+            ApiCommandError::Request(source) | ApiCommandError::ResponseBody { source, .. } => {
+                source.is_timeout()
+            }
+            _ => false,
+        }
+    }
+
+    #[tokio::test]
+    async fn stalled_body_keeps_the_received_request_id() {
+        let url = stalling_server(true).await;
+        let mut h = Harness::new(&url);
+        let log = h.log();
+        let err = h
+            .api
+            .project_chain_id(&mut h.config, &h.cli_args, PROJECT, &log)
+            .await
+            .unwrap_err();
+        let envelope = err.json_envelope();
+        assert_eq!(envelope["error"]["request_id"], "req-stalled", "{envelope}");
+        assert_eq!(
+            envelope["error"]["code"], "network.request_failed",
+            "{envelope}"
+        );
+        assert_eq!(envelope["error"]["http"]["status"], 200, "{envelope}");
+        assert!(timed_out(&err), "{err:?}");
+    }
+
+    #[tokio::test]
     async fn project_slug_resolution_has_a_deadline() {
         for send_headers in [false, true] {
             let url = stalling_server(send_headers).await;
@@ -2130,9 +2159,9 @@ mod tests {
             let resolve = h
                 .api
                 .resolve_project_id(&h.config, "my-protocol", true, true, &log);
-            let result = tokio::time::timeout(std::time::Duration::from_secs(3600), resolve).await;
+            let result = tokio::time::timeout(std::time::Duration::from_secs(30), resolve).await;
             assert!(
-                matches!(result, Ok(Err(ApiCommandError::Request(ref e))) if e.is_timeout()),
+                matches!(result, Ok(Err(ref e)) if timed_out(e)),
                 "send_headers={send_headers}: {result:?}"
             );
         }
@@ -2152,14 +2181,14 @@ mod tests {
             RELEASE,
             &log,
         );
-        let result = tokio::time::timeout(std::time::Duration::from_secs(3600), removal).await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), removal).await;
         assert!(
-            matches!(result, Ok(Err(ApiCommandError::Request(ref e))) if e.is_timeout()),
+            matches!(result, Ok(Err(ref e)) if timed_out(e)),
             "{result:?}"
         );
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn broadcast_metadata_fetches_have_a_deadline() {
         for send_headers in [false, true] {
             let url = stalling_server(send_headers).await;
@@ -2168,9 +2197,9 @@ mod tests {
             let fetch = h
                 .api
                 .project_chain_id(&mut h.config, &h.cli_args, PROJECT, &log);
-            let result = tokio::time::timeout(std::time::Duration::from_secs(3600), fetch).await;
+            let result = tokio::time::timeout(std::time::Duration::from_secs(30), fetch).await;
             assert!(
-                matches!(result, Ok(Err(ApiCommandError::Request(ref e))) if e.is_timeout()),
+                matches!(result, Ok(Err(ref e)) if timed_out(e)),
                 "send_headers={send_headers}: {result:?}"
             );
         }
@@ -2190,9 +2219,9 @@ mod tests {
             RELEASE,
             &log,
         );
-        let result = tokio::time::timeout(std::time::Duration::from_secs(3600), fetch).await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), fetch).await;
         assert!(
-            matches!(result, Ok(Err(ApiCommandError::Request(ref e))) if e.is_timeout()),
+            matches!(result, Ok(Err(ref e)) if timed_out(e)),
             "{result:?}"
         );
         let accept = ProtocolManagerArgs {
@@ -2206,9 +2235,9 @@ mod tests {
             PROJECT,
             &log,
         );
-        let result = tokio::time::timeout(std::time::Duration::from_secs(3600), fetch).await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), fetch).await;
         assert!(
-            matches!(result, Ok(Err(ApiCommandError::Request(ref e))) if e.is_timeout()),
+            matches!(result, Ok(Err(ref e)) if timed_out(e)),
             "{result:?}"
         );
     }

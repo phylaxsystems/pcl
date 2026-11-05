@@ -40,6 +40,11 @@ pub(crate) fn request_id_from_headers(headers: &HeaderMap) -> Option<String> {
     })
 }
 
+/// Request-history kind for a response whose headers arrived but whose body
+/// could not be read; recorded with its status and request id, never as a
+/// success.
+pub(in crate::api) const BODY_FAILED_KIND: &str = "workflow_body_failed";
+
 pub(in crate::api) fn write_request_log(
     request_log_path: &Path,
     kind: &str,
@@ -59,7 +64,7 @@ pub(in crate::api) fn write_request_log(
                 "method": method,
                 "path": path,
                 "status": status,
-                "success": (200..=299).contains(&status),
+                "success": (200..=299).contains(&status) && kind != BODY_FAILED_KIND,
                 "request_id": request_id,
                 "operation_id": operation_id,
             }),
@@ -98,7 +103,13 @@ pub(in crate::api) async fn read_api_response(
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_string();
-    let bytes = response.bytes().await?;
+    let bytes = response.bytes().await.map_err(|source| {
+        ApiCommandError::ResponseBody {
+            status: status.as_u16(),
+            request_id: request_id.clone(),
+            source,
+        }
+    })?;
     let body = response_body_value(&content_type, &bytes);
 
     Ok(ApiResponsePayload {

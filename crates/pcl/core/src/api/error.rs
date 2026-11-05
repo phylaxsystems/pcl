@@ -128,6 +128,19 @@ pub enum ApiCommandError {
         source: Box<ApiCommandError>,
     },
 
+    /// The response headers arrived (so `status` and `request_id` are known)
+    /// but reading the body failed, e.g. at the request deadline.
+    #[error(
+        "Reading the API response body failed after HTTP {status}{}: {source}",
+        if source.is_timeout() { " (request deadline reached)" } else { "" }
+    )]
+    ResponseBody {
+        status: u16,
+        request_id: Option<String>,
+        #[source]
+        source: reqwest::Error,
+    },
+
     #[error("Unexpected {endpoint} response shape: {reason}")]
     UnexpectedResponse {
         endpoint: &'static str,
@@ -189,6 +202,7 @@ impl ApiCommandError {
                     _ => "network.request_failed",
                 }
             }
+            Self::ResponseBody { .. } => "network.request_failed",
             Self::HttpStatus { status, .. } => {
                 match *status {
                     400 => "api.bad_request",
@@ -394,7 +408,7 @@ impl ApiCommandError {
                     "pcl projects mine".to_string(),
                 ]
             }
-            Self::Request(_) | Self::Url(_) => {
+            Self::Request(_) | Self::Url(_) | Self::ResponseBody { .. } => {
                 vec!["Check --api-url and your network connection, then retry".to_string()]
             }
             Self::BodyFile { .. } => {
@@ -479,7 +493,9 @@ impl ApiCommandError {
             Self::Request(source) if source.status().map(|status| status.as_u16()) == Some(404) => {
                 vec!["check_ids", "retry"]
             }
-            Self::Request(_) | Self::Url(_) => vec!["check_network", "retry"],
+            Self::Request(_) | Self::Url(_) | Self::ResponseBody { .. } => {
+                vec!["check_network", "retry"]
+            }
             Self::BodyFile { .. } | Self::Stdin(_) => vec!["fix_body_input", "retry"],
             Self::RequestLog { .. } => vec!["inspect_request_log", "retry"],
             Self::OutputFile { .. } => vec!["fix_output_path", "retry"],
@@ -535,6 +551,19 @@ impl ApiCommandError {
         error.insert("code".to_string(), json!(self.code()));
         error.insert("message".to_string(), json!(self.to_string()));
         error.insert("recoverable".to_string(), json!(self.recoverable()));
+
+        if let Self::ResponseBody {
+            status, request_id, ..
+        } = self
+        {
+            if let Some(request_id) = request_id {
+                error.insert("request_id".to_string(), json!(request_id));
+            }
+            error.insert(
+                "http".to_string(),
+                json!({ "status": status, "request_id": request_id }),
+            );
+        }
 
         if let Self::HttpStatus {
             method,

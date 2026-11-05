@@ -3,7 +3,9 @@ use super::{
     ApiCommand,
     ApiCommandError,
     ApiRequestInput,
+    ApiResponsePayload,
     AssertionsArgs,
+    BODY_FAILED_KIND,
     ContractsArgs,
     DeploymentsArgs,
     HttpMethod,
@@ -100,12 +102,39 @@ use std::{
 
 /// Maximum accepted project image size, matching the dApp upload limit (5 MB).
 const MAX_IMAGE_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Keeps the status and request id of a workflow response whose body failed
+/// (for example at the GET deadline) in request history before returning.
+fn log_body_failure(
+    result: Result<ApiResponsePayload, ApiCommandError>,
+    request_log_path: &Path,
+    request: &WorkflowRequest,
+    path: &str,
+) -> Result<ApiResponsePayload, ApiCommandError> {
+    if let Err(ApiCommandError::ResponseBody {
+        status, request_id, ..
+    }) = &result
+    {
+        write_request_log(
+            request_log_path,
+            BODY_FAILED_KIND,
+            request.method.as_str(),
+            path,
+            *status,
+            request_id.as_deref(),
+            Some(request.operation_id),
+        );
+    }
+    result
+}
 /// Upper bound for one workflow or generated-client GET (OpenAPI fetch,
 /// project-ref resolution), connect through the last body byte, so
 /// a stalled server cannot hang a command (such as a broadcast's metadata
 /// fetches) forever. Mutations are left unbounded: a timed-out POST would
 /// leave its outcome ambiguous.
-const WORKFLOW_GET_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+// Tests stall real local servers, so they use a short deadline.
+const WORKFLOW_GET_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(if cfg!(test) { 1 } else { 60 });
 
 /// Map a local image file's extension to the MIME type the storage endpoint
 /// accepts. Returns `None` for unsupported extensions. Kept in sync with the
@@ -1295,11 +1324,16 @@ impl ApiArgs {
         } else {
             None
         };
-        let mut response = read_api_response(
-            self.send_workflow_request(config, &resolved_request, &url, json_body.as_ref())
-                .await?,
-        )
-        .await?;
+        let mut response = log_body_failure(
+            read_api_response(
+                self.send_workflow_request(config, &resolved_request, &url, json_body.as_ref())
+                    .await?,
+            )
+            .await,
+            request_log_path,
+            request,
+            &path,
+        )?;
         write_request_log(
             request_log_path,
             "workflow",
@@ -1314,11 +1348,16 @@ impl ApiArgs {
             && requires_auth
             && self.try_refresh_after_401(config, cli_args).await?
         {
-            response = read_api_response(
-                self.send_workflow_request(config, &resolved_request, &url, json_body.as_ref())
-                    .await?,
-            )
-            .await?;
+            response = log_body_failure(
+                read_api_response(
+                    self.send_workflow_request(config, &resolved_request, &url, json_body.as_ref())
+                        .await?,
+                )
+                .await,
+                request_log_path,
+                request,
+                &path,
+            )?;
             retried_after_refresh = true;
             write_request_log(
                 request_log_path,
