@@ -941,4 +941,184 @@ mod tests {
         }
         .abi_encode()
     }
+
+    alloy_sol_types::sol! {
+        function transfer(address to, uint256 amount);
+    }
+
+    const TOKEN: Address = address!("1111111111111111111111111111111111111111");
+    const ATTACKER: Address = address!("2222222222222222222222222222222222222222");
+    const OTHER_PROJECT: Address = address!("0404040404040404040404040404040404040404");
+    const OTHER_ASSERTION: B256 =
+        b256!("5555555555555555555555555555555555555555555555555555555555555555");
+    const ETH_STAGING: Address = address!("B5E1b58638E05a69c853dEf16837D651B7EEeAA2");
+    const ETH_RETIRED: Address = address!("B4951F9eA03C6bc7eE441E208C4AC996B2f6e369");
+
+    fn token_transfer() -> Bytes {
+        transferCall {
+            to: ATTACKER,
+            amount: alloy_primitives::U256::from(10).pow(alloy_primitives::U256::from(24)),
+        }
+        .abi_encode()
+        .into()
+    }
+
+    /// PHYL1-208: a compromised API points release removal at another
+    /// contract, another `StateOracle`, or another project's assertions.
+    #[test]
+    fn phyl1_208_compromised_removal_responses_are_refused() {
+        let release = [(ADOPTER, ASSERTION)];
+        let remove = |to: Address, data: &Bytes, listed: &[Value]| {
+            validate_removal_batch(
+                &eth(),
+                1,
+                OracleEnvironment::Production,
+                to,
+                data,
+                listed,
+                &release,
+            )
+        };
+        let other_project = [json!({
+            "contractAddress": format!("{OTHER_PROJECT}"),
+            "assertionId": format!("{OTHER_ASSERTION}"),
+        })];
+        let removes_other_project = encode_batch(vec![
+            remove_entry_for(OTHER_PROJECT, OTHER_ASSERTION).into(),
+        ]);
+
+        let cases = [
+            (
+                "arbitrary contract",
+                TOKEN,
+                token_transfer(),
+                &assertions()[..],
+                "is not the active StateOracle",
+            ),
+            (
+                "retired oracle",
+                ETH_RETIRED,
+                removal_data(),
+                &assertions()[..],
+                "is not the active StateOracle",
+            ),
+            (
+                "another chain's oracle",
+                LINEA_PRODUCTION,
+                removal_data(),
+                &assertions()[..],
+                "is not the active StateOracle",
+            ),
+            (
+                "staging oracle for a production release",
+                ETH_STAGING,
+                removal_data(),
+                &assertions()[..],
+                "is not the active StateOracle",
+            ),
+            (
+                "another project's assertions, listed",
+                ETH_PRODUCTION,
+                removes_other_project.clone(),
+                &other_project[..],
+                "do not match the release record",
+            ),
+            (
+                "another project's assertions, unlisted",
+                ETH_PRODUCTION,
+                removes_other_project,
+                &assertions()[..],
+                "is not the StateOracle.batch",
+            ),
+        ];
+        for (case, to, data, listed, reason) in cases {
+            let err = remove(to, &data, listed).unwrap_err();
+            assert!(err.contains(reason), "{case}: {err}");
+        }
+        remove(ETH_PRODUCTION, &removal_data(), &assertions()).unwrap();
+    }
+
+    /// PHYL1-96: a compromised API points manager acceptance at another
+    /// contract, another chain's `StateOracle`, or a call other than
+    /// `acceptManagerTransfer`. The chain check against the project lives in
+    /// the broadcast path (`accept_broadcast_refuses_a_chain_other_than_the_project_chain`).
+    #[test]
+    fn phyl1_96_compromised_accept_responses_are_refused() {
+        let accept_on_eth = |chain_id: u64, to: Address, data: &Bytes, entry: Vec<u8>| {
+            validate_manager_batch(&eth(), chain_id, to, data, &[(ADOPTER, entry.into())], None)
+        };
+        let accept_batch = encode_batch(vec![accept_entry().into()]);
+        let hijack: Bytes = transferManagerCall {
+            contractAddress: ADOPTER,
+            newManager: ATTACKER,
+        }
+        .abi_encode()
+        .into();
+
+        let cases = [
+            (
+                "arbitrary contract",
+                1,
+                TOKEN,
+                token_transfer(),
+                accept_entry(),
+                "is not the active StateOracle",
+            ),
+            (
+                "arbitrary contract, accept batch",
+                1,
+                TOKEN,
+                accept_batch.clone(),
+                accept_entry(),
+                "is not the active StateOracle",
+            ),
+            (
+                "another chain's oracle",
+                1,
+                LINEA_PRODUCTION,
+                accept_batch.clone(),
+                accept_entry(),
+                "is not the active StateOracle",
+            ),
+            (
+                "chain the host does not serve",
+                59_144,
+                LINEA_PRODUCTION,
+                accept_batch.clone(),
+                accept_entry(),
+                "no active StateOracle",
+            ),
+            (
+                "transferManager to the attacker",
+                1,
+                ETH_PRODUCTION,
+                encode_batch(vec![hijack.clone()]),
+                hijack.to_vec(),
+                "expected acceptManagerTransfer",
+            ),
+            (
+                "removeAssertion",
+                1,
+                ETH_PRODUCTION,
+                removal_data(),
+                remove_entry(),
+                "expected acceptManagerTransfer",
+            ),
+            (
+                "unbatched accept",
+                1,
+                ETH_PRODUCTION,
+                accept_entry().into(),
+                accept_entry(),
+                "is not the StateOracle.batch",
+            ),
+        ];
+        for (case, chain_id, to, data, entry, reason) in cases {
+            let err = accept_on_eth(chain_id, to, &data, entry).unwrap_err();
+            assert!(err.contains(reason), "{case}: {err}");
+        }
+        for oracle in [ETH_PRODUCTION, ETH_STAGING] {
+            accept_on_eth(1, oracle, &accept_batch, accept_entry()).unwrap();
+        }
+    }
 }
