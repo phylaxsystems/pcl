@@ -1183,6 +1183,25 @@ async fn openapi_body_failures_keep_status_and_request_id() {
 }
 
 #[tokio::test]
+async fn openapi_fetch_sends_the_generated_api_version() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("GET", "/api/v1/openapi")
+        .match_header("api-version", "22.0.0")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"paths":{}}"#)
+        .create_async()
+        .await;
+    let spec = test_api(server.url(), true)
+        .fetch_openapi(&CliConfig::default())
+        .await
+        .unwrap();
+    assert_eq!(spec, json!({"paths": {}}));
+    mock.assert_async().await;
+}
+
+#[tokio::test]
 async fn public_workflows_do_not_attach_expired_stored_tokens() {
     let mut server = mockito::Server::new_async().await;
     let mock = server

@@ -79,6 +79,10 @@ use crate::{
     config::CliConfig,
     error::AuthError,
 };
+use dapp_api_client::generated::client::{
+    Client as GeneratedClient,
+    ClientInfo,
+};
 use pcl_common::args::CliArgs;
 use reqwest::header::{
     HeaderMap,
@@ -1065,6 +1069,11 @@ impl ApiArgs {
             .http_client(config, false, false)?
             .get(self.api_url("/openapi")?)
             .header(reqwest::header::ACCEPT, "application/json")
+            // The spec route is pinned to the generated API version, not the workflow default.
+            .header(
+                "api-version",
+                <GeneratedClient as ClientInfo<()>>::api_version(),
+            )
             .timeout(WORKFLOW_GET_TIMEOUT)
             .send()
             .await?;
