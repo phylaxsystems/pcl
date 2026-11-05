@@ -1,4 +1,4 @@
-//! Binds removal and manager-accept transactions to the active StateOracle
+//! Binds removal and manager-accept transactions to the active `StateOracle`
 //! before pcl signs them.
 //!
 //! The dapp signs the API's `{to, data}` bytes directly
@@ -60,7 +60,7 @@ pub(crate) fn release_environment(body: &Value) -> Result<OracleEnvironment, Api
     }
 }
 
-/// Active StateOracles compiled from the ethereum and linea dapp chain
+/// Active `StateOracle` addresses compiled from the ethereum and linea dapp chain
 /// profiles. Only entries whose profile status is `active` are listed.
 /// A host that is not here has no oracle pcl is willing to sign against.
 const ACTIVE_ORACLES: &[(&str, u64, OracleEnvironment, Address)] = &[
@@ -90,7 +90,7 @@ const ACTIVE_ORACLES: &[(&str, u64, OracleEnvironment, Address)] = &[
     ),
 ];
 
-/// Active StateOracle for one platform host, chain, and release environment.
+/// Active `StateOracle` for one platform host, chain, and release environment.
 /// `None` means pcl has no compiled oracle and must not sign.
 pub(crate) fn active_state_oracle(
     platform_host: &str,
@@ -190,7 +190,7 @@ pub(crate) fn validate_accept_batch(
     if !expected.contains(&to) {
         let listed = expected
             .iter()
-            .map(|oracle| oracle.to_string())
+            .map(std::string::ToString::to_string)
             .collect::<Vec<_>>()
             .join(", ");
         return Err(unexpected(
