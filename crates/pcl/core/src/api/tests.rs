@@ -1202,6 +1202,36 @@ async fn openapi_fetch_sends_the_generated_api_version() {
 }
 
 #[tokio::test]
+async fn openapi_fetch_reports_malformed_json_as_a_parse_error() {
+    let mut server = mockito::Server::new_async().await;
+    for content_type in ["application/json", "text/plain"] {
+        let _mock = server
+            .mock("GET", "/api/v1/openapi")
+            .with_status(200)
+            .with_header("content-type", content_type)
+            .with_body("{")
+            .create_async()
+            .await;
+        let error = test_api(server.url(), true)
+            .fetch_openapi(&CliConfig::default())
+            .await
+            .unwrap_err();
+        let envelope = error.json_envelope();
+        assert_eq!(
+            envelope["error"]["code"], "workflow.invalid_arguments",
+            "{content_type}: {envelope}"
+        );
+        assert_eq!(envelope["error"]["recoverable"], true, "{envelope}");
+        let message = envelope["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("Invalid generated API response payload") && message.contains("raw"),
+            "{message}"
+        );
+        server.reset();
+    }
+}
+
+#[tokio::test]
 async fn public_workflows_do_not_attach_expired_stored_tokens() {
     let mut server = mockito::Server::new_async().await;
     let mock = server

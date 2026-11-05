@@ -61,6 +61,8 @@ use super::{
     releases_next_actions,
     releases_request,
     request_body,
+    request_id_from_headers,
+    response_body_value,
     search_next_actions,
     search_request,
     split_path_and_inline_query,
@@ -1077,8 +1079,8 @@ impl ApiArgs {
             .timeout(WORKFLOW_GET_TIMEOUT)
             .send()
             .await?;
-        let response = read_api_response(response).await?;
-        if !response.status.is_success() {
+        if !response.status().is_success() {
+            let response = read_api_response(response).await?;
             return Err(ApiCommandError::HttpStatus {
                 method: "GET",
                 path: "/openapi".to_string(),
@@ -1087,7 +1089,24 @@ impl ApiArgs {
                 body: Box::new(response.body),
             });
         }
-        Ok(response.body)
+        let status = response.status().as_u16();
+        let request_id = request_id_from_headers(response.headers());
+        let bytes = response.bytes().await.map_err(|source| {
+            ApiCommandError::ResponseBody {
+                status,
+                request_id,
+                source,
+            }
+        })?;
+        // Strict decode: a malformed spec is a parse error, not a spec without paths.
+        serde_json::from_slice(&bytes).map_err(|error| {
+            ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "Invalid generated API response payload: {error}; body={}",
+                    response_body_value("application/json", &bytes)
+                ),
+            }
+        })
     }
 
     pub(in crate::api) async fn try_refresh_after_401(
