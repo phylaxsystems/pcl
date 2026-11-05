@@ -504,3 +504,89 @@ fn contract_views_keep_envelopes_and_detail_guidance() {
         request.assert();
     }
 }
+
+/// Serves a valid `/openapi` spec, then answers every other request with
+/// headers and a body cut short of its content-length.
+fn truncating_raw_server() -> String {
+    use std::io::{
+        BufRead,
+        BufReader,
+        Write,
+    };
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let url = format!("http://{}", listener.local_addr().expect("addr"));
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            let _ = reader.read_line(&mut request_line);
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|read| read > 2) {
+                line.clear();
+            }
+            let response = if request_line.contains("/openapi") {
+                let spec = r#"{"paths":{"/health":{"get":{"operationId":"health"}}}}"#;
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{spec}",
+                    spec.len()
+                )
+            } else {
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nx-request-id: req-raw-broken\r\nconnection: close\r\ncontent-length: 100\r\n\r\n{".to_string()
+            };
+            let _ = reader.get_mut().write_all(response.as_bytes());
+        }
+    });
+    url
+}
+
+#[test]
+fn raw_call_body_failures_reach_request_history() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let url = truncating_raw_server();
+    let calls: [&[&str]; 2] = [&[], &["--paginate", "items", "--all"]];
+    for extra in calls {
+        let mut args = vec![
+            "api",
+            "--api-url",
+            &url,
+            "call",
+            "get",
+            "/health",
+            "--allow-unauthenticated",
+        ];
+        args.extend_from_slice(extra);
+        let output = run_pcl(temp_dir.path(), &args);
+        assert!(!output.status.success(), "{extra:?} unexpectedly succeeded");
+        let envelope: serde_json::Value =
+            serde_json::from_slice(&output.stderr).expect("json error envelope");
+        assert_eq!(
+            envelope["error"]["request_id"], "req-raw-broken",
+            "{envelope}"
+        );
+    }
+
+    let history = assert_json_success(
+        &run_pcl(temp_dir.path(), &["requests", "list"]),
+        "requests list",
+    );
+    let records = history["data"]["records"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no request records: {history}"));
+    let failed = records
+        .iter()
+        .filter(|record| {
+            record["request_id"] == "req-raw-broken"
+                && record["status"] == 200
+                && record["success"] == false
+                && record["operation_id"] == "health"
+        })
+        .count();
+    assert_eq!(failed, 2, "{history}");
+
+    let coverage = assert_json_success(
+        &run_pcl(temp_dir.path(), &["api", "--api-url", &url, "coverage"]),
+        "api coverage",
+    );
+    assert_eq!(coverage["data"]["no_hit_count"], 0, "{coverage}");
+    assert_eq!(coverage["data"]["no_2xx_count"], 1, "{coverage}");
+}

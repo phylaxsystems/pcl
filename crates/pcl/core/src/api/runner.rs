@@ -103,14 +103,14 @@ use std::{
 /// Maximum accepted project image size, matching the dApp upload limit (5 MB).
 const MAX_IMAGE_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
 
-/// Keeps the status and request id of a workflow response whose body failed
-/// (for example at the GET deadline) in request history before returning.
+/// Keeps the status and request id of a response whose body failed (for
+/// example at the GET deadline) in request history before returning.
 fn log_body_failure(
     result: Result<ApiResponsePayload, ApiCommandError>,
     request_log_path: &Path,
     method: &str,
     path: &str,
-    operation_id: &str,
+    operation_id: Option<&str>,
 ) -> Result<ApiResponsePayload, ApiCommandError> {
     if let Err(ApiCommandError::ResponseBody {
         status, request_id, ..
@@ -123,7 +123,7 @@ fn log_body_failure(
             path,
             *status,
             request_id.as_deref(),
-            Some(operation_id),
+            operation_id,
         );
     }
     result
@@ -528,15 +528,21 @@ impl ApiArgs {
                 pagination.limit.to_string(),
             );
 
-            let response = read_api_response(
-                client
-                    .get(url.clone())
-                    .headers(headers.clone())
-                    .query(&page_query)
-                    .send()
-                    .await?,
-            )
-            .await?;
+            let response = log_body_failure(
+                read_api_response(
+                    client
+                        .get(url.clone())
+                        .headers(headers.clone())
+                        .query(&page_query)
+                        .send()
+                        .await?,
+                )
+                .await,
+                request_log_path,
+                input.method.as_str(),
+                &path,
+                operation_id.as_deref(),
+            )?;
             write_request_log(
                 request_log_path,
                 "raw_paginated",
@@ -798,14 +804,20 @@ impl ApiArgs {
         };
 
         let client = self.http_client(config, requires_auth, requires_auth)?;
-        let mut payload = read_api_response(
-            client
-                .post(url.clone())
-                .multipart(build_form()?)
-                .send()
-                .await?,
-        )
-        .await?;
+        let mut payload = log_body_failure(
+            read_api_response(
+                client
+                    .post(url.clone())
+                    .multipart(build_form()?)
+                    .send()
+                    .await?,
+            )
+            .await,
+            request_log_path,
+            "POST",
+            "/storage/upload",
+            None,
+        )?;
         write_request_log(
             request_log_path,
             "storage_upload",
@@ -824,14 +836,20 @@ impl ApiArgs {
             && self.try_refresh_after_401(config, cli_args).await?
         {
             let client = self.http_client(config, requires_auth, requires_auth)?;
-            payload = read_api_response(
-                client
-                    .post(url.clone())
-                    .multipart(build_form()?)
-                    .send()
-                    .await?,
-            )
-            .await?;
+            payload = log_body_failure(
+                read_api_response(
+                    client
+                        .post(url.clone())
+                        .multipart(build_form()?)
+                        .send()
+                        .await?,
+                )
+                .await,
+                request_log_path,
+                "POST",
+                "/storage/upload",
+                None,
+            )?;
             write_request_log(
                 request_log_path,
                 "storage_upload_retry_after_refresh",
@@ -1151,35 +1169,8 @@ impl ApiArgs {
             .as_deref()
             .map(serde_json::from_str::<Value>)
             .transpose()?;
-        let mut response = read_api_response(
-            self.send_api_request(
-                config,
-                PreparedApiRequest {
-                    attach_auth: requires_auth,
-                    method: input.method,
-                    url: &url,
-                    headers: &headers,
-                    query: &query,
-                    body: json_body.as_ref(),
-                },
-            )
-            .await?,
-        )
-        .await?;
-        write_request_log(
-            request_log_path,
-            "raw",
-            input.method.as_str(),
-            &path,
-            response.status.as_u16(),
-            response.request_id.as_deref(),
-            operation_id.as_deref(),
-        );
-        if response.status.as_u16() == 401
-            && requires_auth
-            && self.try_refresh_after_401(config, cli_args).await?
-        {
-            response = read_api_response(
+        let mut response = log_body_failure(
+            read_api_response(
                 self.send_api_request(
                     config,
                     PreparedApiRequest {
@@ -1193,7 +1184,46 @@ impl ApiArgs {
                 )
                 .await?,
             )
-            .await?;
+            .await,
+            request_log_path,
+            input.method.as_str(),
+            &path,
+            operation_id.as_deref(),
+        )?;
+        write_request_log(
+            request_log_path,
+            "raw",
+            input.method.as_str(),
+            &path,
+            response.status.as_u16(),
+            response.request_id.as_deref(),
+            operation_id.as_deref(),
+        );
+        if response.status.as_u16() == 401
+            && requires_auth
+            && self.try_refresh_after_401(config, cli_args).await?
+        {
+            response = log_body_failure(
+                read_api_response(
+                    self.send_api_request(
+                        config,
+                        PreparedApiRequest {
+                            attach_auth: requires_auth,
+                            method: input.method,
+                            url: &url,
+                            headers: &headers,
+                            query: &query,
+                            body: json_body.as_ref(),
+                        },
+                    )
+                    .await?,
+                )
+                .await,
+                request_log_path,
+                input.method.as_str(),
+                &path,
+                operation_id.as_deref(),
+            )?;
             write_request_log(
                 request_log_path,
                 "raw_retry_after_refresh",
@@ -1302,7 +1332,7 @@ impl ApiArgs {
             request_log_path,
             request.method.as_str(),
             &path,
-            request.operation_id,
+            Some(request.operation_id),
         )?;
         write_request_log(
             request_log_path,
@@ -1327,7 +1357,7 @@ impl ApiArgs {
                 request_log_path,
                 request.method.as_str(),
                 &path,
-                request.operation_id,
+                Some(request.operation_id),
             )?;
             retried_after_refresh = true;
             write_request_log(
@@ -1531,7 +1561,7 @@ impl ApiArgs {
             request_log_path,
             "GET",
             &path,
-            operation.operation_id,
+            Some(operation.operation_id),
         )?;
         write_request_log(
             request_log_path,
