@@ -1045,6 +1045,15 @@ impl ApiArgs {
         let project_chain = self
             .project_chain_id(config, cli_args, project, request_log_path)
             .await?;
+        if let Some(explicit) = args.chain_id
+            && explicit != project_chain
+        {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "--chain-id {explicit} does not match the project's chain {project_chain}; omit --chain-id to broadcast the acceptance"
+                ),
+            });
+        }
         let refused = refusal(
             "manager acceptance",
             vec![
@@ -1060,15 +1069,6 @@ impl ApiArgs {
                 "chain_id {} does not match the project's chain {project_chain}",
                 calldata.chain_id
             )));
-        }
-        if let Some(explicit) = args.chain_id
-            && explicit != project_chain
-        {
-            return Err(ApiCommandError::InvalidWorkflow {
-                message: format!(
-                    "--chain-id {explicit} does not match the project's chain {project_chain}; omit --chain-id to broadcast the acceptance"
-                ),
-            });
         }
         if let Some(total) = calldata.total_contracts
             && total != calldata.contracts.len() as u64
@@ -1866,5 +1866,26 @@ mod tests {
         )
         .await;
         assert_refused(&err, "59144");
+    }
+
+    #[tokio::test]
+    async fn accept_broadcast_checks_the_chain_flag_before_the_response_chain() {
+        let mut server = mockito::Server::new_async().await;
+        let err = accept(
+            &mut server,
+            json!({
+                "chain_id": 59144,
+                "to": "0x984Ed2269Cdcc0e105675b4a16120Bc0531Bb218",
+                "calldata": "0x01",
+                "contracts": [],
+                "total_contracts": 0
+            }),
+            Some(5),
+        )
+        .await;
+        assert!(
+            matches!(err, ApiCommandError::InvalidWorkflow { .. }),
+            "{err:?}"
+        );
     }
 }
