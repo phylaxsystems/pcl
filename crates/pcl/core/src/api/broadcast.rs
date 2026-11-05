@@ -26,6 +26,7 @@ use crate::{
         TxSender,
         encode_batch,
     },
+    output::shell_word,
     wallet::{
         WalletArgs,
         sign_personal,
@@ -379,6 +380,25 @@ const CONFIRM_RETRY_INITIAL: std::time::Duration = std::time::Duration::from_sec
 const CONFIRM_RETRY_MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl ApiArgs {
+    /// ` --api-url <url>` when this run named its platform explicitly, so a
+    /// copied recovery command reaches the same platform: `--api-url` is a
+    /// one-shot override and is never remembered. A URL with credentials is
+    /// replaced by a placeholder so the secret is never printed.
+    fn recovery_platform(&self) -> String {
+        match &self.api_url {
+            None => String::new(),
+            Some(url) if !url.username().is_empty() || url.password().is_some() => {
+                " --api-url <platform-url>".to_string()
+            }
+            Some(url) => {
+                format!(
+                    " --api-url {}",
+                    shell_word(url.as_str().trim_end_matches('/'))
+                )
+            }
+        }
+    }
+
     /// Fetches the chain id recorded on a project (used when a calldata
     /// response does not carry one).
     async fn project_chain_id(
@@ -611,7 +631,10 @@ impl ApiArgs {
             &json!({ "mode": "transaction", "txHash": outcome.tx_hash }),
         )?;
         let confirm_command = format!(
-            "pcl releases deploy {project} {release_id} --field mode=transaction --field txHash={} --json",
+            "pcl releases deploy {} {}{} --field mode=transaction --field txHash={} --json",
+            shell_word(project),
+            shell_word(release_id),
+            self.recovery_platform(),
             outcome.tx_hash
         );
         let confirm = self
@@ -679,12 +702,14 @@ impl ApiArgs {
                 ),
             });
         }
+        let release_ref = format!("{} {}", shell_word(project), shell_word(release_id));
+        let platform = self.recovery_platform();
         let refused = refusal(
             "release removal",
             vec![
-                format!("pcl releases calldata remove {project} {release_id} --json"),
+                format!("pcl releases calldata remove {release_ref}{platform} --json"),
                 "Check that `to` is the active StateOracle and `data` its batch of removeAssertion calls, then sign {to, data} with an external wallet".to_string(),
-                format!("pcl releases remove {project} {release_id} --field txHash=<tx-hash> --json"),
+                format!("pcl releases remove {release_ref}{platform} --field txHash=<tx-hash> --json"),
             ],
         );
         if let Some(response_chain) = calldata.chain_id
@@ -748,7 +773,7 @@ impl ApiArgs {
             &json!({ "txHash": outcome.tx_hash }),
         )?;
         let confirm_command = format!(
-            "pcl releases remove {project} {release_id} --field txHash={} --json",
+            "pcl releases remove {release_ref}{platform} --field txHash={} --json",
             outcome.tx_hash
         );
         let confirm = self
@@ -989,17 +1014,19 @@ impl ApiArgs {
                 ),
             });
         }
+        let project_ref = shell_word(project);
+        let platform = self.recovery_platform();
         let refused = refusal(
             "manager transfer",
             vec![
                 format!(
-                    "pcl protocol-manager --project {project} --transfer-calldata --new-manager {new_manager} --json"
+                    "pcl protocol-manager --project {project_ref}{platform} --transfer-calldata --new-manager {new_manager} --json"
                 ),
                 format!(
                     "Check that `to` is the active StateOracle and `calldata` its batch of transferManager calls to {new_manager}, then sign {{to, calldata}} with the current manager's external wallet"
                 ),
                 format!(
-                    "The new manager then fetches `pcl protocol-manager --project {project} --accept-calldata --json`, signs it externally and runs --confirm-transfer with the landed hash"
+                    "The new manager then fetches `pcl protocol-manager --project {project_ref}{platform} --accept-calldata --json`, signs it externally and runs --confirm-transfer with the landed hash"
                 ),
             ],
         );
@@ -1118,13 +1145,15 @@ impl ApiArgs {
                 ),
             });
         }
+        let project_ref = shell_word(project);
+        let platform = self.recovery_platform();
         let refused = refusal(
             "manager acceptance",
             vec![
-                format!("pcl protocol-manager --project {project} --accept-calldata --json"),
+                format!("pcl protocol-manager --project {project_ref}{platform} --accept-calldata --json"),
                 "Check that `to` is the active StateOracle and `calldata` its batch of acceptManagerTransfer calls, then sign {to, calldata} with the new manager's external wallet".to_string(),
                 format!(
-                    "pcl protocol-manager --project {project} --confirm-transfer --field mode=onchain --field tx_hash=<tx-hash> --field chain_id=<chain-id> --field new_manager_address=<new-manager> --json"
+                    "pcl protocol-manager --project {project_ref}{platform} --confirm-transfer --field mode=onchain --field tx_hash=<tx-hash> --field chain_id=<chain-id> --field new_manager_address=<new-manager> --json"
                 ),
             ],
         );
@@ -1197,7 +1226,7 @@ impl ApiArgs {
             }),
         )?;
         let confirm_command = format!(
-            "pcl protocol-manager --project {project} --confirm-transfer --field mode=onchain --field tx_hash={} --field chain_id={} --field new_manager_address={signer_address} --json",
+            "pcl protocol-manager --project {project_ref}{platform} --confirm-transfer --field mode=onchain --field tx_hash={} --field chain_id={} --field new_manager_address={signer_address} --json",
             outcome.tx_hash, calldata.chain_id
         );
         let confirm = self
@@ -1901,16 +1930,16 @@ mod tests {
         assert_refused(&err, "127.0.0.1");
         let actions = err.next_actions();
         assert!(
-            actions.contains(&format!(
-                "pcl releases calldata remove {PROJECT} {RELEASE} --json"
-            )),
+            actions[0].starts_with(&format!(
+                "pcl releases calldata remove {PROJECT} {RELEASE} --api-url "
+            )) && actions[0].ends_with(" --json"),
             "{actions:?}"
         );
         assert!(
             actions.iter().any(|action| {
-                action.contains(&format!(
-                    "pcl releases remove {PROJECT} {RELEASE} --field txHash="
-                ))
+                action.starts_with(&format!(
+                    "pcl releases remove {PROJECT} {RELEASE} --api-url "
+                )) && action.contains(" --field txHash=<tx-hash> --json")
             }),
             "{actions:?}"
         );
@@ -2119,6 +2148,137 @@ mod tests {
             }
         });
         url
+    }
+
+    /// Runs removal, acceptance and transfer against `server` through
+    /// `platform` and returns each refusal's next actions.
+    async fn refusal_actions(server: &mut mockito::Server, platform: &str) -> Vec<Vec<String>> {
+        let oracle = "0x8681e3fF0526C785FE82db9153E6E1F54551ebdF";
+        get_json(server, "", json!({"chain_id": 1})).await;
+        get_json(
+            server,
+            &format!("/releases/{RELEASE}"),
+            json!({"environment": "production", "configSnapshot": {"contracts": {}}}),
+        )
+        .await;
+        get_json(
+            server,
+            &format!("/releases/{RELEASE}/remove-calldata"),
+            json!({"to": oracle, "data": "0x01", "chainId": 1, "assertions": []}),
+        )
+        .await;
+        let manager = json!({"mode": "onchain", "chain_id": 1, "to": oracle, "calldata": "0x01", "contracts": [], "total_contracts": 0});
+        get_json(server, "/protocol-manager/accept-calldata", manager.clone()).await;
+        get_json(server, "/protocol-manager/transfer-calldata", manager).await;
+
+        let mut h = Harness::new(platform);
+        let log = h.log();
+        let removal = ReleasesArgs {
+            broadcast: signing(),
+            ..ReleasesArgs::default()
+        };
+        let accept = ProtocolManagerArgs {
+            broadcast: signing(),
+            ..ProtocolManagerArgs::default()
+        };
+        let transfer = ProtocolManagerArgs {
+            new_manager: Some("0x0303030303030303030303030303030303030303".to_string()),
+            broadcast: signing(),
+            ..ProtocolManagerArgs::default()
+        };
+        let errors = [
+            h.api
+                .broadcast_release_remove(
+                    &mut h.config,
+                    &h.cli_args,
+                    &removal,
+                    PROJECT,
+                    RELEASE,
+                    &log,
+                )
+                .await,
+            h.api
+                .protocol_manager_accept_broadcast(
+                    &mut h.config,
+                    &h.cli_args,
+                    &accept,
+                    PROJECT,
+                    &log,
+                )
+                .await,
+            h.api
+                .protocol_manager_transfer_broadcast(
+                    &mut h.config,
+                    &h.cli_args,
+                    &transfer,
+                    PROJECT,
+                    &log,
+                )
+                .await,
+        ];
+        errors
+            .into_iter()
+            .map(|result| {
+                let err = result.unwrap_err();
+                assert_eq!(err.code(), "broadcast.calldata_refused", "{err:?}");
+                err.next_actions()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn recovery_platform_quotes_and_never_prints_credentials() {
+        let flag = |url: &str| ApiArgs::headless(url.parse().unwrap()).recovery_platform();
+        assert_eq!(
+            flag("https://linea.phylax.systems/"),
+            " --api-url https://linea.phylax.systems"
+        );
+        assert_eq!(
+            flag("https://shadow.example/api/?a=1&b=it's"),
+            " --api-url 'https://shadow.example/api/?a=1&b=it%27s'"
+        );
+        for secret in [
+            "https://user:pw@shadow.example",
+            "https://user@shadow.example",
+            "https://:pw@shadow.example",
+        ] {
+            assert_eq!(flag(secret), " --api-url <platform-url>");
+        }
+        let remembered = ApiArgs {
+            api_url: None,
+            ..ApiArgs::headless("https://linea.phylax.systems".parse().unwrap())
+        };
+        assert_eq!(remembered.recovery_platform(), "");
+    }
+
+    #[tokio::test]
+    async fn refusal_routes_keep_an_explicit_platform() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+        for actions in refusal_actions(&mut server, &url).await {
+            let commands = actions
+                .iter()
+                .filter(|action| action.starts_with("pcl "))
+                .collect::<Vec<_>>();
+            assert!(!commands.is_empty(), "{actions:?}");
+            for command in commands {
+                assert!(command.contains(&format!(" --api-url {url}")), "{command}");
+            }
+        }
+
+        let mut server = mockito::Server::new_async().await;
+        let with_secret = server.url().replace("http://", "http://user:hunter2@");
+        for actions in refusal_actions(&mut server, &with_secret).await {
+            for action in &actions {
+                assert!(!action.contains("hunter2"), "{action}");
+            }
+            assert!(
+                actions
+                    .iter()
+                    .any(|action| action.contains("--api-url <platform-url>")),
+                "{actions:?}"
+            );
+        }
     }
 
     fn timed_out(err: &ApiCommandError) -> bool {
