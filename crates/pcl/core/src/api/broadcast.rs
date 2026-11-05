@@ -555,9 +555,17 @@ impl ApiArgs {
         )?;
         validate_release_deploy_calldata(&calldata)?;
 
+        let platform = self.recovery_platform();
         let next_actions = vec![
-            format!("pcl releases show {project} {release_id}"),
-            format!("pcl deployments --project {project}"),
+            format!(
+                "pcl releases show {} {}{platform}",
+                shell_word(project),
+                shell_word(release_id)
+            ),
+            format!(
+                "pcl deployments --project {}{platform}",
+                shell_word(project)
+            ),
         ];
 
         if calldata.is_noop {
@@ -791,7 +799,11 @@ impl ApiArgs {
                 "tx": tx_value(&outcome),
                 "confirm": confirm.body,
             }),
-            vec![format!("pcl releases list {project}")],
+            vec![format!(
+                "pcl releases list {}{}",
+                shell_word(project),
+                self.recovery_platform()
+            )],
         ))
     }
 }
@@ -907,7 +919,11 @@ impl ApiArgs {
                             "nonce_expires_at": nonce.expires_at,
                             "result": result.body,
                         }),
-                        vec![format!("pcl protocol-manager --project {project}")],
+                        vec![format!(
+                            "pcl protocol-manager --project {}{}",
+                            shell_word(project),
+                            self.recovery_platform()
+                        )],
                     ));
                 }
                 Err(error) if attempts == 1 && challenge_expired(&error) => {
@@ -954,7 +970,9 @@ impl ApiArgs {
         )?;
 
         let next_actions = vec![format!(
-            "pcl protocol-manager --project {project} --pending-transfer"
+            "pcl protocol-manager --project {}{} --pending-transfer",
+            shell_word(project),
+            self.recovery_platform()
         )];
 
         if calldata.mode == TransferMode::Direct {
@@ -1098,9 +1116,11 @@ impl ApiArgs {
                 "pending_acceptance": true,
             }),
             vec![
-                format!("pcl protocol-manager --project {project} --pending-transfer"),
                 format!(
-                    "pcl protocol-manager --project {project} --accept-calldata --broadcast (with the new manager's wallet)"
+                    "pcl protocol-manager --project {project_ref}{platform} --pending-transfer"
+                ),
+                format!(
+                    "pcl protocol-manager --project {project_ref}{platform} --accept-calldata --broadcast (with the new manager's wallet)"
                 ),
             ],
         ))
@@ -1244,7 +1264,9 @@ impl ApiArgs {
                 "tx": tx_value(&outcome),
                 "confirm": confirm.body,
             }),
-            vec![format!("pcl protocol-manager --project {project}")],
+            vec![format!(
+                "pcl protocol-manager --project {project_ref}{platform}"
+            )],
         ))
     }
 }
@@ -1510,6 +1532,18 @@ mod tests {
             .unwrap();
 
         assert_eq!(result["data"]["mode"], "direct");
+        // The one-shot platform carries into the follow-up command.
+        let platform = format!("--api-url {}", server.url());
+        assert!(
+            result["next_actions"].as_array().is_some_and(|actions| {
+                actions.iter().all(|action| {
+                    action
+                        .as_str()
+                        .is_some_and(|action| action.contains(&platform))
+                })
+            }),
+            "{result}"
+        );
         calldata.assert_async().await;
         confirm.assert_async().await;
     }
