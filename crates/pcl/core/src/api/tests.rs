@@ -1210,7 +1210,35 @@ async fn a_mutation_whose_body_fails_is_not_retried_blindly() {
             mutation,
             "{envelope}"
         );
+        let human = crate::output::human_string(&envelope);
+        assert_eq!(human.contains("then retry"), !mutation, "{human}");
+        assert_eq!(
+            human.contains("may already have applied"),
+            mutation,
+            "{human}"
+        );
     }
+
+    // A 5xx answer to a mutation is ambiguous too; its human text must not
+    // say to retry either.
+    let server_error = |method| {
+        crate::output::human_string(
+            &ApiCommandError::HttpStatus {
+                method,
+                path: "/projects".to_string(),
+                status: 500,
+                request_id: Some("req-500".to_string()),
+                body: Box::new(json!({})),
+            }
+            .json_envelope(),
+        )
+    };
+    let post = server_error("POST");
+    assert!(
+        !post.contains("Retry later") && post.contains("may already have applied"),
+        "{post}"
+    );
+    assert!(server_error("GET").contains("Retry later"));
 }
 
 #[tokio::test]

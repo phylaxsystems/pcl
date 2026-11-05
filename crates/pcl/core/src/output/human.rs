@@ -205,8 +205,12 @@ struct HumanCollection<'a> {
 fn render_human_error(output: &mut String, error: &Value) {
     output.push('\n');
     let code = error.get("code").and_then(Value::as_str);
+    let ambiguous = error
+        .pointer("/mutation/outcome_ambiguous")
+        .and_then(Value::as_bool)
+        == Some(true);
     if let Some(message) = error.get("message").and_then(Value::as_str) {
-        output.push_str(&human_error_message(code, message));
+        output.push_str(&human_error_message(code, message, ambiguous));
         output.push('\n');
     } else if let Some(error) = error.as_str() {
         output.push_str(error);
@@ -227,9 +231,16 @@ fn render_human_error(output: &mut String, error: &Value) {
     }
 }
 
-fn human_error_message(code: Option<&str>, message: &str) -> String {
+fn human_error_message(code: Option<&str>, message: &str, ambiguous: bool) -> String {
     if code.is_some_and(|value| value.starts_with("cli.")) {
         return clean_cli_error_message(message);
+    }
+    // The canned network and server texts below say to retry, which could
+    // repeat a mutation that already applied.
+    if ambiguous {
+        return format!(
+            "{message}\nThe request may already have applied; check its result before retrying."
+        );
     }
     match code {
         Some("api.not_found") => {
