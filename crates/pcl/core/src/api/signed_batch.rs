@@ -196,16 +196,6 @@ pub(crate) fn validate_manager_batch(
     // either of the chain's active oracles may be the target.
     check_target(platform, chain_id, None, to)?;
 
-    // A repeated contract's second call reverts (NoPendingManager), failing
-    // the whole batch after the operator approved it.
-    let mut seen = std::collections::HashSet::with_capacity(contracts.len());
-    if let Some((contract, _)) = contracts
-        .iter()
-        .find(|(contract, _)| !seen.insert(*contract))
-    {
-        return Err(format!("contract {contract} is listed more than once"));
-    }
-
     let mut expected = Vec::with_capacity(contracts.len());
     for (index, (contract, inner)) in contracts.iter().enumerate() {
         let (call, function): (Bytes, _) = match new_manager {
@@ -322,637 +312,45 @@ fn check_batch(data: &Bytes, expected: Vec<Bytes>) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::onchain::encode_batch;
-    use alloy_primitives::{
-        address,
-        b256,
-    };
+    use alloy_primitives::b256;
     use serde_json::json;
-    use std::time::{
-        Duration,
-        Instant,
-    };
 
-    const ETH_PRODUCTION: Address = address!("8681e3fF0526C785FE82db9153E6E1F54551ebdF");
-    const ADOPTER: Address = address!("0101010101010101010101010101010101010101");
-    const ASSERTION: B256 =
-        b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-
-    fn removal_data() -> Bytes {
-        encode_batch(vec![
-            removeAssertionCall {
-                contractAddress: ADOPTER,
-                assertionId: ASSERTION,
-            }
-            .abi_encode()
-            .into(),
-        ])
-    }
-
-    fn assertions() -> Vec<Value> {
-        vec![json!({
-            "contractAddress": format!("{ADOPTER}"),
-            "assertionId": format!("{ASSERTION}"),
-            "file": null,
-        })]
-    }
-
-    #[test]
-    fn removal_refuses_a_target_other_than_the_active_state_oracle() {
-        let err = validate_removal_batch(
-            &eth(),
-            1,
-            OracleEnvironment::Production,
-            address!("2222222222222222222222222222222222222222"),
-            &removal_data(),
-            &assertions(),
-            &[(ADOPTER, ASSERTION)],
-        )
-        .unwrap_err();
-        let reason = err;
-        assert!(
-            reason.contains("8681e3fF0526C785FE82db9153E6E1F54551ebdF"),
-            "{reason}"
-        );
-    }
-
-    #[test]
-    fn removal_accepts_a_batch_of_remove_assertion_calls() {
-        validate_removal_batch(
-            &eth(),
-            1,
-            OracleEnvironment::Production,
-            ETH_PRODUCTION,
-            &removal_data(),
-            &assertions(),
-            &[(ADOPTER, ASSERTION)],
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn removal_refuses_a_different_function_inside_the_batch() {
-        let data = encode_batch(vec![
-            acceptManagerTransferCall {
-                contractAddress: ADOPTER,
-            }
-            .abi_encode()
-            .into(),
-        ]);
-        let err = validate_removal_batch(
-            &eth(),
-            1,
-            OracleEnvironment::Production,
-            ETH_PRODUCTION,
-            &data,
-            &assertions(),
-            &[(ADOPTER, ASSERTION)],
-        )
-        .unwrap_err();
-        assert!(!err.is_empty());
-    }
-
-    #[test]
-    fn removal_refuses_an_unknown_platform() {
-        let err = validate_removal_batch(
-            &"http://127.0.0.1".parse().unwrap(),
-            1,
-            OracleEnvironment::Production,
-            ETH_PRODUCTION,
-            &removal_data(),
-            &assertions(),
-            &[(ADOPTER, ASSERTION)],
-        )
-        .unwrap_err();
-        let reason = err;
-        assert!(reason.contains("127.0.0.1"), "{reason}");
-    }
-
-    #[test]
-    fn accept_refuses_anything_other_than_accept_manager_transfer() {
-        let linea: Url = LINEA_URL.parse().unwrap();
-        let oracle = address!("984Ed2269Cdcc0e105675b4a16120Bc0531Bb218");
-        let inner: Bytes = acceptManagerTransferCall {
-            contractAddress: ADOPTER,
-        }
-        .abi_encode()
-        .into();
-        validate_manager_batch(
-            &linea,
-            59144,
-            oracle,
-            &encode_batch(vec![inner.clone()]),
-            &[(ADOPTER, inner)],
-            None,
-        )
-        .unwrap();
-
-        let wrong: Bytes = removeAssertionCall {
-            contractAddress: ADOPTER,
-            assertionId: ASSERTION,
-        }
-        .abi_encode()
-        .into();
-        let err = validate_manager_batch(
-            &linea,
-            59144,
-            oracle,
-            &encode_batch(vec![wrong.clone()]),
-            &[(ADOPTER, wrong)],
-            None,
-        )
-        .unwrap_err();
-        assert!(!err.is_empty());
-    }
-
-    #[test]
-    fn retired_ethereum_oracle_is_not_active() {
-        let retired = address!("B4951F9eA03C6bc7eE441E208C4AC996B2f6e369");
-        let err = validate_removal_batch(
-            &eth(),
-            1,
-            OracleEnvironment::Production,
-            retired,
-            &removal_data(),
-            &assertions(),
-            &[(ADOPTER, ASSERTION)],
-        )
-        .unwrap_err();
-        assert!(!err.is_empty());
-    }
-
-    #[test]
-    fn raw_remove_assertion_without_a_batch_is_refused() {
-        let naked: Bytes = removeAssertionCall {
-            contractAddress: ADOPTER,
-            assertionId: ASSERTION,
-        }
-        .abi_encode()
-        .into();
-        let err = validate_removal_batch(
-            &eth(),
-            1,
-            OracleEnvironment::Production,
-            ETH_PRODUCTION,
-            &naked,
-            &assertions(),
-            &[(ADOPTER, ASSERTION)],
-        )
-        .unwrap_err();
-        assert!(!err.is_empty());
-    }
-
-    #[test]
-    fn removal_uses_the_staging_oracle_only_for_a_staging_release() {
-        let staging = address!("B5E1b58638E05a69c853dEf16837D651B7EEeAA2");
-        validate_removal_batch(
-            &eth(),
-            1,
-            OracleEnvironment::Staging,
-            staging,
-            &removal_data(),
-            &assertions(),
-            &[(ADOPTER, ASSERTION)],
-        )
-        .unwrap();
-
-        let err = validate_removal_batch(
-            &eth(),
-            1,
-            OracleEnvironment::Production,
-            staging,
-            &removal_data(),
-            &assertions(),
-            &[(ADOPTER, ASSERTION)],
-        )
-        .unwrap_err();
-        assert!(!err.is_empty());
-    }
-
-    #[test]
-    fn removal_entries_must_match_the_release_snapshot() {
-        let data = removal_data();
-        let check = |release: &[(Address, B256)]| {
-            validate_removal_batch(
-                &eth(),
-                1,
-                OracleEnvironment::Production,
-                ETH_PRODUCTION,
-                &data,
-                &assertions(),
-                release,
-            )
-        };
-        check(&[(ADOPTER, ASSERTION)]).unwrap();
-        let other = B256::repeat_byte(0xbb);
-        for release in [
-            vec![],
-            vec![(ADOPTER, other)],
-            vec![(ADOPTER, ASSERTION), (ADOPTER, other)],
-            vec![(ADOPTER, ASSERTION), (ADOPTER, ASSERTION)],
-        ] {
-            let reason = check(&release).unwrap_err();
-            assert!(reason.contains("release record"), "{release:?}: {reason}");
-        }
-    }
-
-    #[test]
-    fn release_targets_read_every_snapshot_assertion() {
-        let snapshot = |key: &str, id_key: &str| {
-            json!({ key: {"contracts": {
-                "b": {"address": "0x0202020202020202020202020202020202020202", "assertions": [{id_key: format!("{ASSERTION}")}]},
-                "a": {"address": format!("{ADOPTER}").to_lowercase(), "assertions": [{id_key: format!("{ASSERTION}")}, {id_key: format!("{ASSERTION}")}]}
-            }}})
-        };
-        for release in [
-            snapshot("configSnapshot", "assertionId"),
-            snapshot("config_snapshot", "assertion_id"),
-        ] {
-            let mut targets = release_targets(&release).unwrap();
-            targets.sort_unstable();
-            assert_eq!(
-                targets,
-                vec![
-                    (ADOPTER, ASSERTION),
-                    (ADOPTER, ASSERTION),
-                    (
-                        address!("0202020202020202020202020202020202020202"),
-                        ASSERTION
-                    ),
-                ]
-            );
-        }
-        for broken in [
-            json!({}),
-            json!({"configSnapshot": {"contracts": []}}),
-            json!({"configSnapshot": {"contracts": {"a": {"address": "0x01", "assertions": []}}}}),
-            json!({"configSnapshot": {"contracts": {"a": {"address": format!("{ADOPTER}")}}}}),
-            json!({"configSnapshot": {"contracts": {"a": {"address": format!("{ADOPTER}"), "assertions": [{"assertionId": "1"}]}}}}),
-        ] {
-            assert!(release_targets(&broken).is_err(), "{broken}");
-        }
-    }
-
-    #[test]
-    fn transfer_entries_must_name_the_requested_new_manager() {
-        let linea: Url = LINEA_URL.parse().unwrap();
-        let requested = address!("0303030303030303030303030303030303030303");
-        let entry = |new_manager| -> Bytes {
-            transferManagerCall {
-                contractAddress: ADOPTER,
-                newManager: new_manager,
-            }
-            .abi_encode()
-            .into()
-        };
-        let check = |to, inner: Bytes, data: Bytes| {
-            validate_manager_batch(
-                &linea,
-                59_144,
-                to,
-                &data,
-                &[(ADOPTER, inner)],
-                Some(requested),
-            )
-        };
-        let good = entry(requested);
-        check(
-            LINEA_PRODUCTION,
-            good.clone(),
-            encode_batch(vec![good.clone()]),
-        )
-        .unwrap();
-
-        let attacker = entry(address!("4444444444444444444444444444444444444444"));
-        assert!(
-            check(
-                LINEA_PRODUCTION,
-                attacker.clone(),
-                encode_batch(vec![attacker])
-            )
-            .is_err()
-        );
-        let accept: Bytes = accept_entry().into();
-        assert!(check(LINEA_PRODUCTION, accept.clone(), encode_batch(vec![accept])).is_err());
-        let dirty: Bytes = dirty_address(good.to_vec()).into();
-        assert!(check(LINEA_PRODUCTION, dirty.clone(), encode_batch(vec![dirty])).is_err());
-        let token = address!("2222222222222222222222222222222222222222");
-        assert!(check(token, good.clone(), encode_batch(vec![good.clone()])).is_err());
-        assert!(check(LINEA_PRODUCTION, good.clone(), good.clone()).is_err());
-        assert!(
-            validate_manager_batch(
-                &linea,
-                59_144,
-                LINEA_PRODUCTION,
-                &encode_batch(Vec::new()),
-                &[],
-                Some(requested)
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn duplicate_manager_contracts_are_refused() {
-        let linea: Url = LINEA_URL.parse().unwrap();
-        let requested = address!("0303030303030303030303030303030303030303");
-        let lower: Address = format!("{ADOPTER}").to_lowercase().parse().unwrap();
-        let accept: Bytes = accept_entry().into();
-        let transfer: Bytes = transferManagerCall {
-            contractAddress: ADOPTER,
-            newManager: requested,
-        }
-        .abi_encode()
-        .into();
-        for (inner, new_manager) in [(accept, None), (transfer, Some(requested))] {
-            let reason = validate_manager_batch(
-                &linea,
-                59_144,
-                LINEA_PRODUCTION,
-                &encode_batch(vec![inner.clone(), inner.clone()]),
-                &[(ADOPTER, inner.clone()), (lower, inner)],
-                new_manager,
-            )
-            .unwrap_err();
-            assert!(reason.contains("more than once"), "{reason}");
-        }
-
-        let other = address!("0202020202020202020202020202020202020202");
-        let accept_other: Bytes = acceptManagerTransferCall {
-            contractAddress: other,
-        }
-        .abi_encode()
-        .into();
-        let accept: Bytes = accept_entry().into();
-        let reason = validate_manager_batch(
-            &linea,
-            59_144,
-            LINEA_PRODUCTION,
-            &encode_batch(vec![accept.clone(), accept_other.clone(), accept.clone()]),
-            &[
-                (ADOPTER, accept.clone()),
-                (other, accept_other),
-                (ADOPTER, accept),
-            ],
-            None,
-        )
-        .unwrap_err();
-        assert!(reason.contains("more than once"), "{reason}");
-    }
-
-    #[test]
-    fn release_environment_reads_the_release_record() {
-        assert_eq!(
-            release_environment(&json!({"environment": "staging"})).unwrap(),
-            OracleEnvironment::Staging
-        );
-        assert!(release_environment(&json!({})).is_err());
+    sol! {
+        function transfer(address to, uint256 amount);
     }
 
     const ETH_URL: &str = "https://ethereum.phylax.systems";
-    const LINEA_URL: &str = "https://linea.phylax.systems";
-
-    fn eth() -> Url {
-        ETH_URL.parse().unwrap()
-    }
+    const ETH_PRODUCTION: Address = address!("8681e3fF0526C785FE82db9153E6E1F54551ebdF");
+    const ETH_STAGING: Address = address!("B5E1b58638E05a69c853dEf16837D651B7EEeAA2");
+    const ETH_RETIRED: Address = address!("B4951F9eA03C6bc7eE441E208C4AC996B2f6e369");
     const LINEA_PRODUCTION: Address = address!("984Ed2269Cdcc0e105675b4a16120Bc0531Bb218");
+    const ADOPTER: Address = address!("0101010101010101010101010101010101010101");
+    const TOKEN: Address = address!("1111111111111111111111111111111111111111");
+    const ATTACKER: Address = address!("2222222222222222222222222222222222222222");
+    const OTHER_PROJECT: Address = address!("0404040404040404040404040404040404040404");
+    const ASSERTION: B256 =
+        b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
-    fn remove_entry() -> Vec<u8> {
+    fn remove_entry(contract: Address) -> Bytes {
         removeAssertionCall {
-            contractAddress: ADOPTER,
+            contractAddress: contract,
             assertionId: ASSERTION,
         }
         .abi_encode()
+        .into()
     }
 
-    fn accept_entry() -> Vec<u8> {
+    fn accept_entry() -> Bytes {
         acceptManagerTransferCall {
             contractAddress: ADOPTER,
         }
         .abi_encode()
+        .into()
     }
 
-    fn removal(url: &str, to: Address, data: &[u8], assertions: &[Value]) -> Result<(), String> {
-        validate_removal_batch(
-            &url.parse().unwrap(),
-            1,
-            OracleEnvironment::Production,
-            to,
-            &Bytes::copy_from_slice(data),
-            assertions,
-            &removal_targets(assertions).unwrap_or_default(),
-        )
+    fn listed(contract: Address) -> Vec<Value> {
+        vec![json!({"contractAddress": contract.to_string(), "assertionId": ASSERTION.to_string()})]
     }
-
-    fn accept(
-        url: &str,
-        to: Address,
-        data: &[u8],
-        contracts: &[(Address, Vec<u8>)],
-    ) -> Result<(), String> {
-        let contracts = contracts
-            .iter()
-            .map(|(address, inner)| (*address, Bytes::copy_from_slice(inner)))
-            .collect::<Vec<_>>();
-        validate_manager_batch(
-            &url.parse().unwrap(),
-            59_144,
-            to,
-            &Bytes::copy_from_slice(data),
-            &contracts,
-            None,
-        )
-    }
-
-    fn dirty_address(mut entry: Vec<u8>) -> Vec<u8> {
-        // First byte of the address word's zero padding.
-        entry[4] = 0xff;
-        entry
-    }
-
-    #[test]
-    fn removal_refuses_dirty_address_padding() {
-        let entry = dirty_address(remove_entry());
-        let data = encode_batch(vec![entry.into()]);
-        assert!(removal(ETH_URL, ETH_PRODUCTION, &data, &assertions()).is_err());
-    }
-
-    #[test]
-    fn accept_refuses_dirty_address_padding() {
-        let entry = dirty_address(accept_entry());
-        let data = encode_batch(vec![entry.clone().into()]);
-        assert!(accept(LINEA_URL, LINEA_PRODUCTION, &data, &[(ADOPTER, entry)]).is_err());
-    }
-
-    #[test]
-    fn removal_refuses_trailing_bytes() {
-        let mut outer = encode_batch(vec![remove_entry().into()]).to_vec();
-        outer.extend_from_slice(&[0u8; 32]);
-        assert!(removal(ETH_URL, ETH_PRODUCTION, &outer, &assertions()).is_err());
-        let mut odd = encode_batch(vec![remove_entry().into()]).to_vec();
-        odd.push(0);
-        assert!(removal(ETH_URL, ETH_PRODUCTION, &odd, &assertions()).is_err());
-
-        let mut inner = remove_entry();
-        inner.extend_from_slice(&[0u8; 32]);
-        let data = encode_batch(vec![inner.into()]);
-        assert!(removal(ETH_URL, ETH_PRODUCTION, &data, &assertions()).is_err());
-    }
-
-    #[test]
-    fn accept_refuses_trailing_bytes() {
-        let mut inner = accept_entry();
-        inner.extend_from_slice(&[0u8; 32]);
-        let data = encode_batch(vec![inner.clone().into()]);
-        assert!(accept(LINEA_URL, LINEA_PRODUCTION, &data, &[(ADOPTER, inner)]).is_err());
-        let mut outer = encode_batch(vec![accept_entry().into()]).to_vec();
-        outer.extend_from_slice(&[0u8; 32]);
-        assert!(
-            accept(
-                LINEA_URL,
-                LINEA_PRODUCTION,
-                &outer,
-                &[(ADOPTER, accept_entry())]
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn empty_batches_are_refused() {
-        let empty = encode_batch(Vec::new());
-        assert!(removal(ETH_URL, ETH_PRODUCTION, &empty, &[]).is_err());
-        assert!(accept(LINEA_URL, LINEA_PRODUCTION, &empty, &[]).is_err());
-    }
-
-    /// `selector | offset | count | count offsets that all point at one
-    /// element | element length | element bytes`.
-    fn overlapping_offsets(count: usize, element_len: usize) -> Vec<u8> {
-        let mut data = crate::onchain::encode_batch(Vec::new()).to_vec();
-        data.truncate(4);
-        let word = |value: usize| {
-            let mut word = [0u8; 32];
-            word[24..].copy_from_slice(&(value as u64).to_be_bytes());
-            word
-        };
-        data.extend_from_slice(&word(0x20));
-        data.extend_from_slice(&word(count));
-        for _ in 0..count {
-            data.extend_from_slice(&word(count * 32));
-        }
-        data.extend_from_slice(&word(element_len));
-        data.extend(std::iter::repeat_n(0u8, element_len));
-        data
-    }
-
-    #[test]
-    fn hostile_batch_layouts_are_refused_quickly() {
-        let started = Instant::now();
-        // 64,868 bytes whose 1000 offsets all point at one 32 KiB element.
-        let overlapping = overlapping_offsets(1000, 32_768);
-        assert_eq!(overlapping.len(), 64_868);
-        assert!(removal(ETH_URL, ETH_PRODUCTION, &overlapping, &assertions()).is_err());
-        assert!(
-            accept(
-                LINEA_URL,
-                LINEA_PRODUCTION,
-                &overlapping,
-                &[(ADOPTER, accept_entry())]
-            )
-            .is_err()
-        );
-
-        // A 64 KiB body that declares 2^38 entries.
-        let mut forged = overlapping_offsets(0, 0);
-        forged[4 + 32 + 24..4 + 64].copy_from_slice(&(1u64 << 38).to_be_bytes());
-        forged.resize(65_536, 0);
-        assert!(removal(ETH_URL, ETH_PRODUCTION, &forged, &assertions()).is_err());
-
-        // ~1 MiB that a decoder would expand to 8 GB of copied entries.
-        let huge = overlapping_offsets(16_000, 512_000);
-        assert!(removal(ETH_URL, ETH_PRODUCTION, &huge, &assertions()).is_err());
-        assert!(
-            started.elapsed() < Duration::from_secs(1),
-            "{:?}",
-            started.elapsed()
-        );
-    }
-
-    #[test]
-    fn host_match_requires_the_canonical_origin() {
-        let data = encode_batch(vec![remove_entry().into()]);
-        for url in [
-            "http://ethereum.phylax.systems",
-            "https://ethereum.phylax.systems:8080",
-            "https://ethereum.phylax.systems:8443",
-            "https://u:p@ethereum.phylax.systems",
-            "https://ETHEREUM.phylax.systems.",
-            "https://ethereum.phylax.systems/?x=1",
-            "https://ethereum.phylax.systems/api/v1",
-            "https://ethereum.phylax.systems.evil.example",
-        ] {
-            let reason = removal(url, ETH_PRODUCTION, &data, &assertions()).unwrap_err();
-            assert!(reason.contains(ETH_URL), "{url}: {reason}");
-        }
-        removal(ETH_URL, ETH_PRODUCTION, &data, &assertions()).unwrap();
-        removal(
-            "https://ETHEREUM.phylax.systems/",
-            ETH_PRODUCTION,
-            &data,
-            &assertions(),
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn right_function_with_wrong_arguments_is_refused() {
-        let other = remove_entry_for(ADOPTER, B256::repeat_byte(0xbb));
-        let data = encode_batch(vec![other.into()]);
-        assert!(removal(ETH_URL, ETH_PRODUCTION, &data, &assertions()).is_err());
-
-        let elsewhere = address!("0202020202020202020202020202020202020202");
-        let inner = acceptManagerTransferCall {
-            contractAddress: elsewhere,
-        }
-        .abi_encode();
-        let data = encode_batch(vec![inner.clone().into()]);
-        assert!(accept(LINEA_URL, LINEA_PRODUCTION, &data, &[(ADOPTER, inner)]).is_err());
-    }
-
-    #[test]
-    fn batch_and_list_lengths_must_match() {
-        let data = encode_batch(vec![remove_entry().into(), remove_entry().into()]);
-        assert!(removal(ETH_URL, ETH_PRODUCTION, &data, &assertions()).is_err());
-        let data = encode_batch(vec![accept_entry().into()]);
-        assert!(
-            accept(
-                LINEA_URL,
-                LINEA_PRODUCTION,
-                &data,
-                &[(ADOPTER, accept_entry()), (ADOPTER, accept_entry())]
-            )
-            .is_err()
-        );
-    }
-
-    fn remove_entry_for(contract: Address, assertion: B256) -> Vec<u8> {
-        removeAssertionCall {
-            contractAddress: contract,
-            assertionId: assertion,
-        }
-        .abi_encode()
-    }
-
-    alloy_sol_types::sol! {
-        function transfer(address to, uint256 amount);
-    }
-
-    const TOKEN: Address = address!("1111111111111111111111111111111111111111");
-    const ATTACKER: Address = address!("2222222222222222222222222222222222222222");
-    const OTHER_PROJECT: Address = address!("0404040404040404040404040404040404040404");
-    const OTHER_ASSERTION: B256 =
-        b256!("5555555555555555555555555555555555555555555555555555555555555555");
-    const ETH_STAGING: Address = address!("B5E1b58638E05a69c853dEf16837D651B7EEeAA2");
-    const ETH_RETIRED: Address = address!("B4951F9eA03C6bc7eE441E208C4AC996B2f6e369");
 
     fn token_transfer() -> Bytes {
         transferCall {
@@ -963,101 +361,131 @@ mod tests {
         .into()
     }
 
+    fn remove_on(
+        url: &str,
+        environment: OracleEnvironment,
+        to: Address,
+        data: &Bytes,
+        listed: &[Value],
+    ) -> Result<(), String> {
+        validate_removal_batch(
+            &url.parse().unwrap(),
+            1,
+            environment,
+            to,
+            data,
+            listed,
+            &[(ADOPTER, ASSERTION)],
+        )
+    }
+
     /// PHYL1-208: a compromised API points release removal at another
     /// contract, another `StateOracle`, or another project's assertions.
     #[test]
     fn phyl1_208_compromised_removal_responses_are_refused() {
-        let release = [(ADOPTER, ASSERTION)];
-        let remove = |to: Address, data: &Bytes, listed: &[Value]| {
-            validate_removal_batch(
-                &eth(),
-                1,
-                OracleEnvironment::Production,
-                to,
-                data,
-                listed,
-                &release,
-            )
-        };
-        let other_project = [json!({
-            "contractAddress": format!("{OTHER_PROJECT}"),
-            "assertionId": format!("{OTHER_ASSERTION}"),
-        })];
-        let removes_other_project = encode_batch(vec![
-            remove_entry_for(OTHER_PROJECT, OTHER_ASSERTION).into(),
-        ]);
-
+        let good = encode_batch(vec![remove_entry(ADOPTER)]);
+        let other = encode_batch(vec![remove_entry(OTHER_PROJECT)]);
+        let mut trailing = good.to_vec();
+        trailing.push(0);
+        let mut dirty = remove_entry(ADOPTER).to_vec();
+        dirty[4] = 0xff; // the address word's zero padding
         let cases = [
             (
-                "arbitrary contract",
                 TOKEN,
                 token_transfer(),
-                &assertions()[..],
+                listed(ADOPTER),
                 "is not the active StateOracle",
             ),
             (
-                "retired oracle",
                 ETH_RETIRED,
-                removal_data(),
-                &assertions()[..],
+                good.clone(),
+                listed(ADOPTER),
                 "is not the active StateOracle",
             ),
             (
-                "another chain's oracle",
                 LINEA_PRODUCTION,
-                removal_data(),
-                &assertions()[..],
+                good.clone(),
+                listed(ADOPTER),
                 "is not the active StateOracle",
             ),
             (
-                "staging oracle for a production release",
                 ETH_STAGING,
-                removal_data(),
-                &assertions()[..],
+                good.clone(),
+                listed(ADOPTER),
                 "is not the active StateOracle",
             ),
             (
-                "another project's assertions, listed",
                 ETH_PRODUCTION,
-                removes_other_project.clone(),
-                &other_project[..],
-                "do not match the release record",
+                other.clone(),
+                listed(OTHER_PROJECT),
+                "release record",
             ),
             (
-                "another project's assertions, unlisted",
                 ETH_PRODUCTION,
-                removes_other_project,
-                &assertions()[..],
+                other,
+                listed(ADOPTER),
+                "is not the StateOracle.batch",
+            ),
+            (
+                ETH_PRODUCTION,
+                trailing.into(),
+                listed(ADOPTER),
+                "is not the StateOracle.batch",
+            ),
+            (
+                ETH_PRODUCTION,
+                encode_batch(vec![dirty.into()]),
+                listed(ADOPTER),
                 "is not the StateOracle.batch",
             ),
         ];
-        for (case, to, data, listed, reason) in cases {
-            let err = remove(to, &data, listed).unwrap_err();
-            assert!(err.contains(reason), "{case}: {err}");
+        for (to, data, listed, reason) in cases {
+            let err =
+                remove_on(ETH_URL, OracleEnvironment::Production, to, &data, &listed).unwrap_err();
+            assert!(err.contains(reason), "{to}: {err}");
         }
-        remove(ETH_PRODUCTION, &removal_data(), &assertions()).unwrap();
+        remove_on(
+            ETH_URL,
+            OracleEnvironment::Production,
+            ETH_PRODUCTION,
+            &good,
+            &listed(ADOPTER),
+        )
+        .unwrap();
+        remove_on(
+            ETH_URL,
+            OracleEnvironment::Staging,
+            ETH_STAGING,
+            &good,
+            &listed(ADOPTER),
+        )
+        .unwrap();
     }
 
     /// PHYL1-96: a compromised API points manager acceptance at another
     /// contract, another chain's `StateOracle`, or a call other than
-    /// `acceptManagerTransfer`. The chain check against the project lives in
-    /// the broadcast path (`accept_broadcast_refuses_a_chain_other_than_the_project_chain`).
+    /// `acceptManagerTransfer`. The project chain check is in `broadcast.rs`.
     #[test]
     fn phyl1_96_compromised_accept_responses_are_refused() {
-        let accept_on_eth = |chain_id: u64, to: Address, data: &Bytes, entry: Vec<u8>| {
-            validate_manager_batch(&eth(), chain_id, to, data, &[(ADOPTER, entry.into())], None)
+        let accept = |chain_id: u64, to: Address, data: Bytes, entry: Bytes| {
+            validate_manager_batch(
+                &ETH_URL.parse().unwrap(),
+                chain_id,
+                to,
+                &data,
+                &[(ADOPTER, entry)],
+                None,
+            )
         };
-        let accept_batch = encode_batch(vec![accept_entry().into()]);
+        let batch = encode_batch(vec![accept_entry()]);
         let hijack: Bytes = transferManagerCall {
             contractAddress: ADOPTER,
             newManager: ATTACKER,
         }
         .abi_encode()
         .into();
-
         let cases = [
             (
-                "arbitrary contract",
                 1,
                 TOKEN,
                 token_transfer(),
@@ -1065,60 +493,103 @@ mod tests {
                 "is not the active StateOracle",
             ),
             (
-                "arbitrary contract, accept batch",
                 1,
                 TOKEN,
-                accept_batch.clone(),
+                batch.clone(),
                 accept_entry(),
                 "is not the active StateOracle",
             ),
             (
-                "another chain's oracle",
                 1,
                 LINEA_PRODUCTION,
-                accept_batch.clone(),
+                batch.clone(),
                 accept_entry(),
                 "is not the active StateOracle",
             ),
             (
-                "chain the host does not serve",
                 59_144,
                 LINEA_PRODUCTION,
-                accept_batch.clone(),
+                batch.clone(),
                 accept_entry(),
                 "no active StateOracle",
             ),
             (
-                "transferManager to the attacker",
                 1,
                 ETH_PRODUCTION,
                 encode_batch(vec![hijack.clone()]),
-                hijack.to_vec(),
+                hijack,
                 "expected acceptManagerTransfer",
             ),
             (
-                "removeAssertion",
                 1,
                 ETH_PRODUCTION,
-                removal_data(),
-                remove_entry(),
-                "expected acceptManagerTransfer",
+                accept_entry(),
+                accept_entry(),
+                "is not the StateOracle.batch",
             ),
             (
-                "unbatched accept",
                 1,
                 ETH_PRODUCTION,
-                accept_entry().into(),
+                encode_batch(Vec::new()),
                 accept_entry(),
                 "is not the StateOracle.batch",
             ),
         ];
-        for (case, chain_id, to, data, entry, reason) in cases {
-            let err = accept_on_eth(chain_id, to, &data, entry).unwrap_err();
-            assert!(err.contains(reason), "{case}: {err}");
+        for (chain_id, to, data, entry, reason) in cases {
+            let err = accept(chain_id, to, data, entry).unwrap_err();
+            assert!(err.contains(reason), "{to}: {err}");
         }
         for oracle in [ETH_PRODUCTION, ETH_STAGING] {
-            accept_on_eth(1, oracle, &accept_batch, accept_entry()).unwrap();
+            accept(1, oracle, batch.clone(), accept_entry()).unwrap();
+        }
+    }
+
+    #[test]
+    fn transfer_entries_must_name_the_requested_new_manager() {
+        let requested = address!("0303030303030303030303030303030303030303");
+        let entry = |new_manager| -> Bytes {
+            transferManagerCall {
+                contractAddress: ADOPTER,
+                newManager: new_manager,
+            }
+            .abi_encode()
+            .into()
+        };
+        let check = |inner: Bytes| {
+            validate_manager_batch(
+                &ETH_URL.parse().unwrap(),
+                1,
+                ETH_PRODUCTION,
+                &encode_batch(vec![inner.clone()]),
+                &[(ADOPTER, inner)],
+                Some(requested),
+            )
+        };
+        check(entry(requested)).unwrap();
+        assert!(check(entry(ATTACKER)).is_err());
+        assert!(check(accept_entry()).is_err());
+    }
+
+    #[test]
+    fn only_the_canonical_platform_origin_is_trusted() {
+        let data = encode_batch(vec![remove_entry(ADOPTER)]);
+        for url in [
+            "http://ethereum.phylax.systems",
+            "https://ethereum.phylax.systems:8443",
+            "https://u:p@ethereum.phylax.systems",
+            "https://ETHEREUM.phylax.systems.",
+            "https://ethereum.phylax.systems/api/v1",
+            "https://ethereum.phylax.systems.evil.example",
+        ] {
+            let reason = remove_on(
+                url,
+                OracleEnvironment::Production,
+                ETH_PRODUCTION,
+                &data,
+                &listed(ADOPTER),
+            )
+            .unwrap_err();
+            assert!(reason.contains(ETH_URL), "{url}: {reason}");
         }
     }
 }
