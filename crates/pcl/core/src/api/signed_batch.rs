@@ -31,6 +31,7 @@ use serde_json::Value;
 sol! {
     function removeAssertion(address contractAddress, bytes32 assertionId);
     function acceptManagerTransfer(address contractAddress);
+    function transferManager(address contractAddress, address newManager);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -179,28 +180,50 @@ pub(crate) fn validate_removal_batch(
     check_batch(data, expected)
 }
 
-pub(crate) fn validate_accept_batch(
+/// Checks a manager batch: `transferManager(contract, new_manager)` per
+/// contract when `new_manager` is set (initiation), otherwise
+/// `acceptManagerTransfer(contract)` (acceptance).
+pub(crate) fn validate_manager_batch(
     platform: &Url,
     chain_id: u64,
     to: Address,
     data: &Bytes,
     contracts: &[(Address, Bytes)],
+    new_manager: Option<Address>,
 ) -> Result<(), String> {
-    // The accept response names no environment, and the dapp builds it for
+    // Manager responses name no environment, and the dapp builds them for
     // whichever single environment holds the project's active contracts, so
     // either of the chain's active oracles may be the target.
     check_target(platform, chain_id, None, to)?;
 
     let mut expected = Vec::with_capacity(contracts.len());
     for (index, (contract, inner)) in contracts.iter().enumerate() {
-        let call: Bytes = acceptManagerTransferCall {
-            contractAddress: *contract,
-        }
-        .abi_encode()
-        .into();
+        let (call, function): (Bytes, _) = match new_manager {
+            Some(new_manager) => {
+                (
+                    transferManagerCall {
+                        contractAddress: *contract,
+                        newManager: new_manager,
+                    }
+                    .abi_encode()
+                    .into(),
+                    "transferManager",
+                )
+            }
+            None => {
+                (
+                    acceptManagerTransferCall {
+                        contractAddress: *contract,
+                    }
+                    .abi_encode()
+                    .into(),
+                    "acceptManagerTransfer",
+                )
+            }
+        };
         if *inner != call {
             return Err(format!(
-                "contract {index} calldata is not acceptManagerTransfer({contract})"
+                "contract {index} calldata is not the expected {function} call for {contract}"
             ));
         }
         expected.push(call);
@@ -403,12 +426,13 @@ mod tests {
         }
         .abi_encode()
         .into();
-        validate_accept_batch(
+        validate_manager_batch(
             &linea,
             59144,
             oracle,
             &encode_batch(vec![inner.clone()]),
             &[(ADOPTER, inner)],
+            None,
         )
         .unwrap();
 
@@ -418,12 +442,13 @@ mod tests {
         }
         .abi_encode()
         .into();
-        let err = validate_accept_batch(
+        let err = validate_manager_batch(
             &linea,
             59144,
             oracle,
             &encode_batch(vec![wrong.clone()]),
             &[(ADOPTER, wrong)],
+            None,
         )
         .unwrap_err();
         assert!(!err.is_empty());
@@ -558,6 +583,65 @@ mod tests {
     }
 
     #[test]
+    fn transfer_entries_must_name_the_requested_new_manager() {
+        let linea: Url = LINEA_URL.parse().unwrap();
+        let requested = address!("0303030303030303030303030303030303030303");
+        let entry = |new_manager| -> Bytes {
+            transferManagerCall {
+                contractAddress: ADOPTER,
+                newManager: new_manager,
+            }
+            .abi_encode()
+            .into()
+        };
+        let check = |to, inner: Bytes, data: Bytes| {
+            validate_manager_batch(
+                &linea,
+                59_144,
+                to,
+                &data,
+                &[(ADOPTER, inner)],
+                Some(requested),
+            )
+        };
+        let good = entry(requested);
+        check(
+            LINEA_PRODUCTION,
+            good.clone(),
+            encode_batch(vec![good.clone()]),
+        )
+        .unwrap();
+
+        let attacker = entry(address!("4444444444444444444444444444444444444444"));
+        assert!(
+            check(
+                LINEA_PRODUCTION,
+                attacker.clone(),
+                encode_batch(vec![attacker])
+            )
+            .is_err()
+        );
+        let accept: Bytes = accept_entry().into();
+        assert!(check(LINEA_PRODUCTION, accept.clone(), encode_batch(vec![accept])).is_err());
+        let dirty: Bytes = dirty_address(good.to_vec()).into();
+        assert!(check(LINEA_PRODUCTION, dirty.clone(), encode_batch(vec![dirty])).is_err());
+        let token = address!("2222222222222222222222222222222222222222");
+        assert!(check(token, good.clone(), encode_batch(vec![good.clone()])).is_err());
+        assert!(check(LINEA_PRODUCTION, good.clone(), good.clone()).is_err());
+        assert!(
+            validate_manager_batch(
+                &linea,
+                59_144,
+                LINEA_PRODUCTION,
+                &encode_batch(Vec::new()),
+                &[],
+                Some(requested)
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn release_environment_reads_the_release_record() {
         assert_eq!(
             release_environment(&json!({"environment": "staging"})).unwrap(),
@@ -611,12 +695,13 @@ mod tests {
             .iter()
             .map(|(address, inner)| (*address, Bytes::copy_from_slice(inner)))
             .collect::<Vec<_>>();
-        validate_accept_batch(
+        validate_manager_batch(
             &url.parse().unwrap(),
             59_144,
             to,
             &Bytes::copy_from_slice(data),
             &contracts,
+            None,
         )
     }
 

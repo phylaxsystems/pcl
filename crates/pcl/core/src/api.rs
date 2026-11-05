@@ -1721,7 +1721,10 @@ struct ProtocolManagerArgs {
     new_manager: Option<String>,
     #[arg(long, help = "Address for --nonce")]
     address: Option<String>,
-    #[arg(long, help = "Chain ID for --nonce and --set --sign")]
+    #[arg(
+        long,
+        help = "Chain ID for --nonce and --set --sign; with --broadcast it must match the project's chain"
+    )]
     chain_id: Option<u64>,
     #[arg(
         long,

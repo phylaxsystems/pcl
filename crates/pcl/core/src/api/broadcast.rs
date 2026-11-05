@@ -1,7 +1,7 @@
 //! Broadcast glue: fetch backend-computed calldata, sign and submit it
 //! on-chain, then confirm the mutation with the API.
 //!
-//! Removal and manager-accept transactions are checked against the compiled
+//! Removal and manager transfer/accept transactions are checked against the compiled
 //! active `StateOracle` and must equal the `StateOracle.batch` pcl rebuilds
 //! from the expected calls before signing.
 //! Deploy still wraps operation calldata in that batch locally.
@@ -127,6 +127,8 @@ struct TransferCalldataResponse {
     to: Option<Address>,
     #[serde(default)]
     calldata: Option<Bytes>,
+    #[serde(default)]
+    contracts: Vec<BoundContractCall>,
     #[serde(default)]
     total_contracts: Option<u64>,
     #[serde(default, alias = "requiredConfirmations")]
@@ -908,6 +910,11 @@ impl ApiArgs {
             .ok_or(ApiCommandError::InvalidWorkflow {
                 message: "--transfer-calldata --broadcast requires --new-manager".to_string(),
             })?;
+        let new_manager_address: Address = new_manager.parse().map_err(|_| {
+            ApiCommandError::InvalidWorkflow {
+                message: format!("--new-manager {new_manager} is not a 0x address"),
+            }
+        })?;
 
         progress(cli_args, "Fetching manager transfer calldata");
         let request = get_operation(
@@ -970,6 +977,59 @@ impl ApiArgs {
                 reason: "onchain mode without chain_id/to/calldata".to_string(),
             });
         };
+        let project_chain = self
+            .project_chain_id(config, cli_args, project, request_log_path)
+            .await?;
+        if let Some(explicit) = args.chain_id
+            && explicit != project_chain
+        {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "--chain-id {explicit} does not match the project's chain {project_chain}; omit --chain-id to broadcast the transfer"
+                ),
+            });
+        }
+        let refused = refusal(
+            "manager transfer",
+            vec![
+                format!(
+                    "pcl protocol-manager --project {project} --transfer-calldata --new-manager {new_manager} --json"
+                ),
+                format!(
+                    "Check that `to` is the active StateOracle and `calldata` its batch of transferManager calls to {new_manager}, then sign {{to, calldata}} with the current manager's external wallet"
+                ),
+                format!(
+                    "The new manager then fetches `pcl protocol-manager --project {project} --accept-calldata --json`, signs it externally and runs --confirm-transfer with the landed hash"
+                ),
+            ],
+        );
+        if chain_id != project_chain {
+            return Err(refused(format!(
+                "chain_id {chain_id} does not match the project's chain {project_chain}"
+            )));
+        }
+        if let Some(total) = calldata.total_contracts
+            && total != calldata.contracts.len() as u64
+        {
+            return Err(refused(format!(
+                "total_contracts {total} does not match {} contract entries",
+                calldata.contracts.len()
+            )));
+        }
+        let contracts = calldata
+            .contracts
+            .iter()
+            .map(|contract| (contract.address, contract.calldata.clone()))
+            .collect::<Vec<_>>();
+        super::signed_batch::validate_manager_batch(
+            &self.resolved_api_url(),
+            chain_id,
+            to,
+            &data,
+            &contracts,
+            Some(new_manager_address),
+        )
+        .map_err(refused)?;
 
         confirm_send(
             cli_args,
@@ -979,7 +1039,7 @@ impl ApiArgs {
             to,
             &format!(
                 "transfer protocol manager to {new_manager} ({} contract(s))",
-                calldata.total_contracts.unwrap_or_default()
+                contracts.len()
             ),
         )?;
 
@@ -1087,12 +1147,13 @@ impl ApiArgs {
             .iter()
             .map(|contract| (contract.address, contract.calldata.clone()))
             .collect::<Vec<_>>();
-        super::signed_batch::validate_accept_batch(
+        super::signed_batch::validate_manager_batch(
             &self.resolved_api_url(),
             calldata.chain_id,
             calldata.to,
             &calldata.calldata,
             &contracts,
+            None,
         )
         .map_err(refused)?;
 
@@ -1918,5 +1979,112 @@ mod tests {
         )
         .await;
         assert_refused(&err, "release record");
+    }
+
+    async fn transfer(
+        server: &mut mockito::Server,
+        body: Value,
+        chain_flag: Option<u64>,
+    ) -> ApiCommandError {
+        get_json(server, "", json!({"chain_id": 1})).await;
+        get_json(server, "/protocol-manager/transfer-calldata", body).await;
+        let mut h = Harness::new(&server.url());
+        let args = ProtocolManagerArgs {
+            new_manager: Some("0x0303030303030303030303030303030303030303".to_string()),
+            chain_id: chain_flag,
+            broadcast: signing(),
+            ..ProtocolManagerArgs::default()
+        };
+        let log = h.log();
+        h.api
+            .protocol_manager_transfer_broadcast(&mut h.config, &h.cli_args, &args, PROJECT, &log)
+            .await
+            .unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn transfer_broadcast_refuses_a_token_transfer_before_signing() {
+        let mut server = mockito::Server::new_async().await;
+        // ERC20 transfer(attacker, balance) aimed at a token contract.
+        let err = transfer(
+            &mut server,
+            json!({
+                "mode": "onchain",
+                "chain_id": 1,
+                "to": "0x2222222222222222222222222222222222222222",
+                "calldata": "0xa9059cbb000000000000000000000000444444444444444444444444444444444444444400000000000000000000000000000000000000000000000000000000000f4240",
+                "contracts": [],
+                "total_contracts": 0
+            }),
+            None,
+        )
+        .await;
+        assert_refused(&err, "127.0.0.1");
+        assert!(
+            err.next_actions().iter().any(|action| {
+                action.contains("--transfer-calldata") && !action.contains("--broadcast")
+            }),
+            "{:?}",
+            err.next_actions()
+        );
+    }
+
+    #[tokio::test]
+    async fn transfer_broadcast_refuses_a_chain_other_than_the_project_chain() {
+        let mut server = mockito::Server::new_async().await;
+        let err = transfer(
+            &mut server,
+            json!({
+                "mode": "onchain",
+                "chain_id": 59144,
+                "to": "0x984Ed2269Cdcc0e105675b4a16120Bc0531Bb218",
+                "calldata": "0x01",
+                "contracts": [],
+                "total_contracts": 0
+            }),
+            None,
+        )
+        .await;
+        assert_refused(&err, "59144");
+    }
+
+    #[tokio::test]
+    async fn transfer_broadcast_refuses_a_contract_count_mismatch() {
+        let mut server = mockito::Server::new_async().await;
+        let err = transfer(
+            &mut server,
+            json!({
+                "mode": "onchain",
+                "chain_id": 1,
+                "to": "0x8681e3fF0526C785FE82db9153E6E1F54551ebdF",
+                "calldata": "0x01",
+                "total_contracts": 2
+            }),
+            None,
+        )
+        .await;
+        assert_refused(&err, "total_contracts");
+    }
+
+    #[tokio::test]
+    async fn transfer_broadcast_checks_the_chain_flag_first() {
+        let mut server = mockito::Server::new_async().await;
+        let err = transfer(
+            &mut server,
+            json!({
+                "mode": "onchain",
+                "chain_id": 59144,
+                "to": "0x984Ed2269Cdcc0e105675b4a16120Bc0531Bb218",
+                "calldata": "0x01",
+                "contracts": [],
+                "total_contracts": 0
+            }),
+            Some(5),
+        )
+        .await;
+        assert!(
+            matches!(err, ApiCommandError::InvalidWorkflow { .. }),
+            "{err:?}"
+        );
     }
 }
