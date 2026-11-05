@@ -100,6 +100,11 @@ use std::{
 
 /// Maximum accepted project image size, matching the dApp upload limit (5 MB).
 const MAX_IMAGE_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
+/// Upper bound for one workflow GET, connect through the last body byte, so
+/// a stalled server cannot hang a command (such as a broadcast's metadata
+/// fetches) forever. Mutations are left unbounded: a timed-out POST would
+/// leave its outcome ambiguous.
+const WORKFLOW_GET_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Map a local image file's extension to the MIME type the storage endpoint
 /// accepts. Returns `None` for unsupported extensions. Kept in sync with the
@@ -1598,6 +1603,9 @@ impl ApiArgs {
         let attach_auth = self.workflow_attach_auth(request, config);
         let client = self.http_client(config, attach_auth, requires_auth)?;
         let mut builder = client.request(request.method.reqwest(), url.clone());
+        if request.method == HttpMethod::Get {
+            builder = builder.timeout(WORKFLOW_GET_TIMEOUT);
+        }
         if !request.query.is_empty() {
             builder = builder.query(&request.query);
         }

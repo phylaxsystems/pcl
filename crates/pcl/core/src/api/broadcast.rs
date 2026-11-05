@@ -2087,4 +2087,77 @@ mod tests {
             "{err:?}"
         );
     }
+
+    /// Accepts connections and never answers, or answers headers then stalls.
+    async fn stalling_server(send_headers: bool) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((mut stream, _)) = listener.accept().await {
+                if send_headers {
+                    use tokio::io::AsyncWriteExt;
+                    let _ = stream
+                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{")
+                        .await;
+                }
+                held.push(stream);
+            }
+        });
+        url
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn broadcast_metadata_fetches_have_a_deadline() {
+        for send_headers in [false, true] {
+            let url = stalling_server(send_headers).await;
+            let mut h = Harness::new(&url);
+            let log = h.log();
+            let fetch = h
+                .api
+                .project_chain_id(&mut h.config, &h.cli_args, PROJECT, &log);
+            let result = tokio::time::timeout(std::time::Duration::from_secs(3600), fetch).await;
+            assert!(
+                matches!(result, Ok(Err(ApiCommandError::Request(ref e))) if e.is_timeout()),
+                "send_headers={send_headers}: {result:?}"
+            );
+        }
+
+        let url = stalling_server(true).await;
+        let mut h = Harness::new(&url);
+        let log = h.log();
+        let removal = ReleasesArgs {
+            broadcast: signing(),
+            ..ReleasesArgs::default()
+        };
+        let fetch = h.api.broadcast_release_remove(
+            &mut h.config,
+            &h.cli_args,
+            &removal,
+            PROJECT,
+            RELEASE,
+            &log,
+        );
+        let result = tokio::time::timeout(std::time::Duration::from_secs(3600), fetch).await;
+        assert!(
+            matches!(result, Ok(Err(ApiCommandError::Request(ref e))) if e.is_timeout()),
+            "{result:?}"
+        );
+        let accept = ProtocolManagerArgs {
+            broadcast: signing(),
+            ..ProtocolManagerArgs::default()
+        };
+        let fetch = h.api.protocol_manager_accept_broadcast(
+            &mut h.config,
+            &h.cli_args,
+            &accept,
+            PROJECT,
+            &log,
+        );
+        let result = tokio::time::timeout(std::time::Duration::from_secs(3600), fetch).await;
+        assert!(
+            matches!(result, Ok(Err(ApiCommandError::Request(ref e))) if e.is_timeout()),
+            "{result:?}"
+        );
+    }
 }
