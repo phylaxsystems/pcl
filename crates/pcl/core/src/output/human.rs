@@ -282,7 +282,9 @@ fn api_error_reason(error: &Value) -> Option<String> {
             return Some(value.to_string());
         }
     }
-    body.as_str().map(ToString::to_string)
+    body.as_str()
+        .filter(|reason| !reason.is_empty())
+        .map(ToString::to_string)
 }
 
 fn render_human_special(output: &mut String, envelope: &Value) -> bool {
