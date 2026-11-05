@@ -1079,33 +1079,35 @@ impl ApiArgs {
             .timeout(WORKFLOW_GET_TIMEOUT)
             .send()
             .await?;
-        if !response.status().is_success() {
-            let response = read_api_response(response).await?;
-            return Err(ApiCommandError::HttpStatus {
-                method: "GET",
-                path: "/openapi".to_string(),
-                status: response.status.as_u16(),
-                request_id: response.request_id,
-                body: Box::new(response.body),
-            });
-        }
-        let status = response.status().as_u16();
+        let status = response.status();
         let request_id = request_id_from_headers(response.headers());
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
         let bytes = response.bytes().await.map_err(|source| {
             ApiCommandError::ResponseBody {
-                status,
-                request_id,
+                status: status.as_u16(),
+                request_id: request_id.clone(),
                 source,
             }
         })?;
-        // Strict decode: a malformed spec is a parse error, not a spec without paths.
-        serde_json::from_slice(&bytes).map_err(|error| {
-            ApiCommandError::InvalidWorkflow {
-                message: format!(
-                    "Invalid generated API response payload: {error}; body={}",
-                    response_body_value("application/json", &bytes)
-                ),
-            }
+        // Only a 200 whose body is valid JSON is the spec, as in the generated
+        // client; anything else (204, a malformed body, an error status) keeps
+        // its status, request id and raw body.
+        if status == reqwest::StatusCode::OK
+            && let Ok(spec) = serde_json::from_slice(&bytes)
+        {
+            return Ok(spec);
+        }
+        Err(ApiCommandError::HttpStatus {
+            method: "GET",
+            path: "/openapi".to_string(),
+            status: status.as_u16(),
+            request_id,
+            body: Box::new(response_body_value(&content_type, &bytes)),
         })
     }
 

@@ -1202,14 +1202,21 @@ async fn openapi_fetch_sends_the_generated_api_version() {
 }
 
 #[tokio::test]
-async fn openapi_fetch_reports_malformed_json_as_a_parse_error() {
+async fn openapi_fetch_keeps_provenance_when_a_success_is_not_a_spec() {
     let mut server = mockito::Server::new_async().await;
-    for content_type in ["application/json", "text/plain"] {
+    let cases = [
+        (200, "application/json", "{"),
+        (200, "text/plain", "{"),
+        (200, "application/json", ""),
+        (204, "application/json", ""),
+    ];
+    for (status, content_type, body) in cases {
         let _mock = server
             .mock("GET", "/api/v1/openapi")
-            .with_status(200)
+            .with_status(status)
             .with_header("content-type", content_type)
-            .with_body("{")
+            .with_header("x-request-id", "req-not-a-spec")
+            .with_body(body)
             .create_async()
             .await;
         let error = test_api(server.url(), true)
@@ -1217,16 +1224,17 @@ async fn openapi_fetch_reports_malformed_json_as_a_parse_error() {
             .await
             .unwrap_err();
         let envelope = error.json_envelope();
-        assert_eq!(
-            envelope["error"]["code"], "workflow.invalid_arguments",
-            "{content_type}: {envelope}"
-        );
-        assert_eq!(envelope["error"]["recoverable"], true, "{envelope}");
-        let message = envelope["error"]["message"].as_str().unwrap();
-        assert!(
-            message.contains("Invalid generated API response payload") && message.contains("raw"),
-            "{message}"
-        );
+        let case = format!("{status} {content_type} {body:?}: {envelope}");
+        assert_eq!(envelope["error"]["code"], "api.request_failed", "{case}");
+        assert_eq!(envelope["error"]["recoverable"], true, "{case}");
+        assert_eq!(envelope["error"]["request_id"], "req-not-a-spec", "{case}");
+        assert_eq!(envelope["error"]["http"]["status"], status, "{case}");
+        if !body.is_empty() {
+            assert!(
+                envelope["error"]["http"]["body"].to_string().contains('{'),
+                "{case}"
+            );
+        }
         server.reset();
     }
 }
