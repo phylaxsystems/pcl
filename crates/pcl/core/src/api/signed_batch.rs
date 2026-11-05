@@ -10,6 +10,12 @@
 //! dapp deployments.
 
 use super::ApiCommandError;
+use crate::platform::{
+    Network,
+    SELECTABLE_NETWORKS,
+    Url,
+    redact_platform_url,
+};
 use alloy_primitives::{
     Address,
     B256,
@@ -63,88 +69,101 @@ pub(crate) fn release_environment(body: &Value) -> Result<OracleEnvironment, Api
 
 /// Active `StateOracle` addresses compiled from the ethereum and linea dapp chain
 /// profiles. Only entries whose profile status is `active` are listed.
-/// A host that is not here has no oracle pcl is willing to sign against.
-const ACTIVE_ORACLES: &[(&str, u64, OracleEnvironment, Address)] = &[
+/// A platform that is not here has no oracle pcl is willing to sign against.
+const ACTIVE_ORACLES: &[(Network, u64, OracleEnvironment, Address)] = &[
     (
-        "ethereum.phylax.systems",
+        Network::EthereumMainnet,
         1,
         OracleEnvironment::Production,
         address!("8681e3fF0526C785FE82db9153E6E1F54551ebdF"),
     ),
     (
-        "ethereum.phylax.systems",
+        Network::EthereumMainnet,
         1,
         OracleEnvironment::Staging,
         address!("B5E1b58638E05a69c853dEf16837D651B7EEeAA2"),
     ),
     (
-        "linea.phylax.systems",
+        Network::LineaMainnet,
         59_144,
         OracleEnvironment::Production,
         address!("984Ed2269Cdcc0e105675b4a16120Bc0531Bb218"),
     ),
     (
-        "linea.phylax.systems",
+        Network::LineaMainnet,
         59_144,
         OracleEnvironment::Staging,
         address!("c4AB38f642b1ABC38e40f30C60B49663D6c426a3"),
     ),
 ];
 
-/// Active `StateOracle` for one platform host, chain, and release environment.
-/// `None` means pcl has no compiled oracle and must not sign.
-pub(crate) fn active_state_oracle(
-    platform_host: &str,
+/// Requires `to` to be an active `StateOracle` for the platform, chain and,
+/// when known, environment. The platform must be a network's canonical
+/// origin (`Network::from_url`), so another scheme, port, userinfo or a
+/// trailing-dot host is refused.
+fn check_target(
+    endpoint: &'static str,
+    platform: &Url,
     chain_id: u64,
-    environment: OracleEnvironment,
-) -> Option<Address> {
-    ACTIVE_ORACLES
-        .iter()
-        .find_map(|(host, oracle_chain, oracle_env, oracle)| {
-            (host.eq_ignore_ascii_case(platform_host)
-                && *oracle_chain == chain_id
-                && *oracle_env == environment)
-                .then_some(*oracle)
+    environment: Option<OracleEnvironment>,
+    to: Address,
+) -> Result<(), ApiCommandError> {
+    let Some(network) = Network::from_url(platform) else {
+        let supported = SELECTABLE_NETWORKS
+            .map(|network| format!("https://{}", network.host()))
+            .join(", ");
+        return Err(unexpected(
+            endpoint,
+            format!(
+                "{} is not a platform with a compiled StateOracle; pcl signs this transaction only for {supported}",
+                redact_platform_url(platform)
+            ),
+        ));
+    };
+    let scope = format!(
+        "{} chain {chain_id}{}",
+        network.host(),
+        environment.map_or(String::new(), |environment| {
+            format!(" {}", environment.as_str())
         })
-}
-
-fn active_oracles_for_chain(platform_host: &str, chain_id: u64) -> Vec<Address> {
-    ACTIVE_ORACLES
+    );
+    let active = ACTIVE_ORACLES
         .iter()
-        .filter(|(host, oracle_chain, _, _)| {
-            host.eq_ignore_ascii_case(platform_host) && *oracle_chain == chain_id
+        .filter(|(oracle_network, oracle_chain, oracle_env, _)| {
+            *oracle_network == network
+                && *oracle_chain == chain_id
+                && environment.is_none_or(|environment| *oracle_env == environment)
         })
         .map(|(_, _, _, oracle)| *oracle)
-        .collect()
+        .collect::<Vec<_>>();
+    if active.is_empty() {
+        return Err(unexpected(
+            endpoint,
+            format!("no active StateOracle for {scope}"),
+        ));
+    }
+    if !active.contains(&to) {
+        let active = active.iter().map(ToString::to_string).collect::<Vec<_>>();
+        return Err(unexpected(
+            endpoint,
+            format!(
+                "transaction target {to} is not the active StateOracle ({}) for {scope}",
+                active.join(", ")
+            ),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_removal_batch(
-    platform_host: &str,
+    platform: &Url,
     chain_id: u64,
     environment: OracleEnvironment,
     to: Address,
     data: &Bytes,
     assertions: &[Value],
 ) -> Result<(), ApiCommandError> {
-    let Some(expected) = active_state_oracle(platform_host, chain_id, environment) else {
-        return Err(unexpected(
-            "remove-calldata",
-            format!(
-                "no active StateOracle for {platform_host} chain {chain_id} {}",
-                environment.as_str()
-            ),
-        ));
-    };
-    if to != expected {
-        return Err(unexpected(
-            "remove-calldata",
-            format!(
-                "transaction target {to} is not the active StateOracle {expected} for {platform_host} chain {chain_id} {}",
-                environment.as_str()
-            ),
-        ));
-    }
-
+    check_target("remove-calldata", platform, chain_id, Some(environment), to)?;
     let expected = removal_targets(assertions)?
         .into_iter()
         .map(|(contract, assertion_id)| {
@@ -160,32 +179,22 @@ pub(crate) fn validate_removal_batch(
 }
 
 pub(crate) fn validate_accept_batch(
-    platform_host: &str,
+    platform: &Url,
     chain_id: u64,
     to: Address,
     data: &Bytes,
     contracts: &[(Address, Bytes)],
 ) -> Result<(), ApiCommandError> {
-    let expected = active_oracles_for_chain(platform_host, chain_id);
-    if expected.is_empty() {
-        return Err(unexpected(
-            "protocol-manager/accept-calldata",
-            format!("no active StateOracle for {platform_host} chain {chain_id}"),
-        ));
-    }
-    if !expected.contains(&to) {
-        let listed = expected
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(unexpected(
-            "protocol-manager/accept-calldata",
-            format!(
-                "transaction target {to} is not an active StateOracle ({listed}) for {platform_host} chain {chain_id}"
-            ),
-        ));
-    }
+    // The accept response names no environment, and the dapp builds it for
+    // whichever single environment holds the project's active contracts, so
+    // either of the chain's active oracles may be the target.
+    check_target(
+        "protocol-manager/accept-calldata",
+        platform,
+        chain_id,
+        None,
+        to,
+    )?;
 
     let mut expected = Vec::with_capacity(contracts.len());
     for (index, (contract, inner)) in contracts.iter().enumerate() {
@@ -296,7 +305,6 @@ mod tests {
         Instant,
     };
 
-    const ETH: &str = "ethereum.phylax.systems";
     const ETH_PRODUCTION: Address = address!("8681e3fF0526C785FE82db9153E6E1F54551ebdF");
     const ADOPTER: Address = address!("0101010101010101010101010101010101010101");
     const ASSERTION: B256 =
@@ -324,7 +332,7 @@ mod tests {
     #[test]
     fn removal_refuses_a_target_other_than_the_active_state_oracle() {
         let err = validate_removal_batch(
-            ETH,
+            &eth(),
             1,
             OracleEnvironment::Production,
             address!("2222222222222222222222222222222222222222"),
@@ -344,7 +352,7 @@ mod tests {
     #[test]
     fn removal_accepts_a_batch_of_remove_assertion_calls() {
         validate_removal_batch(
-            ETH,
+            &eth(),
             1,
             OracleEnvironment::Production,
             ETH_PRODUCTION,
@@ -364,7 +372,7 @@ mod tests {
             .into(),
         ]);
         let err = validate_removal_batch(
-            ETH,
+            &eth(),
             1,
             OracleEnvironment::Production,
             ETH_PRODUCTION,
@@ -378,7 +386,7 @@ mod tests {
     #[test]
     fn removal_refuses_an_unknown_platform() {
         let err = validate_removal_batch(
-            "127.0.0.1",
+            &"http://127.0.0.1".parse().unwrap(),
             1,
             OracleEnvironment::Production,
             ETH_PRODUCTION,
@@ -394,7 +402,7 @@ mod tests {
 
     #[test]
     fn accept_refuses_anything_other_than_accept_manager_transfer() {
-        let linea = "linea.phylax.systems";
+        let linea: Url = LINEA_URL.parse().unwrap();
         let oracle = address!("984Ed2269Cdcc0e105675b4a16120Bc0531Bb218");
         let inner: Bytes = acceptManagerTransferCall {
             contractAddress: ADOPTER,
@@ -402,7 +410,7 @@ mod tests {
         .abi_encode()
         .into();
         validate_accept_batch(
-            linea,
+            &linea,
             59144,
             oracle,
             &encode_batch(vec![inner.clone()]),
@@ -417,7 +425,7 @@ mod tests {
         .abi_encode()
         .into();
         let err = validate_accept_batch(
-            linea,
+            &linea,
             59144,
             oracle,
             &encode_batch(vec![wrong.clone()]),
@@ -431,7 +439,7 @@ mod tests {
     fn retired_ethereum_oracle_is_not_active() {
         let retired = address!("B4951F9eA03C6bc7eE441E208C4AC996B2f6e369");
         let err = validate_removal_batch(
-            ETH,
+            &eth(),
             1,
             OracleEnvironment::Production,
             retired,
@@ -451,7 +459,7 @@ mod tests {
         .abi_encode()
         .into();
         let err = validate_removal_batch(
-            ETH,
+            &eth(),
             1,
             OracleEnvironment::Production,
             ETH_PRODUCTION,
@@ -466,7 +474,7 @@ mod tests {
     fn removal_uses_the_staging_oracle_only_for_a_staging_release() {
         let staging = address!("B5E1b58638E05a69c853dEf16837D651B7EEeAA2");
         validate_removal_batch(
-            ETH,
+            &eth(),
             1,
             OracleEnvironment::Staging,
             staging,
@@ -476,7 +484,7 @@ mod tests {
         .unwrap();
 
         let err = validate_removal_batch(
-            ETH,
+            &eth(),
             1,
             OracleEnvironment::Production,
             staging,
@@ -498,6 +506,10 @@ mod tests {
 
     const ETH_URL: &str = "https://ethereum.phylax.systems";
     const LINEA_URL: &str = "https://linea.phylax.systems";
+
+    fn eth() -> Url {
+        ETH_URL.parse().unwrap()
+    }
     const LINEA_PRODUCTION: Address = address!("984Ed2269Cdcc0e105675b4a16120Bc0531Bb218");
 
     fn remove_entry() -> Vec<u8> {
@@ -516,9 +528,8 @@ mod tests {
     }
 
     fn removal(url: &str, to: Address, data: &[u8], assertions: &[Value]) -> Result<(), String> {
-        let url: url::Url = url.parse().unwrap();
         validate_removal_batch(
-            url.host_str().unwrap(),
+            &url.parse().unwrap(),
             1,
             OracleEnvironment::Production,
             to,
@@ -534,13 +545,12 @@ mod tests {
         data: &[u8],
         contracts: &[(Address, Vec<u8>)],
     ) -> Result<(), String> {
-        let url: url::Url = url.parse().unwrap();
         let contracts = contracts
             .iter()
             .map(|(address, inner)| (*address, Bytes::copy_from_slice(inner)))
             .collect::<Vec<_>>();
         validate_accept_batch(
-            url.host_str().unwrap(),
+            &url.parse().unwrap(),
             59_144,
             to,
             &Bytes::copy_from_slice(data),
@@ -661,6 +671,32 @@ mod tests {
             "{:?}",
             started.elapsed()
         );
+    }
+
+    #[test]
+    fn host_match_requires_the_canonical_origin() {
+        let data = encode_batch(vec![remove_entry().into()]);
+        for url in [
+            "http://ethereum.phylax.systems",
+            "https://ethereum.phylax.systems:8080",
+            "https://ethereum.phylax.systems:8443",
+            "https://u:p@ethereum.phylax.systems",
+            "https://ETHEREUM.phylax.systems.",
+            "https://ethereum.phylax.systems/?x=1",
+            "https://ethereum.phylax.systems/api/v1",
+            "https://ethereum.phylax.systems.evil.example",
+        ] {
+            let reason = removal(url, ETH_PRODUCTION, &data, &assertions()).unwrap_err();
+            assert!(reason.contains(ETH_URL), "{url}: {reason}");
+        }
+        removal(ETH_URL, ETH_PRODUCTION, &data, &assertions()).unwrap();
+        removal(
+            "https://ETHEREUM.phylax.systems/",
+            ETH_PRODUCTION,
+            &data,
+            &assertions(),
+        )
+        .unwrap();
     }
 
     #[test]

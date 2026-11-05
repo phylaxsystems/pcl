@@ -677,15 +677,8 @@ impl ApiArgs {
             .call_workflow_result(config, cli_args, &release_request, request_log_path)
             .await?;
         let environment = super::signed_batch::release_environment(&release.body)?;
-        let platform = self.resolved_api_url();
-        let host = platform.host_str().ok_or_else(|| {
-            ApiCommandError::UnexpectedResponse {
-                endpoint: "remove-calldata",
-                reason: "platform URL has no host".to_string(),
-            }
-        })?;
         super::signed_batch::validate_removal_batch(
-            host,
+            &self.resolved_api_url(),
             chain_id,
             environment,
             calldata.to,
@@ -1053,20 +1046,13 @@ impl ApiArgs {
                 ),
             });
         }
-        let platform = self.resolved_api_url();
-        let host = platform.host_str().ok_or_else(|| {
-            ApiCommandError::UnexpectedResponse {
-                endpoint: "protocol-manager/accept-calldata",
-                reason: "platform URL has no host".to_string(),
-            }
-        })?;
         let contracts = calldata
             .contracts
             .iter()
             .map(|contract| (contract.address, contract.calldata.clone()))
             .collect::<Vec<_>>();
         super::signed_batch::validate_accept_batch(
-            host,
+            &self.resolved_api_url(),
             calldata.chain_id,
             calldata.to,
             &calldata.calldata,
