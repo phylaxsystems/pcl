@@ -174,13 +174,13 @@ fn validate_release_deploy_calldata(
         (true, true) | (false, false) => Ok(()),
         (true, false) => {
             Err(ApiCommandError::UnexpectedResponse {
-                endpoint: "deploy-calldata",
+                endpoint: "/projects/{project_id}/releases/{release_id}/deploy-calldata",
                 reason: "noop response unexpectedly included transaction calldata".to_string(),
             })
         }
         (false, true) => {
             Err(ApiCommandError::UnexpectedResponse {
-                endpoint: "deploy-calldata",
+                endpoint: "/projects/{project_id}/releases/{release_id}/deploy-calldata",
                 reason: "non-noop response did not include transaction calldata".to_string(),
             })
         }
@@ -190,6 +190,18 @@ fn validate_release_deploy_calldata(
 // ---------------------------------------------------------------------------
 // Shared plumbing
 // ---------------------------------------------------------------------------
+
+/// Builds the refusal for an API transaction pcl will not sign, carrying the
+/// manual route an operator can use instead.
+fn refusal(action: &'static str, manual_route: Vec<String>) -> impl Fn(String) -> ApiCommandError {
+    move |reason| {
+        ApiCommandError::CalldataRefused {
+            action,
+            reason,
+            manual_route: manual_route.clone(),
+        }
+    }
+}
 
 async fn resolve_signer(
     wallet: &WalletArgs,
@@ -518,8 +530,10 @@ impl ApiArgs {
         let calldata_result = self
             .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
-        let calldata: ReleaseDeployCalldataResponse =
-            parse_response("deploy-calldata", &calldata_result.body)?;
+        let calldata: ReleaseDeployCalldataResponse = parse_response(
+            "/projects/{project_id}/releases/{release_id}/deploy-calldata",
+            &calldata_result.body,
+        )?;
         validate_release_deploy_calldata(&calldata)?;
 
         let next_actions = vec![
@@ -642,8 +656,10 @@ impl ApiArgs {
         let calldata_result = self
             .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
-        let calldata: ReleaseRemoveCalldataResponse =
-            parse_response("remove-calldata", &calldata_result.body)?;
+        let calldata: ReleaseRemoveCalldataResponse = parse_response(
+            "/projects/{project_id}/releases/{release_id}/remove-calldata",
+            &calldata_result.body,
+        )?;
 
         // The project record picks the chain. The release record picks the
         // environment, and therefore which active StateOracle may be signed.
@@ -660,15 +676,20 @@ impl ApiArgs {
                 ),
             });
         }
+        let refused = refusal(
+            "release removal",
+            vec![
+                format!("pcl releases calldata remove {project} {release_id} --json"),
+                "Check that `to` is the active StateOracle and `data` its batch of removeAssertion calls, then sign {to, data} with an external wallet".to_string(),
+                format!("pcl releases remove {project} {release_id} --field txHash=<tx-hash> --json"),
+            ],
+        );
         if let Some(response_chain) = calldata.chain_id
             && response_chain != chain_id
         {
-            return Err(ApiCommandError::UnexpectedResponse {
-                endpoint: "remove-calldata",
-                reason: format!(
-                    "chain_id {response_chain} does not match the project's chain {chain_id}"
-                ),
-            });
+            return Err(refused(format!(
+                "chain_id {response_chain} does not match the project's chain {chain_id}"
+            )));
         }
 
         let release_request =
@@ -684,7 +705,8 @@ impl ApiArgs {
             calldata.to,
             &calldata.data,
             &calldata.assertions,
-        )?;
+        )
+        .map_err(refused)?;
 
         confirm_send(
             cli_args,
@@ -825,8 +847,10 @@ impl ApiArgs {
             let nonce_result = self
                 .call_workflow_result(config, cli_args, &nonce_request, request_log_path)
                 .await?;
-            let nonce: ProtocolManagerNonceResponse =
-                parse_response("protocol-manager/nonce", &nonce_result.body)?;
+            let nonce: ProtocolManagerNonceResponse = parse_response(
+                "/projects/{project_id}/protocol-manager/nonce",
+                &nonce_result.body,
+            )?;
 
             progress(cli_args, "Signing challenge message (EIP-191)");
             let signature = sign_personal(&signer, &nonce.message).await?;
@@ -891,8 +915,10 @@ impl ApiArgs {
         let calldata_result = self
             .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
-        let calldata: TransferCalldataResponse =
-            parse_response("protocol-manager/transfer-calldata", &calldata_result.body)?;
+        let calldata: TransferCalldataResponse = parse_response(
+            "/projects/{project_id}/protocol-manager/transfer-calldata",
+            &calldata_result.body,
+        )?;
 
         let next_actions = vec![format!(
             "pcl protocol-manager --project {project} --pending-transfer"
@@ -936,7 +962,7 @@ impl ApiArgs {
             (calldata.chain_id, calldata.to, calldata.calldata.clone())
         else {
             return Err(ApiCommandError::UnexpectedResponse {
-                endpoint: "protocol-manager/transfer-calldata",
+                endpoint: "/projects/{project_id}/protocol-manager/transfer-calldata",
                 reason: "onchain mode without chain_id/to/calldata".to_string(),
             });
         };
@@ -1012,19 +1038,28 @@ impl ApiArgs {
         let calldata_result = self
             .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
-        let calldata: AcceptCalldataResponse =
-            parse_response("protocol-manager/accept-calldata", &calldata_result.body)?;
+        let calldata: AcceptCalldataResponse = parse_response(
+            "/projects/{project_id}/protocol-manager/accept-calldata",
+            &calldata_result.body,
+        )?;
         let project_chain = self
             .project_chain_id(config, cli_args, project, request_log_path)
             .await?;
-        if calldata.chain_id != project_chain {
-            return Err(ApiCommandError::UnexpectedResponse {
-                endpoint: "protocol-manager/accept-calldata",
-                reason: format!(
-                    "chain_id {} does not match the project's chain {project_chain}",
-                    calldata.chain_id
+        let refused = refusal(
+            "manager acceptance",
+            vec![
+                format!("pcl protocol-manager --project {project} --accept-calldata --json"),
+                "Check that `to` is the active StateOracle and `calldata` its batch of acceptManagerTransfer calls, then sign {to, calldata} with the new manager's external wallet".to_string(),
+                format!(
+                    "pcl protocol-manager --project {project} --confirm-transfer --field mode=onchain --field tx_hash=<tx-hash> --field chain_id=<chain-id> --field new_manager_address=<new-manager> --json"
                 ),
-            });
+            ],
+        );
+        if calldata.chain_id != project_chain {
+            return Err(refused(format!(
+                "chain_id {} does not match the project's chain {project_chain}",
+                calldata.chain_id
+            )));
         }
         if let Some(explicit) = args.chain_id
             && explicit != project_chain
@@ -1038,13 +1073,10 @@ impl ApiArgs {
         if let Some(total) = calldata.total_contracts
             && total != calldata.contracts.len() as u64
         {
-            return Err(ApiCommandError::UnexpectedResponse {
-                endpoint: "protocol-manager/accept-calldata",
-                reason: format!(
-                    "total_contracts {total} does not match {} contract entries",
-                    calldata.contracts.len()
-                ),
-            });
+            return Err(refused(format!(
+                "total_contracts {total} does not match {} contract entries",
+                calldata.contracts.len()
+            )));
         }
         let contracts = calldata
             .contracts
@@ -1057,7 +1089,8 @@ impl ApiArgs {
             calldata.to,
             &calldata.calldata,
             &contracts,
-        )?;
+        )
+        .map_err(refused)?;
 
         confirm_send(
             cli_args,
@@ -1181,8 +1214,11 @@ mod tests {
             "message": null,
             "someFutureField": true,
         });
-        let parsed: ReleaseDeployCalldataResponse =
-            parse_response("deploy-calldata", &body).unwrap();
+        let parsed: ReleaseDeployCalldataResponse = parse_response(
+            "/projects/{project_id}/releases/{release_id}/deploy-calldata",
+            &body,
+        )
+        .unwrap();
         assert_eq!(parsed.chain_id, 84532);
         assert_eq!(
             parsed.state_oracle_address,
@@ -1204,8 +1240,11 @@ mod tests {
             "isNoop": true,
             "message": "Everything already deployed",
         });
-        let parsed: ReleaseDeployCalldataResponse =
-            parse_response("deploy-calldata", &body).unwrap();
+        let parsed: ReleaseDeployCalldataResponse = parse_response(
+            "/projects/{project_id}/releases/{release_id}/deploy-calldata",
+            &body,
+        )
+        .unwrap();
         assert!(parsed.is_noop);
         assert_eq!(
             parsed.message.as_deref(),
@@ -1222,8 +1261,11 @@ mod tests {
                 { "contractAddress": "0x0101010101010101010101010101010101010101", "assertionId": "1", "file": null }
             ],
         });
-        let parsed: ReleaseRemoveCalldataResponse =
-            parse_response("remove-calldata", &body).unwrap();
+        let parsed: ReleaseRemoveCalldataResponse = parse_response(
+            "/projects/{project_id}/releases/{release_id}/remove-calldata",
+            &body,
+        )
+        .unwrap();
         assert_eq!(parsed.assertions.len(), 1);
         assert_eq!(parsed.data.as_ref(), [0x1e, 0x89, 0x7a, 0xfb]);
     }
@@ -1238,8 +1280,11 @@ mod tests {
             "contracts": [{ "address": "0x0101010101010101010101010101010101010101", "calldata": "0x01" }],
             "total_contracts": 1,
         });
-        let parsed: TransferCalldataResponse =
-            parse_response("transfer-calldata", &onchain).unwrap();
+        let parsed: TransferCalldataResponse = parse_response(
+            "/projects/{project_id}/protocol-manager/transfer-calldata",
+            &onchain,
+        )
+        .unwrap();
         assert_eq!(parsed.mode, TransferMode::Onchain);
         assert_eq!(parsed.chain_id, Some(84532));
         assert!(parsed.to.is_some());
@@ -1251,8 +1296,11 @@ mod tests {
             "contracts": [],
             "total_contracts": 0,
         });
-        let parsed: TransferCalldataResponse =
-            parse_response("transfer-calldata", &direct).unwrap();
+        let parsed: TransferCalldataResponse = parse_response(
+            "/projects/{project_id}/protocol-manager/transfer-calldata",
+            &direct,
+        )
+        .unwrap();
         assert_eq!(parsed.mode, TransferMode::Direct);
         assert!(parsed.to.is_none());
         assert!(parsed.calldata.is_none());
@@ -1267,13 +1315,15 @@ mod tests {
             "calldata": "0xdeadbeef",
             "total_contracts": 1,
         });
-        let err =
-            parse_response::<TransferCalldataResponse>("protocol-manager/transfer-calldata", &body)
-                .unwrap_err();
+        let err = parse_response::<TransferCalldataResponse>(
+            "/projects/{project_id}/protocol-manager/transfer-calldata",
+            &body,
+        )
+        .unwrap_err();
         assert!(matches!(
             err,
             ApiCommandError::UnexpectedResponse {
-                endpoint: "protocol-manager/transfer-calldata",
+                endpoint: "/projects/{project_id}/protocol-manager/transfer-calldata",
                 ..
             }
         ));
@@ -1400,7 +1450,7 @@ mod tests {
             assert!(matches!(
                 validate_release_deploy_calldata(&inconsistent),
                 Err(ApiCommandError::UnexpectedResponse {
-                    endpoint: "deploy-calldata",
+                    endpoint: "/projects/{project_id}/releases/{release_id}/deploy-calldata",
                     ..
                 })
             ));
@@ -1416,7 +1466,11 @@ mod tests {
             "contracts": [],
             "total_contracts": 0,
         });
-        let parsed: AcceptCalldataResponse = parse_response("accept-calldata", &body).unwrap();
+        let parsed: AcceptCalldataResponse = parse_response(
+            "/projects/{project_id}/protocol-manager/accept-calldata",
+            &body,
+        )
+        .unwrap();
         assert_eq!(parsed.chain_id, 84532);
     }
 
@@ -1428,20 +1482,22 @@ mod tests {
             "expires_at": "2026-07-03T00:00:00Z",
         });
         let parsed: ProtocolManagerNonceResponse =
-            parse_response("protocol-manager/nonce", &body).unwrap();
+            parse_response("/projects/{project_id}/protocol-manager/nonce", &body).unwrap();
         assert_eq!(parsed.nonce, "abc123");
         assert!(parsed.message.starts_with("Sign"));
     }
 
     #[test]
     fn malformed_response_yields_unexpected_response_error() {
-        let err =
-            parse_response::<ReleaseDeployCalldataResponse>("deploy-calldata", &json!({"nope": 1}))
-                .unwrap_err();
+        let err = parse_response::<ReleaseDeployCalldataResponse>(
+            "/projects/{project_id}/releases/{release_id}/deploy-calldata",
+            &json!({"nope": 1}),
+        )
+        .unwrap_err();
         assert!(matches!(
             err,
             ApiCommandError::UnexpectedResponse {
-                endpoint: "deploy-calldata",
+                endpoint: "/projects/{project_id}/releases/{release_id}/deploy-calldata",
                 ..
             }
         ));
@@ -1488,8 +1544,11 @@ mod tests {
             "isNoop": false,
             "requiredConfirmations": 6,
         });
-        let parsed: ReleaseDeployCalldataResponse =
-            parse_response("deploy-calldata", &deploy).unwrap();
+        let parsed: ReleaseDeployCalldataResponse = parse_response(
+            "/projects/{project_id}/releases/{release_id}/deploy-calldata",
+            &deploy,
+        )
+        .unwrap();
         assert_eq!(parsed.required_confirmations, Some(6));
 
         // Snake-case payloads accept both casings; absence stays None so the
@@ -1500,15 +1559,22 @@ mod tests {
             "calldata": "0x01",
             "required_confirmations": 3,
         });
-        let parsed: AcceptCalldataResponse = parse_response("accept-calldata", &accept).unwrap();
+        let parsed: AcceptCalldataResponse = parse_response(
+            "/projects/{project_id}/protocol-manager/accept-calldata",
+            &accept,
+        )
+        .unwrap();
         assert_eq!(parsed.required_confirmations, Some(3));
 
         let remove = json!({
             "to": "0x0101010101010101010101010101010101010101",
             "data": "0x01",
         });
-        let parsed: ReleaseRemoveCalldataResponse =
-            parse_response("remove-calldata", &remove).unwrap();
+        let parsed: ReleaseRemoveCalldataResponse = parse_response(
+            "/projects/{project_id}/releases/{release_id}/remove-calldata",
+            &remove,
+        )
+        .unwrap();
         assert_eq!(parsed.required_confirmations, None);
     }
 
@@ -1562,107 +1628,243 @@ mod tests {
         assert!(!challenge_expired(&ApiCommandError::BroadcastCancelled));
     }
 
-    #[tokio::test]
-    async fn removal_broadcast_refuses_an_unknown_platform_before_sending() {
-        let mut server = mockito::Server::new_async().await;
-        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-        let release_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
-        let project = server
-            .mock("GET", format!("/api/v1/projects/{project_id}").as_str())
-            .match_header("authorization", "Bearer access-token")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"chain_id":1}"#)
-            .expect(1)
-            .create_async()
-            .await;
-        let release = server
-            .mock(
-                "GET",
-                format!("/api/v1/projects/{project_id}/releases/{release_id}").as_str(),
-            )
-            .match_header("authorization", "Bearer access-token")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"environment":"production"}"#)
-            .expect(1)
-            .create_async()
-            .await;
-        let remove = server
-            .mock(
-                "GET",
-                format!("/api/v1/projects/{project_id}/releases/{release_id}/remove-calldata")
-                    .as_str(),
-            )
-            .match_header("authorization", "Bearer access-token")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(
-                json!({
-                    "to": "0x2222222222222222222222222222222222222222",
-                    "data": "0x01",
-                    "chainId": 1,
-                    "assertions": []
-                })
-                .to_string(),
-            )
-            .expect(1)
-            .create_async()
-            .await;
+    const PROJECT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
-        let api = ApiArgs::headless(server.url().parse().unwrap());
-        let mut config = CliConfig {
-            auth: Some(crate::config::UserAuth {
-                issuer_platform_url: Some(server.url()),
-                access_token: "access-token".to_string(),
-                refresh_token: "refresh-token".to_string(),
-                expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
-                refresh_expires_at: None,
-                user_id: None,
-                wallet_address: None,
-                email: Some("agent@example.com".to_string()),
-            }),
-            platform_url: Some(server.url()),
-            rpc: BTreeMap::new(),
-        };
-        let config_dir = tempfile::tempdir().unwrap();
-        let cli_args = CliArgs {
-            config_dir: Some(config_dir.path().to_path_buf()),
-            ..CliArgs::default()
-        };
-        let args = ReleasesArgs {
-            broadcast: BroadcastArgs {
-                broadcast: true,
-                yes: true,
-                wallet: crate::wallet::WalletArgs {
-                    private_key: Some(
-                        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-                            .to_string(),
-                    ),
-                    ..crate::wallet::WalletArgs::default()
+    const RELEASE: &str = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+    const TEST_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+    struct Harness {
+        api: ApiArgs,
+        config: CliConfig,
+        cli_args: CliArgs,
+        dir: tempfile::TempDir,
+    }
+
+    impl Harness {
+        fn new(url: &str) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            Self {
+                api: ApiArgs::headless(url.parse().unwrap()),
+                config: CliConfig {
+                    auth: Some(crate::config::UserAuth {
+                        issuer_platform_url: Some(url.to_string()),
+                        access_token: "access-token".to_string(),
+                        refresh_token: "refresh-token".to_string(),
+                        expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+                        refresh_expires_at: None,
+                        user_id: None,
+                        wallet_address: None,
+                        email: Some("agent@example.com".to_string()),
+                    }),
+                    platform_url: Some(url.to_string()),
+                    rpc: BTreeMap::new(),
                 },
-                ..BroadcastArgs::default()
+                cli_args: CliArgs {
+                    config_dir: Some(dir.path().to_path_buf()),
+                    ..CliArgs::default()
+                },
+                dir,
+            }
+        }
+
+        fn log(&self) -> std::path::PathBuf {
+            self.dir.path().join("requests.jsonl")
+        }
+    }
+
+    fn signing() -> BroadcastArgs {
+        BroadcastArgs {
+            broadcast: true,
+            yes: true,
+            wallet: crate::wallet::WalletArgs {
+                private_key: Some(TEST_KEY.to_string()),
+                ..crate::wallet::WalletArgs::default()
             },
+            ..BroadcastArgs::default()
+        }
+    }
+
+    async fn get_json(server: &mut mockito::Server, path: &str, body: Value) -> mockito::Mock {
+        server
+            .mock("GET", format!("/api/v1/projects/{PROJECT}{path}").as_str())
+            .match_query(Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body.to_string())
+            .create_async()
+            .await
+    }
+
+    async fn accept(
+        server: &mut mockito::Server,
+        body: Value,
+        chain_flag: Option<u64>,
+    ) -> ApiCommandError {
+        get_json(server, "", json!({"chain_id": 1})).await;
+        get_json(server, "/protocol-manager/accept-calldata", body).await;
+        let mut h = Harness::new(&server.url());
+        let args = ProtocolManagerArgs {
+            chain_id: chain_flag,
+            broadcast: signing(),
+            ..ProtocolManagerArgs::default()
+        };
+        let log = h.log();
+        h.api
+            .protocol_manager_accept_broadcast(&mut h.config, &h.cli_args, &args, PROJECT, &log)
+            .await
+            .unwrap_err()
+    }
+
+    async fn remove(server: &mut mockito::Server, release: Value, body: Value) -> ApiCommandError {
+        get_json(server, "", json!({"chain_id": 1})).await;
+        get_json(server, &format!("/releases/{RELEASE}"), release).await;
+        get_json(
+            server,
+            &format!("/releases/{RELEASE}/remove-calldata"),
+            body,
+        )
+        .await;
+        let mut h = Harness::new(&server.url());
+        let args = ReleasesArgs {
+            broadcast: signing(),
             ..ReleasesArgs::default()
         };
-
-        let err = api
-            .broadcast_release_remove(
-                &mut config,
-                &cli_args,
-                &args,
-                project_id,
-                release_id,
-                &config_dir.path().join("requests.jsonl"),
-            )
+        let log = h.log();
+        h.api
+            .broadcast_release_remove(&mut h.config, &h.cli_args, &args, PROJECT, RELEASE, &log)
             .await
-            .unwrap_err();
-        let ApiCommandError::UnexpectedResponse { reason, .. } = err else {
-            panic!("expected the oracle check to refuse the mock platform, got {err:?}");
-        };
-        assert!(reason.contains("127.0.0.1"), "{reason}");
-        project.assert_async().await;
-        release.assert_async().await;
-        remove.assert_async().await;
+            .unwrap_err()
+    }
+
+    fn assert_refused(err: &ApiCommandError, needle: &str) {
+        assert_eq!(err.code(), "broadcast.calldata_refused", "{err:?}");
+        assert!(!err.recoverable(), "{err:?}");
+        assert!(err.to_string().contains(needle), "{err}");
+        let actions = err.next_actions();
+        assert!(!actions.is_empty());
+        assert!(
+            actions.iter().all(|action| !action.contains("api inspect")),
+            "{actions:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn accept_broadcast_refuses_a_chain_other_than_the_project_chain() {
+        let mut server = mockito::Server::new_async().await;
+        let err = accept(
+            &mut server,
+            json!({
+                "chain_id": 59144,
+                "to": "0x984Ed2269Cdcc0e105675b4a16120Bc0531Bb218",
+                "calldata": "0x01",
+                "contracts": [],
+                "total_contracts": 0
+            }),
+            None,
+        )
+        .await;
+        assert_refused(&err, "59144");
+    }
+
+    #[tokio::test]
+    async fn accept_broadcast_refuses_a_contract_count_mismatch() {
+        let mut server = mockito::Server::new_async().await;
+        let err = accept(
+            &mut server,
+            json!({
+                "chain_id": 1,
+                "to": "0x8681e3fF0526C785FE82db9153E6E1F54551ebdF",
+                "calldata": "0x01",
+                "contracts": [],
+                "total_contracts": 3
+            }),
+            None,
+        )
+        .await;
+        assert_refused(&err, "total_contracts");
+    }
+
+    #[tokio::test]
+    async fn accept_broadcast_refuses_an_unknown_platform_before_sending() {
+        let mut server = mockito::Server::new_async().await;
+        let err = accept(
+            &mut server,
+            json!({
+                "chain_id": 1,
+                "to": "0x8681e3fF0526C785FE82db9153E6E1F54551ebdF",
+                "calldata": "0x01",
+                "contracts": [{"address": "0x0101010101010101010101010101010101010101", "calldata": "0x01"}],
+                "total_contracts": 1
+            }),
+            None,
+        )
+        .await;
+        assert_refused(&err, "127.0.0.1");
+        assert!(
+            err.next_actions()
+                .iter()
+                .any(|action| action.contains("--confirm-transfer")),
+            "{:?}",
+            err.next_actions()
+        );
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_refusal_names_the_manual_route() {
+        let mut server = mockito::Server::new_async().await;
+        let err = remove(
+            &mut server,
+            json!({
+                "environment": "production",
+                "configSnapshot": {"contracts": {"a": {
+                    "address": "0x0101010101010101010101010101010101010101",
+                    "assertions": [{"assertionId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]
+                }}}
+            }),
+            json!({
+                "to": "0x8681e3fF0526C785FE82db9153E6E1F54551ebdF",
+                "data": "0x01",
+                "chainId": 1,
+                "assertions": [{
+                    "contractAddress": "0x0101010101010101010101010101010101010101",
+                    "assertionId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }]
+            }),
+        )
+        .await;
+        assert_refused(&err, "127.0.0.1");
+        let actions = err.next_actions();
+        assert!(
+            actions.contains(&format!(
+                "pcl releases calldata remove {PROJECT} {RELEASE} --json"
+            )),
+            "{actions:?}"
+        );
+        assert!(
+            actions.iter().any(|action| {
+                action.contains(&format!(
+                    "pcl releases remove {PROJECT} {RELEASE} --field txHash="
+                ))
+            }),
+            "{actions:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_refuses_a_chain_other_than_the_project_chain() {
+        let mut server = mockito::Server::new_async().await;
+        let err = remove(
+            &mut server,
+            json!({"environment": "production", "configSnapshot": {"contracts": {}}}),
+            json!({
+                "to": "0x8681e3fF0526C785FE82db9153E6E1F54551ebdF",
+                "data": "0x01",
+                "chainId": 59144,
+                "assertions": []
+            }),
+        )
+        .await;
+        assert_refused(&err, "59144");
     }
 }

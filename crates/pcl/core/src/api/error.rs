@@ -133,6 +133,16 @@ pub enum ApiCommandError {
         endpoint: &'static str,
         reason: String,
     },
+
+    /// pcl will not sign this API-built transaction. Retrying cannot help;
+    /// `manual_route` fetches the calldata for external review and signing,
+    /// then confirms the landed transaction.
+    #[error("Refusing to sign the {action} transaction: {reason}")]
+    CalldataRefused {
+        action: &'static str,
+        reason: String,
+        manual_route: Vec<String>,
+    },
 }
 
 impl ApiCommandError {
@@ -219,11 +229,12 @@ impl ApiCommandError {
             Self::BroadcastCancelled => "broadcast.cancelled",
             Self::ConfirmAfterTx { .. } => "broadcast.confirm_failed",
             Self::UnexpectedResponse { .. } => "api.unexpected_response",
+            Self::CalldataRefused { .. } => "broadcast.calldata_refused",
         }
     }
 
     pub fn recoverable(&self) -> bool {
-        !matches!(self, Self::MissingPaths)
+        !matches!(self, Self::MissingPaths | Self::CalldataRefused { .. })
     }
 
     pub fn next_actions(&self) -> Vec<String> {
@@ -447,6 +458,7 @@ impl ApiCommandError {
             Self::UnexpectedResponse { endpoint, .. } => {
                 vec![format!("pcl api inspect get {endpoint} --json")]
             }
+            Self::CalldataRefused { manual_route, .. } => manual_route.clone(),
         }
     }
 
@@ -512,6 +524,9 @@ impl ApiCommandError {
             Self::BroadcastCancelled => vec!["rerun_with_yes"],
             Self::ConfirmAfterTx { .. } => vec!["confirm_platform_only", "reconcile_mutation"],
             Self::UnexpectedResponse { .. } => vec!["inspect_response_body"],
+            Self::CalldataRefused { .. } => {
+                vec!["sign_externally_after_review", "confirm_platform_only"]
+            }
         }
     }
 

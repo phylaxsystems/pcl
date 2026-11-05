@@ -102,22 +102,18 @@ const ACTIVE_ORACLES: &[(Network, u64, OracleEnvironment, Address)] = &[
 /// origin (`Network::from_url`), so another scheme, port, userinfo or a
 /// trailing-dot host is refused.
 fn check_target(
-    endpoint: &'static str,
     platform: &Url,
     chain_id: u64,
     environment: Option<OracleEnvironment>,
     to: Address,
-) -> Result<(), ApiCommandError> {
+) -> Result<(), String> {
     let Some(network) = Network::from_url(platform) else {
         let supported = SELECTABLE_NETWORKS
             .map(|network| format!("https://{}", network.host()))
             .join(", ");
-        return Err(unexpected(
-            endpoint,
-            format!(
-                "{} is not a platform with a compiled StateOracle; pcl signs this transaction only for {supported}",
-                redact_platform_url(platform)
-            ),
+        return Err(format!(
+            "{} is not a platform with a compiled StateOracle; pcl signs this transaction only for {supported}",
+            redact_platform_url(platform)
         ));
     };
     let scope = format!(
@@ -137,19 +133,13 @@ fn check_target(
         .map(|(_, _, _, oracle)| *oracle)
         .collect::<Vec<_>>();
     if active.is_empty() {
-        return Err(unexpected(
-            endpoint,
-            format!("no active StateOracle for {scope}"),
-        ));
+        return Err(format!("no active StateOracle for {scope}"));
     }
     if !active.contains(&to) {
         let active = active.iter().map(ToString::to_string).collect::<Vec<_>>();
-        return Err(unexpected(
-            endpoint,
-            format!(
-                "transaction target {to} is not the active StateOracle ({}) for {scope}",
-                active.join(", ")
-            ),
+        return Err(format!(
+            "transaction target {to} is not the active StateOracle ({}) for {scope}",
+            active.join(", ")
         ));
     }
     Ok(())
@@ -162,8 +152,8 @@ pub(crate) fn validate_removal_batch(
     to: Address,
     data: &Bytes,
     assertions: &[Value],
-) -> Result<(), ApiCommandError> {
-    check_target("remove-calldata", platform, chain_id, Some(environment), to)?;
+) -> Result<(), String> {
+    check_target(platform, chain_id, Some(environment), to)?;
     let expected = removal_targets(assertions)?
         .into_iter()
         .map(|(contract, assertion_id)| {
@@ -175,7 +165,7 @@ pub(crate) fn validate_removal_batch(
             .into()
         })
         .collect();
-    check_batch("remove-calldata", data, expected)
+    check_batch(data, expected)
 }
 
 pub(crate) fn validate_accept_batch(
@@ -184,17 +174,11 @@ pub(crate) fn validate_accept_batch(
     to: Address,
     data: &Bytes,
     contracts: &[(Address, Bytes)],
-) -> Result<(), ApiCommandError> {
+) -> Result<(), String> {
     // The accept response names no environment, and the dapp builds it for
     // whichever single environment holds the project's active contracts, so
     // either of the chain's active oracles may be the target.
-    check_target(
-        "protocol-manager/accept-calldata",
-        platform,
-        chain_id,
-        None,
-        to,
-    )?;
+    check_target(platform, chain_id, None, to)?;
 
     let mut expected = Vec::with_capacity(contracts.len());
     for (index, (contract, inner)) in contracts.iter().enumerate() {
@@ -204,59 +188,37 @@ pub(crate) fn validate_accept_batch(
         .abi_encode()
         .into();
         if *inner != call {
-            return Err(unexpected(
-                "protocol-manager/accept-calldata",
-                format!("contract {index} calldata is not acceptManagerTransfer({contract})"),
+            return Err(format!(
+                "contract {index} calldata is not acceptManagerTransfer({contract})"
             ));
         }
         expected.push(call);
     }
-    check_batch("protocol-manager/accept-calldata", data, expected)
+    check_batch(data, expected)
 }
 
-pub(crate) fn removal_targets(
-    assertions: &[Value],
-) -> Result<Vec<(Address, B256)>, ApiCommandError> {
+pub(crate) fn removal_targets(assertions: &[Value]) -> Result<Vec<(Address, B256)>, String> {
     let mut targets = Vec::with_capacity(assertions.len());
     for (index, assertion) in assertions.iter().enumerate() {
         let Some(object) = assertion.as_object() else {
-            return Err(unexpected(
-                "remove-calldata",
-                format!("assertion {index} is not an object"),
-            ));
+            return Err(format!("assertion {index} is not an object"));
         };
         let contract = object
             .get("contractAddress")
             .or_else(|| object.get("contract_address"))
             .and_then(Value::as_str)
-            .ok_or_else(|| {
-                unexpected(
-                    "remove-calldata",
-                    format!("assertion {index} is missing contractAddress"),
-                )
-            })?;
-        let contract: Address = contract.parse().map_err(|_| {
-            unexpected(
-                "remove-calldata",
-                format!("assertion {index} has an invalid contract address"),
-            )
-        })?;
+            .ok_or_else(|| format!("assertion {index} is missing contractAddress"))?;
+        let contract: Address = contract
+            .parse()
+            .map_err(|_| format!("assertion {index} has an invalid contract address"))?;
         let assertion_id = object
             .get("assertionId")
             .or_else(|| object.get("assertion_id"))
             .and_then(Value::as_str)
-            .ok_or_else(|| {
-                unexpected(
-                    "remove-calldata",
-                    format!("assertion {index} is missing assertionId"),
-                )
-            })?;
-        let assertion_id: B256 = assertion_id.parse().map_err(|_| {
-            unexpected(
-                "remove-calldata",
-                format!("assertion {index} has an invalid assertionId"),
-            )
-        })?;
+            .ok_or_else(|| format!("assertion {index} is missing assertionId"))?;
+        let assertion_id: B256 = assertion_id
+            .parse()
+            .map_err(|_| format!("assertion {index} has an invalid assertionId"))?;
         targets.push((contract, assertion_id));
     }
     Ok(targets)
@@ -266,29 +228,17 @@ pub(crate) fn removal_targets(
 /// `expected`. Building the bytes pcl expects and comparing them rejects dirty
 /// padding, trailing bytes and forged offsets or lengths without decoding (or
 /// allocating for) anything the API sent.
-fn check_batch(
-    endpoint: &'static str,
-    data: &Bytes,
-    expected: Vec<Bytes>,
-) -> Result<(), ApiCommandError> {
+fn check_batch(data: &Bytes, expected: Vec<Bytes>) -> Result<(), String> {
     if expected.is_empty() {
-        return Err(unexpected(
-            endpoint,
-            "the batch has no calls to sign".to_string(),
-        ));
+        return Err("the batch has no calls to sign".to_string());
     }
     let count = expected.len();
     if *data != crate::onchain::encode_batch(expected) {
-        return Err(unexpected(
-            endpoint,
-            format!("calldata is not the StateOracle.batch of the {count} expected call(s)"),
+        return Err(format!(
+            "calldata is not the StateOracle.batch of the {count} expected call(s)"
         ));
     }
     Ok(())
-}
-
-fn unexpected(endpoint: &'static str, reason: String) -> ApiCommandError {
-    ApiCommandError::UnexpectedResponse { endpoint, reason }
 }
 
 #[cfg(test)]
@@ -340,9 +290,7 @@ mod tests {
             &assertions(),
         )
         .unwrap_err();
-        let ApiCommandError::UnexpectedResponse { reason, .. } = err else {
-            panic!("expected unexpected response, got {err:?}");
-        };
+        let reason = err;
         assert!(
             reason.contains("8681e3fF0526C785FE82db9153E6E1F54551ebdF"),
             "{reason}"
@@ -380,7 +328,7 @@ mod tests {
             &assertions(),
         )
         .unwrap_err();
-        assert!(matches!(err, ApiCommandError::UnexpectedResponse { .. }));
+        assert!(!err.is_empty());
     }
 
     #[test]
@@ -394,9 +342,7 @@ mod tests {
             &assertions(),
         )
         .unwrap_err();
-        let ApiCommandError::UnexpectedResponse { reason, .. } = err else {
-            panic!("expected unexpected response, got {err:?}");
-        };
+        let reason = err;
         assert!(reason.contains("127.0.0.1"), "{reason}");
     }
 
@@ -432,7 +378,7 @@ mod tests {
             &[(ADOPTER, wrong)],
         )
         .unwrap_err();
-        assert!(matches!(err, ApiCommandError::UnexpectedResponse { .. }));
+        assert!(!err.is_empty());
     }
 
     #[test]
@@ -447,7 +393,7 @@ mod tests {
             &assertions(),
         )
         .unwrap_err();
-        assert!(matches!(err, ApiCommandError::UnexpectedResponse { .. }));
+        assert!(!err.is_empty());
     }
 
     #[test]
@@ -467,7 +413,7 @@ mod tests {
             &assertions(),
         )
         .unwrap_err();
-        assert!(matches!(err, ApiCommandError::UnexpectedResponse { .. }));
+        assert!(!err.is_empty());
     }
 
     #[test]
@@ -492,7 +438,7 @@ mod tests {
             &assertions(),
         )
         .unwrap_err();
-        assert!(matches!(err, ApiCommandError::UnexpectedResponse { .. }));
+        assert!(!err.is_empty());
     }
 
     #[test]
@@ -536,7 +482,6 @@ mod tests {
             &Bytes::copy_from_slice(data),
             assertions,
         )
-        .map_err(|err| err.to_string())
     }
 
     fn accept(
@@ -556,7 +501,6 @@ mod tests {
             &Bytes::copy_from_slice(data),
             &contracts,
         )
-        .map_err(|err| err.to_string())
     }
 
     fn dirty_address(mut entry: Vec<u8>) -> Vec<u8> {
