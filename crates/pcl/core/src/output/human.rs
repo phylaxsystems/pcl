@@ -124,9 +124,10 @@ fn is_dangerous_or_internal_action(action: &str) -> bool {
 
 /// Recognises the confirm-only removal step by token checks, not a full
 /// grammar: the action starts `pcl releases remove`, has exactly one
-/// `--field` token, whose value starts `txHash=`, and has no bare `--body`,
-/// `--body-file`, `--remove` or `--delete` token. Forms such as `--body={}`,
-/// `--field=mode=x` or a trailing shell snippet still pass, so this is only
+/// `--field` token followed by another token, that token starts `txHash=`,
+/// and has no bare `--body`, `--body-file`, `--remove` or `--delete` token.
+/// Forms such as `--body={}`, `--field=mode=x`, a trailing bare `--field` or a
+/// trailing shell snippet still pass, so this is only
 /// safe because the eligible actions are built locally by the broadcast
 /// recovery paths; do not use it to vet external input.
 fn is_confirm_only_removal(action: &str) -> bool {
