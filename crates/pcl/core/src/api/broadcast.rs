@@ -2284,6 +2284,33 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn confirm_after_tx_promotes_a_body_failure_request_id() {
+        let source = reqwest::get("http://127.0.0.1:1/").await.unwrap_err();
+        let err = ApiCommandError::ConfirmAfterTx {
+            tx_hash: alloy_primitives::B256::repeat_byte(0x11),
+            confirm_command: format!(
+                "pcl releases remove {PROJECT} {RELEASE} --field txHash=0x11 --json"
+            ),
+            source: Box::new(ApiCommandError::ResponseBody {
+                status: 200,
+                request_id: Some("req-confirm-body".to_string()),
+                source,
+            }),
+        };
+        let envelope = err.json_envelope();
+        assert_eq!(
+            envelope["error"]["request_id"], "req-confirm-body",
+            "{envelope}"
+        );
+        assert_eq!(
+            envelope["error"]["source"]["error"]["request_id"],
+            "req-confirm-body"
+        );
+        let human = crate::output::human_string(&envelope);
+        assert!(human.contains("Request ID: req-confirm-body"), "{human}");
+    }
+
     #[test]
     fn human_output_still_hides_other_release_removals() {
         let refused = json!({
@@ -2405,6 +2432,8 @@ mod tests {
             "{envelope}"
         );
         assert_eq!(envelope["error"]["http"]["status"], 200, "{envelope}");
+        assert_eq!(envelope["request_id"], "req-stalled", "{envelope}");
+        assert_eq!(envelope["http_status"], 200, "{envelope}");
         assert!(timed_out(&err), "{err:?}");
     }
 

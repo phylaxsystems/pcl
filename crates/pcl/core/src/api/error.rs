@@ -611,6 +611,10 @@ impl ApiCommandError {
             if let Self::HttpStatus {
                 request_id: Some(request_id),
                 ..
+            }
+            | Self::ResponseBody {
+                request_id: Some(request_id),
+                ..
             } = source.as_ref()
             {
                 error.insert("request_id".to_string(), json!(request_id));
@@ -645,6 +649,15 @@ impl ApiCommandError {
             "suggested_next_actions": self.suggested_next_actions(),
             "next_actions": self.next_actions(),
         });
+
+        if let Self::ResponseBody {
+            status, request_id, ..
+        } = self
+            && let Some(object) = envelope.as_object_mut()
+        {
+            object.insert("http_status".to_string(), json!(status));
+            object.insert("request_id".to_string(), json!(request_id));
+        }
 
         if let Self::HttpStatus {
             method,
