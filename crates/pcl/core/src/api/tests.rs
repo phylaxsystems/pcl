@@ -730,6 +730,30 @@ fn api_coverage_matches_request_log_to_openapi_operations() {
 }
 
 #[test]
+fn api_coverage_counts_failed_bodies_as_not_ok() {
+    let temp_dir = tempfile::tempdir().expect("create tempdir");
+    let request_log = temp_dir.path().join("requests.jsonl");
+    for record in [
+        // Headers said 200 but the body failed: not a successful response.
+        json!({"kind": "workflow_body_failed", "method": "GET", "path": "/health", "status": 200, "success": false, "request_id": "req-body-broken"}),
+        // Older history without `success` still counts by status.
+        json!({"kind": "raw", "method": "GET", "path": "/projects", "status": 200, "request_id": "req-legacy"}),
+    ] {
+        crate::request_log::append_request_record_at(&request_log, &record).expect("append");
+    }
+    let spec = json!({"paths": {
+        "/health": {"get": {"operationId": "health"}},
+        "/projects": {"get": {"operationId": "projects.list"}}
+    }});
+    let coverage =
+        api_coverage(&spec, &request_log, 100, "http://localhost:3000").expect("coverage");
+    assert_eq!(coverage["no_2xx_count"], 1, "{coverage}");
+    assert_eq!(coverage["no_2xx"][0]["operation_id"], json!("health"));
+    assert_eq!(coverage["no_2xx"][0]["ok"], 0);
+    assert_eq!(coverage["no_2xx"][0]["latest_status"], 200);
+}
+
+#[test]
 fn synthesizes_missing_operation_ids() {
     assert_eq!(
         synthetic_operation_id(HttpMethod::Post, "/web/auth/bootstrap-session"),
