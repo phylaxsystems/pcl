@@ -122,8 +122,13 @@ fn is_dangerous_or_internal_action(action: &str) -> bool {
         || action.starts_with("Use data.")
 }
 
-/// `pcl releases remove <project> <release> --field txHash=<hash>` with no
-/// other body input: the confirm-only step, not a new removal request.
+/// Recognises the confirm-only removal step by token checks, not a full
+/// grammar: the action starts `pcl releases remove`, has exactly one
+/// `--field` token, whose value starts `txHash=`, and has no bare `--body`,
+/// `--body-file`, `--remove` or `--delete` token. Forms such as `--body={}`,
+/// `--field=mode=x` or a trailing shell snippet still pass, so this is only
+/// safe because the eligible actions are built locally by the broadcast
+/// recovery paths; do not use it to vet external input.
 fn is_confirm_only_removal(action: &str) -> bool {
     let tokens = action.split_whitespace().collect::<Vec<_>>();
     tokens.starts_with(&["pcl", "releases", "remove"])

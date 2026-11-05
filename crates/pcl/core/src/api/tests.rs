@@ -1139,6 +1139,49 @@ async fn openapi_discovery_errors_preserve_http_metadata() {
     openapi.assert_async().await;
 }
 
+/// Answers one request with `status`, a request id and a truncated body.
+async fn truncating_server(status: u16) -> String {
+    use tokio::io::{
+        AsyncBufReadExt,
+        AsyncWriteExt,
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut stream = tokio::io::BufReader::new(stream);
+        let mut line = String::new();
+        while stream.read_line(&mut line).await.is_ok_and(|read| read > 0) {
+            if line == "\r\n" {
+                break;
+            }
+            line.clear();
+        }
+        let head = format!(
+            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\nx-request-id: req-openapi-broken\r\ncontent-length: 100\r\n\r\n{{"
+        );
+        let _ = stream.write_all(head.as_bytes()).await;
+    });
+    url
+}
+
+#[tokio::test]
+async fn openapi_body_failures_keep_status_and_request_id() {
+    for status in [200, 500] {
+        let url = truncating_server(status).await;
+        let error = test_api(url, true)
+            .fetch_openapi(&CliConfig::default())
+            .await
+            .unwrap_err();
+        let envelope = error.json_envelope();
+        assert_eq!(
+            envelope["error"]["request_id"], "req-openapi-broken",
+            "{status}: {envelope}"
+        );
+        assert_eq!(envelope["error"]["http"]["status"], status, "{envelope}");
+    }
+}
+
 #[tokio::test]
 async fn public_workflows_do_not_attach_expired_stored_tokens() {
     let mut server = mockito::Server::new_async().await;

@@ -61,8 +61,6 @@ use super::{
     releases_next_actions,
     releases_request,
     request_body,
-    request_id_from_headers,
-    response_body_value,
     search_next_actions,
     search_request,
     split_path_and_inline_query,
@@ -80,10 +78,6 @@ use crate::{
     auth::refresh_stored_auth,
     config::CliConfig,
     error::AuthError,
-};
-use dapp_api_client::generated::client::{
-    Client as GeneratedClient,
-    Error as GeneratedError,
 };
 use pcl_common::args::CliArgs;
 use reqwest::header::{
@@ -128,8 +122,8 @@ fn log_body_failure(
     }
     result
 }
-/// Upper bound for one workflow, project-ref resolution or generated-client
-/// (OpenAPI fetch) GET, connect through the last body byte, so
+/// Upper bound for one workflow, project-ref resolution or OpenAPI GET,
+/// connect through the last body byte, so
 /// a stalled server cannot hang a command (such as a broadcast's metadata
 /// fetches) forever. Mutations are left unbounded: a timed-out POST would
 /// leave its outcome ambiguous.
@@ -153,74 +147,6 @@ fn image_mime_for_path(path: &Path) -> Option<&'static str> {
 
 fn is_project_path_param(name: &str) -> bool {
     matches!(name, "project_id" | "projectId")
-}
-
-async fn generated_error_to_api_error<E>(
-    method: &'static str,
-    path: &str,
-    error: GeneratedError<E>,
-) -> ApiCommandError
-where
-    E: serde::Serialize + std::fmt::Debug,
-{
-    match error {
-        GeneratedError::ErrorResponse(response) => {
-            let status = response.status().as_u16();
-            let request_id = request_id_from_headers(response.headers());
-            let body = serde_json::to_value(response.as_ref()).unwrap_or_else(|error| {
-                json!({
-                    "error": error.to_string(),
-                    "body": format!("{response:?}"),
-                })
-            });
-            ApiCommandError::HttpStatus {
-                method,
-                path: path.to_string(),
-                status,
-                request_id,
-                body: Box::new(body),
-            }
-        }
-        GeneratedError::UnexpectedResponse(response) => {
-            let status = response.status().as_u16();
-            let request_id = request_id_from_headers(response.headers());
-            let content_type = response
-                .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok())
-                .unwrap_or_default()
-                .to_string();
-            let bytes = match response.bytes().await {
-                Ok(bytes) => bytes,
-                Err(source) => {
-                    return ApiCommandError::ResponseBody {
-                        status,
-                        request_id,
-                        source,
-                    };
-                }
-            };
-            ApiCommandError::HttpStatus {
-                method,
-                path: path.to_string(),
-                status,
-                request_id,
-                body: Box::new(response_body_value(&content_type, &bytes)),
-            }
-        }
-        GeneratedError::CommunicationError(error) => ApiCommandError::Request(error),
-        GeneratedError::InvalidUpgrade(error) => ApiCommandError::Request(error),
-        GeneratedError::ResponseBodyError(error) => ApiCommandError::Request(error),
-        GeneratedError::InvalidResponsePayload(bytes, error) => {
-            let body = response_body_value("application/json", &bytes);
-            ApiCommandError::InvalidWorkflow {
-                message: format!("Invalid generated API response payload: {error}; body={body}"),
-            }
-        }
-        GeneratedError::InvalidRequest(message) | GeneratedError::Custom(message) => {
-            ApiCommandError::InvalidWorkflow { message }
-        }
-    }
 }
 
 fn print_api_value(output: Value, json_output: bool) -> Result<(), ApiCommandError> {
@@ -1134,11 +1060,25 @@ impl ApiArgs {
         &self,
         config: &CliConfig,
     ) -> Result<Value, ApiCommandError> {
-        let client = self.generated_client(config, false, false)?;
-        match client.openapi().await {
-            Ok(response) => Ok(response.into_inner()),
-            Err(error) => Err(generated_error_to_api_error("GET", "/openapi", error).await),
+        // Plain transport so a failed body keeps its status and request id.
+        let response = self
+            .http_client(config, false, false)?
+            .get(self.api_url("/openapi")?)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .timeout(WORKFLOW_GET_TIMEOUT)
+            .send()
+            .await?;
+        let response = read_api_response(response).await?;
+        if !response.status.is_success() {
+            return Err(ApiCommandError::HttpStatus {
+                method: "GET",
+                path: "/openapi".to_string(),
+                status: response.status.as_u16(),
+                request_id: response.request_id,
+                body: Box::new(response.body),
+            });
         }
+        Ok(response.body)
     }
 
     pub(in crate::api) async fn try_refresh_after_401(
@@ -1681,17 +1621,6 @@ impl ApiArgs {
         attach_auth: bool,
         require_auth: bool,
     ) -> Result<reqwest::Client, ApiCommandError> {
-        self.http_client_builder(config, attach_auth, require_auth)?
-            .build()
-            .map_err(ApiCommandError::Request)
-    }
-
-    fn http_client_builder(
-        &self,
-        config: &CliConfig,
-        attach_auth: bool,
-        require_auth: bool,
-    ) -> Result<reqwest::ClientBuilder, ApiCommandError> {
         let mut headers = HeaderMap::new();
         headers.insert(
             HeaderName::from_static("api-version"),
@@ -1727,25 +1656,10 @@ impl ApiArgs {
             return Err(ApiCommandError::NoAuthToken);
         }
 
-        Ok(reqwest::Client::builder().default_headers(headers))
-    }
-
-    pub(in crate::api) fn generated_client(
-        &self,
-        config: &CliConfig,
-        attach_auth: bool,
-        require_auth: bool,
-    ) -> Result<GeneratedClient, ApiCommandError> {
-        let mut base = self.resolved_api_url();
-        base.set_path("/api/v1");
-        // Only GETs go through the generated client (the OpenAPI fetch), so a
-        // client-wide deadline bounds no mutation.
-        let http_client = self
-            .http_client_builder(config, attach_auth, require_auth)?
-            .timeout(WORKFLOW_GET_TIMEOUT)
+        reqwest::Client::builder()
+            .default_headers(headers)
             .build()
-            .map_err(ApiCommandError::Request)?;
-        Ok(GeneratedClient::new_with_client(base.as_str(), http_client))
+            .map_err(ApiCommandError::Request)
     }
 
     pub(in crate::api) async fn resolve_operation_id(
