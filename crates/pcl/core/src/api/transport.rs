@@ -107,6 +107,7 @@ pub(in crate::api) async fn read_api_response(
         ApiCommandError::ResponseBody {
             status: status.as_u16(),
             request_id: request_id.clone(),
+            side_effecting: false,
             source,
         }
     })?;

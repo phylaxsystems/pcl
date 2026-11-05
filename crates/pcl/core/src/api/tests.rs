@@ -1148,21 +1148,69 @@ async fn truncating_server(status: u16) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.unwrap();
-        let mut stream = tokio::io::BufReader::new(stream);
-        let mut line = String::new();
-        while stream.read_line(&mut line).await.is_ok_and(|read| read > 0) {
-            if line == "\r\n" {
-                break;
+        while let Ok((stream, _)) = listener.accept().await {
+            let mut stream = tokio::io::BufReader::new(stream);
+            let mut line = String::new();
+            while stream.read_line(&mut line).await.is_ok_and(|read| read > 0) {
+                if line == "\r\n" {
+                    break;
+                }
+                line.clear();
             }
-            line.clear();
+            let head = format!(
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\nx-request-id: req-openapi-broken\r\nconnection: close\r\ncontent-length: 100\r\n\r\n{{"
+            );
+            let _ = stream.write_all(head.as_bytes()).await;
         }
-        let head = format!(
-            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\nx-request-id: req-openapi-broken\r\ncontent-length: 100\r\n\r\n{{"
-        );
-        let _ = stream.write_all(head.as_bytes()).await;
     });
     url
+}
+
+#[tokio::test]
+async fn a_mutation_whose_body_fails_is_not_retried_blindly() {
+    for (method, status) in [(HttpMethod::Post, 201), (HttpMethod::Get, 200)] {
+        let api = test_api(truncating_server(status).await, true);
+        let input = ApiRequestInput {
+            method,
+            path: "/probe",
+            query: &[],
+            header: &[],
+            body: None,
+            body_file: None,
+            field: &[],
+            require_auth: false,
+        };
+        let envelope = api
+            .call_api(
+                &mut CliConfig::default(),
+                &CliArgs::default(),
+                input,
+                test_request_log_path(),
+            )
+            .await
+            .unwrap_err()
+            .json_envelope();
+        let mutation = method == HttpMethod::Post;
+        assert_eq!(
+            envelope["error"]["request_id"], "req-openapi-broken",
+            "{envelope}"
+        );
+        assert_eq!(envelope["error"]["http"]["status"], status, "{envelope}");
+        assert_eq!(
+            envelope["error"]["mutation"]["outcome_ambiguous"], mutation,
+            "{envelope}"
+        );
+        assert_eq!(envelope["outcome_ambiguous"], mutation, "{envelope}");
+        let suggested = envelope["suggested_next_actions"].to_string();
+        assert_eq!(suggested.contains("\"retry\""), !mutation, "{envelope}");
+        assert_eq!(
+            envelope["next_actions"]
+                .to_string()
+                .contains("Do not retry immediately"),
+            mutation,
+            "{envelope}"
+        );
+    }
 }
 
 #[tokio::test]

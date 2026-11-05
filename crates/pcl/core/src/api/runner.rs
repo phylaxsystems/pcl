@@ -42,6 +42,7 @@ use super::{
     integration_body_template,
     integrations_request,
     list_operations,
+    method_side_effecting,
     next_actions_for_operations,
     ok_envelope,
     openapi_path_matches,
@@ -104,18 +105,23 @@ use std::{
 const MAX_IMAGE_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
 
 /// Keeps the status and request id of a response whose body failed (for
-/// example at the GET deadline) in request history before returning.
+/// example at the GET deadline) in request history, and marks a failed
+/// mutation as possibly applied, before returning.
 fn log_body_failure(
-    result: Result<ApiResponsePayload, ApiCommandError>,
+    mut result: Result<ApiResponsePayload, ApiCommandError>,
     request_log_path: &Path,
     method: &str,
     path: &str,
     operation_id: Option<&str>,
 ) -> Result<ApiResponsePayload, ApiCommandError> {
     if let Err(ApiCommandError::ResponseBody {
-        status, request_id, ..
-    }) = &result
+        status,
+        request_id,
+        side_effecting,
+        ..
+    }) = &mut result
     {
+        *side_effecting = method_side_effecting(method);
         write_request_log(
             request_log_path,
             BODY_FAILED_KIND,
@@ -1109,6 +1115,7 @@ impl ApiArgs {
             ApiCommandError::ResponseBody {
                 status: status.as_u16(),
                 request_id: request_id.clone(),
+                side_effecting: false,
                 source,
             }
         })?;

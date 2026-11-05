@@ -137,6 +137,9 @@ pub enum ApiCommandError {
     ResponseBody {
         status: u16,
         request_id: Option<String>,
+        /// The request was a mutation the server answered, so it may have
+        /// applied even though its result was lost.
+        side_effecting: bool,
         #[source]
         source: reqwest::Error,
     },
@@ -408,6 +411,18 @@ impl ApiCommandError {
                     "pcl projects mine".to_string(),
                 ]
             }
+            Self::ResponseBody {
+                side_effecting: true,
+                status,
+                ..
+            } => {
+                vec![
+                    format!(
+                        "Do not retry immediately; the platform answered HTTP {status} before the response body failed, so check whether the mutation applied first"
+                    ),
+                    "pcl requests list --json".to_string(),
+                ]
+            }
             Self::Request(_) | Self::Url(_) | Self::ResponseBody { .. } => {
                 vec!["Check --api-url and your network connection, then retry".to_string()]
             }
@@ -493,6 +508,10 @@ impl ApiCommandError {
             Self::Request(source) if source.status().map(|status| status.as_u16()) == Some(404) => {
                 vec!["check_ids", "retry"]
             }
+            Self::ResponseBody {
+                side_effecting: true,
+                ..
+            } => vec!["reconcile_mutation", "contact_platform_with_request_id"],
             Self::Request(_) | Self::Url(_) | Self::ResponseBody { .. } => {
                 vec!["check_network", "retry"]
             }
@@ -553,7 +572,10 @@ impl ApiCommandError {
         error.insert("recoverable".to_string(), json!(self.recoverable()));
 
         if let Self::ResponseBody {
-            status, request_id, ..
+            status,
+            request_id,
+            side_effecting,
+            ..
         } = self
         {
             if let Some(request_id) = request_id {
@@ -562,6 +584,13 @@ impl ApiCommandError {
             error.insert(
                 "http".to_string(),
                 json!({ "status": status, "request_id": request_id }),
+            );
+            error.insert(
+                "mutation".to_string(),
+                json!({
+                    "side_effecting": side_effecting,
+                    "outcome_ambiguous": side_effecting,
+                }),
             );
         }
 
@@ -651,12 +680,16 @@ impl ApiCommandError {
         });
 
         if let Self::ResponseBody {
-            status, request_id, ..
+            status,
+            request_id,
+            side_effecting,
+            ..
         } = self
             && let Some(object) = envelope.as_object_mut()
         {
             object.insert("http_status".to_string(), json!(status));
             object.insert("request_id".to_string(), json!(request_id));
+            object.insert("outcome_ambiguous".to_string(), json!(side_effecting));
         }
 
         if let Self::HttpStatus {

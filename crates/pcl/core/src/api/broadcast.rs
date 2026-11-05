@@ -2295,6 +2295,7 @@ mod tests {
             source: Box::new(ApiCommandError::ResponseBody {
                 status: 200,
                 request_id: Some("req-confirm-body".to_string()),
+                side_effecting: true,
                 source,
             }),
         };
