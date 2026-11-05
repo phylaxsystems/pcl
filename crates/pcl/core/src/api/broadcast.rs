@@ -2223,6 +2223,97 @@ mod tests {
             .collect()
     }
 
+    fn human_next(err: &ApiCommandError) -> String {
+        let human = crate::output::human_string(&err.json_envelope());
+        human
+            .split("\nNext:\n")
+            .nth(1)
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn human_removal_refusal_keeps_the_confirm_only_step() {
+        let mut server = mockito::Server::new_async().await;
+        let err = remove(
+            &mut server,
+            json!({"environment": "production", "configSnapshot": {"contracts": {}}}),
+            json!({"to": "0x8681e3fF0526C785FE82db9153E6E1F54551ebdF", "data": "0x01", "chainId": 1, "assertions": []}),
+        )
+        .await;
+        let confirm = format!("pcl releases remove {PROJECT} {RELEASE}");
+        assert!(
+            err.next_actions()
+                .iter()
+                .any(|action| action.starts_with(&confirm)),
+            "{:?}",
+            err.next_actions()
+        );
+        let next = human_next(&err);
+        assert!(
+            next.contains(&confirm) && next.contains("--field txHash=<tx-hash>"),
+            "{next}"
+        );
+        assert!(next.contains("pcl releases calldata remove"), "{next}");
+    }
+
+    #[test]
+    fn human_confirm_after_tx_keeps_the_confirm_only_step() {
+        let confirm = format!(
+            "pcl releases remove {PROJECT} {RELEASE} --field txHash=0x{} --json",
+            "11".repeat(32)
+        );
+        let err = ApiCommandError::ConfirmAfterTx {
+            tx_hash: alloy_primitives::B256::repeat_byte(0x11),
+            confirm_command: confirm.clone(),
+            source: Box::new(ApiCommandError::HttpStatus {
+                method: "POST",
+                path: "/projects/p/releases/r/confirm-remove".to_string(),
+                status: 502,
+                request_id: Some("req-confirm".to_string()),
+                body: Box::new(json!({"error": "bad gateway"})),
+            }),
+        };
+        assert!(err.next_actions().contains(&confirm));
+        let next = human_next(&err);
+        assert!(
+            next.contains(&format!(
+                "pcl releases remove {PROJECT} {RELEASE} --field txHash=0x"
+            )),
+            "{next}"
+        );
+    }
+
+    #[test]
+    fn human_output_still_hides_other_release_removals() {
+        let refused = json!({
+            "status": "error",
+            "error": {"code": "broadcast.calldata_refused", "message": "refused", "recoverable": false},
+            "next_actions": [
+                format!("pcl releases remove {PROJECT} {RELEASE} --json"),
+                format!("pcl releases remove {PROJECT} {RELEASE} --field txHash=0x01 --field mode=x --json"),
+                format!("pcl releases remove {PROJECT} {RELEASE} --field txHash=0x01 --body '{{}}' --json"),
+                format!("pcl releases remove {PROJECT} --field txHash=0x01 --remove --json"),
+            ]
+        });
+        let confirm_elsewhere = json!({
+            "status": "ok",
+            "data": {},
+            "next_actions": [format!("pcl releases remove {PROJECT} {RELEASE} --field txHash=0x01 --json")]
+        });
+        for envelope in [refused, confirm_elsewhere] {
+            let human = crate::output::human_string(&envelope);
+            assert!(!human.contains("pcl releases remove"), "{human}");
+        }
+
+        let accept = json!({
+            "status": "error",
+            "error": {"code": "broadcast.calldata_refused", "message": "refused", "recoverable": false},
+            "next_actions": [format!("pcl protocol-manager --project {PROJECT} --confirm-transfer --field mode=onchain --field tx_hash=<tx-hash> --json")]
+        });
+        assert!(crate::output::human_string(&accept).contains("--confirm-transfer"));
+    }
+
     #[test]
     fn recovery_platform_quotes_and_never_prints_credentials() {
         let flag = |url: &str| ApiArgs::headless(url.parse().unwrap()).recovery_platform();

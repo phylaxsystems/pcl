@@ -65,13 +65,22 @@ fn human_next_actions(envelope: &Value) -> Vec<String> {
         .or_else(|| envelope.pointer("/data/data/test_available"))
         .and_then(Value::as_bool)
         == Some(false);
+    // A refused or unconfirmed broadcast's recovery ends in the confirm-only
+    // removal command; it records an already landed transaction.
+    let confirm_recovery = matches!(
+        envelope.pointer("/error/code").and_then(Value::as_str),
+        Some("broadcast.calldata_refused" | "broadcast.confirm_failed")
+    );
     envelope
         .get("next_actions")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-        .filter(|action| !is_dangerous_or_internal_action(action))
+        .filter(|action| {
+            !is_dangerous_or_internal_action(action)
+                || (confirm_recovery && is_confirm_only_removal(action))
+        })
         .filter(|action| !(is_empty_ok && is_item_placeholder_action(action)))
         .filter(|action| !(terms_accepted && action.contains("account --accept-terms")))
         .filter(|action| !(integration_test_unavailable && action.contains(" --test")))
@@ -111,6 +120,24 @@ fn is_dangerous_or_internal_action(action: &str) -> bool {
         || trimmed.starts_with("pcl access member remove")
         || action.starts_with("Read error.http.body")
         || action.starts_with("Use data.")
+}
+
+/// `pcl releases remove <project> <release> --field txHash=<hash>` with no
+/// other body input: the confirm-only step, not a new removal request.
+fn is_confirm_only_removal(action: &str) -> bool {
+    let tokens = action.split_whitespace().collect::<Vec<_>>();
+    tokens.starts_with(&["pcl", "releases", "remove"])
+        && tokens
+            .windows(2)
+            .filter(|pair| pair[0] == "--field")
+            .count()
+            == 1
+        && tokens
+            .windows(2)
+            .any(|pair| pair[0] == "--field" && pair[1].starts_with("txHash="))
+        && !tokens
+            .iter()
+            .any(|token| matches!(*token, "--body" | "--body-file" | "--remove" | "--delete"))
 }
 
 fn is_item_placeholder_action(action: &str) -> bool {
