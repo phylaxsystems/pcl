@@ -3,9 +3,7 @@ use super::{
     ApiCommand,
     ApiCommandError,
     ApiRequestInput,
-    ApiResponsePayload,
     AssertionsArgs,
-    BODY_FAILED_KIND,
     ContractsArgs,
     DeploymentsArgs,
     HttpMethod,
@@ -42,7 +40,6 @@ use super::{
     integration_body_template,
     integrations_request,
     list_operations,
-    method_side_effecting,
     next_actions_for_operations,
     ok_envelope,
     openapi_path_matches,
@@ -62,6 +59,8 @@ use super::{
     releases_next_actions,
     releases_request,
     request_body,
+    request_id_from_headers,
+    response_body_value,
     search_next_actions,
     search_request,
     split_path_and_inline_query,
@@ -82,7 +81,7 @@ use crate::{
 };
 use dapp_api_client::generated::client::{
     Client as GeneratedClient,
-    ClientInfo,
+    Error as GeneratedError,
 };
 use pcl_common::args::CliArgs;
 use reqwest::header::{
@@ -102,56 +101,6 @@ use std::{
 /// Maximum accepted project image size, matching the dApp upload limit (5 MB).
 const MAX_IMAGE_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
 
-/// Keeps the status and request id of a response whose body failed (for
-/// example at the GET deadline) in request history, and marks a failed
-/// mutation as possibly applied, before returning.
-fn log_body_failure(
-    mut result: Result<ApiResponsePayload, ApiCommandError>,
-    request_log_path: &Path,
-    method: &str,
-    path: &str,
-    operation_id: Option<&str>,
-) -> Result<ApiResponsePayload, ApiCommandError> {
-    if let Err(ApiCommandError::ResponseBody {
-        status,
-        request_id,
-        side_effecting,
-        ..
-    }) = &mut result
-    {
-        *side_effecting = method_side_effecting(method);
-        write_request_log(
-            request_log_path,
-            BODY_FAILED_KIND,
-            method,
-            path,
-            *status,
-            request_id.as_deref(),
-            operation_id,
-        );
-    }
-    result
-}
-/// A mutation that fails after it may have reached the platform may have
-/// applied. Mutations do not follow redirects, so a connect or build failure
-/// proves nothing was sent.
-fn send_error(method: &str, source: reqwest::Error) -> ApiCommandError {
-    if method_side_effecting(method) && !source.is_connect() && !source.is_builder() {
-        ApiCommandError::MutationUnconfirmed(source)
-    } else {
-        ApiCommandError::Request(source)
-    }
-}
-
-/// Upper bound for one workflow, project-ref resolution or `OpenAPI` GET,
-/// connect through the last body byte, so
-/// a stalled server cannot hang a command (such as a broadcast's metadata
-/// fetches) forever. Mutations are left unbounded: a timed-out POST would
-/// leave its outcome ambiguous.
-// Tests stall real local servers, so they use a short deadline.
-const WORKFLOW_GET_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(if cfg!(test) { 1 } else { 60 });
-
 /// Map a local image file's extension to the MIME type the storage endpoint
 /// accepts. Returns `None` for unsupported extensions. Kept in sync with the
 /// dApp's `ALLOWED_IMAGE_MIME_TYPES`.
@@ -166,8 +115,78 @@ fn image_mime_for_path(path: &Path) -> Option<&'static str> {
     }
 }
 
+fn generated_error_request_id<E>(error: &GeneratedError<E>) -> Option<String> {
+    match error {
+        GeneratedError::ErrorResponse(response) => request_id_from_headers(response.headers()),
+        GeneratedError::UnexpectedResponse(response) => request_id_from_headers(response.headers()),
+        _ => None,
+    }
+}
+
 fn is_project_path_param(name: &str) -> bool {
     matches!(name, "project_id" | "projectId")
+}
+
+async fn generated_error_to_api_error<E>(
+    method: &'static str,
+    path: &str,
+    error: GeneratedError<E>,
+) -> ApiCommandError
+where
+    E: serde::Serialize + std::fmt::Debug,
+{
+    match error {
+        GeneratedError::ErrorResponse(response) => {
+            let status = response.status().as_u16();
+            let request_id = request_id_from_headers(response.headers());
+            let body = serde_json::to_value(response.as_ref()).unwrap_or_else(|error| {
+                json!({
+                    "error": error.to_string(),
+                    "body": format!("{response:?}"),
+                })
+            });
+            ApiCommandError::HttpStatus {
+                method,
+                path: path.to_string(),
+                status,
+                request_id,
+                body: Box::new(body),
+            }
+        }
+        GeneratedError::UnexpectedResponse(response) => {
+            let status = response.status().as_u16();
+            let request_id = request_id_from_headers(response.headers());
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            let bytes = match response.bytes().await {
+                Ok(bytes) => bytes,
+                Err(error) => return ApiCommandError::Request(error),
+            };
+            ApiCommandError::HttpStatus {
+                method,
+                path: path.to_string(),
+                status,
+                request_id,
+                body: Box::new(response_body_value(&content_type, &bytes)),
+            }
+        }
+        GeneratedError::CommunicationError(error) => ApiCommandError::Request(error),
+        GeneratedError::InvalidUpgrade(error) => ApiCommandError::Request(error),
+        GeneratedError::ResponseBodyError(error) => ApiCommandError::Request(error),
+        GeneratedError::InvalidResponsePayload(bytes, error) => {
+            let body = response_body_value("application/json", &bytes);
+            ApiCommandError::InvalidWorkflow {
+                message: format!("Invalid generated API response payload: {error}; body={body}"),
+            }
+        }
+        GeneratedError::InvalidRequest(message) | GeneratedError::Custom(message) => {
+            ApiCommandError::InvalidWorkflow { message }
+        }
+    }
 }
 
 fn print_api_value(output: Value, json_output: bool) -> Result<(), ApiCommandError> {
@@ -527,7 +546,6 @@ impl ApiArgs {
             config,
             input.require_auth && !self.allow_unauthenticated,
             input.require_auth && !self.allow_unauthenticated,
-            true,
         )?;
 
         let mut items = Vec::new();
@@ -544,21 +562,15 @@ impl ApiArgs {
                 pagination.limit.to_string(),
             );
 
-            let response = log_body_failure(
-                read_api_response(
-                    client
-                        .get(url.clone())
-                        .headers(headers.clone())
-                        .query(&page_query)
-                        .send()
-                        .await?,
-                )
-                .await,
-                request_log_path,
-                input.method.as_str(),
-                &path,
-                operation_id.as_deref(),
-            )?;
+            let response = read_api_response(
+                client
+                    .get(url.clone())
+                    .headers(headers.clone())
+                    .query(&page_query)
+                    .send()
+                    .await?,
+            )
+            .await?;
             write_request_log(
                 request_log_path,
                 "raw_paginated",
@@ -819,22 +831,15 @@ impl ApiArgs {
             Ok(reqwest::multipart::Form::new().part("file", part))
         };
 
-        let client = self.http_client(config, requires_auth, requires_auth, false)?;
-        let mut payload = log_body_failure(
-            read_api_response(
-                client
-                    .post(url.clone())
-                    .multipart(build_form()?)
-                    .send()
-                    .await
-                    .map_err(|source| send_error("POST", source))?,
-            )
-            .await,
-            request_log_path,
-            "POST",
-            "/storage/upload",
-            None,
-        )?;
+        let client = self.http_client(config, requires_auth, requires_auth)?;
+        let mut payload = read_api_response(
+            client
+                .post(url.clone())
+                .multipart(build_form()?)
+                .send()
+                .await?,
+        )
+        .await?;
         write_request_log(
             request_log_path,
             "storage_upload",
@@ -852,22 +857,15 @@ impl ApiArgs {
             && requires_auth
             && self.try_refresh_after_401(config, cli_args).await?
         {
-            let client = self.http_client(config, requires_auth, requires_auth, false)?;
-            payload = log_body_failure(
-                read_api_response(
-                    client
-                        .post(url.clone())
-                        .multipart(build_form()?)
-                        .send()
-                        .await
-                        .map_err(|source| send_error("POST", source))?,
-                )
-                .await,
-                request_log_path,
-                "POST",
-                "/storage/upload",
-                None,
-            )?;
+            let client = self.http_client(config, requires_auth, requires_auth)?;
+            payload = read_api_response(
+                client
+                    .post(url.clone())
+                    .multipart(build_form()?)
+                    .send()
+                    .await?,
+            )
+            .await?;
             write_request_log(
                 request_log_path,
                 "storage_upload_retry_after_refresh",
@@ -1102,35 +1100,11 @@ impl ApiArgs {
         &self,
         config: &CliConfig,
     ) -> Result<Value, ApiCommandError> {
-        // Plain transport so a failed body keeps its status and request id.
-        let response = self
-            .http_client(config, false, false, true)?
-            .get(self.api_url("/openapi")?)
-            .header(reqwest::header::ACCEPT, "application/json")
-            // The spec route is pinned to the generated API version, not the workflow default.
-            .header(
-                "api-version",
-                <GeneratedClient as ClientInfo<()>>::api_version(),
-            )
-            .timeout(WORKFLOW_GET_TIMEOUT)
-            .send()
-            .await?;
-        let response = read_api_response(response).await?;
-        // Only a 200 whose body is a JSON object with a `paths` object is the
-        // spec; anything else (204, a malformed or non-spec body, an error
-        // status) keeps its status, request id and raw body.
-        if response.status == reqwest::StatusCode::OK
-            && response.body.get("paths").is_some_and(Value::is_object)
-        {
-            return Ok(response.body);
+        let client = self.generated_client(config, false, false)?;
+        match client.openapi().await {
+            Ok(response) => Ok(response.into_inner()),
+            Err(error) => Err(generated_error_to_api_error("GET", "/openapi", error).await),
         }
-        Err(ApiCommandError::HttpStatus {
-            method: "GET",
-            path: "/openapi".to_string(),
-            status: response.status.as_u16(),
-            request_id: response.request_id,
-            body: Box::new(response.body),
-        })
     }
 
     pub(in crate::api) async fn try_refresh_after_401(
@@ -1173,27 +1147,21 @@ impl ApiArgs {
             .as_deref()
             .map(serde_json::from_str::<Value>)
             .transpose()?;
-        let mut response = log_body_failure(
-            read_api_response(
-                self.send_api_request(
-                    config,
-                    PreparedApiRequest {
-                        attach_auth: requires_auth,
-                        method: input.method,
-                        url: &url,
-                        headers: &headers,
-                        query: &query,
-                        body: json_body.as_ref(),
-                    },
-                )
-                .await?,
+        let mut response = read_api_response(
+            self.send_api_request(
+                config,
+                PreparedApiRequest {
+                    attach_auth: requires_auth,
+                    method: input.method,
+                    url: &url,
+                    headers: &headers,
+                    query: &query,
+                    body: json_body.as_ref(),
+                },
             )
-            .await,
-            request_log_path,
-            input.method.as_str(),
-            &path,
-            operation_id.as_deref(),
-        )?;
+            .await?,
+        )
+        .await?;
         write_request_log(
             request_log_path,
             "raw",
@@ -1207,27 +1175,21 @@ impl ApiArgs {
             && requires_auth
             && self.try_refresh_after_401(config, cli_args).await?
         {
-            response = log_body_failure(
-                read_api_response(
-                    self.send_api_request(
-                        config,
-                        PreparedApiRequest {
-                            attach_auth: requires_auth,
-                            method: input.method,
-                            url: &url,
-                            headers: &headers,
-                            query: &query,
-                            body: json_body.as_ref(),
-                        },
-                    )
-                    .await?,
+            response = read_api_response(
+                self.send_api_request(
+                    config,
+                    PreparedApiRequest {
+                        attach_auth: requires_auth,
+                        method: input.method,
+                        url: &url,
+                        headers: &headers,
+                        query: &query,
+                        body: json_body.as_ref(),
+                    },
                 )
-                .await,
-                request_log_path,
-                input.method.as_str(),
-                &path,
-                operation_id.as_deref(),
-            )?;
+                .await?,
+            )
+            .await?;
             write_request_log(
                 request_log_path,
                 "raw_retry_after_refresh",
@@ -1327,17 +1289,11 @@ impl ApiArgs {
         } else {
             None
         };
-        let mut response = log_body_failure(
-            read_api_response(
-                self.send_workflow_request(config, &resolved_request, &url, json_body.as_ref())
-                    .await?,
-            )
-            .await,
-            request_log_path,
-            request.method.as_str(),
-            &path,
-            Some(request.operation_id),
-        )?;
+        let mut response = read_api_response(
+            self.send_workflow_request(config, &resolved_request, &url, json_body.as_ref())
+                .await?,
+        )
+        .await?;
         write_request_log(
             request_log_path,
             "workflow",
@@ -1352,17 +1308,11 @@ impl ApiArgs {
             && requires_auth
             && self.try_refresh_after_401(config, cli_args).await?
         {
-            response = log_body_failure(
-                read_api_response(
-                    self.send_workflow_request(config, &resolved_request, &url, json_body.as_ref())
-                        .await?,
-                )
-                .await,
-                request_log_path,
-                request.method.as_str(),
-                &path,
-                Some(request.operation_id),
-            )?;
+            response = read_api_response(
+                self.send_workflow_request(config, &resolved_request, &url, json_body.as_ref())
+                    .await?,
+            )
+            .await?;
             retried_after_refresh = true;
             write_request_log(
                 request_log_path,
@@ -1552,45 +1502,43 @@ impl ApiArgs {
         let operation = WorkflowOperation::new(HttpMethod::Get, "projects.resolveProjectRef")
             .path_param("project_ref", project_ref);
         let path = operation.path()?;
-        // Plain transport rather than the generated client, so a failed body
-        // keeps its status and request id in the error and request history.
-        let response = self
-            .http_client(config, attach_auth, require_auth, true)?
-            .get(self.api_url(&path)?)
-            .timeout(WORKFLOW_GET_TIMEOUT)
-            .send()
-            .await?;
-        let response = log_body_failure(
-            read_api_response(response).await,
-            request_log_path,
-            "GET",
-            &path,
-            Some(operation.operation_id),
-        )?;
-        write_request_log(
-            request_log_path,
-            "workflow_project_resolution",
-            "GET",
-            &path,
-            response.status.as_u16(),
-            response.request_id.as_deref(),
-            Some(operation.operation_id),
-        );
-        if !response.status.is_success() {
-            return Err(ApiCommandError::HttpStatus {
-                method: "GET",
-                path,
-                status: response.status.as_u16(),
-                request_id: response.request_id,
-                body: Box::new(response.body),
-            });
-        }
-        match response.body.get("project_id").and_then(Value::as_str) {
-            Some(project_id) if !project_id.is_empty() => Ok(project_id.to_string()),
-            _ => {
-                Err(ApiCommandError::InvalidWorkflow {
-                    message: format!("Could not resolve project reference `{project_ref}`"),
-                })
+        let client = self.generated_client(config, attach_auth, require_auth)?;
+        match client.projects_resolve_project_ref(project_ref).await {
+            Ok(response) => {
+                let request_id = request_id_from_headers(response.headers());
+                write_request_log(
+                    request_log_path,
+                    "workflow_project_resolution",
+                    "GET",
+                    &path,
+                    response.status().as_u16(),
+                    request_id.as_deref(),
+                    Some(operation.operation_id),
+                );
+                let project_id = response.into_inner().project_id;
+                if project_id.is_empty() {
+                    Err(ApiCommandError::InvalidWorkflow {
+                        message: format!("Could not resolve project reference `{project_ref}`"),
+                    })
+                } else {
+                    Ok(project_id)
+                }
+            }
+            Err(error) => {
+                let status = error.status().map(|status| status.as_u16());
+                let request_id = generated_error_request_id(&error);
+                if let Some(status) = status {
+                    write_request_log(
+                        request_log_path,
+                        "workflow_project_resolution",
+                        "GET",
+                        &path,
+                        status,
+                        request_id.as_deref(),
+                        Some(operation.operation_id),
+                    );
+                }
+                Err(generated_error_to_api_error("GET", &path, error).await)
             }
         }
     }
@@ -1626,12 +1574,7 @@ impl ApiArgs {
         config: &CliConfig,
         request: PreparedApiRequest<'_>,
     ) -> Result<reqwest::Response, ApiCommandError> {
-        let client = self.http_client(
-            config,
-            request.attach_auth,
-            request.attach_auth,
-            !method_side_effecting(request.method.as_str()),
-        )?;
+        let client = self.http_client(config, request.attach_auth, request.attach_auth)?;
         let mut builder = client
             .request(request.method.reqwest(), request.url.clone())
             .headers(request.headers.clone());
@@ -1641,10 +1584,7 @@ impl ApiArgs {
         if let Some(body) = request.body {
             builder = builder.json(body);
         }
-        builder
-            .send()
-            .await
-            .map_err(|source| send_error(request.method.as_str(), source))
+        Ok(builder.send().await?)
     }
 
     pub(in crate::api) async fn send_workflow_request(
@@ -1656,26 +1596,15 @@ impl ApiArgs {
     ) -> Result<reqwest::Response, ApiCommandError> {
         let requires_auth = request.require_auth && !self.allow_unauthenticated;
         let attach_auth = self.workflow_attach_auth(request, config);
-        let client = self.http_client(
-            config,
-            attach_auth,
-            requires_auth,
-            !method_side_effecting(request.method.as_str()),
-        )?;
+        let client = self.http_client(config, attach_auth, requires_auth)?;
         let mut builder = client.request(request.method.reqwest(), url.clone());
-        if request.method == HttpMethod::Get {
-            builder = builder.timeout(WORKFLOW_GET_TIMEOUT);
-        }
         if !request.query.is_empty() {
             builder = builder.query(&request.query);
         }
         if let Some(body) = body {
             builder = builder.json(body);
         }
-        builder
-            .send()
-            .await
-            .map_err(|source| send_error(request.method.as_str(), source))
+        Ok(builder.send().await?)
     }
 
     pub(in crate::api) fn workflow_attach_auth(
@@ -1695,14 +1624,11 @@ impl ApiArgs {
             })
     }
 
-    /// `follow_redirects` is false for mutations: after a redirect a failed
-    /// hop cannot show whether the original request already applied.
     pub(in crate::api) fn http_client(
         &self,
         config: &CliConfig,
         attach_auth: bool,
         require_auth: bool,
-        follow_redirects: bool,
     ) -> Result<reqwest::Client, ApiCommandError> {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1741,13 +1667,20 @@ impl ApiArgs {
 
         reqwest::Client::builder()
             .default_headers(headers)
-            .redirect(if follow_redirects {
-                reqwest::redirect::Policy::default()
-            } else {
-                reqwest::redirect::Policy::none()
-            })
             .build()
             .map_err(ApiCommandError::Request)
+    }
+
+    pub(in crate::api) fn generated_client(
+        &self,
+        config: &CliConfig,
+        attach_auth: bool,
+        require_auth: bool,
+    ) -> Result<GeneratedClient, ApiCommandError> {
+        let mut base = self.resolved_api_url();
+        base.set_path("/api/v1");
+        let http_client = self.http_client(config, attach_auth, require_auth)?;
+        Ok(GeneratedClient::new_with_client(base.as_str(), http_client))
     }
 
     pub(in crate::api) async fn resolve_operation_id(

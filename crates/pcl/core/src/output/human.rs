@@ -65,22 +65,13 @@ fn human_next_actions(envelope: &Value) -> Vec<String> {
         .or_else(|| envelope.pointer("/data/data/test_available"))
         .and_then(Value::as_bool)
         == Some(false);
-    // A refused or unconfirmed broadcast's recovery ends in the confirm-only
-    // removal command; it records an already landed transaction.
-    let confirm_recovery = matches!(
-        envelope.pointer("/error/code").and_then(Value::as_str),
-        Some("broadcast.calldata_refused" | "broadcast.confirm_failed")
-    );
     envelope
         .get("next_actions")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-        .filter(|action| {
-            !is_dangerous_or_internal_action(action)
-                || (confirm_recovery && is_confirm_only_removal(action))
-        })
+        .filter(|action| !is_dangerous_or_internal_action(action))
         .filter(|action| !(is_empty_ok && is_item_placeholder_action(action)))
         .filter(|action| !(terms_accepted && action.contains("account --accept-terms")))
         .filter(|action| !(integration_test_unavailable && action.contains(" --test")))
@@ -120,30 +111,6 @@ fn is_dangerous_or_internal_action(action: &str) -> bool {
         || trimmed.starts_with("pcl access member remove")
         || action.starts_with("Read error.http.body")
         || action.starts_with("Use data.")
-}
-
-/// Recognises the confirm-only removal step by token checks, not a full
-/// grammar: the action starts `pcl releases remove`, has exactly one
-/// `--field` token followed by another token, that token starts `txHash=`,
-/// and has no bare `--body`, `--body-file`, `--remove` or `--delete` token.
-/// Forms such as `--body={}`, `--field=mode=x`, a trailing bare `--field` or a
-/// trailing shell snippet still pass, so this is only
-/// safe because the eligible actions are built locally by the broadcast
-/// recovery paths; do not use it to vet external input.
-fn is_confirm_only_removal(action: &str) -> bool {
-    let tokens = action.split_whitespace().collect::<Vec<_>>();
-    tokens.starts_with(&["pcl", "releases", "remove"])
-        && tokens
-            .windows(2)
-            .filter(|pair| pair[0] == "--field")
-            .count()
-            == 1
-        && tokens
-            .windows(2)
-            .any(|pair| pair[0] == "--field" && pair[1].starts_with("txHash="))
-        && !tokens
-            .iter()
-            .any(|token| matches!(*token, "--body" | "--body-file" | "--remove" | "--delete"))
 }
 
 fn is_item_placeholder_action(action: &str) -> bool {
@@ -205,12 +172,8 @@ struct HumanCollection<'a> {
 fn render_human_error(output: &mut String, error: &Value) {
     output.push('\n');
     let code = error.get("code").and_then(Value::as_str);
-    let ambiguous = error
-        .pointer("/mutation/outcome_ambiguous")
-        .and_then(Value::as_bool)
-        == Some(true);
     if let Some(message) = error.get("message").and_then(Value::as_str) {
-        output.push_str(&human_error_message(code, message, ambiguous));
+        output.push_str(&human_error_message(code, message));
         output.push('\n');
     } else if let Some(error) = error.as_str() {
         output.push_str(error);
@@ -231,16 +194,9 @@ fn render_human_error(output: &mut String, error: &Value) {
     }
 }
 
-fn human_error_message(code: Option<&str>, message: &str, ambiguous: bool) -> String {
+fn human_error_message(code: Option<&str>, message: &str) -> String {
     if code.is_some_and(|value| value.starts_with("cli.")) {
         return clean_cli_error_message(message);
-    }
-    // The canned network and server texts below say to retry, which could
-    // repeat a mutation that already applied.
-    if ambiguous {
-        return format!(
-            "{message}\nThe request may already have applied; check its result before retrying."
-        );
     }
     match code {
         Some("api.not_found") => {
@@ -282,9 +238,7 @@ fn api_error_reason(error: &Value) -> Option<String> {
             return Some(value.to_string());
         }
     }
-    body.as_str()
-        .filter(|reason| !reason.is_empty())
-        .map(ToString::to_string)
+    body.as_str().map(ToString::to_string)
 }
 
 fn render_human_special(output: &mut String, envelope: &Value) -> bool {

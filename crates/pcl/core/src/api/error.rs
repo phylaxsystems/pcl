@@ -128,36 +128,14 @@ pub enum ApiCommandError {
         source: Box<ApiCommandError>,
     },
 
-    /// The response headers arrived (so `status` and `request_id` are known)
-    /// but reading the body failed, e.g. at the request deadline.
-    #[error(
-        "Reading the API response body failed after HTTP {status}{}: {source}",
-        if source.is_timeout() { " (request deadline reached)" } else { "" }
-    )]
-    ResponseBody {
-        status: u16,
-        request_id: Option<String>,
-        /// The request was a mutation the server answered, so it may have
-        /// applied even though its result was lost.
-        side_effecting: bool,
-        #[source]
-        source: reqwest::Error,
-    },
-
-    /// A mutation's connection failed after it was established and before
-    /// any response arrived, so the platform may have applied it.
-    #[error("API request failed after it was sent, so its outcome is unknown: {0}")]
-    MutationUnconfirmed(#[source] reqwest::Error),
-
     #[error("Unexpected {endpoint} response shape: {reason}")]
     UnexpectedResponse {
         endpoint: &'static str,
         reason: String,
     },
 
-    /// pcl will not sign this API-built transaction. Retrying cannot help;
-    /// `manual_route` fetches the calldata for external review and signing,
-    /// then confirms the landed transaction.
+    /// pcl will not sign this API-built transaction; `manual_route` is the
+    /// external-wallet alternative.
     #[error("Refusing to sign the {action} transaction: {reason}")]
     CalldataRefused {
         action: &'static str,
@@ -210,7 +188,6 @@ impl ApiCommandError {
                     _ => "network.request_failed",
                 }
             }
-            Self::ResponseBody { .. } | Self::MutationUnconfirmed(_) => "network.request_failed",
             Self::HttpStatus { status, .. } => {
                 match *status {
                     400 => "api.bad_request",
@@ -375,11 +352,11 @@ impl ApiCommandError {
             }
             Self::HttpStatus {
                 method,
-                status: status @ (300..=399 | 500..=599),
+                status: status @ 500..=599,
                 request_id,
                 path,
                 ..
-            } if status >= &500 || mutation_outcome_ambiguous(method, *status) => {
+            } => {
                 let mut actions = if mutation_outcome_ambiguous(method, *status) {
                     vec![
                         format!(
@@ -399,7 +376,7 @@ impl ApiCommandError {
                 };
                 if let Some(request_id) = request_id {
                     actions.push(format!(
-                        "Include request_id {request_id} when reporting this error"
+                        "Include request_id {request_id} when reporting this server error"
                     ));
                 }
                 actions
@@ -416,25 +393,7 @@ impl ApiCommandError {
                     "pcl projects mine".to_string(),
                 ]
             }
-            Self::MutationUnconfirmed(_) => {
-                vec![
-                    "Do not retry immediately; the request may have reached the platform before it failed, so check whether the mutation applied first".to_string(),
-                    "pcl requests list --json".to_string(),
-                ]
-            }
-            Self::ResponseBody {
-                side_effecting: true,
-                status,
-                ..
-            } => {
-                vec![
-                    format!(
-                        "Do not retry immediately; the platform answered HTTP {status} before the response body failed, so check whether the mutation applied first"
-                    ),
-                    "pcl requests list --json".to_string(),
-                ]
-            }
-            Self::Request(_) | Self::Url(_) | Self::ResponseBody { .. } => {
+            Self::Request(_) | Self::Url(_) => {
                 vec!["Check --api-url and your network connection, then retry".to_string()]
             }
             Self::BodyFile { .. } => {
@@ -519,14 +478,7 @@ impl ApiCommandError {
             Self::Request(source) if source.status().map(|status| status.as_u16()) == Some(404) => {
                 vec!["check_ids", "retry"]
             }
-            Self::ResponseBody {
-                side_effecting: true,
-                ..
-            } => vec!["reconcile_mutation", "contact_platform_with_request_id"],
-            Self::MutationUnconfirmed(_) => vec!["reconcile_mutation"],
-            Self::Request(_) | Self::Url(_) | Self::ResponseBody { .. } => {
-                vec!["check_network", "retry"]
-            }
+            Self::Request(_) | Self::Url(_) => vec!["check_network", "retry"],
             Self::BodyFile { .. } | Self::Stdin(_) => vec!["fix_body_input", "retry"],
             Self::RequestLog { .. } => vec!["inspect_request_log", "retry"],
             Self::OutputFile { .. } => vec!["fix_output_path", "retry"],
@@ -541,7 +493,7 @@ impl ApiCommandError {
             Self::HttpStatus { status: 429, .. } => vec!["retry_later", "reduce_request_rate"],
             Self::HttpStatus {
                 method,
-                status: status @ (300..=399 | 500..=599),
+                status: status @ 500..=599,
                 ..
             } if mutation_outcome_ambiguous(method, *status) => {
                 vec!["reconcile_mutation", "contact_platform_with_request_id"]
@@ -582,36 +534,6 @@ impl ApiCommandError {
         error.insert("code".to_string(), json!(self.code()));
         error.insert("message".to_string(), json!(self.to_string()));
         error.insert("recoverable".to_string(), json!(self.recoverable()));
-
-        if let Self::ResponseBody {
-            status,
-            request_id,
-            side_effecting,
-            ..
-        } = self
-        {
-            if let Some(request_id) = request_id {
-                error.insert("request_id".to_string(), json!(request_id));
-            }
-            error.insert(
-                "http".to_string(),
-                json!({ "status": status, "request_id": request_id }),
-            );
-            error.insert(
-                "mutation".to_string(),
-                json!({
-                    "side_effecting": side_effecting,
-                    "outcome_ambiguous": side_effecting,
-                }),
-            );
-        }
-
-        if let Self::MutationUnconfirmed(_) = self {
-            error.insert(
-                "mutation".to_string(),
-                json!({ "side_effecting": true, "outcome_ambiguous": true }),
-            );
-        }
 
         if let Self::HttpStatus {
             method,
@@ -659,10 +581,6 @@ impl ApiCommandError {
             if let Self::HttpStatus {
                 request_id: Some(request_id),
                 ..
-            }
-            | Self::ResponseBody {
-                request_id: Some(request_id),
-                ..
             } = source.as_ref()
             {
                 error.insert("request_id".to_string(), json!(request_id));
@@ -697,25 +615,6 @@ impl ApiCommandError {
             "suggested_next_actions": self.suggested_next_actions(),
             "next_actions": self.next_actions(),
         });
-
-        if let Self::ResponseBody {
-            status,
-            request_id,
-            side_effecting,
-            ..
-        } = self
-            && let Some(object) = envelope.as_object_mut()
-        {
-            object.insert("http_status".to_string(), json!(status));
-            object.insert("request_id".to_string(), json!(request_id));
-            object.insert("outcome_ambiguous".to_string(), json!(side_effecting));
-        }
-
-        if let Self::MutationUnconfirmed(_) = self
-            && let Some(object) = envelope.as_object_mut()
-        {
-            object.insert("outcome_ambiguous".to_string(), json!(true));
-        }
 
         if let Self::HttpStatus {
             method,
@@ -754,8 +653,6 @@ pub(in crate::api) fn method_side_effecting(method: &str) -> bool {
     !method.eq_ignore_ascii_case("GET") && !method.eq_ignore_ascii_case("HEAD")
 }
 
-/// A 5xx, or a 3xx (mutations do not follow redirects), leaves a mutation's
-/// outcome unknown.
 fn mutation_outcome_ambiguous(method: &str, status: u16) -> bool {
-    method_side_effecting(method) && (status >= 500 || (300..400).contains(&status))
+    method_side_effecting(method) && status >= 500
 }

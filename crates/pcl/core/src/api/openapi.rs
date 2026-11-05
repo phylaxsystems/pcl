@@ -71,10 +71,7 @@ impl OperationCoverage {
     fn record_hit(&mut self, record: &Value) {
         let status = record.get("status").and_then(Value::as_u64);
         self.hit += 1;
-        // An explicit `success: false` (e.g. a 200 whose body failed) wins;
-        // older records without the field count by status.
-        let failed = record.get("success").and_then(Value::as_bool) == Some(false);
-        if !failed && status.is_some_and(|status| (200..=299).contains(&status)) {
+        if status.is_some_and(|status| (200..=299).contains(&status)) {
             self.ok += 1;
         }
         if let Some(status) = status {
