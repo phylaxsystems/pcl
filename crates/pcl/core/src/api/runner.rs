@@ -100,7 +100,8 @@ use std::{
 
 /// Maximum accepted project image size, matching the dApp upload limit (5 MB).
 const MAX_IMAGE_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
-/// Upper bound for one workflow GET, connect through the last body byte, so
+/// Upper bound for one workflow or generated-client GET (OpenAPI fetch,
+/// project-ref resolution), connect through the last body byte, so
 /// a stalled server cannot hang a command (such as a broadcast's metadata
 /// fetches) forever. Mutations are left unbounded: a timed-out POST would
 /// leave its outcome ambiguous.
@@ -1638,6 +1639,17 @@ impl ApiArgs {
         attach_auth: bool,
         require_auth: bool,
     ) -> Result<reqwest::Client, ApiCommandError> {
+        self.http_client_builder(config, attach_auth, require_auth)?
+            .build()
+            .map_err(ApiCommandError::Request)
+    }
+
+    fn http_client_builder(
+        &self,
+        config: &CliConfig,
+        attach_auth: bool,
+        require_auth: bool,
+    ) -> Result<reqwest::ClientBuilder, ApiCommandError> {
         let mut headers = HeaderMap::new();
         headers.insert(
             HeaderName::from_static("api-version"),
@@ -1673,10 +1685,7 @@ impl ApiArgs {
             return Err(ApiCommandError::NoAuthToken);
         }
 
-        reqwest::Client::builder()
-            .default_headers(headers)
-            .build()
-            .map_err(ApiCommandError::Request)
+        Ok(reqwest::Client::builder().default_headers(headers))
     }
 
     pub(in crate::api) fn generated_client(
@@ -1687,7 +1696,13 @@ impl ApiArgs {
     ) -> Result<GeneratedClient, ApiCommandError> {
         let mut base = self.resolved_api_url();
         base.set_path("/api/v1");
-        let http_client = self.http_client(config, attach_auth, require_auth)?;
+        // Only GETs go through the generated client (OpenAPI fetch and
+        // project-ref resolution), so a client-wide deadline bounds no mutation.
+        let http_client = self
+            .http_client_builder(config, attach_auth, require_auth)?
+            .timeout(WORKFLOW_GET_TIMEOUT)
+            .build()
+            .map_err(ApiCommandError::Request)?;
         Ok(GeneratedClient::new_with_client(base.as_str(), http_client))
     }
 

@@ -2122,6 +2122,44 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn project_slug_resolution_has_a_deadline() {
+        for send_headers in [false, true] {
+            let url = stalling_server(send_headers).await;
+            let h = Harness::new(&url);
+            let log = h.log();
+            let resolve = h
+                .api
+                .resolve_project_id(&h.config, "my-protocol", true, true, &log);
+            let result = tokio::time::timeout(std::time::Duration::from_secs(3600), resolve).await;
+            assert!(
+                matches!(result, Ok(Err(ApiCommandError::Request(ref e))) if e.is_timeout()),
+                "send_headers={send_headers}: {result:?}"
+            );
+        }
+
+        let url = stalling_server(false).await;
+        let mut h = Harness::new(&url);
+        let log = h.log();
+        let args = ReleasesArgs {
+            broadcast: signing(),
+            ..ReleasesArgs::default()
+        };
+        let removal = h.api.broadcast_release_remove(
+            &mut h.config,
+            &h.cli_args,
+            &args,
+            "my-protocol",
+            RELEASE,
+            &log,
+        );
+        let result = tokio::time::timeout(std::time::Duration::from_secs(3600), removal).await;
+        assert!(
+            matches!(result, Ok(Err(ApiCommandError::Request(ref e))) if e.is_timeout()),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn broadcast_metadata_fetches_have_a_deadline() {
         for send_headers in [false, true] {
             let url = stalling_server(send_headers).await;
