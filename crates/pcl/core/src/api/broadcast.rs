@@ -2089,19 +2089,33 @@ mod tests {
     }
 
     /// Accepts connections and never answers, or answers headers then stalls.
+    /// The request is read first: bytes written to an idle connection make
+    /// hyper fail with `UnexpectedMessage` instead of timing out.
     async fn stalling_server(send_headers: bool) -> String {
+        use tokio::io::{
+            AsyncBufReadExt,
+            AsyncWriteExt,
+        };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move {
-            let mut held = Vec::new();
-            while let Ok((mut stream, _)) = listener.accept().await {
-                if send_headers {
-                    use tokio::io::AsyncWriteExt;
-                    let _ = stream
-                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{")
-                        .await;
-                }
-                held.push(stream);
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut stream = tokio::io::BufReader::new(stream);
+                    let mut line = String::new();
+                    while stream.read_line(&mut line).await.is_ok_and(|read| read > 0) {
+                        if line == "\r\n" {
+                            break;
+                        }
+                        line.clear();
+                    }
+                    if send_headers {
+                        let _ = stream
+                            .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{")
+                            .await;
+                    }
+                    std::future::pending::<()>().await;
+                });
             }
         });
         url
