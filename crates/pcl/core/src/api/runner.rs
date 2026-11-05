@@ -62,8 +62,6 @@ use super::{
     releases_next_actions,
     releases_request,
     request_body,
-    request_id_from_headers,
-    response_body_value,
     search_next_actions,
     search_request,
     split_path_and_inline_query,
@@ -1103,37 +1101,21 @@ impl ApiArgs {
             .timeout(WORKFLOW_GET_TIMEOUT)
             .send()
             .await?;
-        let status = response.status();
-        let request_id = request_id_from_headers(response.headers());
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_string();
-        let bytes = response.bytes().await.map_err(|source| {
-            ApiCommandError::ResponseBody {
-                status: status.as_u16(),
-                request_id: request_id.clone(),
-                side_effecting: false,
-                source,
-            }
-        })?;
+        let response = read_api_response(response).await?;
         // Only a 200 whose body is a JSON object with a `paths` object is the
         // spec; anything else (204, a malformed or non-spec body, an error
         // status) keeps its status, request id and raw body.
-        if status == reqwest::StatusCode::OK
-            && let Ok(spec) = serde_json::from_slice::<Value>(&bytes)
-            && spec.get("paths").is_some_and(Value::is_object)
+        if response.status == reqwest::StatusCode::OK
+            && response.body.get("paths").is_some_and(Value::is_object)
         {
-            return Ok(spec);
+            return Ok(response.body);
         }
         Err(ApiCommandError::HttpStatus {
             method: "GET",
             path: "/openapi".to_string(),
-            status: status.as_u16(),
-            request_id,
-            body: Box::new(response_body_value(&content_type, &bytes)),
+            status: response.status.as_u16(),
+            request_id: response.request_id,
+            body: Box::new(response.body),
         })
     }
 
