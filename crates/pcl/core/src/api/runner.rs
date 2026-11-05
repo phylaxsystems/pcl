@@ -132,8 +132,9 @@ fn log_body_failure(
     }
     result
 }
-/// A mutation whose connection fails after it was established may have
-/// applied; only a connect failure proves nothing reached the platform.
+/// A mutation that fails after it may have reached the platform may have
+/// applied. Mutations do not follow redirects, so a connect or build failure
+/// proves nothing was sent.
 fn send_error(method: &str, source: reqwest::Error) -> ApiCommandError {
     if method_side_effecting(method) && !source.is_connect() && !source.is_builder() {
         ApiCommandError::MutationUnconfirmed(source)
@@ -526,6 +527,7 @@ impl ApiArgs {
             config,
             input.require_auth && !self.allow_unauthenticated,
             input.require_auth && !self.allow_unauthenticated,
+            true,
         )?;
 
         let mut items = Vec::new();
@@ -817,7 +819,7 @@ impl ApiArgs {
             Ok(reqwest::multipart::Form::new().part("file", part))
         };
 
-        let client = self.http_client(config, requires_auth, requires_auth)?;
+        let client = self.http_client(config, requires_auth, requires_auth, false)?;
         let mut payload = log_body_failure(
             read_api_response(
                 client
@@ -850,7 +852,7 @@ impl ApiArgs {
             && requires_auth
             && self.try_refresh_after_401(config, cli_args).await?
         {
-            let client = self.http_client(config, requires_auth, requires_auth)?;
+            let client = self.http_client(config, requires_auth, requires_auth, false)?;
             payload = log_body_failure(
                 read_api_response(
                     client
@@ -1102,7 +1104,7 @@ impl ApiArgs {
     ) -> Result<Value, ApiCommandError> {
         // Plain transport so a failed body keeps its status and request id.
         let response = self
-            .http_client(config, false, false)?
+            .http_client(config, false, false, true)?
             .get(self.api_url("/openapi")?)
             .header(reqwest::header::ACCEPT, "application/json")
             // The spec route is pinned to the generated API version, not the workflow default.
@@ -1553,7 +1555,7 @@ impl ApiArgs {
         // Plain transport rather than the generated client, so a failed body
         // keeps its status and request id in the error and request history.
         let response = self
-            .http_client(config, attach_auth, require_auth)?
+            .http_client(config, attach_auth, require_auth, true)?
             .get(self.api_url(&path)?)
             .timeout(WORKFLOW_GET_TIMEOUT)
             .send()
@@ -1624,7 +1626,12 @@ impl ApiArgs {
         config: &CliConfig,
         request: PreparedApiRequest<'_>,
     ) -> Result<reqwest::Response, ApiCommandError> {
-        let client = self.http_client(config, request.attach_auth, request.attach_auth)?;
+        let client = self.http_client(
+            config,
+            request.attach_auth,
+            request.attach_auth,
+            !method_side_effecting(request.method.as_str()),
+        )?;
         let mut builder = client
             .request(request.method.reqwest(), request.url.clone())
             .headers(request.headers.clone());
@@ -1649,7 +1656,12 @@ impl ApiArgs {
     ) -> Result<reqwest::Response, ApiCommandError> {
         let requires_auth = request.require_auth && !self.allow_unauthenticated;
         let attach_auth = self.workflow_attach_auth(request, config);
-        let client = self.http_client(config, attach_auth, requires_auth)?;
+        let client = self.http_client(
+            config,
+            attach_auth,
+            requires_auth,
+            !method_side_effecting(request.method.as_str()),
+        )?;
         let mut builder = client.request(request.method.reqwest(), url.clone());
         if request.method == HttpMethod::Get {
             builder = builder.timeout(WORKFLOW_GET_TIMEOUT);
@@ -1683,11 +1695,14 @@ impl ApiArgs {
             })
     }
 
+    /// `follow_redirects` is false for mutations: after a redirect a failed
+    /// hop cannot show whether the original request already applied.
     pub(in crate::api) fn http_client(
         &self,
         config: &CliConfig,
         attach_auth: bool,
         require_auth: bool,
+        follow_redirects: bool,
     ) -> Result<reqwest::Client, ApiCommandError> {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1726,6 +1741,11 @@ impl ApiArgs {
 
         reqwest::Client::builder()
             .default_headers(headers)
+            .redirect(if follow_redirects {
+                reqwest::redirect::Policy::default()
+            } else {
+                reqwest::redirect::Policy::none()
+            })
             .build()
             .map_err(ApiCommandError::Request)
     }

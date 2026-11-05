@@ -1166,12 +1166,14 @@ async fn truncating_server(status: u16) -> String {
     url
 }
 
-/// Reads each request's headers and body, then closes without answering:
-/// the platform may have applied it, but the client never sees a response.
-async fn dropping_server() -> String {
+/// Reads each request's headers and body, then closes after writing
+/// `answer` (nothing: the client never sees a response). The platform may
+/// have applied the request either way.
+async fn dropping_server(answer: Option<String>) -> String {
     use tokio::io::{
         AsyncBufReadExt,
         AsyncReadExt,
+        AsyncWriteExt,
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -1191,6 +1193,9 @@ async fn dropping_server() -> String {
             }
             let mut body = vec![0; length];
             let _ = stream.read_exact(&mut body).await;
+            if let Some(answer) = &answer {
+                let _ = stream.write_all(answer.as_bytes()).await;
+            }
         }
     });
     url
@@ -1202,10 +1207,38 @@ async fn a_mutation_whose_connection_drops_is_not_retried_blindly() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         format!("http://{}", listener.local_addr().unwrap())
     };
-    for (url, method, ambiguous) in [
-        (dropping_server().await, HttpMethod::Post, true),
-        (dropping_server().await, HttpMethod::Get, false),
-        (closed, HttpMethod::Post, false),
+    // A mutation does not follow a redirect: the original request was sent,
+    // so a 3xx is reported as ambiguous instead of failing on a later hop.
+    // A GET still follows it.
+    let redirect = |location: &str| {
+        Some(format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nlocation: {location}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+        ))
+    };
+    let to_closed = redirect(&format!("{closed}/next"));
+    let dropped = "network.request_failed";
+    for (url, method, ambiguous, code) in [
+        (dropping_server(None).await, HttpMethod::Post, true, dropped),
+        (dropping_server(None).await, HttpMethod::Get, false, dropped),
+        (closed.clone(), HttpMethod::Post, false, dropped),
+        (
+            dropping_server(to_closed.clone()).await,
+            HttpMethod::Post,
+            true,
+            "api.request_failed",
+        ),
+        (
+            dropping_server(redirect("ftp://example.invalid/result")).await,
+            HttpMethod::Post,
+            true,
+            "api.request_failed",
+        ),
+        (
+            dropping_server(to_closed).await,
+            HttpMethod::Get,
+            false,
+            dropped,
+        ),
     ] {
         let api = test_api(url, true);
         let input = ApiRequestInput {
@@ -1229,10 +1262,7 @@ async fn a_mutation_whose_connection_drops_is_not_retried_blindly() {
             .unwrap_err()
             .json_envelope();
         let case = format!("{method:?} ambiguous={ambiguous}: {envelope}");
-        assert_eq!(
-            envelope["error"]["code"], "network.request_failed",
-            "{case}"
-        );
+        assert_eq!(envelope["error"]["code"], code, "{case}");
         assert_eq!(
             envelope["error"]["mutation"]["outcome_ambiguous"] == true,
             ambiguous,

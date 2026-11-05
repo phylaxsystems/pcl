@@ -375,11 +375,11 @@ impl ApiCommandError {
             }
             Self::HttpStatus {
                 method,
-                status: status @ 500..=599,
+                status: status @ (300..=399 | 500..=599),
                 request_id,
                 path,
                 ..
-            } => {
+            } if status >= &500 || mutation_outcome_ambiguous(method, *status) => {
                 let mut actions = if mutation_outcome_ambiguous(method, *status) {
                     vec![
                         format!(
@@ -418,7 +418,7 @@ impl ApiCommandError {
             }
             Self::MutationUnconfirmed(_) => {
                 vec![
-                    "Do not retry immediately; the connection failed after the request was sent, so check whether the mutation applied first".to_string(),
+                    "Do not retry immediately; the request may have reached the platform before it failed, so check whether the mutation applied first".to_string(),
                     "pcl requests list --json".to_string(),
                 ]
             }
@@ -541,7 +541,7 @@ impl ApiCommandError {
             Self::HttpStatus { status: 429, .. } => vec!["retry_later", "reduce_request_rate"],
             Self::HttpStatus {
                 method,
-                status: status @ 500..=599,
+                status: status @ (300..=399 | 500..=599),
                 ..
             } if mutation_outcome_ambiguous(method, *status) => {
                 vec!["reconcile_mutation", "contact_platform_with_request_id"]
@@ -754,6 +754,8 @@ pub(in crate::api) fn method_side_effecting(method: &str) -> bool {
     !method.eq_ignore_ascii_case("GET") && !method.eq_ignore_ascii_case("HEAD")
 }
 
+/// A 5xx, or a 3xx (mutations do not follow redirects), leaves a mutation's
+/// outcome unknown.
 fn mutation_outcome_ambiguous(method: &str, status: u16) -> bool {
-    method_side_effecting(method) && status >= 500
+    method_side_effecting(method) && (status >= 500 || (300..400).contains(&status))
 }
