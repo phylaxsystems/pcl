@@ -152,9 +152,20 @@ pub(crate) fn validate_removal_batch(
     to: Address,
     data: &Bytes,
     assertions: &[Value],
+    release: &[(Address, B256)],
 ) -> Result<(), String> {
+    let targets = removal_targets(assertions)?;
+    let mut listed = targets.clone();
+    listed.sort_unstable();
+    let mut held = release.to_vec();
+    held.sort_unstable();
+    if listed != held {
+        return Err(
+            "the listed assertions do not match the release record's config snapshot".to_string(),
+        );
+    }
     check_target(platform, chain_id, Some(environment), to)?;
-    let expected = removal_targets(assertions)?
+    let expected = targets
         .into_iter()
         .map(|(contract, assertion_id)| {
             removeAssertionCall {
@@ -224,6 +235,39 @@ pub(crate) fn removal_targets(assertions: &[Value]) -> Result<Vec<(Address, B256
     Ok(targets)
 }
 
+/// Every `(contract, assertionId)` in the release record's config snapshot:
+/// the set the API's `buildRemoveCalldata` removes, read from `getRelease`.
+pub(crate) fn release_targets(release: &Value) -> Result<Vec<(Address, B256)>, String> {
+    let contracts = release
+        .get("configSnapshot")
+        .or_else(|| release.get("config_snapshot"))
+        .and_then(|snapshot| snapshot.get("contracts"))
+        .and_then(Value::as_object)
+        .ok_or("the release record has no config snapshot contracts")?;
+    let mut targets = Vec::new();
+    for contract in contracts.values() {
+        let address: Address = contract
+            .get("address")
+            .and_then(Value::as_str)
+            .and_then(|address| address.parse().ok())
+            .ok_or("a release record contract has no valid address")?;
+        let assertions = contract
+            .get("assertions")
+            .and_then(Value::as_array)
+            .ok_or("a release record contract has no assertions list")?;
+        for assertion in assertions {
+            let id: B256 = assertion
+                .get("assertionId")
+                .or_else(|| assertion.get("assertion_id"))
+                .and_then(Value::as_str)
+                .and_then(|id| id.parse().ok())
+                .ok_or("a release record assertion has no valid assertionId")?;
+            targets.push((address, id));
+        }
+    }
+    Ok(targets)
+}
+
 /// Requires `data` to be exactly the canonical `StateOracle.batch` of
 /// `expected`. Building the bytes pcl expects and comparing them rejects dirty
 /// padding, trailing bytes and forged offsets or lengths without decoding (or
@@ -288,6 +332,7 @@ mod tests {
             address!("2222222222222222222222222222222222222222"),
             &removal_data(),
             &assertions(),
+            &[(ADOPTER, ASSERTION)],
         )
         .unwrap_err();
         let reason = err;
@@ -306,6 +351,7 @@ mod tests {
             ETH_PRODUCTION,
             &removal_data(),
             &assertions(),
+            &[(ADOPTER, ASSERTION)],
         )
         .unwrap();
     }
@@ -326,6 +372,7 @@ mod tests {
             ETH_PRODUCTION,
             &data,
             &assertions(),
+            &[(ADOPTER, ASSERTION)],
         )
         .unwrap_err();
         assert!(!err.is_empty());
@@ -340,6 +387,7 @@ mod tests {
             ETH_PRODUCTION,
             &removal_data(),
             &assertions(),
+            &[(ADOPTER, ASSERTION)],
         )
         .unwrap_err();
         let reason = err;
@@ -391,6 +439,7 @@ mod tests {
             retired,
             &removal_data(),
             &assertions(),
+            &[(ADOPTER, ASSERTION)],
         )
         .unwrap_err();
         assert!(!err.is_empty());
@@ -411,6 +460,7 @@ mod tests {
             ETH_PRODUCTION,
             &naked,
             &assertions(),
+            &[(ADOPTER, ASSERTION)],
         )
         .unwrap_err();
         assert!(!err.is_empty());
@@ -426,6 +476,7 @@ mod tests {
             staging,
             &removal_data(),
             &assertions(),
+            &[(ADOPTER, ASSERTION)],
         )
         .unwrap();
 
@@ -436,9 +487,74 @@ mod tests {
             staging,
             &removal_data(),
             &assertions(),
+            &[(ADOPTER, ASSERTION)],
         )
         .unwrap_err();
         assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn removal_entries_must_match_the_release_snapshot() {
+        let data = removal_data();
+        let check = |release: &[(Address, B256)]| {
+            validate_removal_batch(
+                &eth(),
+                1,
+                OracleEnvironment::Production,
+                ETH_PRODUCTION,
+                &data,
+                &assertions(),
+                release,
+            )
+        };
+        check(&[(ADOPTER, ASSERTION)]).unwrap();
+        let other = B256::repeat_byte(0xbb);
+        for release in [
+            vec![],
+            vec![(ADOPTER, other)],
+            vec![(ADOPTER, ASSERTION), (ADOPTER, other)],
+            vec![(ADOPTER, ASSERTION), (ADOPTER, ASSERTION)],
+        ] {
+            let reason = check(&release).unwrap_err();
+            assert!(reason.contains("release record"), "{release:?}: {reason}");
+        }
+    }
+
+    #[test]
+    fn release_targets_read_every_snapshot_assertion() {
+        let snapshot = |key: &str, id_key: &str| {
+            json!({ key: {"contracts": {
+                "b": {"address": "0x0202020202020202020202020202020202020202", "assertions": [{id_key: format!("{ASSERTION}")}]},
+                "a": {"address": format!("{ADOPTER}").to_lowercase(), "assertions": [{id_key: format!("{ASSERTION}")}, {id_key: format!("{ASSERTION}")}]}
+            }}})
+        };
+        for release in [
+            snapshot("configSnapshot", "assertionId"),
+            snapshot("config_snapshot", "assertion_id"),
+        ] {
+            let mut targets = release_targets(&release).unwrap();
+            targets.sort_unstable();
+            assert_eq!(
+                targets,
+                vec![
+                    (ADOPTER, ASSERTION),
+                    (ADOPTER, ASSERTION),
+                    (
+                        address!("0202020202020202020202020202020202020202"),
+                        ASSERTION
+                    ),
+                ]
+            );
+        }
+        for broken in [
+            json!({}),
+            json!({"configSnapshot": {"contracts": []}}),
+            json!({"configSnapshot": {"contracts": {"a": {"address": "0x01", "assertions": []}}}}),
+            json!({"configSnapshot": {"contracts": {"a": {"address": format!("{ADOPTER}")}}}}),
+            json!({"configSnapshot": {"contracts": {"a": {"address": format!("{ADOPTER}"), "assertions": [{"assertionId": "1"}]}}}}),
+        ] {
+            assert!(release_targets(&broken).is_err(), "{broken}");
+        }
     }
 
     #[test]
@@ -481,6 +597,7 @@ mod tests {
             to,
             &Bytes::copy_from_slice(data),
             assertions,
+            &removal_targets(assertions).unwrap_or_default(),
         )
     }
 

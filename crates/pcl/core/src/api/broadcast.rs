@@ -662,7 +662,8 @@ impl ApiArgs {
         )?;
 
         // The project record picks the chain. The release record picks the
-        // environment, and therefore which active StateOracle may be signed.
+        // environment, and therefore which active StateOracle may be signed,
+        // and holds the assertions the batch may remove.
         // An explicit --chain-id may only confirm the project chain.
         let chain_id = self
             .project_chain_id(config, cli_args, project, request_log_path)
@@ -698,6 +699,8 @@ impl ApiArgs {
             .call_workflow_result(config, cli_args, &release_request, request_log_path)
             .await?;
         let environment = super::signed_batch::release_environment(&release.body)?;
+        let release_targets =
+            super::signed_batch::release_targets(&release.body).map_err(&refused)?;
         super::signed_batch::validate_removal_batch(
             &self.resolved_api_url(),
             chain_id,
@@ -705,6 +708,7 @@ impl ApiArgs {
             calldata.to,
             &calldata.data,
             &calldata.assertions,
+            &release_targets,
         )
         .map_err(refused)?;
 
@@ -1887,5 +1891,32 @@ mod tests {
             matches!(err, ApiCommandError::InvalidWorkflow { .. }),
             "{err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_binds_entries_to_the_release_record() {
+        let mut server = mockito::Server::new_async().await;
+        // The release holds assertion 0xaa..; the calldata response swaps in 0xbb..
+        let err = remove(
+            &mut server,
+            json!({
+                "environment": "production",
+                "configSnapshot": {"contracts": {"a": {
+                    "address": "0x0101010101010101010101010101010101010101",
+                    "assertions": [{"assertionId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]
+                }}}
+            }),
+            json!({
+                "to": "0x8681e3fF0526C785FE82db9153E6E1F54551ebdF",
+                "data": "0x01",
+                "chainId": 1,
+                "assertions": [{
+                    "contractAddress": "0x0101010101010101010101010101010101010101",
+                    "assertionId": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }]
+            }),
+        )
+        .await;
+        assert_refused(&err, "release record");
     }
 }
