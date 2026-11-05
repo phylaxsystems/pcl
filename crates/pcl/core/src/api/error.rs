@@ -144,6 +144,11 @@ pub enum ApiCommandError {
         source: reqwest::Error,
     },
 
+    /// A mutation's connection failed after it was established and before
+    /// any response arrived, so the platform may have applied it.
+    #[error("API request failed after it was sent, so its outcome is unknown: {0}")]
+    MutationUnconfirmed(#[source] reqwest::Error),
+
     #[error("Unexpected {endpoint} response shape: {reason}")]
     UnexpectedResponse {
         endpoint: &'static str,
@@ -205,7 +210,7 @@ impl ApiCommandError {
                     _ => "network.request_failed",
                 }
             }
-            Self::ResponseBody { .. } => "network.request_failed",
+            Self::ResponseBody { .. } | Self::MutationUnconfirmed(_) => "network.request_failed",
             Self::HttpStatus { status, .. } => {
                 match *status {
                     400 => "api.bad_request",
@@ -411,6 +416,12 @@ impl ApiCommandError {
                     "pcl projects mine".to_string(),
                 ]
             }
+            Self::MutationUnconfirmed(_) => {
+                vec![
+                    "Do not retry immediately; the connection failed after the request was sent, so check whether the mutation applied first".to_string(),
+                    "pcl requests list --json".to_string(),
+                ]
+            }
             Self::ResponseBody {
                 side_effecting: true,
                 status,
@@ -512,6 +523,7 @@ impl ApiCommandError {
                 side_effecting: true,
                 ..
             } => vec!["reconcile_mutation", "contact_platform_with_request_id"],
+            Self::MutationUnconfirmed(_) => vec!["reconcile_mutation"],
             Self::Request(_) | Self::Url(_) | Self::ResponseBody { .. } => {
                 vec!["check_network", "retry"]
             }
@@ -591,6 +603,13 @@ impl ApiCommandError {
                     "side_effecting": side_effecting,
                     "outcome_ambiguous": side_effecting,
                 }),
+            );
+        }
+
+        if let Self::MutationUnconfirmed(_) = self {
+            error.insert(
+                "mutation".to_string(),
+                json!({ "side_effecting": true, "outcome_ambiguous": true }),
             );
         }
 
@@ -690,6 +709,12 @@ impl ApiCommandError {
             object.insert("http_status".to_string(), json!(status));
             object.insert("request_id".to_string(), json!(request_id));
             object.insert("outcome_ambiguous".to_string(), json!(side_effecting));
+        }
+
+        if let Self::MutationUnconfirmed(_) = self
+            && let Some(object) = envelope.as_object_mut()
+        {
+            object.insert("outcome_ambiguous".to_string(), json!(true));
         }
 
         if let Self::HttpStatus {

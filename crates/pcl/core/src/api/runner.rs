@@ -132,6 +132,16 @@ fn log_body_failure(
     }
     result
 }
+/// A mutation whose connection fails after it was established may have
+/// applied; only a connect failure proves nothing reached the platform.
+fn send_error(method: &str, source: reqwest::Error) -> ApiCommandError {
+    if method_side_effecting(method) && !source.is_connect() && !source.is_builder() {
+        ApiCommandError::MutationUnconfirmed(source)
+    } else {
+        ApiCommandError::Request(source)
+    }
+}
+
 /// Upper bound for one workflow, project-ref resolution or `OpenAPI` GET,
 /// connect through the last body byte, so
 /// a stalled server cannot hang a command (such as a broadcast's metadata
@@ -814,7 +824,8 @@ impl ApiArgs {
                     .post(url.clone())
                     .multipart(build_form()?)
                     .send()
-                    .await?,
+                    .await
+                    .map_err(|source| send_error("POST", source))?,
             )
             .await,
             request_log_path,
@@ -846,7 +857,8 @@ impl ApiArgs {
                         .post(url.clone())
                         .multipart(build_form()?)
                         .send()
-                        .await?,
+                        .await
+                        .map_err(|source| send_error("POST", source))?,
                 )
                 .await,
                 request_log_path,
@@ -1622,7 +1634,10 @@ impl ApiArgs {
         if let Some(body) = request.body {
             builder = builder.json(body);
         }
-        Ok(builder.send().await?)
+        builder
+            .send()
+            .await
+            .map_err(|source| send_error(request.method.as_str(), source))
     }
 
     pub(in crate::api) async fn send_workflow_request(
@@ -1645,7 +1660,10 @@ impl ApiArgs {
         if let Some(body) = body {
             builder = builder.json(body);
         }
-        Ok(builder.send().await?)
+        builder
+            .send()
+            .await
+            .map_err(|source| send_error(request.method.as_str(), source))
     }
 
     pub(in crate::api) fn workflow_attach_auth(

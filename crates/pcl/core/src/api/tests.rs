@@ -1166,6 +1166,90 @@ async fn truncating_server(status: u16) -> String {
     url
 }
 
+/// Reads each request's headers and body, then closes without answering:
+/// the platform may have applied it, but the client never sees a response.
+async fn dropping_server() -> String {
+    use tokio::io::{
+        AsyncBufReadExt,
+        AsyncReadExt,
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let mut stream = tokio::io::BufReader::new(stream);
+            let mut line = String::new();
+            let mut length = 0usize;
+            while stream.read_line(&mut line).await.is_ok_and(|read| read > 0) {
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+                line.clear();
+            }
+            let mut body = vec![0; length];
+            let _ = stream.read_exact(&mut body).await;
+        }
+    });
+    url
+}
+
+#[tokio::test]
+async fn a_mutation_whose_connection_drops_is_not_retried_blindly() {
+    let closed = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", listener.local_addr().unwrap())
+    };
+    for (url, method, ambiguous) in [
+        (dropping_server().await, HttpMethod::Post, true),
+        (dropping_server().await, HttpMethod::Get, false),
+        (closed, HttpMethod::Post, false),
+    ] {
+        let api = test_api(url, true);
+        let input = ApiRequestInput {
+            method,
+            path: "/probe",
+            query: &[],
+            header: &[],
+            body: Some(r#"{"name":"demo"}"#),
+            body_file: None,
+            field: &[],
+            require_auth: false,
+        };
+        let envelope = api
+            .call_api(
+                &mut CliConfig::default(),
+                &CliArgs::default(),
+                input,
+                test_request_log_path(),
+            )
+            .await
+            .unwrap_err()
+            .json_envelope();
+        let case = format!("{method:?} ambiguous={ambiguous}: {envelope}");
+        assert_eq!(
+            envelope["error"]["code"], "network.request_failed",
+            "{case}"
+        );
+        assert_eq!(
+            envelope["error"]["mutation"]["outcome_ambiguous"] == true,
+            ambiguous,
+            "{case}"
+        );
+        assert_eq!(
+            envelope["suggested_next_actions"]
+                .to_string()
+                .contains("\"retry\""),
+            !ambiguous,
+            "{case}"
+        );
+        let human = crate::output::human_string(&envelope);
+        assert_eq!(human.contains("then retry"), !ambiguous, "{human}");
+    }
+}
+
 #[tokio::test]
 async fn a_mutation_whose_body_fails_is_not_retried_blindly() {
     for (method, status) in [(HttpMethod::Post, 201), (HttpMethod::Get, 200)] {
