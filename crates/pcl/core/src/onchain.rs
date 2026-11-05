@@ -77,8 +77,8 @@ type WalletProvider = FillProvider<
 >;
 
 sol! {
-    /// `StateOracle.batch`. pcl encodes deploy batches with this and decodes
-    /// removal and manager-accept transactions before signing them.
+    /// `StateOracle.batch`. pcl encodes deploy batches with this and rebuilds
+    /// removal and manager batches to compare with the API's bytes.
     function batch(bytes[] calldata data) external;
 }
 
@@ -180,13 +180,6 @@ impl TxArgs {
 /// operation calldata.
 pub fn encode_batch(calldata: Vec<Bytes>) -> Bytes {
     batchCall { data: calldata }.abi_encode().into()
-}
-
-/// Decodes a `StateOracle.batch(bytes[])` call into its inner calldata.
-pub fn decode_batch(data: &[u8]) -> Result<Vec<Bytes>, String> {
-    batchCall::abi_decode(data)
-        .map(|call| call.data)
-        .map_err(|err| format!("calldata is not a StateOracle batch: {err}"))
 }
 
 /// Outcome of a confirmed transaction, surfaced in command envelopes.

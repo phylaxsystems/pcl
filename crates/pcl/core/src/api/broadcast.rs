@@ -2,7 +2,8 @@
 //! on-chain, then confirm the mutation with the API.
 //!
 //! Removal and manager-accept transactions are checked against the compiled
-//! active `StateOracle` and decoded as `StateOracle.batch` before signing.
+//! active `StateOracle` and must equal the `StateOracle.batch` pcl rebuilds
+//! from the expected calls before signing.
 //! Deploy still wraps operation calldata in that batch locally.
 
 use super::{
