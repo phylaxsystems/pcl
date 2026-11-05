@@ -1208,6 +1208,12 @@ async fn openapi_fetch_keeps_provenance_when_a_success_is_not_a_spec() {
         (200, "application/json", "{"),
         (200, "text/plain", "{"),
         (200, "application/json", ""),
+        (200, "application/json", "null"),
+        (200, "application/json", "[]"),
+        (200, "application/json", "7"),
+        (200, "application/json", r#""hello""#),
+        (200, "application/json", "{}"),
+        (200, "application/json", r#"{"paths":[]}"#),
         (204, "application/json", ""),
     ];
     for (status, content_type, body) in cases {
@@ -1229,7 +1235,7 @@ async fn openapi_fetch_keeps_provenance_when_a_success_is_not_a_spec() {
         assert_eq!(envelope["error"]["recoverable"], true, "{case}");
         assert_eq!(envelope["error"]["request_id"], "req-not-a-spec", "{case}");
         assert_eq!(envelope["error"]["http"]["status"], status, "{case}");
-        if !body.is_empty() {
+        if body.starts_with('{') {
             assert!(
                 envelope["error"]["http"]["body"].to_string().contains('{'),
                 "{case}"

@@ -1112,11 +1112,12 @@ impl ApiArgs {
                 source,
             }
         })?;
-        // Only a 200 whose body is valid JSON is the spec, as in the generated
-        // client; anything else (204, a malformed body, an error status) keeps
-        // its status, request id and raw body.
+        // Only a 200 whose body is a JSON object with a `paths` object is the
+        // spec; anything else (204, a malformed or non-spec body, an error
+        // status) keeps its status, request id and raw body.
         if status == reqwest::StatusCode::OK
-            && let Ok(spec) = serde_json::from_slice(&bytes)
+            && let Ok(spec) = serde_json::from_slice::<Value>(&bytes)
+            && spec.get("paths").is_some_and(Value::is_object)
         {
             return Ok(spec);
         }
