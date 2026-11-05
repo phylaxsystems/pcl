@@ -382,21 +382,18 @@ const CONFIRM_RETRY_MAX_DELAY: std::time::Duration = std::time::Duration::from_s
 impl ApiArgs {
     /// ` --api-url <url>` when this run named its platform explicitly, so a
     /// copied recovery command reaches the same platform: `--api-url` is a
-    /// one-shot override and is never remembered. A URL with credentials is
-    /// replaced by a placeholder so the secret is never printed.
+    /// one-shot override and is never remembered. A URL that
+    /// `redact_platform_url` would mask (userinfo, query or fragment) is
+    /// replaced by a placeholder so a secret in it is never printed.
     fn recovery_platform(&self) -> String {
-        match &self.api_url {
-            None => String::new(),
-            Some(url) if !url.username().is_empty() || url.password().is_some() => {
-                " --api-url <platform-url>".to_string()
-            }
-            Some(url) => {
-                format!(
-                    " --api-url {}",
-                    shell_word(url.as_str().trim_end_matches('/'))
-                )
-            }
+        let Some(url) = &self.api_url else {
+            return String::new();
+        };
+        let shown = crate::platform::trim_platform_url(url);
+        if crate::platform::redact_platform_url(url) != shown {
+            return " --api-url <platform-url>".to_string();
         }
+        format!(" --api-url {}", shell_word(shown))
     }
 
     /// Fetches the chain id recorded on a project (used when a calldata
@@ -2234,13 +2231,23 @@ mod tests {
             " --api-url https://linea.phylax.systems"
         );
         assert_eq!(
-            flag("https://shadow.example/api/?a=1&b=it's"),
-            " --api-url 'https://shadow.example/api/?a=1&b=it%27s'"
+            flag("https://shadow.example/it's"),
+            " --api-url 'https://shadow.example/it'\\''s'"
+        );
+        // An encoded `?` in the path is not a query and is shown.
+        assert_eq!(
+            flag("https://shadow.example/x%3Ftoken"),
+            " --api-url 'https://shadow.example/x%3Ftoken'"
         );
         for secret in [
             "https://user:pw@shadow.example",
             "https://user@shadow.example",
             "https://:pw@shadow.example",
+            "https://custom.example?token=SECRET",
+            "https://shadow.example/api/?a=1&b=2",
+            "https://shadow.example/#frag",
+            "https://shadow.example/?",
+            "https://user:pw@shadow.example/?token=SECRET",
         ] {
             assert_eq!(flag(secret), " --api-url <platform-url>");
         }
