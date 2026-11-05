@@ -122,7 +122,7 @@ fn log_body_failure(
     }
     result
 }
-/// Upper bound for one workflow, project-ref resolution or OpenAPI GET,
+/// Upper bound for one workflow, project-ref resolution or `OpenAPI` GET,
 /// connect through the last body byte, so
 /// a stalled server cannot hang a command (such as a broadcast's metadata
 /// fetches) forever. Mutations are left unbounded: a timed-out POST would
