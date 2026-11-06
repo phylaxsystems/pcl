@@ -489,6 +489,12 @@ pub enum PlatformError {
 /// Errors that can occur during authentication operations
 #[derive(Error, Debug)]
 pub enum AuthError {
+    /// Remote revocation did not succeed; retain credentials so it can be retried.
+    #[error(
+        "Remote logout was not confirmed; local credentials were retained. Retry logout. Use `pcl auth logout --local` only to remove local credentials without revocation."
+    )]
+    LogoutFailed { details: serde_json::Value },
+
     /// Error when the auth code request fails
     #[error(
         "Authentication request failed. Please check your connection and try again.\nError: {0}"

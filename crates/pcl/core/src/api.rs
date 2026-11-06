@@ -41,6 +41,7 @@ pub use crate::output::{
     with_envelope_metadata,
 };
 pub use broadcast::BroadcastArgs;
+pub(crate) use broadcast::release_next_actions;
 pub use error::ApiCommandError;
 pub use manifest::api_manifest;
 pub use render::{
@@ -53,9 +54,7 @@ use envelopes::{
     ok_envelope,
     query_pairs_value,
     upsert_query,
-    workflow_data_for_output_mode,
     workflow_success_envelope,
-    workflow_success_envelope_with_data,
 };
 pub(in crate::api) use error::method_side_effecting;
 use input::{
@@ -107,7 +106,6 @@ use runtime_types::{
 use templates::{
     access_body_template,
     body_template,
-    deployment_body_template,
     integration_body_template,
     project_body_template,
     protocol_manager_body_template,
@@ -131,7 +129,6 @@ use workflows::{
     assertions_request,
     contracts_next_actions,
     contracts_request,
-    deployments_request,
     events_request,
     incidents_next_actions,
     incidents_request,
@@ -348,7 +345,6 @@ macro_rules! always_needs_platform {
 body_template_gates_platform!(
     AssertionsArgs,
     AccountArgs,
-    DeploymentsArgs,
     IntegrationsArgs,
     ProtocolManagerArgs,
 );
@@ -406,7 +402,6 @@ enum WorkflowCommand {
     Account(AccountArgs),
     Contracts(ContractsArgs),
     Releases(ReleasesArgs),
-    Deployments(DeploymentsArgs),
     Access(AccessArgs),
     Integrations(IntegrationsArgs),
     ProtocolManager(ProtocolManagerArgs),
@@ -471,6 +466,8 @@ enum ApiCommand {
 
 #[derive(clap::Args, Debug)]
 struct ApiCallArgs {
+    #[arg(long, conflicts_with_all = ["output", "paginate", "jsonl"], help = "Save successful response bytes unchanged (PDF or other binary artifact)")]
+    output_raw: Option<PathBuf>,
     #[arg(value_enum, ignore_case = true, help = "HTTP method")]
     method: HttpMethod,
     #[arg(help = "API path below /api/v1, for example /views/public/invalidations")]
@@ -548,6 +545,8 @@ struct IncidentsArgs {
     incident_id: Option<String>,
     #[arg(long, help = "Transaction ID for incident trace")]
     tx_id: Option<String>,
+    #[arg(long, requires = "incident_id", conflicts_with_all = ["tx_id", "retry_trace", "stats", "all"], help = "Include every transaction trace and its full API metadata")]
+    include_traces: bool,
     #[arg(long, help = "Filter project incidents by assertion")]
     assertion_id: Option<String>,
     #[arg(long, help = "Filter project incidents by assertion adopter")]
@@ -566,6 +565,16 @@ struct IncidentsArgs {
     network: Option<u64>,
     #[arg(long, help = "Sort direction for public incidents")]
     sort: Option<String>,
+    #[arg(long, requires = "project_id", help = "Project incident sort field")]
+    sort_by: Option<String>,
+    #[arg(
+        long,
+        requires = "project_id",
+        help = "Filter project incidents by outcome"
+    )]
+    outcome: Option<String>,
+    #[arg(long, requires_all = ["project_id", "from_date"], conflicts_with_all = ["all", "stats", "incident_id"], help = "Get the latest recent production invalidation")]
+    latest: bool,
     #[arg(long, help = "Legacy option; unavailable in OpenAPI 22")]
     dev_mode: Option<String>,
     #[arg(long, help = "Return incident stats for --project-id")]
@@ -608,6 +617,7 @@ struct ProjectsArgs {
     /// Local image file to upload and set as the project image. Resolved to a
     /// storage path before the create/update request is built.
     profile_image: Option<PathBuf>,
+    upload_audit: Option<PathBuf>,
     /// Clear the project image by sending `profile_image_url: null`.
     remove_profile_image: bool,
     github_url: Option<String>,
@@ -656,6 +666,14 @@ enum ProjectsSubcommand {
     Resolve(ProjectRefArgs),
     #[command(about = "Show lightweight project widget data")]
     Widget(ProjectRefArgs),
+    #[command(about = "Upload an audit PDF (max 50 MB); returns the reference for submitAudit")]
+    UploadAudit(ProjectAuditArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct ProjectAuditArgs {
+    project: String,
+    file: PathBuf,
 }
 
 #[derive(clap::Args, Debug)]
@@ -787,7 +805,8 @@ impl ProjectsSubcommand {
             | Self::Save(_)
             | Self::Unsave(_)
             | Self::Resolve(_)
-            | Self::Widget(_) => true,
+            | Self::Widget(_)
+            | Self::UploadAudit(_) => true,
         }
     }
 
@@ -804,6 +823,13 @@ impl ProjectsSubcommand {
             Self::Mine => {
                 ProjectsArgs {
                     mine: true,
+                    ..ProjectsArgs::default()
+                }
+            }
+            Self::UploadAudit(args) => {
+                ProjectsArgs {
+                    project_id: Some(args.project),
+                    upload_audit: Some(args.file),
                     ..ProjectsArgs::default()
                 }
             }
@@ -931,7 +957,7 @@ impl WorkflowBodyArgs {
 #[derive(clap::Args, Debug)]
 #[command(group(
     ArgGroup::new("assertions_action")
-        .args(["assertion_id", "adopter_address", "registered", "remove_info", "remove_calldata"])
+        .args(["assertion_id", "adopter_address", "registered"])
         .multiple(false)
 ))]
 struct AssertionsArgs {
@@ -959,10 +985,6 @@ struct AssertionsArgs {
     limit: Option<u64>,
     #[arg(long, help = "Return registered assertions for --project-id")]
     registered: bool,
-    #[arg(long, help = "Return remove assertions info")]
-    remove_info: bool,
-    #[arg(long, help = "Generate remove assertions calldata")]
-    remove_calldata: bool,
     #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
     field: Vec<String>,
     #[arg(long, help = "JSON request body")]
@@ -1035,20 +1057,6 @@ struct ContractsArgs {
     project: Option<String>,
     #[arg(long, help = "Assertion adopter ID for contract detail")]
     adopter_id: Option<String>,
-    #[arg(long, help = "Assertion adopter contract address")]
-    aa_address: Option<String>,
-    #[arg(long, help = "Network/chain ID for adopter calldata requests")]
-    network: Option<String>,
-    #[arg(long, help = "Environment for adopter calldata requests")]
-    environment: Option<String>,
-    #[arg(
-        long = "assertion-id",
-        alias = "assertion-ids",
-        help = "Assertion ID to include in --remove-calldata; repeat for multiple assertions"
-    )]
-    assertion_ids: Vec<String>,
-    #[arg(long, help = "Get remove assertions calldata")]
-    remove_calldata: bool,
 }
 
 #[derive(Debug, Default)]
@@ -1065,6 +1073,8 @@ struct ReleasesArgs {
     remove_calldata: bool,
     backtest_progress: bool,
     retry_check: bool,
+    rename: bool,
+    diff: bool,
     chain_id: Option<u64>,
     broadcast: BroadcastArgs,
     body: Option<String>,
@@ -1091,6 +1101,10 @@ enum ReleasesSubcommand {
     List(ReleaseProjectArgs),
     #[command(about = "Show one release")]
     Show(ReleaseRefArgs),
+    #[command(about = "Show the release diff")]
+    Diff(ReleaseRefArgs),
+    #[command(about = "Rename a release with --field name=<name>")]
+    Rename(ReleaseBodyArgs),
     #[command(about = "Create a release")]
     Create(ReleaseProjectBodyArgs),
     #[command(about = "Preview a release body without persisting")]
@@ -1236,9 +1250,15 @@ impl ReleasesSubcommand {
     fn needs_platform_url(&self) -> bool {
         match self {
             Self::Create(args) | Self::Preview(args) => !args.body.body_template,
-            Self::Deploy(args) | Self::Remove(args) => !args.body.body_template,
+            Self::Deploy(args) | Self::Remove(args) | Self::Rename(args) => {
+                !args.body.body_template
+            }
             Self::RetryCheck(args) => !args.body.body_template,
-            Self::List(_) | Self::Show(_) | Self::Calldata(_) | Self::BacktestProgress(_) => true,
+            Self::List(_)
+            | Self::Show(_)
+            | Self::Diff(_)
+            | Self::Calldata(_)
+            | Self::BacktestProgress(_) => true,
         }
     }
 
@@ -1246,6 +1266,17 @@ impl ReleasesSubcommand {
         match self {
             Self::List(args) => release_project_args(Some(args.project)),
             Self::Show(args) => release_ref_args(args.project, args.release_id),
+            Self::Diff(args) => {
+                let mut release_args = release_ref_args(args.project, args.release_id);
+                release_args.diff = true;
+                release_args
+            }
+            Self::Rename(args) => {
+                let mut release_args = release_ref_args_optional(args.project, args.release_id);
+                release_args.rename = true;
+                args.body.apply_to_release(&mut release_args);
+                release_args
+            }
             Self::Create(args) => {
                 let mut release_args = release_project_args(args.project);
                 release_args.create = true;
@@ -1325,31 +1356,6 @@ fn release_ref_args_optional(project: Option<String>, release_id: Option<String>
         release_id,
         ..ReleasesArgs::default()
     }
-}
-
-#[derive(clap::Args, Debug)]
-#[command(group(
-    ArgGroup::new("deployments_action")
-        .args(["confirm"])
-        .multiple(false)
-))]
-struct DeploymentsArgs {
-    #[arg(long, visible_alias = "project-id", help = "Project UUID or slug")]
-    project: Option<String>,
-    #[arg(long, help = "Confirm deployment")]
-    confirm: bool,
-    #[arg(long, help = "JSON request body")]
-    body: Option<String>,
-    #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
-    field: Vec<String>,
-    #[arg(
-        long = "body-file",
-        conflicts_with = "body",
-        help = "Path to JSON body, or - for stdin"
-    )]
-    body_file: Option<PathBuf>,
-    #[arg(long, help = "Print a JSON body template")]
-    body_template: bool,
 }
 
 #[derive(Debug, Default)]
@@ -1769,8 +1775,8 @@ top_level_workflow_command!(
     AssertionsCommand,
     AssertionsArgs,
     Assertions,
-    "List, inspect, and manage assertions",
-    "Examples:\n  pcl assertions --project-id <project-ref>\n  pcl assertions --adopter-address 0x... --network 1\n  pcl assertions --project-id <project-ref> --registered\n  pcl assertions --project-id <project-ref> --remove-info"
+    "List and inspect assertions",
+    "Examples:\n  pcl assertions --project-id <project-ref>\n  pcl assertions --adopter-address 0x... --network 1\n  pcl assertions --project-id <project-ref> --registered\n  pcl releases calldata remove <project-ref> <release-id>"
 );
 
 top_level_workflow_command!(
@@ -1793,16 +1799,8 @@ top_level_workflow_command!(
     ContractsCommand,
     ContractsArgs,
     Contracts,
-    "Inspect release-based project contracts and assertion-removal calldata",
-    "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl releases list <project-ref>"
-);
-
-top_level_workflow_command!(
-    DeploymentsCommand,
-    DeploymentsArgs,
-    Deployments,
-    "Inspect deployments and confirm deployed assertions",
-    "Examples:\n  pcl deployments --project <project-ref>\n  pcl deployments --project <project-ref> --confirm --body-template"
+    "Inspect release-based project contracts",
+    "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl releases list <project-ref>\n  pcl releases calldata remove <project-ref> <release-id>"
 );
 
 top_level_workflow_command!(

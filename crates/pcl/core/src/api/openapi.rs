@@ -1076,9 +1076,14 @@ pub(super) fn example_call(method: HttpMethod, path: &str, operation: &Value) ->
     if service_api_key_raw_call_path(method, &path) {
         command.push_str(" --header 'x-api-key=<x-api-key>'");
     }
+    if service_bearer_raw_call_path(method, &path) {
+        command.push_str(" --header 'authorization=Bearer <service-token>'");
+    }
     for parameter in required_header_parameters(operation) {
-        if service_api_key_raw_call_path(method, &path)
-            && parameter.eq_ignore_ascii_case("x-api-key")
+        if (service_api_key_raw_call_path(method, &path)
+            && parameter.eq_ignore_ascii_case("x-api-key"))
+            || (service_bearer_raw_call_path(method, &path)
+                && parameter.eq_ignore_ascii_case("authorization"))
         {
             continue;
         }
@@ -1117,6 +1122,7 @@ pub(super) fn operation_auth_metadata(method: HttpMethod, path: &str, operation:
     let required_headers = required_header_parameters(operation);
     let browser_token_required = requires_browser_session_token(path, operation);
     let service_api_key_required = service_api_key_raw_call_path(method, path);
+    let service_bearer_token_required = service_bearer_raw_call_path(method, path);
     let stored_cli_auth =
         !should_allow_unauthenticated_raw_call(method, path, operation) && !browser_token_required;
     let mut notes = Vec::new();
@@ -1133,11 +1139,15 @@ pub(super) fn operation_auth_metadata(method: HttpMethod, path: &str, operation:
     if service_api_key_required {
         notes.push("Requires a service API key supplied with --header x-api-key=<x-api-key>.");
     }
+    if service_bearer_token_required {
+        notes.push("Requires a service shared-secret bearer supplied with --header authorization=Bearer <service-token>; a user CLI token is not accepted.");
+    }
     json!({
         "stored_cli_auth": stored_cli_auth,
         "allow_unauthenticated_example": should_allow_unauthenticated_raw_call(method, path, operation),
         "browser_session_token_required": browser_token_required,
         "service_api_key_required": service_api_key_required,
+        "service_bearer_token_required": service_bearer_token_required,
         "required_headers": required_headers,
         "notes": notes,
     })
@@ -1163,6 +1173,7 @@ fn should_allow_unauthenticated_raw_call(
     operation: &Value,
 ) -> bool {
     service_api_key_raw_call_path(method, path)
+        || service_bearer_raw_call_path(method, path)
         || (public_raw_call_path(method, path) && !has_required_authorization_parameter(operation))
 }
 
@@ -1172,6 +1183,11 @@ fn service_api_key_raw_call_path(method: HttpMethod, path: &str) -> bool {
             || path.starts_with("/indexer/")
             || path.starts_with("/tracer/")
             || path.starts_with("/backtesting/"))
+}
+
+fn service_bearer_raw_call_path(method: HttpMethod, path: &str) -> bool {
+    (method == HttpMethod::Get && path.starts_with("/agent/"))
+        || (method == HttpMethod::Post && path.starts_with("/agentic/"))
 }
 
 pub(super) fn public_raw_call_path(method: HttpMethod, path: &str) -> bool {
@@ -1219,7 +1235,7 @@ fn shell_quote_path(path: &str) -> String {
     }
 }
 
-fn shell_quote(value: &str) -> String {
+pub(super) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 

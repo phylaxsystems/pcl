@@ -9,10 +9,7 @@ use chrono::{
 };
 use clap::Parser;
 use mockito::Matcher;
-use pcl_common::args::{
-    CliArgs,
-    OutputMode,
-};
+use pcl_common::args::CliArgs;
 use serde_json::{
     Value,
     json,
@@ -23,6 +20,14 @@ use std::{
     fs,
     path::Path,
 };
+
+const RETIRED_OPERATION_IDS: &[&str] = &[
+    "projects.removeAssertionsInfo",
+    "projects.removeAssertionsCalldata",
+    "assertionAdopters.removeAssertionsCalldata",
+    "views.projectDeployments.getProjectDeployments",
+    "projects.confirmDeployment",
+];
 
 fn test_request_log_path() -> &'static Path {
     Path::new("/tmp/pcl-test-requests.jsonl")
@@ -119,8 +124,6 @@ fn assertions_args(project_id: Option<&str>) -> AssertionsArgs {
         page: None,
         limit: None,
         registered: false,
-        remove_info: false,
-        remove_calldata: false,
         field: Vec::new(),
         body: None,
         body_file: None,
@@ -148,6 +151,7 @@ fn projects_args() -> ProjectsArgs {
         project_description: None,
         profile_image_url: None,
         profile_image: None,
+        upload_audit: None,
         remove_profile_image: false,
         github_url: None,
         chain_id: None,
@@ -186,11 +190,6 @@ fn contracts_args() -> ContractsArgs {
     ContractsArgs {
         project: None,
         adopter_id: None,
-        aa_address: None,
-        network: None,
-        environment: None,
-        assertion_ids: Vec::new(),
-        remove_calldata: false,
     }
 }
 
@@ -220,6 +219,8 @@ fn access_args() -> AccessArgs {
 
 fn release_args() -> ReleasesArgs {
     ReleasesArgs {
+        rename: false,
+        diff: false,
         project: Some("project-1".to_string()),
         release_id: None,
         signer_address: None,
@@ -243,6 +244,10 @@ fn release_args() -> ReleasesArgs {
 
 fn incidents_args() -> IncidentsArgs {
     IncidentsArgs {
+        include_traces: false,
+        sort_by: None,
+        outcome: None,
+        latest: false,
         project_id: None,
         incident_id: None,
         tx_id: None,
@@ -479,14 +484,14 @@ fn openapi_next_actions_keep_safe_remove_calldata_examples() {
         "method": "GET",
         "workflow_alternatives": [
             {
-                "example": "pcl assertions --project-id <project-ref> --remove-calldata"
+                "example": "pcl releases calldata remove <project-ref> <release-id>"
             }
         ]
     });
 
     assert_eq!(
         command_next_actions(&inspected),
-        vec!["pcl assertions --project-id <project-ref> --remove-calldata"]
+        vec!["pcl releases calldata remove <project-ref> <release-id>"]
     );
 }
 
@@ -858,6 +863,7 @@ fn incident_detail_next_action_uses_invalidating_transaction_id() {
         next_actions,
         vec![
             "pcl incidents --incident-id incident-1 --tx-id invalidating-tx-1".to_string(),
+            "pcl incidents --incident-id incident-1 --include-traces".to_string(),
             "pcl incidents --limit 5".to_string(),
         ]
     );
@@ -1133,7 +1139,6 @@ async fn public_workflows_do_not_attach_expired_stored_tokens() {
         .run_workflow(
             &mut config,
             &CliArgs::default(),
-            "search",
             test_workflow_request(
                 HttpMethod::Get,
                 "health",
@@ -1323,7 +1328,6 @@ async fn authenticated_workflow_refuses_a_foreign_platform_with_a_valid_token() 
         .run_workflow(
             &mut config,
             &CliArgs::default(),
-            "search",
             test_workflow_request(HttpMethod::Get, "health", true, Vec::<String>::new()),
             test_request_log_path(),
         )
@@ -1352,7 +1356,6 @@ async fn authenticated_workflow_refuses_to_refresh_against_a_foreign_platform() 
         .run_workflow(
             &mut config,
             &CliArgs::default(),
-            "search",
             test_workflow_request(HttpMethod::Get, "health", true, Vec::<String>::new()),
             test_request_log_path(),
         )
@@ -1912,16 +1915,6 @@ fn builds_assertion_lifecycle_requests() {
     })
     .unwrap();
     assert_eq!(registered.path, "/views/projects/project-1/assertions");
-
-    let remove = assertions_request(&AssertionsArgs {
-        remove_calldata: true,
-        ..assertions_args(Some("project-1"))
-    })
-    .unwrap();
-    assert_eq!(
-        remove.path,
-        "/projects/project-1/remove-assertions-calldata"
-    );
 }
 
 #[test]
@@ -2024,40 +2017,6 @@ fn projects_mine_uses_authenticated_home_view() {
         vec![
             "pcl account".to_string(),
             "pcl projects saved --user-id <user-id>".to_string()
-        ]
-    );
-}
-
-#[test]
-fn contracts_remove_calldata_requires_and_sends_assertion_ids() {
-    let error = contracts_request(&ContractsArgs {
-        remove_calldata: true,
-        aa_address: Some("0xabc".to_string()),
-        ..contracts_args()
-    })
-    .unwrap_err();
-    assert!(error.to_string().contains("--assertion-id is required"));
-
-    let request = contracts_request(&ContractsArgs {
-        remove_calldata: true,
-        aa_address: Some("0xabc".to_string()),
-        network: Some("31337".to_string()),
-        environment: Some("production".to_string()),
-        assertion_ids: vec!["assertion-1".to_string(), "assertion-2".to_string()],
-        ..contracts_args()
-    })
-    .unwrap();
-    assert_eq!(
-        request.path,
-        "/assertion_adopters/0xabc/remove-assertions-calldata"
-    );
-    assert_eq!(
-        request.query,
-        vec![
-            ("network".to_string(), "31337".to_string()),
-            ("environment".to_string(), "production".to_string()),
-            ("assertion_ids".to_string(), "assertion-1".to_string()),
-            ("assertion_ids".to_string(), "assertion-2".to_string()),
         ]
     );
 }
@@ -2473,7 +2432,6 @@ async fn workflow_success_envelopes_include_request_provenance() {
         .run_workflow(
             &mut config,
             &CliArgs::default(),
-            "search",
             request,
             test_request_log_path(),
         )
@@ -3062,7 +3020,7 @@ fn human_output_keeps_safe_remove_calldata_actions() {
             },
             "request": {"method": "GET", "path": "/views/projects/project-1/assertions"},
             "response": {"status": 200, "request_id": "req_assertions"},
-            "next_actions": ["pcl assertions --project-id project-1 --remove-calldata"],
+            "next_actions": ["pcl releases calldata remove project-1 release-1"],
         }),
         false,
     )
@@ -3070,7 +3028,7 @@ fn human_output_keeps_safe_remove_calldata_actions() {
 
     assert_output_contains(
         &output,
-        &["pcl assertions --project-id project-1 --remove-calldata"],
+        &["pcl releases calldata remove project-1 release-1"],
     );
 }
 
@@ -3161,51 +3119,6 @@ fn protocol_manager_pending_next_actions_offer_accept_calldata_when_pending() {
             "pcl protocol-manager --project project-1 --nonce --address 0xmanager",
             "pcl protocol-manager --project project-1 --accept-calldata",
         ]
-    );
-}
-
-#[test]
-fn deployment_output_only_redacts_artifacts_for_human_mode() {
-    let deployment_data = json!({
-        "project": {"project_id": "project-1", "project_name": "Demo"},
-        "submitted_assertions": [
-            {
-                "id": "assertion-1",
-                "contract_name": "Guard",
-                "source_code": "contract Guard { function ok() external {} }",
-                "bytecode": "0x6080604052348015600e575f80fd5b50"
-            }
-        ],
-        "staging_assertions": [],
-        "available_contracts": [],
-        "_meta": {"sources": ["offchain"]}
-    });
-
-    let json_data =
-        workflow_data_for_output_mode("deployments", &deployment_data, OutputMode::Json);
-
-    assert_eq!(
-        json_data["submitted_assertions"][0]["source_code"],
-        "contract Guard { function ok() external {} }"
-    );
-    assert_eq!(
-        json_data["submitted_assertions"][0]["bytecode"],
-        "0x6080604052348015600e575f80fd5b50"
-    );
-
-    let compact = workflow_data_for_output_mode("deployments", &deployment_data, OutputMode::Human);
-    let rendered = serde_json::to_string(&compact).expect("json render");
-
-    assert!(rendered.contains("\"redacted\":true"), "{rendered}");
-    assert!(!rendered.contains("contract Guard"), "{rendered}");
-    assert!(!rendered.contains("0x608060405234"), "{rendered}");
-    assert_eq!(
-        compact["submitted_assertions"][0]["source_code"]["reason"],
-        "large_artifact"
-    );
-    assert_eq!(
-        compact["submitted_assertions"][0]["bytecode"]["reason"],
-        "large_artifact"
     );
 }
 
@@ -4018,6 +3931,29 @@ fn manifest_lists_structured_actions_for_every_workflow() {
 }
 
 #[test]
+fn generated_client_omits_retired_operations() {
+    let retired_paths = [
+        "/projects/{project_id}/remove-assertions-info",
+        "/projects/{project_id}/remove-assertions-calldata",
+        "/assertion_adopters/{aa_address}/remove-assertions-calldata",
+        "/projects/{project_id}/confirm-deployment",
+        "/views/projects/{projectId}/deployments",
+    ];
+    for &(operation_id, _method, path) in
+        dapp_api_client::generated::operation_paths::OPERATION_PATHS
+    {
+        assert!(
+            !RETIRED_OPERATION_IDS.contains(&operation_id),
+            "generated map still includes {operation_id}"
+        );
+        assert!(
+            !retired_paths.contains(&path),
+            "generated map still includes {path}"
+        );
+    }
+}
+
+#[test]
 fn workflow_definitions_are_the_manifest_source_of_truth() {
     let manifest = api_manifest();
     let commands = manifest["commands"].as_array().unwrap();
@@ -4029,8 +3965,7 @@ fn workflow_definitions_are_the_manifest_source_of_truth() {
             .find(|command| command["command"] == definition.command)
             .unwrap_or_else(|| panic!("missing manifest command {}", definition.command));
         assert_eq!(
-            command["output_policy"],
-            definition.output_policy.as_str(),
+            command["output_policy"], "machine_raw",
             "manifest should expose output policy from workflow definition {}",
             definition.name
         );
@@ -4042,14 +3977,17 @@ fn workflow_definitions_are_the_manifest_source_of_truth() {
         );
     }
 
-    assert_eq!(
-        definitions::workflow_output_policy("deployments"),
-        definitions::WorkflowOutputPolicy::MachineRawHumanCompactArtifacts
-    );
-    assert_eq!(
-        definitions::workflow_output_policy("projects"),
-        definitions::WorkflowOutputPolicy::MachineRaw
-    );
+    assert!(definitions::workflow_definition("deployments").is_none());
+    for definition in definitions::workflow_definitions() {
+        for action in definition.actions {
+            assert!(
+                !RETIRED_OPERATION_IDS.contains(&action.operation_id),
+                "{} still references {}",
+                definition.name,
+                action.operation_id
+            );
+        }
+    }
 }
 
 #[test]
@@ -4071,9 +4009,6 @@ fn raw_api_parser_rejects_workflow_aliases() {
         ApiArgs::try_parse_from(["api", "transfers", "--transfer-id", "t1", "--reject"]).is_err()
     );
     assert!(ApiArgs::try_parse_from(["api", "releases", "--deploy", "--body-template"]).is_err());
-    assert!(
-        ApiArgs::try_parse_from(["api", "deployments", "--confirm", "--body-template"]).is_err()
-    );
     assert!(
         ApiArgs::try_parse_from(["api", "integrations", "--configure", "--body-template"]).is_err()
     );
@@ -4250,4 +4185,22 @@ fn public_incidents_reject_unsupported_dev_mode_without_a_request() {
             .to_string()
             .contains("no longer supports --dev-mode")
     );
+}
+
+#[test]
+fn service_agent_discovery_uses_shared_secret_bearer_not_user_or_api_key() {
+    for (method, path) in [
+        (HttpMethod::Get, "/agent/health"),
+        (HttpMethod::Post, "/agentic/events"),
+    ] {
+        let operation = json!({"parameters": [{"in":"header", "name":"authorization", "schema":{"type":"string"}}]});
+        let auth = operation_auth_metadata(method, path, &operation);
+        assert_eq!(auth["stored_cli_auth"], false);
+        assert_eq!(auth["service_api_key_required"], false);
+        assert_eq!(auth["service_bearer_token_required"], true);
+        let example = example_call(method, path, &operation);
+        assert!(example.contains("--allow-unauthenticated"));
+        assert!(example.contains("authorization=Bearer <service-token>"));
+        assert!(!example.contains("x-api-key"));
+    }
 }

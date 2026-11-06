@@ -21,6 +21,33 @@ pub(in crate::api) fn releases_request(
 ) -> Result<WorkflowRequest, ApiCommandError> {
     let body = request_body(args.body.as_deref(), args.body_file.as_ref(), &args.field)?;
     let project = required_project_arg(args.project.as_deref(), "releases", "--project")?;
+    if args.rename || args.diff {
+        let release_id = required_arg(args.release_id.as_deref(), "--release-id")?;
+        return WorkflowRequest::from_operation(
+            WorkflowOperation::new(
+                if args.rename {
+                    HttpMethod::Patch
+                } else {
+                    HttpMethod::Get
+                },
+                if args.rename {
+                    "projects.renameRelease"
+                } else {
+                    "projects.getReleaseDiff"
+                },
+            )
+            .path_param("project_id", &project)
+            .path_param("release_id", &release_id),
+            if args.diff {
+                vec![("against".to_string(), "active".to_string())]
+            } else {
+                Vec::new()
+            },
+            body,
+            true,
+            vec![format!("pcl releases show {project} {release_id}")],
+        );
+    }
     if args.preview {
         return workflow_operation_with_body(
             WorkflowOperation::new(HttpMethod::Post, "projects.previewRelease")
@@ -178,12 +205,13 @@ pub(in crate::api) fn releases_next_actions(
 
 workflow_definition!(
     "releases",
-    command: "pcl releases <list|show|create|preview|deploy|remove|calldata|backtest-progress|retry-check>",
+    command: "pcl releases <list|show|diff|rename|create|preview|deploy|remove|calldata|backtest-progress|retry-check>",
     description: "List, inspect, create, preview, deploy, check progress, retry failed checks, and remove releases.",
     output: "release data, diffs, check progress, deployment confirmations, or calldata",
-    policy: MachineRaw,
     actions: [
         action!("list", true, "projects.listReleases", "pcl releases list <project-ref>", required: ["<project-ref>"]),
+        action!("rename", true, "projects.renameRelease", "pcl releases rename <project-ref> <release-id> --field name=<name>", required: ["<project-ref>", "<release-id>"], body_template: "release_name"),
+        action!("diff", true, "projects.getReleaseDiff", "pcl releases diff <project-ref> <release-id>", required: ["<project-ref>", "<release-id>"]),
         action!("detail", true, "projects.getRelease", "pcl releases show <project-ref> <release-id>", required: ["<project-ref>", "<release-id>"]),
         action!("preview", true, "projects.previewRelease", "pcl releases preview <project-ref> --body-file release.json", required: ["<project-ref>"], body_template: "release"),
         action!("create", true, "projects.createRelease", "pcl releases create <project-ref> --body-file release.json", required: ["<project-ref>"], body_template: "release"),

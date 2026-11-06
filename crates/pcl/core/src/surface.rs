@@ -1630,7 +1630,7 @@ fn llms_guide() -> Value {
             }
         ],
         "command_surfaces": {
-            "workflows": ["pcl incidents", "pcl projects", "pcl assertions", "pcl account", "pcl contracts", "pcl releases", "pcl deployments", "pcl access", "pcl integrations", "pcl protocol-manager", "pcl events", "pcl search"],
+            "workflows": ["pcl incidents", "pcl projects", "pcl assertions", "pcl account", "pcl contracts", "pcl releases", "pcl access", "pcl integrations", "pcl protocol-manager", "pcl events", "pcl search"],
             "discovery": ["pcl --json --llms", "pcl llms --json", "pcl workflows --json", "pcl schema --json", "pcl api manifest --json", "pcl api list --json", "pcl api inspect --json"],
             "execution": ["pcl api call", "pcl export incidents", "pcl apply", "pcl deploy"],
             "state": ["pcl artifacts", "pcl requests", "pcl jobs"],
@@ -1655,7 +1655,7 @@ fn llms_guide() -> Value {
             "single_envelope_login": "pcl auth login --no-wait --force --json returns status=action_required with device_url, code, device_secret, expires_at, and poll_command.",
             "poll_command": "pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --json",
             "refresh_command": "pcl auth refresh --json rotates the stored refresh token when available; if the refresh token is missing or rejected, it returns a login challenge.",
-            "logout": "pcl auth logout attempts remote logout first, then clears local credentials; pass --local to skip the remote request."
+            "logout": "pcl auth logout clears local credentials only after confirmed revocation. Failures retain credentials and return auth.logout_failed with recovery actions. Use --local only for local cleanup without remote revocation."
         },
         "mutation_safety": {
             "order": ["--body-template", "typed flags", "--field key=value", "--body-file body.json"],
@@ -2048,8 +2048,8 @@ fn workflow_recipes() -> Vec<Value> {
             "steps": [
                 {"command": "pcl doctor --json", "output": "environment readiness"},
                 {"command": "pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --resume --json", "output": "incident JSONL artifact"},
-                {"command": "pcl incidents --incident-id <incident-id> --json", "output": "incident detail"},
-                {"command": "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --json", "output": "transaction trace"},
+                {"command": "pcl incidents --project <project-id> --incident-id <incident-id> --include-traces --output context.json --json", "output": "incident detail and all transaction trace responses with per-fetch completeness"},
+                {"command": "pcl incidents --project <project-id> --incident-id <incident-id> --tx-id <tx-id> --json", "output": "transaction trace"},
                 {"command": "pcl requests list --limit 20 --json", "output": "API request IDs and status history"}
             ],
         }),

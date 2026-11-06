@@ -44,7 +44,6 @@ workflow_definition!(
     command: "pcl account [--me|--accept-terms|--logout]",
     description: "Inspect authenticated web user state and perform onboarding actions.",
     output: "current user account state, terms acceptance result, or logout result",
-    policy: MachineRaw,
     actions: [
         action!("me", true, "web.auth.me", "pcl account"),
         action!("accept_terms", true, "web.auth.acceptTerms", "pcl account --accept-terms", body_template: "empty_object"),

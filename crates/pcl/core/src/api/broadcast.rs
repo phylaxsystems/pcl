@@ -275,6 +275,17 @@ fn tx_value(outcome: &TxOutcome) -> Value {
     })
 }
 
+/// Follow-ups after a release deploys, shared with `pcl deploy`.
+pub(crate) fn release_next_actions(
+    project: impl std::fmt::Display,
+    release_id: impl std::fmt::Display,
+) -> Vec<String> {
+    vec![
+        format!("pcl releases show {project} {release_id}"),
+        format!("pcl releases list {project}"),
+    ]
+}
+
 fn broadcast_envelope(action: &str, data: Value, next_actions: Vec<String>) -> Value {
     crate::output::with_envelope_metadata(json!({
         "status": "ok",
@@ -511,10 +522,7 @@ impl ApiArgs {
             parse_response("deploy-calldata", &calldata_result.body)?;
         validate_release_deploy_calldata(&calldata)?;
 
-        let next_actions = vec![
-            format!("pcl releases show {project} {release_id}"),
-            format!("pcl deployments --project {project}"),
-        ];
+        let next_actions = release_next_actions(project, release_id);
 
         if calldata.is_noop {
             confirm_mutation(
