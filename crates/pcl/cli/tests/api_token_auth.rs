@@ -7,125 +7,107 @@ use std::{
     process::Command,
 };
 
-#[test]
-fn ensure_uses_injected_token_without_creating_a_session() {
-    assert_injected_validation("ensure");
-}
+const TOKEN: &str = "cl_api_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const CURRENT: &str = "/api/v1/auth/api-tokens/current";
 
-#[test]
-fn status_validates_injected_token_without_a_saved_session() {
-    assert_injected_validation("status");
-}
-
-fn assert_injected_validation(command: &str) {
-    let mut server = mockito::Server::new();
-    let token = format!("cl_api_{}", "a".repeat(43));
-    let check = server.mock("GET", "/api/v1/auth/api-tokens/current")
-        .match_header("authorization", format!("Bearer {token}").as_str())
-        .with_status(200).with_header("content-type", "application/json")
-        .with_body(r#"{"authenticated":true,"project_id":"project","scope":"invalidations:read","expires_at":"2099-01-01"}"#).create();
+// Every case gets an isolated credential/config directory and checks that the
+// credential appears in neither output nor persistent interactive auth state.
+fn run(server: &mockito::Server, args: &[&str], token: Option<&str>) -> Value {
     let tmp = tempfile::tempdir().unwrap();
     let file = tmp.path().join("credential.json");
-    fs::write(
-        &file,
-        serde_json::to_vec(&json!({"platform_url":server.url(),"token":token})).unwrap(),
-    )
-    .unwrap();
+    if let Some(token) = token {
+        fs::write(
+            &file,
+            serde_json::to_vec(&json!({
+                "platform_url": server.url(), "token": token
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
-        .args(["auth", command, "--json"])
+        .args(args)
+        .args(["--json", "--config-dir"])
+        .arg(tmp.path().join("config"))
         .env("PCL_API_TOKEN_FILE", &file)
         .env("PCL_API_URL", server.url())
         .env("PCL_AUTH_URL", server.url())
-        .arg("--config-dir")
-        .arg(tmp.path().join("config"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
         .output()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
     let envelope: Value = serde_json::from_slice(if output.status.success() {
         &output.stdout
     } else {
         &output.stderr
     })
     .unwrap();
-    assert_eq!(envelope["status"], "ok");
-    assert_eq!(envelope["data"]["authenticated"], true);
-    assert!(!String::from_utf8_lossy(&output.stdout).contains(&token));
-    assert!(!String::from_utf8_lossy(&output.stderr).contains(&token));
+    assert_eq!(output.status.success(), envelope["status"] == "ok");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains(TOKEN));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains(TOKEN));
     let config = fs::read_to_string(tmp.path().join("config/config.toml")).unwrap_or_default();
-    assert!(!config.contains(&token));
+    assert!(!config.contains(TOKEN));
     assert!(!config.contains("[auth]"));
-    check.assert();
+    envelope
+}
+
+#[test]
+fn auth_commands_validate_injected_token_without_a_saved_session() {
+    for command in ["ensure", "status", "login", "refresh"] {
+        let mut server = mockito::Server::new();
+        let check = server.mock("GET", CURRENT)
+            .match_header("authorization", format!("Bearer {TOKEN}").as_str())
+            .with_status(200).with_header("content-type", "application/json")
+            .with_body(r#"{"authenticated":true,"project_id":"project","scope":"invalidations:read","expires_at":"2099-01-01"}"#).create();
+        let envelope = run(&server, &["auth", command], Some(TOKEN));
+        assert_eq!(envelope["status"], "ok");
+        assert_eq!(envelope["data"]["authenticated"], true);
+        check.assert();
+    }
 }
 
 #[test]
 fn bad_token_file_never_starts_device_login() {
     let mut server = mockito::Server::new();
     let login = server.mock("GET", mockito::Matcher::Any).expect(0).create();
-    let tmp = tempfile::tempdir().unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
-        .args(["auth", "ensure", "--json"])
-        .env("PCL_API_TOKEN_FILE", tmp.path().join("missing"))
-        .env("PCL_API_URL", server.url())
-        .env("PCL_AUTH_URL", server.url())
-        .arg("--config-dir")
-        .arg(tmp.path().join("config"))
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let envelope: Value = serde_json::from_slice(if output.status.success() {
-        &output.stdout
-    } else {
-        &output.stderr
-    })
-    .unwrap();
-    assert_eq!(envelope["error"]["code"], "auth.api_token_invalid");
+    for token in [None, Some("malformed")] {
+        assert_eq!(
+            run(&server, &["auth", "ensure"], token)["error"]["code"],
+            "auth.api_token_invalid"
+        );
+    }
     login.assert();
 }
 
 #[test]
 fn rejected_or_redirected_token_never_falls_back_to_login() {
-    for status in [401, 302] {
-        let mut server = mockito::Server::new();
-        let token = format!("cl_api_{}", "b".repeat(43));
-        let check = server
-            .mock("GET", "/api/v1/auth/api-tokens/current")
-            .match_header("authorization", format!("Bearer {token}").as_str())
-            .with_status(status)
-            .with_header("location", &format!("{}/unexpected", server.url()))
-            .expect(1)
-            .create();
-        let fallback = server.mock("GET", "/unexpected").expect(0).create();
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("credential.json");
-        fs::write(
-            &file,
-            serde_json::to_vec(&json!({"platform_url":server.url(),"token":token})).unwrap(),
-        )
-        .unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
-            .args(["auth", "ensure", "--json", "--config-dir"])
-            .arg(tmp.path().join("config"))
-            .env("PCL_API_TOKEN_FILE", &file)
-            .env("PCL_API_URL", server.url())
-            .env("PCL_AUTH_URL", server.url())
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-        let envelope: Value = serde_json::from_slice(if output.status.success() {
-            &output.stdout
-        } else {
-            &output.stderr
-        })
-        .unwrap();
-        assert_eq!(envelope["error"]["code"], "auth.api_token_invalid");
-        assert!(!String::from_utf8_lossy(&output.stdout).contains(&token));
-        assert!(!String::from_utf8_lossy(&output.stderr).contains(&token));
-        check.assert();
-        fallback.assert();
+    let project = "11111111-1111-4111-8111-111111111111";
+    for (args, path, code) in [
+        (
+            vec!["auth", "ensure"],
+            CURRENT.to_string(),
+            "auth.api_token_invalid",
+        ),
+        (
+            vec!["download", "--project-id", project],
+            format!("/api/v1/projects/{project}"),
+            "download.api_failed",
+        ),
+    ] {
+        for status in [401, 302] {
+            let mut server = mockito::Server::new();
+            let check = server
+                .mock("GET", path.as_str())
+                .match_query(mockito::Matcher::Any)
+                .match_header("authorization", format!("Bearer {TOKEN}").as_str())
+                .with_status(status)
+                .with_header("location", &format!("{}/unexpected", server.url()))
+                .expect(1)
+                .create();
+            let fallback = server.mock("GET", "/unexpected").expect(0).create();
+            assert_eq!(run(&server, &args, Some(TOKEN))["error"]["code"], code);
+            check.assert();
+            fallback.assert();
+        }
     }
 }
 
@@ -133,7 +115,6 @@ fn rejected_or_redirected_token_never_falls_back_to_login() {
 fn incidents_use_injected_token_and_do_not_refresh_after_rejection() {
     for status in [200, 401] {
         let mut server = mockito::Server::new();
-        let token = format!("cl_api_{}", "c".repeat(43));
         let project = "11111111-1111-4111-8111-111111111111";
         let request = server
             .mock(
@@ -141,7 +122,7 @@ fn incidents_use_injected_token_and_do_not_refresh_after_rejection() {
                 format!("/api/v1/views/projects/{project}/invalidations").as_str(),
             )
             .match_query(mockito::Matcher::Any)
-            .match_header("authorization", format!("Bearer {token}").as_str())
+            .match_header("authorization", format!("Bearer {TOKEN}").as_str())
             .with_status(status)
             .with_header("content-type", "application/json")
             .with_body(if status == 200 {
@@ -155,44 +136,15 @@ fn incidents_use_injected_token_and_do_not_refresh_after_rejection() {
             .mock("POST", "/api/v1/auth/refresh")
             .expect(0)
             .create();
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("credential.json");
-        fs::write(
-            &file,
-            serde_json::to_vec(&json!({"platform_url":server.url(),"token":token})).unwrap(),
-        )
-        .unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
-            .args([
-                "incidents",
-                "--project-id",
-                project,
-                "--json",
-                "--config-dir",
-            ])
-            .arg(tmp.path().join("config"))
-            .env("PCL_API_TOKEN_FILE", &file)
-            .env("PCL_API_URL", server.url())
-            .output()
-            .unwrap();
-        assert_eq!(
-            output.status.success(),
-            status == 200,
-            "{}",
-            String::from_utf8_lossy(&output.stdout)
+        let envelope = run(
+            &server,
+            &["incidents", "--project-id", project],
+            Some(TOKEN),
         );
-        let envelope: Value = serde_json::from_slice(if output.status.success() {
-            &output.stdout
-        } else {
-            &output.stderr
-        })
-        .unwrap();
         assert_eq!(
             envelope["status"],
             if status == 200 { "ok" } else { "error" }
         );
-        assert!(!String::from_utf8_lossy(&output.stdout).contains(&token));
-        assert!(!String::from_utf8_lossy(&output.stderr).contains(&token));
         request.assert();
         refresh.assert();
     }
