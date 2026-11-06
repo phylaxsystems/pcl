@@ -1,0 +1,73 @@
+{
+  "checked_at_utc": "2026-11-06T03:29:00Z",
+  "validation_mode": "production read-only, fresh config directories, no credentials",
+  "pinned_dapp_revision": "9eec47730154fe9ac5fcf8d9721b5fece449bf18",
+  "pinned_api_version": "25.2.0",
+  "pinned_operation_count": 125,
+  "hosts": {
+    "app.phylax.systems": {
+      "served_api_version": "23.3.0",
+      "advertised_operation_count": 130,
+      "missing_pinned_operation_ids": [],
+      "additional_operation_ids": [
+        "assertionAdopters.removeAssertionsCalldata",
+        "projects.confirmDeployment",
+        "projects.removeAssertionsCalldata",
+        "projects.removeAssertionsInfo",
+        "views.projectDeployments.getProjectDeployments"
+      ],
+      "invalidation_list": {
+        "status": 200,
+        "request_id": "req_mw4ezdat_f9d32bcdc0de0360",
+        "fetched_at": "2026-11-06T03:27:56.302311500+00:00",
+        "item_count": 1
+      }
+    },
+    "ethereum.phylax.systems": {
+      "served_api_version": "23.3.0",
+      "advertised_operation_count": 130,
+      "missing_pinned_operation_ids": [],
+      "additional_operation_ids": [
+        "assertionAdopters.removeAssertionsCalldata",
+        "projects.confirmDeployment",
+        "projects.removeAssertionsCalldata",
+        "projects.removeAssertionsInfo",
+        "views.projectDeployments.getProjectDeployments"
+      ],
+      "invalidation_list": {
+        "status": 200,
+        "request_id": "req_mw4eze1l_d406731758ec0763",
+        "fetched_at": "2026-11-06T03:27:55.803715875+00:00",
+        "item_count": 0
+      }
+    },
+    "linea.phylax.systems": {
+      "served_api_version": "23.3.0",
+      "advertised_operation_count": 130,
+      "missing_pinned_operation_ids": [],
+      "additional_operation_ids": [
+        "assertionAdopters.removeAssertionsCalldata",
+        "projects.confirmDeployment",
+        "projects.removeAssertionsCalldata",
+        "projects.removeAssertionsInfo",
+        "views.projectDeployments.getProjectDeployments"
+      ],
+      "invalidation_list": {
+        "status": 200,
+        "request_id": "req_mw4ezdat_f9d32bcdc0de0360",
+        "fetched_at": "2026-11-06T03:27:55.323654097+00:00",
+        "item_count": 1
+      }
+    }
+  },
+  "app_projects": {
+    "status": 200,
+    "request_id": "req_mw4f0og6_cf44230367223d4c",
+    "fetched_at": "2026-11-06T03:28:55.998001583+00:00"
+  },
+  "app_resolve": {
+    "status": 200,
+    "request_id": "req_mw4f0sap_8f715f1fc7c630bf",
+    "fetched_at": "2026-11-06T03:29:00.718300294+00:00"
+  }
+}

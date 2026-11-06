@@ -162,10 +162,9 @@ pub(in crate::api) fn projects_request(
 
 workflow_definition!(
     "projects",
-    command: "pcl projects <list|mine|show|saved|create|update|delete|save|unsave|resolve|widget>",
+    command: "pcl projects <list|mine|show|saved|create|update|delete|save|unsave|resolve|widget|upload-audit>",
     description: "List, inspect, create, update, save, unsave, resolve, widget, and delete projects.",
     output: "project explorer, your projects, project detail, saved projects, widget, or mutation result",
-    policy: MachineRaw,
     actions: [
         action!("explorer", false, "views.projectsExplorer.getProjectsExplorer",
             "pcl projects list --limit 10"
@@ -179,6 +178,7 @@ workflow_definition!(
         action!("save", true, "projects.saveProject", "pcl projects save <project-ref>", required: ["<project-ref>"], body_template: "project_saved"),
         action!("unsave", true, "projects.unsaveProject", "pcl projects unsave <project-ref>", required: ["<project-ref>"], body_template: "project_saved"),
         action!("resolve", false, "projects.resolveProjectRef", "pcl projects resolve <project-ref>", required: ["<project-ref>"]),
+        action!("upload_audit", true, "projects.mintAuditUploadUrl", "pcl projects upload-audit <project-ref> report.pdf", required: ["<project-ref>", "<file>"]),
         action!("widget", true, "projects.getProjectWidget", "pcl projects widget <project-ref>", required: ["<project-ref>"]),
     ],
 );

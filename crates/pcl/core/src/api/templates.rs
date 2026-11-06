@@ -1,6 +1,5 @@
 use super::{
     AccessArgs,
-    DeploymentsArgs,
     IntegrationsArgs,
     ProjectsArgs,
     ProtocolManagerArgs,
@@ -49,6 +48,9 @@ pub(super) fn project_body_template(args: &ProjectsArgs) -> Value {
 }
 
 pub(super) fn release_body_template(args: &ReleasesArgs) -> Value {
+    if args.rename {
+        return body_template("release_name");
+    }
     if args.deploy {
         return body_template("release_deploy");
     }
@@ -64,13 +66,6 @@ pub(super) fn release_body_template(args: &ReleasesArgs) -> Value {
         return body_template("empty_object");
     }
     body_template("release")
-}
-
-pub(super) fn deployment_body_template(args: &DeploymentsArgs) -> Value {
-    if !args.confirm {
-        return body_template("empty_object");
-    }
-    body_template("deployment_confirmation")
 }
 
 pub(super) fn access_body_template(args: &AccessArgs) -> Value {
@@ -193,6 +188,7 @@ pub(super) fn body_template(kind: &str) -> Value {
             })
         }
         "role_update" => json!({ "role": "viewer" }),
+        "release_name" => json!({"name": "Release name"}),
         "release_deploy" => {
             json!({
                 "chainId": 1,
@@ -203,23 +199,6 @@ pub(super) fn body_template(kind: &str) -> Value {
             json!({
                 "chainId": 1,
                 "txHash": "0x..."
-            })
-        }
-        "deployment_confirmation" => {
-            json!({
-                "tx_hash": "0x...",
-                "chainId": 1,
-                "environment": "staging",
-                "assertions": [
-                    {
-                        "assertion_id": "0x...",
-                        "assertion_adopters": [
-                            {
-                                "id": "<adopter-id>"
-                            }
-                        ]
-                    }
-                ]
             })
         }
         "slack" => {

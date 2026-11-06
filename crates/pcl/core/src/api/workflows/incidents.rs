@@ -9,13 +9,23 @@ use super::{
     first_string_field,
     push_query,
     required_arg,
-    workflow_operation_with_body,
 };
 use serde_json::Value;
 
 pub(in crate::api) fn incidents_request(
     args: &IncidentsArgs,
 ) -> Result<WorkflowRequest, ApiCommandError> {
+    if args.include_traces
+        && (args.incident_id.is_none()
+            || args.tx_id.is_some()
+            || args.retry_trace
+            || args.stats
+            || args.all)
+    {
+        return Err(ApiCommandError::InvalidWorkflow {
+            message: "--include-traces requires incident detail and cannot be combined with --tx-id, --retry-trace, --stats, or --all".to_string(),
+        });
+    }
     if args.dev_mode.is_some() {
         return Err(ApiCommandError::InvalidWorkflowWithActions {
             message: "OpenAPI 22 no longer supports --dev-mode for public incidents".to_string(),
@@ -48,14 +58,16 @@ pub(in crate::api) fn incidents_request(
     push_query(&mut query, "limit", args.limit);
 
     if let Some(incident_id) = &args.incident_id {
+        push_query(&mut query, "project_id", args.project_id.as_deref());
         if args.retry_trace {
             let tx_id = required_arg(args.tx_id.as_deref(), "--tx-id")?;
-            return workflow_operation_with_body(
+            return WorkflowRequest::from_operation(
                 WorkflowOperation::new(HttpMethod::Post, "retryTrace")
                     .path_param("invalidation_id", incident_id)
                     .path_param("invalidating_transaction_id", &tx_id),
-                true,
+                query,
                 Some("{}".to_string()),
+                true,
                 vec![format!(
                     "pcl incidents --incident-id {incident_id} --tx-id {tx_id}"
                 )],
@@ -97,6 +109,22 @@ pub(in crate::api) fn incidents_request(
     }
 
     if let Some(project_id) = &args.project_id {
+        if args.latest {
+            return WorkflowRequest::from_operation(
+                WorkflowOperation::new(
+                    HttpMethod::Get,
+                    "views.projectInvalidations.getLatestRecentInvalidation",
+                )
+                .path_param("projectId", project_id),
+                vec![(
+                    "fromDate".to_string(),
+                    required_arg(args.from_date.as_deref(), "--from-date")?,
+                )],
+                None,
+                true,
+                vec![format!("pcl incidents --project {project_id} --limit 5")],
+            );
+        }
         if args.stats {
             return WorkflowRequest::from_operation(
                 WorkflowOperation::new(HttpMethod::Get, "getInvalidationStats")
@@ -109,6 +137,8 @@ pub(in crate::api) fn incidents_request(
                 )],
             );
         }
+        push_query(&mut query, "sortBy", args.sort_by.as_deref());
+        push_query(&mut query, "outcome", args.outcome.as_deref());
         push_query(&mut query, "assertionId", args.assertion_id.as_deref());
         push_query(
             &mut query,
@@ -177,6 +207,7 @@ pub(in crate::api) fn incidents_next_actions(
         {
             return vec![
                 format!("pcl incidents --incident-id {incident_id} --tx-id {tx_id}"),
+                format!("pcl incidents --incident-id {incident_id} --include-traces"),
                 "pcl incidents --limit 5".to_string(),
             ];
         }
@@ -205,13 +236,13 @@ workflow_definition!(
     command: "pcl incidents [--project-id <id>] [--incident-id <id>] [--stats] [--limit <n>] [--all --output <file>]",
     description: "List public incidents, project incidents, fetch all incident pages, inspect incident detail, incident stats, or incident trace.",
     output: "incident data from /views/public/invalidations, /views/projects/{projectId}/invalidations, /views/invalidations/{invalidationId}, or /projects/{project_id}/invalidations/stats",
-    policy: MachineRaw,
     actions: [
         action!("list_public", false, "views.publicInvalidations.getPublicInvalidations", "pcl incidents --limit 5", optional: ["--page", "--limit", "--network", "--sort", "--all", "--max-pages", "--output"]),
-        action!("list_project", true, "views.projectInvalidations.getProjectInvalidations", "pcl incidents --project <project-ref> --all --limit 50 --output incidents.json", required: ["--project"], optional: ["--page", "--limit", "--assertion-id", "--adopter-id", "--environment", "--from", "--to", "--all", "--max-pages", "--output"]),
+        action!("list_project", true, "views.projectInvalidations.getProjectInvalidations", "pcl incidents --project <project-ref> --all --limit 50 --output incidents.json", required: ["--project"], optional: ["--page", "--limit", "--assertion-id", "--assertion-adopter-id", "--environment", "--from-date", "--to-date", "--sort-by", "--outcome", "--all", "--max-pages", "--output"]),
+        action!("latest", true, "views.projectInvalidations.getLatestRecentInvalidation", "pcl incidents --project <project-ref> --latest --from-date <iso-date>", required: ["--project", "--latest", "--from-date"]),
         action!("stats", true, "getInvalidationStats", "pcl incidents --project <project-ref> --stats", required: ["--project"]),
-        action!("detail", true, "views.invalidationDetail.getInvalidationDetail", "pcl incidents --incident-id <incident-id>", required: ["--incident-id"]),
-        action!("trace", true, "views.invalidationTrace.getInvalidationTrace", "pcl incidents --incident-id <incident-id> --tx-id <invalidating-transaction-id>", required: ["--incident-id", "--tx-id"]),
+        action!("detail", true, "views.invalidationDetail.getInvalidationDetail", "pcl incidents --incident-id <incident-id>", required: ["--incident-id"], optional: ["--project", "--include-traces", "--output"]),
+        action!("trace", true, "views.invalidationTrace.getInvalidationTrace", "pcl incidents --incident-id <incident-id> --tx-id <invalidating-transaction-id>", required: ["--incident-id", "--tx-id"], optional: ["--project", "--output"]),
         action!("retry_trace", true, "retryTrace", "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace", required: ["--incident-id", "--tx-id"], body_template: "empty_object"),
     ],
 );

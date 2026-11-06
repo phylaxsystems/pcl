@@ -1,4 +1,4 @@
-.PHONY: ci fmt-check clippy full-check release-check test doc diff-check agent-smoke audit regenerate regenerate-dev
+.PHONY: ci fmt-check clippy full-check release-check test doc diff-check agent-smoke audit regenerate regenerate-pinned regenerate-dev
 
 ci: fmt-check clippy full-check release-check test doc agent-smoke diff-check
 
@@ -30,7 +30,23 @@ agent-smoke:
 audit:
 	cargo deny --all-features check advisories
 
-# Regenerate dapp-api-client from latest OpenAPI spec
+# Spec the committed client was generated from: credible-layer-dapp
+# packages/dapp-api/openapi.json (OpenAPI 25.2.0). Bump both together.
+DAPP_SPEC_REV ?= 9eec47730154fe9ac5fcf8d9721b5fece449bf18
+DAPP_SPEC_SHA256 ?= e730b42a07e5639226fdf9a68642a9455d99de5c4c2d4e272f9f77e89cbde075
+DAPP_SPEC_FILE := crates/dapp-api-client/openapi/spec.json
+
+# Regenerate dapp-api-client from the pinned dapp revision (reproducible; needs gh auth)
+regenerate-pinned:
+	mkdir -p $(dir $(DAPP_SPEC_FILE))
+	gh api -H "Accept: application/vnd.github.raw" "repos/phylaxsystems/credible-layer-dapp/contents/packages/dapp-api/openapi.json?ref=$(DAPP_SPEC_REV)" > $(DAPP_SPEC_FILE)
+	echo "$(DAPP_SPEC_SHA256)  $(DAPP_SPEC_FILE)" | shasum -a 256 -c
+	# Force off: a forced build refetches from the live API over the verified spec.
+	cd crates/dapp-api-client && FORCE_SPEC_REGENERATE=false cargo build --features regenerate
+	@echo "Client regenerated! Review changes with: git diff crates/dapp-api-client/src/generated/"
+
+# Regenerate dapp-api-client from whatever production serves now (not pinned;
+# can revert the committed client to an older spec)
 regenerate:
 	@echo "Regenerating dapp-api-client from latest OpenAPI spec..."
 	cd crates/dapp-api-client && FORCE_SPEC_REGENERATE=true cargo build --features regenerate

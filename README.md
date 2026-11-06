@@ -94,7 +94,7 @@ pcl projects show <project-ref>
 pcl assertions --project-id <project-ref>
 pcl incidents --project-id <project-ref> --environment production
 pcl releases list <project-ref>
-pcl deployments --project <project-ref>
+pcl releases show <project-ref> <release-id>
 ```
 
 When you need a payload for a write, ask the CLI for the shape before sending it:
@@ -123,7 +123,7 @@ pcl api coverage --json
 | `pcl apply`, `pcl verify` | Structured assertion workflow commands for dry-runs, verification, and deployment prep |
 | `pcl deploy` | End-to-end deploy: project, protocol manager, release, on-chain activation, confirmation |
 | `pcl incidents`, `pcl projects`, `pcl assertions` | Natural platform workflow commands |
-| `pcl account`, `pcl contracts`, `pcl releases`, `pcl deployments` | Account, contract, release, and deployment workflows |
+| `pcl account`, `pcl contracts`, `pcl releases` | Account, contract, and release workflows |
 | `pcl access`, `pcl integrations`, `pcl protocol-manager`, `pcl events`, `pcl search` | Access control, integrations, protocol manager transfer, audit, and search workflows |
 | `pcl doctor`, `pcl whoami` | Diagnose local/API readiness, target auth capability, and identity state |
 | `pcl workflows`, `pcl schema` | Workflow recipes and command/action schemas; agents should add `--json` |
@@ -265,7 +265,7 @@ pcl assertions --adopter-address 0x... --network 1 --json
 pcl account --json
 pcl contracts --project <project-ref> --json
 pcl releases list <project-ref> --json
-pcl deployments --project <project-ref> --json
+pcl releases show <project-ref> <release-id> --json
 pcl access members <project-ref> --json
 pcl integrations --project <project-ref> --provider slack --json
 pcl protocol-manager --project <project-ref> --pending-transfer --json
@@ -276,13 +276,17 @@ pcl search --query settler --json
 Contract membership follows releases: include a contract with at least one assertion
 in the applicable active release using `pcl releases create`, `preview`, and `deploy`.
 Inspect membership with `pcl contracts --project <project-ref>`; inspect one contract
-with `--adopter-id`. Use `pcl releases remove` for release removal and
-`pcl contracts --remove-calldata` for on-chain assertion-removal calldata.
+with `--adopter-id`. Use `pcl releases remove` to confirm a release removal and
+`pcl releases calldata remove` for that release's on-chain removal calldata.
+Confirm a release deployment with `pcl releases deploy`. Inspect release state
+with `pcl releases list` and `pcl releases show`.
 
-The legacy `contracts --assign-project`, `--unassigned`, and `--remove` actions
-and their `--manager`, `--body`, `--field`, `--body-file`, and `--body-template`
-options have been removed. Existing scripts must move to release workflows;
-these obsolete flags now fail locally in both human and JSON modes.
+`pcl deployments` (including `--confirm`), `pcl assertions --remove-info`,
+`pcl assertions --remove-calldata`, and `pcl contracts --remove-calldata`
+(with `--aa-address`, `--assertion-id`, `--network`, and `--environment`) have
+been removed. Those flags fail locally in both human and JSON modes. The
+legacy `contracts --assign-project`, `--unassigned`, and `--remove` actions
+were removed earlier; project membership follows active releases.
 Generic `pcl api` debugging remains available.
 
 ### Mutation Rules
@@ -308,6 +312,53 @@ For complex bodies:
 ### Raw API Fallback
 
 Raw calls are an escape hatch for debugging, API parity checks, internal/service endpoints, browser-session bridge investigation, and new endpoint exploration before a workflow is promoted.
+### Complete invalidation context
+
+```bash
+pcl incidents --project <project-ref> --incident-id <incident-id> --include-traces --output context.json --json
+pcl incidents --project <project-ref> --outcome prevented --sort-by createdAt --json
+pcl incidents --project <project-ref> --latest --from-date 2026-11-01T00:00:00Z --json
+```
+
+Detail remains under `data` without projecting fields. `trace_context.transactions[]`
+contains each invalidating transaction ID and its complete trace response or error
+with request provenance. This preserves decoded calls/errors, structured traces,
+activities, payload budgets, full transaction/block/replay input, trace attempts,
+and API metadata, including fields added by the server later. Numeric strings
+remain strings. `--output` also works for individual detail and trace requests.
+
+`trace_context.complete` means every trace **request** succeeded, not that every
+trace finished generating. Inspect trace status, errors, retry eligibility,
+`payload_budget`, and nullable legacy fields before drawing conclusions. Partial
+fetches preserve successful responses and expose `failed_fetches`, per-transaction
+errors, and a warning; the command still succeeds because detail was retrieved.
+Use `--tx-id` to retry a failed read; `--retry-trace` is a separate server mutation.
+A project argument is forwarded as context and does not grant access.
+
+### New API journeys and files
+
+```bash
+pcl releases diff <project-ref> <release-id> --json
+pcl releases rename <project-ref> <release-id> --field name='Release name' --json
+pcl projects upload-audit <project-ref> report.pdf --json
+pcl api inspect projects.submitAudit --json
+pcl api inspect views.auditLog.exportAuditLogPdf --json
+pcl api call post /views/projects/<project-id>/audit-log/pdf --body-file export.json --output-raw audit-log.pdf --json
+```
+
+Audit upload validates a PDF up to 50 MB, mints a signed URL, and uploads without
+forwarding the platform token. It returns `auditReportRef` and `storagePath` for
+`projects.submitAudit`; uploading alone does not submit an audit. Storage tokens
+are omitted from successful output. `--output-raw` saves exact response bytes on
+HTTP success and returns file metadata; HTTP errors leave an existing file intact.
+
+Audit submission/replacement/withdrawal, reviewables, operational risk, summaries,
+and circuit-breaker reset preparation/recording use `api inspect` plus `api call`
+where no workflow alternative exists. Inspect the live request schema and required
+roles before a mutation. Service `/agent/*` and `/agentic/*` operations require
+service credentials, not a normal user's CLI session. See the [API inventory](qa/api-inventory.md)
+and [journey validation tracker](qa/user-stories.md) for scope and remaining checks.
+
 For normal product work, inspect `workflow_alternatives` and use the advertised workflow command instead of `pcl api call`.
 Call any endpoint below `/api/v1`. Query strings and repeated `--query` flags are both valid.
 Known public raw paths do not attach stored tokens by default; pass `--allow-unauthenticated` when you need to force no auth on another public endpoint.

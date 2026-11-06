@@ -70,6 +70,9 @@ let config = Config::new("https://custom-api.example.com/api/v1".to_string());
 
 The client code (`src/generated/client.rs`) is auto-generated from the dApp API's OpenAPI specification and is committed to version control. This ensures reliable builds and makes API changes visible in pull requests.
 
+The committed client targets OpenAPI **25.2.0**, dapp revision
+`9eec47730154fe9ac5fcf8d9721b5fece449bf18`. The Makefile pins the revision and spec checksum.
+
 #### When to Regenerate
 
 Regenerate the client when:
@@ -82,7 +85,12 @@ Regenerate the client when:
 The easiest way is using the Makefile from the repository root:
 
 ```bash
-# Regenerate from production API
+# Reproduce the committed client from the pinned dapp revision
+# (DAPP_SPEC_REV / DAPP_SPEC_SHA256 in the Makefile; needs `gh` auth)
+make regenerate-pinned
+
+# Regenerate from whatever production serves now. This is not pinned: if
+# production lags the pinned revision, it reverts the client to the older spec.
 make regenerate
 
 # Regenerate from development API (localhost:3000)

@@ -12,12 +12,21 @@ All notable user-facing changes should be recorded here.
 
 ### Added
 
+- Collect full invalidation detail and every transaction trace with `--include-traces`, preserving per-fetch errors, request IDs, metadata and numeric strings. Save detail/trace context with `--output`.
+- Add project invalidation filters/latest, release diff/rename, audit PDF upload, and binary response output via `api call --output-raw`.
+- Advertise shared-secret bearer authentication for service agent endpoints.
+
 - `pcl deploy` warns when the assertions it is about to release use the V2 spec but the target does not support it (the `app.phylax.systems` platform, or a Linea chain). The warning names the files and the V2 triggers/precompiles found in them, prints before the protocol-manager step and again at the end, and appears in `--json` output as `data.warnings`. It never blocks a deploy.
 - `pcl auth login` warns when logging in to `app.phylax.systems` that the platform runs the V1 assertion spec and assertions must not be written against V2. Machine output carries it as a `warnings` array on the login envelope.
 
 ### Breaking changes
 
-- Removed manual contract assignment: `pcl contracts --assign-project`, `--unassigned`, and `--remove`, along with their dedicated body and manager flags. Project membership now follows active releases; use `pcl releases create`, `preview`, and `deploy`. Contract listing/detail, release removal, assertion-removal calldata, and generic raw API debugging remain supported.
+- Removed `pcl deployments`, including project deployment listing and `--confirm`. Inspect releases with `pcl releases list` and `pcl releases show`. Confirm a release deployment with `pcl releases deploy`.
+- Removed `pcl assertions --remove-info` and `--remove-calldata`. Assertion listing, detail, registered lookup, and adopter lookup remain.
+- Removed `pcl contracts --remove-calldata` and the `--aa-address`, `--assertion-id`, `--network`, and `--environment` options that existed only for adopter-removal calldata. Contract listing and detail remain. Use `pcl releases calldata remove` for release removal calldata and `pcl releases remove` to confirm removal.
+- Regenerated the API client from credible-layer-dapp revision `9eec47730154fe9ac5fcf8d9721b5fece449bf18` (OpenAPI 25.2.0), which removes those endpoints.
+
+- Removed manual contract assignment: `pcl contracts --assign-project`, `--unassigned`, and `--remove`, along with their dedicated body and manager flags. Project membership now follows active releases; use `pcl releases create`, `preview`, and `deploy`. Contract listing/detail, release removal, release removal calldata, and generic raw API debugging remain supported.
 
 - Removed TOON output entirely: the `--toon` flag, the `--format toon` alias, and the TOON envelope renderer are gone. `--json` is the only machine output mode; agent guidance, manifest examples, and `next_actions` hints now use `--json`.
 

@@ -14,6 +14,7 @@ pub(in crate::api) struct ApiResponsePayload {
     pub(in crate::api) request_id: Option<String>,
     pub(in crate::api) headers: Map<String, Value>,
     pub(in crate::api) body: Value,
+    pub(in crate::api) raw_bytes: Vec<u8>,
 }
 
 pub(crate) struct GeneratedErrorDetails {
@@ -106,6 +107,7 @@ pub(in crate::api) async fn read_api_response(
         request_id,
         headers,
         body,
+        raw_bytes: bytes.to_vec(),
     })
 }
 
