@@ -489,6 +489,8 @@ pub enum PlatformError {
 /// Errors that can occur during authentication operations
 #[derive(Error, Debug)]
 pub enum AuthError {
+    #[error("Injected API token: {0}")]
+    ApiToken(String),
     /// Error when the auth code request fails
     #[error(
         "Authentication request failed. Please check your connection and try again.\nError: {0}"

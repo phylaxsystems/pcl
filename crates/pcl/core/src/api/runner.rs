@@ -1112,7 +1112,7 @@ impl ApiArgs {
         config: &mut CliConfig,
         cli_args: &CliArgs,
     ) -> Result<bool, ApiCommandError> {
-        if !self.refresh_after_401.get() {
+        if crate::api_token::configured() || !self.refresh_after_401.get() {
             return Ok(false);
         }
 
@@ -1552,6 +1552,12 @@ impl ApiArgs {
         if self.allow_unauthenticated || !require_auth {
             return Ok(());
         }
+        if crate::api_token::header(&self.resolved_api_url())
+            .map_err(ApiCommandError::PlatformMismatch)?
+            .is_some()
+        {
+            return Ok(());
+        }
         let Some(auth) = &config.auth else {
             return Err(ApiCommandError::NoAuthToken);
         };
@@ -1636,7 +1642,13 @@ impl ApiArgs {
             HeaderValue::from_static("1"),
         );
 
-        if attach_auth && let Some(auth) = &config.auth {
+        if attach_auth && crate::api_token::configured() {
+            if let Some(value) = crate::api_token::header(&self.resolved_api_url())
+                .map_err(ApiCommandError::PlatformMismatch)?
+            {
+                headers.insert(reqwest::header::AUTHORIZATION, value);
+            }
+        } else if attach_auth && let Some(auth) = &config.auth {
             match crate::auth::ensure_credential_platform(config, &self.resolved_api_url()) {
                 Err(error) if require_auth => {
                     return Err(ApiCommandError::PlatformMismatch(error));
@@ -1666,6 +1678,11 @@ impl ApiArgs {
         }
 
         reqwest::Client::builder()
+            .redirect(if crate::api_token::configured() {
+                reqwest::redirect::Policy::none()
+            } else {
+                reqwest::redirect::Policy::default()
+            })
             .default_headers(headers)
             .build()
             .map_err(ApiCommandError::Request)
