@@ -128,7 +128,6 @@ workflow_definition!(
     command: "pcl search [--query <term>] [--stats] [--health] [--verified-contract --address <addr> --chain-id <id>]",
     description: "Search projects/contracts and inspect platform metadata.",
     output: "search results, stats, health, whitelist, or verified contract data",
-    policy: MachineRaw,
     actions: [
         action!("query", false, "search", "pcl search --query settler", optional: ["--query"]),
         action!("stats", false, "stats", "pcl search --stats"),

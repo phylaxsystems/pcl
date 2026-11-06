@@ -120,7 +120,6 @@ workflow_definition!(
     command: "pcl integrations --project <ref> --provider <slack|pagerduty> [--configure|--test|--delete]",
     description: "Manage Slack and PagerDuty integrations.",
     output: "integration status or mutation/test results",
-    policy: MachineRaw,
     actions: [
         action!("get_slack", true, "getSlackIntegration", "pcl integrations --project <project-ref> --provider slack", required: ["--project", "--provider"]),
         action!("configure_slack", true, "configureSlackIntegration", "pcl integrations --project <project-ref> --provider slack --configure --body-template", required: ["--project", "--provider"], body_template: "slack"),

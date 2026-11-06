@@ -94,7 +94,7 @@ pcl projects show <project-ref>
 pcl assertions --project-id <project-ref>
 pcl incidents --project-id <project-ref> --environment production
 pcl releases list <project-ref>
-pcl deployments --project <project-ref>
+pcl releases show <project-ref> <release-id>
 ```
 
 When you need a payload for a write, ask the CLI for the shape before sending it:
@@ -123,7 +123,7 @@ pcl api coverage --json
 | `pcl apply`, `pcl verify` | Structured assertion workflow commands for dry-runs, verification, and deployment prep |
 | `pcl deploy` | End-to-end deploy: project, protocol manager, release, on-chain activation, confirmation |
 | `pcl incidents`, `pcl projects`, `pcl assertions` | Natural platform workflow commands |
-| `pcl account`, `pcl contracts`, `pcl releases`, `pcl deployments` | Account, contract, release, and deployment workflows |
+| `pcl account`, `pcl contracts`, `pcl releases` | Account, contract, and release workflows |
 | `pcl access`, `pcl integrations`, `pcl protocol-manager`, `pcl events`, `pcl search` | Access control, integrations, protocol manager transfer, audit, and search workflows |
 | `pcl doctor`, `pcl whoami` | Diagnose local/API readiness, target auth capability, and identity state |
 | `pcl workflows`, `pcl schema` | Workflow recipes and command/action schemas; agents should add `--json` |
@@ -265,7 +265,7 @@ pcl assertions --adopter-address 0x... --network 1 --json
 pcl account --json
 pcl contracts --project <project-ref> --json
 pcl releases list <project-ref> --json
-pcl deployments --project <project-ref> --json
+pcl releases show <project-ref> <release-id> --json
 pcl access members <project-ref> --json
 pcl integrations --project <project-ref> --provider slack --json
 pcl protocol-manager --project <project-ref> --pending-transfer --json
@@ -276,13 +276,17 @@ pcl search --query settler --json
 Contract membership follows releases: include a contract with at least one assertion
 in the applicable active release using `pcl releases create`, `preview`, and `deploy`.
 Inspect membership with `pcl contracts --project <project-ref>`; inspect one contract
-with `--adopter-id`. Use `pcl releases remove` for release removal and
-`pcl contracts --remove-calldata` for on-chain assertion-removal calldata.
+with `--adopter-id`. Use `pcl releases remove` to confirm a release removal and
+`pcl releases calldata remove` for that release's on-chain removal calldata.
+Confirm a release deployment with `pcl releases deploy`. Inspect release state
+with `pcl releases list` and `pcl releases show`.
 
-The legacy `contracts --assign-project`, `--unassigned`, and `--remove` actions
-and their `--manager`, `--body`, `--field`, `--body-file`, and `--body-template`
-options have been removed. Existing scripts must move to release workflows;
-these obsolete flags now fail locally in both human and JSON modes.
+`pcl deployments` (including `--confirm`), `pcl assertions --remove-info`,
+`pcl assertions --remove-calldata`, and `pcl contracts --remove-calldata`
+(with `--aa-address`, `--assertion-id`, `--network`, and `--environment`) have
+been removed. Those flags fail locally in both human and JSON modes. The
+legacy `contracts --assign-project`, `--unassigned`, and `--remove` actions
+were removed earlier; project membership follows active releases.
 Generic `pcl api` debugging remains available.
 
 ### Mutation Rules

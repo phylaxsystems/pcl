@@ -17,7 +17,12 @@ All notable user-facing changes should be recorded here.
 
 ### Breaking changes
 
-- Removed manual contract assignment: `pcl contracts --assign-project`, `--unassigned`, and `--remove`, along with their dedicated body and manager flags. Project membership now follows active releases; use `pcl releases create`, `preview`, and `deploy`. Contract listing/detail, release removal, assertion-removal calldata, and generic raw API debugging remain supported.
+- Removed `pcl deployments`, including project deployment listing and `--confirm`. Inspect releases with `pcl releases list` and `pcl releases show`. Confirm a release deployment with `pcl releases deploy`.
+- Removed `pcl assertions --remove-info` and `--remove-calldata`. Assertion listing, detail, registered lookup, and adopter lookup remain.
+- Removed `pcl contracts --remove-calldata` and the `--aa-address`, `--assertion-id`, `--network`, and `--environment` options that existed only for adopter-removal calldata. Contract listing and detail remain. Use `pcl releases calldata remove` for release removal calldata and `pcl releases remove` to confirm removal.
+- Regenerated the API client from credible-layer-dapp revision `e87c2ae3c57028fcf40e0866b5ddea832812d1ca` (OpenAPI 24.0.0), which removes those endpoints.
+
+- Removed manual contract assignment: `pcl contracts --assign-project`, `--unassigned`, and `--remove`, along with their dedicated body and manager flags. Project membership now follows active releases; use `pcl releases create`, `preview`, and `deploy`. Contract listing/detail, release removal, release removal calldata, and generic raw API debugging remain supported.
 
 - Removed TOON output entirely: the `--toon` flag, the `--format toon` alias, and the TOON envelope renderer are gone. `--json` is the only machine output mode; agent guidance, manifest examples, and `next_actions` hints now use `--json`.
 

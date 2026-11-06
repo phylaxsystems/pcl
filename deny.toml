@@ -14,4 +14,6 @@ ignore = [
     { id = "RUSTSEC-2026-0367", reason = "Transitive through Phoundry/Foundry -> soldeer-core, zip-extract and svm-rs; zip fixes require >=9.0.0, outside upstream dependency requirements. Remove when those upstreams upgrade ZIP extraction." },
     { id = "RUSTSEC-2026-0368", reason = "Transitive through Phoundry/Foundry -> soldeer-core, zip-extract and svm-rs; zip fixes require >=9.0.0, outside upstream dependency requirements. Remove when those upstreams upgrade ZIP extraction." },
     { id = "RUSTSEC-2026-0369", reason = "Transitive through Phoundry/Foundry -> soldeer-core, zip-extract and svm-rs; zip fixes require >=9.0.0, outside upstream dependency requirements. Remove when those upstreams upgrade ZIP extraction." },
+    { id = "RUSTSEC-2026-0387", reason = "Transitive crypto-bigint 0.5.5 through Foundry/Alloy cryptography. The fix is 0.7.6, a major bump those crates have not taken." },
+    { id = "RUSTSEC-2026-0429", reason = "Transitive zip 4.6.1 through Phoundry/Foundry -> soldeer-core and svm-rs. The fix is zip >=9.0.0, outside upstream dependency requirements. Remove with the other zip ignores." },
 ]
