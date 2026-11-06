@@ -2048,8 +2048,8 @@ fn workflow_recipes() -> Vec<Value> {
             "steps": [
                 {"command": "pcl doctor --json", "output": "environment readiness"},
                 {"command": "pcl export incidents --project-id <project-id> --environment production --out incidents.jsonl --errors errors.jsonl --resume --json", "output": "incident JSONL artifact"},
-                {"command": "pcl incidents --incident-id <incident-id> --include-traces --output context.json --json", "output": "incident detail and all transaction trace responses with per-fetch completeness"},
-                {"command": "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --json", "output": "transaction trace"},
+                {"command": "pcl incidents --project <project-id> --incident-id <incident-id> --include-traces --output context.json --json", "output": "incident detail and all transaction trace responses with per-fetch completeness"},
+                {"command": "pcl incidents --project <project-id> --incident-id <incident-id> --tx-id <tx-id> --json", "output": "transaction trace"},
                 {"command": "pcl requests list --limit 20 --json", "output": "API request IDs and status history"}
             ],
         }),
