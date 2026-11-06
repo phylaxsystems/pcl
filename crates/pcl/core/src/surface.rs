@@ -240,6 +240,7 @@ impl ProductSurfaceError {
                     "pcl doctor".to_string(),
                 ]
             }
+            Self::PlatformMismatch(AuthError::ApiToken(_)) => vec![],
             Self::PlatformMismatch(_) => {
                 vec![
                     "pcl auth login --auth-url <platform-url>".to_string(),

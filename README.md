@@ -383,7 +383,7 @@ Store the returned secret in a runtime-mounted file with restrictive permissions
 ```
 
 Set `PCL_API_TOKEN_FILE` to that file and `PCL_API_URL` to the same platform.
-Run `pcl auth ensure --json`, then `pcl incidents list --project-id <uuid> --json`.
+Run `pcl auth ensure --json`, then `pcl incidents --project-id <uuid> --json`.
 Token mode takes precedence over saved login, never refreshes or starts device
 approval, and never writes the injected credential to PCL configuration. It rejects
 platform mismatches and redirects. Use project UUIDs: name/slug resolution requires

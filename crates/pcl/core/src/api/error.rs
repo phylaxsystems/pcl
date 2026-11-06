@@ -248,6 +248,7 @@ impl ApiCommandError {
                     "pcl api list --allow-unauthenticated --json".to_string(),
                 ]
             }
+            Self::PlatformMismatch(AuthError::ApiToken(_)) => vec![],
             Self::PlatformMismatch(_) => {
                 vec![
                     "pcl auth login --auth-url <platform-url>".to_string(),
@@ -456,6 +457,7 @@ impl ApiCommandError {
             Self::NoAuthToken | Self::ExpiredAuthToken(_) | Self::AuthRefresh(_) => {
                 vec!["refresh_or_login", "retry"]
             }
+            Self::PlatformMismatch(AuthError::ApiToken(_)) => vec![],
             Self::PlatformMismatch(_) => vec!["refresh_or_login"],
             Self::InvalidKeyValue { .. }
             | Self::InvalidHeaderName { .. }
