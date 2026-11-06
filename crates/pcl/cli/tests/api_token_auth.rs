@@ -13,6 +13,15 @@ const CURRENT: &str = "/api/v1/auth/api-tokens/current";
 // Every case gets an isolated credential/config directory and checks that the
 // credential appears in neither output nor persistent interactive auth state.
 fn run(server: &mockito::Server, args: &[&str], token: Option<&str>) -> Value {
+    run_with_session(server, args, token, None)
+}
+
+fn run_with_session(
+    server: &mockito::Server,
+    args: &[&str],
+    token: Option<&str>,
+    expires_at: Option<i64>,
+) -> Value {
     let tmp = tempfile::tempdir().unwrap();
     let file = tmp.path().join("credential.json");
     if let Some(token) = token {
@@ -24,6 +33,23 @@ fn run(server: &mockito::Server, args: &[&str], token: Option<&str>) -> Value {
             .unwrap(),
         )
         .unwrap();
+    }
+    let config_dir = tmp.path().join("config");
+    fs::create_dir_all(&config_dir).unwrap();
+    let saved = expires_at.map(|expiry| {
+        format!(
+            r#"platform_url = "{url}"
+[auth]
+access_token = "saved-broad-session"
+refresh_token = "saved-refresh"
+expires_at = {expiry}
+issuer_platform_url = "{url}"
+"#,
+            url = server.url()
+        )
+    });
+    if let Some(saved) = &saved {
+        fs::write(config_dir.join("config.toml"), saved).unwrap();
     }
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
         .args(args)
@@ -46,7 +72,11 @@ fn run(server: &mockito::Server, args: &[&str], token: Option<&str>) -> Value {
     assert!(!String::from_utf8_lossy(&output.stderr).contains(TOKEN));
     let config = fs::read_to_string(tmp.path().join("config/config.toml")).unwrap_or_default();
     assert!(!config.contains(TOKEN));
-    assert!(!config.contains("[auth]"));
+    if let Some(saved) = saved {
+        assert_eq!(config, saved);
+    } else {
+        assert!(!config.contains("[auth]"));
+    }
     envelope
 }
 
@@ -147,5 +177,50 @@ fn incidents_use_injected_token_and_do_not_refresh_after_rejection() {
         );
         request.assert();
         refresh.assert();
+    }
+}
+
+#[test]
+fn injected_credentials_never_use_or_refresh_a_broader_saved_session() {
+    let project = "11111111-1111-4111-8111-111111111111";
+    for expiry in [1, 4_102_444_800] {
+        for token in [None, Some("malformed"), Some(TOKEN)] {
+            for (args, path) in [
+                (vec!["auth", "ensure"], CURRENT.to_string()),
+                (
+                    vec!["incidents", "--project-id", project],
+                    format!("/api/v1/views/projects/{project}/invalidations"),
+                ),
+                (
+                    vec!["download", "--project-id", project],
+                    format!("/api/v1/projects/{project}"),
+                ),
+            ] {
+                let mut server = mockito::Server::new();
+                let injected = server
+                    .mock("GET", path.as_str())
+                    .match_query(mockito::Matcher::Any)
+                    .match_header("authorization", format!("Bearer {TOKEN}").as_str())
+                    .with_status(401)
+                    .expect(usize::from(token == Some(TOKEN)))
+                    .create();
+                let broad = server
+                    .mock("GET", mockito::Matcher::Any)
+                    .match_header("authorization", "Bearer saved-broad-session")
+                    .expect(0)
+                    .create();
+                let login_or_refresh = server
+                    .mock("POST", mockito::Matcher::Any)
+                    .expect(0)
+                    .create();
+                assert_eq!(
+                    run_with_session(&server, &args, token, Some(expiry))["status"],
+                    "error"
+                );
+                injected.assert();
+                broad.assert();
+                login_or_refresh.assert();
+            }
+        }
     }
 }
