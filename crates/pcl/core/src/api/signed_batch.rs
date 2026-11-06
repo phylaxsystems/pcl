@@ -76,13 +76,13 @@ const ACTIVE_ORACLES: &[(Network, u64, OracleEnvironment, Address)] = &[
         Network::EthereumMainnet,
         1,
         OracleEnvironment::Production,
-        address!("8681e3fF0526C785FE82db9153E6E1F54551ebdF"),
+        address!("14386aF70E91dFE12aC6243D4B5e087870d7f14D"),
     ),
     (
         Network::EthereumMainnet,
         1,
         OracleEnvironment::Staging,
-        address!("B5E1b58638E05a69c853dEf16837D651B7EEeAA2"),
+        address!("DE55F19430b3Ec5Fa7e5978B49E4467e74C4175b"),
     ),
     (
         Network::LineaMainnet,
@@ -320,8 +320,8 @@ mod tests {
     }
 
     const ETH_URL: &str = "https://ethereum.phylax.systems";
-    const ETH_PRODUCTION: Address = address!("8681e3fF0526C785FE82db9153E6E1F54551ebdF");
-    const ETH_STAGING: Address = address!("B5E1b58638E05a69c853dEf16837D651B7EEeAA2");
+    const ETH_PRODUCTION: Address = address!("14386aF70E91dFE12aC6243D4B5e087870d7f14D");
+    const ETH_STAGING: Address = address!("DE55F19430b3Ec5Fa7e5978B49E4467e74C4175b");
     const ETH_RETIRED: Address = address!("B4951F9eA03C6bc7eE441E208C4AC996B2f6e369");
     const LINEA_PRODUCTION: Address = address!("984Ed2269Cdcc0e105675b4a16120Bc0531Bb218");
     const ADOPTER: Address = address!("0101010101010101010101010101010101010101");
@@ -590,6 +590,22 @@ mod tests {
             )
             .unwrap_err();
             assert!(reason.contains(ETH_URL), "{url}: {reason}");
+        }
+    }
+
+    #[test]
+    fn ethereum_oracles_from_before_the_cutover_are_not_active() {
+        let data = encode_batch(vec![remove_entry(ADOPTER)]);
+        let previous = [
+            address!("8681e3fF0526C785FE82db9153E6E1F54551ebdF"),
+            address!("B5E1b58638E05a69c853dEf16837D651B7EEeAA2"),
+        ];
+        for retired in previous {
+            for environment in [OracleEnvironment::Production, OracleEnvironment::Staging] {
+                let err =
+                    remove_on(ETH_URL, environment, retired, &data, &listed(ADOPTER)).unwrap_err();
+                assert!(err.contains("is not the active StateOracle"), "{err}");
+            }
         }
     }
 }
