@@ -184,10 +184,29 @@ refresh token when available; if the refresh token is missing or rejected,
 it returns the same login challenge shape.
 Auth commands use `--auth-url`/`PCL_AUTH_URL` when set, otherwise they follow `PCL_API_URL`
 before falling back to the production app URL.
-When `expires_soon` is true, renew before long-running work with `pcl auth ensure --force --json`
-or `pcl auth login --no-wait --json`.
-`pcl auth logout` attempts remote logout first, then clears local credentials. Use
-`pcl auth logout --local` only when you explicitly want local cleanup.
+When `expires_soon` is true, renew before long-running work with `pcl auth refresh --json`
+or `pcl auth ensure --json`. `auth ensure --force` starts a new human-approved login.
+`pcl auth logout` clears local credentials only after confirmed remote logout. Failed
+revocation returns `auth.logout_failed` and retains credentials for retry; a platform
+mismatch is rejected before sending credentials. For `APP_SESSION_NOT_REVOKED`, follow
+`next_actions` to force a refresh and retry logout. `pcl auth logout --local` explicitly
+removes only the local credentials and does not revoke the server session.
+
+Agents use the existing browser-approved CLI session: run `auth ensure --json`, have
+the user approve `data.device_url`, then run `data.poll_command`. Subsequent
+`auth ensure` / `auth refresh` calls renew credentials without browser interaction.
+These sessions inherit the approving user's permissions, rather than a single project's.
+The [dapp credential contract](https://github.com/phylaxsystems/credible-layer-dapp/blob/main/docs/architecture/auth.md#app-issued-api-credentials)
+limits them to 90 days before fresh approval; keep the returned device secret and
+the config directory private. An `action_required` result means human approval is needed.
+
+```sh
+export PCL_API_URL=https://app.phylax.systems
+pcl auth ensure --json
+# After human approval, run data.poll_command with the same config directory.
+pcl incidents --project <project-id> --incident-id <incident-id> --include-traces --json
+pcl auth logout --json
+```
 Repository-local agent instructions also live in [AGENTS.md](AGENTS.md).
 The core discovery commands in this section are exercised by `make agent-smoke`, which is part of
 `make ci`, so README/agent guidance should not drift from the CLI contract.

@@ -166,7 +166,7 @@ pub enum AuthSubcommands {
 
     /// Logout from PCL
     #[command(
-        long_about = "Attempts remote logout with the stored access token, then removes local authentication credentials. Use --local to skip the remote logout attempt.",
+        long_about = "Revokes the remote session before removing local credentials. Failed revocation retains credentials for retry. Use --local for local cleanup only.",
         after_help = "Examples:\n  pcl auth logout\n  pcl auth logout --local"
     )]
     Logout {
@@ -322,7 +322,13 @@ impl AuthCommand {
                 self.refresh(config, cli_args, json_output, *force).await
             }
             AuthSubcommands::Logout { local } => {
+                if !local && config.auth.is_some() {
+                    ensure_credential_platform(config, &self.effective_auth_url())?;
+                }
                 let logout = self.remote_logout(config, *local).await;
+                if !local && config.auth.is_some() && logout["success"] != true {
+                    return Err(AuthError::LogoutFailed { details: logout });
+                }
                 Self::logout(config);
                 Self::print_output(
                     &json!({
@@ -1005,7 +1011,7 @@ impl AuthCommand {
         let response = match response {
             Ok(response) => response,
             Err(error) => {
-                let details = generated_error_details(&error);
+                let details = generated_auth_error_details(error).await;
                 return json!({
                     "attempted": true,
                     "success": false,
@@ -1021,7 +1027,7 @@ impl AuthCommand {
 
         json!({
             "attempted": true,
-            "success": true,
+            "success": response.success,
             "mode": "remote",
             "endpoint": endpoint,
             "http_status": response.status().as_u16(),
@@ -1314,7 +1320,7 @@ async fn handle_refresh_error(
 ) -> Result<RefreshOutcome, AuthError> {
     let status = error.status().map(|status| status.as_u16());
     let retry_after_seconds = generated_error_retry_after(&error);
-    let details = generated_refresh_error_details(error).await;
+    let details = generated_auth_error_details(error).await;
     let request_id = details.request_id;
     match status {
         Some(401) => {
@@ -1447,7 +1453,7 @@ async fn refresh_error_details(response: reqwest::Response) -> RefreshErrorDetai
     }
 }
 
-async fn generated_refresh_error_details(
+async fn generated_auth_error_details(
     error: GeneratedError<GeneratedApiErrorBody>,
 ) -> RefreshErrorDetails {
     match error {
@@ -1484,7 +1490,7 @@ async fn generated_refresh_error_details(
                 request_id: None,
                 code: None,
                 message: Some(format!(
-                    "Invalid refresh response payload: {error}; body={}",
+                    "Invalid authentication response payload: {error}; body={}",
                     String::from_utf8_lossy(&bytes)
                 )),
             }
@@ -1518,24 +1524,6 @@ fn generated_error_retry_after<E>(error: &GeneratedError<E>) -> Option<u64> {
     }
     .and_then(|value| value.to_str().ok())
     .and_then(|value| value.parse::<u64>().ok())
-}
-
-fn generated_error_details<E>(error: &GeneratedError<E>) -> RefreshErrorDetails
-where
-    E: std::fmt::Debug,
-{
-    let status = error.status().map(|status| status.as_u16());
-    let request_id = match &error {
-        GeneratedError::ErrorResponse(response) => request_id_from_headers(response.headers()),
-        GeneratedError::UnexpectedResponse(response) => request_id_from_headers(response.headers()),
-        _ => None,
-    };
-    RefreshErrorDetails {
-        status,
-        request_id,
-        code: None,
-        message: Some(error.to_string()),
-    }
 }
 
 fn finish_timeout_if_needed(spinner: &ProgressBar, json_output: bool, error: &AuthError) {

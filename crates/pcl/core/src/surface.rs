@@ -1655,7 +1655,7 @@ fn llms_guide() -> Value {
             "single_envelope_login": "pcl auth login --no-wait --force --json returns status=action_required with device_url, code, device_secret, expires_at, and poll_command.",
             "poll_command": "pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --json",
             "refresh_command": "pcl auth refresh --json rotates the stored refresh token when available; if the refresh token is missing or rejected, it returns a login challenge.",
-            "logout": "pcl auth logout attempts remote logout first, then clears local credentials; pass --local to skip the remote request."
+            "logout": "pcl auth logout clears local credentials only after confirmed revocation. Failures retain credentials and return auth.logout_failed with recovery actions. Use --local only for local cleanup without remote revocation."
         },
         "mutation_safety": {
             "order": ["--body-template", "typed flags", "--field key=value", "--body-file body.json"],

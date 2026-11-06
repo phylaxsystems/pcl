@@ -956,12 +956,34 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
     }
 }
 
+fn auth_logout_error_envelope(err: &AuthError, details: &Value) -> Value {
+    let mut next_actions = Vec::new();
+    if details["error_code"] == "APP_SESSION_NOT_REVOKED" {
+        next_actions.push(command_for_current_output("pcl auth refresh --force"));
+    }
+    next_actions.push(command_for_current_output("pcl auth logout"));
+    with_envelope_metadata(json!({
+        "status": "error",
+        "error": {
+            "code": "auth.logout_failed",
+            "message": err.to_string(),
+            "recoverable": true,
+            "request_id": details["request_id"],
+            "http": {"status": details["http_status"]},
+            "local_credentials_removed": false,
+            "remote_logout": details,
+        },
+        "next_actions": next_actions,
+    }))
+}
+
 fn auth_error_envelope(err: &AuthError) -> Value {
     if let Some(envelope) = auth_refresh_error_envelope(err) {
         return envelope;
     }
 
     match err {
+        AuthError::LogoutFailed { details } => auth_logout_error_envelope(err, details),
         AuthError::StoredTokenExpired {
             user,
             expires_at,
