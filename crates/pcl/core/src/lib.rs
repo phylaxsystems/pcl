@@ -6,6 +6,7 @@
 
 pub mod abi;
 pub mod api;
+pub mod api_token;
 pub mod apply;
 pub mod assertion_spec;
 pub mod auth;

@@ -157,6 +157,7 @@ impl ApiCommandError {
             Self::NoAuthToken => "auth.no_token",
             Self::ExpiredAuthToken(_) => "auth.expired_token",
             Self::AuthRefresh(_) => "auth.refresh_failed",
+            Self::PlatformMismatch(AuthError::ApiToken(_)) => "auth.api_token_invalid",
             Self::PlatformMismatch(_) => "auth.platform_mismatch",
             Self::InvalidKeyValue { .. } => "input.invalid_key_value",
             Self::InvalidHeaderName { .. } => "input.invalid_header_name",

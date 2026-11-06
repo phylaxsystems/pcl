@@ -156,6 +156,7 @@ impl ProductSurfaceError {
             Self::NoAuthToken => "auth.no_token",
             Self::ExpiredAuthToken(_) => "auth.expired_token",
             Self::AuthRefresh(_) => "auth.refresh_failed",
+            Self::PlatformMismatch(AuthError::ApiToken(_)) => "auth.api_token_invalid",
             Self::PlatformMismatch(_) => "auth.platform_mismatch",
             Self::InvalidInput(_) => "input.invalid",
             Self::Io { .. } => "io.failed",
@@ -1028,8 +1029,14 @@ async fn export_incidents(
     );
 
     let http_client = reqwest::Client::builder()
+        .redirect(if crate::api_token::configured() {
+            reqwest::redirect::Policy::none()
+        } else {
+            reqwest::redirect::Policy::default()
+        })
         .default_headers(default_headers(
             config,
+            &args.resolved_api_url(),
             args.project_id.is_some(),
             args.allow_unauthenticated,
         )?)
@@ -2125,6 +2132,12 @@ async fn ensure_export_auth(
     if allow_unauthenticated || !require_auth {
         return Ok(());
     }
+    if crate::api_token::header(api_url)
+        .map_err(ProductSurfaceError::PlatformMismatch)?
+        .is_some()
+    {
+        return Ok(());
+    }
     // Stored credentials may only ever reach the platform that issued them.
     // This guards both the refresh POST below and the bearer header attached
     // right after in `default_headers` — an export pointed at a foreign
@@ -2146,6 +2159,7 @@ async fn ensure_export_auth(
 
 fn default_headers(
     config: &CliConfig,
+    api_url: &url::Url,
     require_auth: bool,
     allow_unauthenticated: bool,
 ) -> Result<HeaderMap, ProductSurfaceError> {
@@ -2156,6 +2170,12 @@ fn default_headers(
     );
 
     if require_auth && !allow_unauthenticated {
+        if let Some(value) =
+            crate::api_token::header(api_url).map_err(ProductSurfaceError::PlatformMismatch)?
+        {
+            headers.insert(reqwest::header::AUTHORIZATION, value);
+            return Ok(headers);
+        }
         let Some(auth) = &config.auth else {
             return Err(ProductSurfaceError::NoAuthToken);
         };

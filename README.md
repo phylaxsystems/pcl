@@ -371,3 +371,23 @@ BSL 1.1 — see [LICENSE](LICENSE) for details.
 <div align="center">
 <sub><b>Phylax Systems</b> &nbsp;·&nbsp; <a href="https://docs.phylax.systems">Credible Layer docs</a> &nbsp;·&nbsp; <a href="https://phylax.systems">phylax.systems</a></sub>
 </div>
+
+### Unattended invalidation reads
+
+Provision a token once with an authenticated `POST /api/v1/auth/api-tokens` on
+the target platform (`project_id`, `name`, and `expires_at`, at most 90 days).
+Store the returned secret in a runtime-mounted file with restrictive permissions:
+
+```json
+{"platform_url":"https://ethereum.phylax.systems","token":"cl_api_<secret>"}
+```
+
+Set `PCL_API_TOKEN_FILE` to that file and `PCL_API_URL` to the same platform.
+Run `pcl auth ensure --json`, then `pcl incidents list --project-id <uuid> --json`.
+Token mode takes precedence over saved login, never refreshes or starts device
+approval, and never writes the injected credential to PCL configuration. It rejects
+platform mismatches and redirects. Use project UUIDs: name/slug resolution requires
+broader project access that this read-only credential intentionally lacks.
+The server checks expiry, revocation and current membership on every request.
+Revoke with authenticated `DELETE /api/v1/auth/api-tokens/<id>`; rotate by issuing
+and mounting a replacement. Unset `PCL_API_TOKEN_FILE` to use interactive login.

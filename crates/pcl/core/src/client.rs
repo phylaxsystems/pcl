@@ -38,6 +38,12 @@ pub async fn ensure_fresh_auth(
     auth_url: &url::Url,
     cli_args: &CliArgs,
 ) -> Result<(), ClientBuildError> {
+    if crate::api_token::header(auth_url)
+        .map_err(ClientBuildError::PlatformMismatch)?
+        .is_some()
+    {
+        return Ok(());
+    }
     let auth = config.auth.as_ref().ok_or(ClientBuildError::NoAuthToken)?;
     // Never post the stored refresh token to a platform that did not issue it.
     crate::auth::ensure_credential_platform(config, auth_url)
@@ -68,6 +74,21 @@ pub fn authenticated_client(
     config: &CliConfig,
     api_url: &url::Url,
 ) -> Result<GeneratedClient, ClientBuildError> {
+    if let Some(header) =
+        crate::api_token::header(api_url).map_err(ClientBuildError::PlatformMismatch)?
+    {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::AUTHORIZATION, header);
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .default_headers(headers)
+            .build()
+            .map_err(|_| ClientBuildError::InvalidConfig("Cannot build API token client".into()))?;
+        return Ok(GeneratedClient::new_with_client(
+            &api_base_url(api_url),
+            client,
+        ));
+    }
     // Never attach the stored bearer token to a platform that did not issue it.
     crate::auth::ensure_credential_platform(config, api_url)
         .map_err(ClientBuildError::PlatformMismatch)?;
