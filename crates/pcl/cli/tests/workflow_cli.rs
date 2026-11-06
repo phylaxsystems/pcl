@@ -818,6 +818,14 @@ fn incident_context_preserves_trace_fields_and_reports_partial_failures() {
     );
     let envelope = assert_json_success(&output, "incident context");
     assert_eq!(envelope["data"], detail);
+    assert_eq!(
+        envelope["next_actions"][0],
+        "pcl incidents --incident-id incident --tx-id tx1 --project 'demo' --json"
+    );
+    assert_eq!(
+        envelope["next_actions"][1],
+        "pcl incidents --incident-id incident --include-traces --project 'demo' --json"
+    );
     assert_eq!(envelope["response"]["request_id"], "detail-request");
     assert_eq!(envelope["trace_context"]["complete"], false);
     assert_eq!(envelope["trace_context"]["failed_fetches"], 1);
@@ -948,7 +956,7 @@ fn audit_pdf_upload_uses_signed_storage_without_forwarding_auth() {
 }
 
 #[test]
-fn current_release_and_incident_routes_use_required_queries() {
+fn current_release_routes_use_required_queries() {
     let mut server = mockito::Server::new();
     let config = tempfile::tempdir().unwrap();
     write_valid_auth_config_for_platform(config.path(), &server.url());
@@ -989,6 +997,14 @@ fn current_release_and_incident_routes_use_required_queries() {
         "rename release",
     );
     rename.assert();
+}
+
+#[test]
+fn current_incident_routes_use_required_queries() {
+    let mut server = mockito::Server::new();
+    let config = tempfile::tempdir().unwrap();
+    write_valid_auth_config_for_platform(config.path(), &server.url());
+    let project = "11111111-1111-4111-8111-111111111111";
     let latest = server
         .mock(
             "GET",
@@ -998,9 +1014,9 @@ fn current_release_and_incident_routes_use_required_queries() {
             "fromDate".into(),
             "2026-11-01T00:00:00Z".into(),
         ))
-        .with_body("{}")
+        .with_body(r#"{"data":{"item":{"invalidationId":"incident"}},"_meta":{"requestId":"latest-request"}}"#)
         .create();
-    assert_json_success(
+    let latest_result = assert_json_success(
         &run_pcl(
             config.path(),
             &[
@@ -1013,6 +1029,10 @@ fn current_release_and_incident_routes_use_required_queries() {
             ],
         ),
         "latest invalidation",
+    );
+    assert_eq!(
+        latest_result["next_actions"][0],
+        format!("pcl incidents --incident-id incident --project '{project}' --json")
     );
     latest.assert();
     let filtered = server
@@ -1042,4 +1062,35 @@ fn current_release_and_incident_routes_use_required_queries() {
         "invalidation filters",
     );
     filtered.assert();
+    let retry = server
+        .mock(
+            "POST",
+            "/api/v1/invalidations/incident/transactions/tx/trace/retry",
+        )
+        .match_query(Matcher::UrlEncoded("project_id".into(), project.into()))
+        .match_body(Matcher::Json(serde_json::json!({})))
+        .with_body(r#"{"status":"pending"}"#)
+        .create();
+    let retried = assert_json_success(
+        &run_pcl(
+            config.path(),
+            &[
+                "incidents",
+                "--project",
+                project,
+                "--incident-id",
+                "incident",
+                "--tx-id",
+                "tx",
+                "--retry-trace",
+            ],
+        ),
+        "retry trace with project context",
+    );
+    assert_eq!(retried["data"]["status"], "pending");
+    assert_eq!(
+        retried["next_actions"][0],
+        format!("pcl incidents --incident-id incident --tx-id tx --project '{project}' --json")
+    );
+    retry.assert();
 }

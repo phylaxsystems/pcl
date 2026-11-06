@@ -186,6 +186,24 @@ pub(in crate::api) fn incidents_next_actions(
     args: &IncidentsArgs,
     fallback: Vec<String>,
 ) -> Vec<String> {
+    let actions = incident_actions(data, args, fallback);
+    let Some(project) = &args.project_id else {
+        return actions;
+    };
+    let project = crate::api::openapi::shell_quote(project);
+    actions
+        .into_iter()
+        .map(|action| {
+            if action.starts_with("pcl incidents ") && !action.contains(" --project") {
+                format!("{action} --project {project}")
+            } else {
+                action
+            }
+        })
+        .collect()
+}
+
+fn incident_actions(data: &Value, args: &IncidentsArgs, fallback: Vec<String>) -> Vec<String> {
     if let Some(incident_id) = &args.incident_id {
         if args.tx_id.is_none()
             && let Some(tx_id) = data
@@ -243,6 +261,6 @@ workflow_definition!(
         action!("stats", true, "getInvalidationStats", "pcl incidents --project <project-ref> --stats", required: ["--project"]),
         action!("detail", true, "views.invalidationDetail.getInvalidationDetail", "pcl incidents --incident-id <incident-id>", required: ["--incident-id"], optional: ["--project", "--include-traces", "--output"]),
         action!("trace", true, "views.invalidationTrace.getInvalidationTrace", "pcl incidents --incident-id <incident-id> --tx-id <invalidating-transaction-id>", required: ["--incident-id", "--tx-id"], optional: ["--project", "--output"]),
-        action!("retry_trace", true, "retryTrace", "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace", required: ["--incident-id", "--tx-id"], body_template: "empty_object"),
+        action!("retry_trace", true, "retryTrace", "pcl incidents --incident-id <incident-id> --tx-id <tx-id> --retry-trace", required: ["--incident-id", "--tx-id"], optional: ["--project"], body_template: "empty_object"),
     ],
 );

@@ -333,7 +333,8 @@ trace finished generating. Inspect trace status, errors, retry eligibility,
 fetches preserve successful responses and expose `failed_fetches`, per-transaction
 errors, and a warning; the command still succeeds because detail was retrieved.
 Use `--tx-id` to retry a failed read; `--retry-trace` is a separate server mutation.
-A project argument is forwarded as context and does not grant access.
+A project argument is forwarded as context and preserved in incident `next_actions`;
+it does not grant access.
 
 ### New API journeys and files
 

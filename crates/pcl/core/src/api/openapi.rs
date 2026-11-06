@@ -1235,7 +1235,7 @@ fn shell_quote_path(path: &str) -> String {
     }
 }
 
-fn shell_quote(value: &str) -> String {
+pub(super) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
