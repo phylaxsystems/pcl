@@ -262,6 +262,9 @@ impl AuthCommand {
     /// resolved before it runs. `status` reads only local config, and
     /// `logout --local` deliberately skips the remote call.
     pub fn needs_platform_url(&self) -> bool {
+        if crate::api_token::configured() && matches!(self.command, AuthSubcommands::Status) {
+            return true;
+        }
         !matches!(
             self.command,
             AuthSubcommands::Status | AuthSubcommands::Logout { local: true }

@@ -9,6 +9,15 @@ use std::{
 
 #[test]
 fn ensure_uses_injected_token_without_creating_a_session() {
+    assert_injected_validation("ensure");
+}
+
+#[test]
+fn status_validates_injected_token_without_a_saved_session() {
+    assert_injected_validation("status");
+}
+
+fn assert_injected_validation(command: &str) {
     let mut server = mockito::Server::new();
     let token = format!("cl_api_{}", "a".repeat(43));
     let check = server.mock("GET", "/api/v1/auth/api-tokens/current")
@@ -23,7 +32,7 @@ fn ensure_uses_injected_token_without_creating_a_session() {
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
-        .args(["auth", "ensure", "--json"])
+        .args(["auth", command, "--json"])
         .env("PCL_API_TOKEN_FILE", &file)
         .env("PCL_API_URL", server.url())
         .env("PCL_AUTH_URL", server.url())
@@ -36,10 +45,16 @@ fn ensure_uses_injected_token_without_creating_a_session() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let envelope: Value = serde_json::from_slice(if output.status.success() {
+        &output.stdout
+    } else {
+        &output.stderr
+    })
+    .unwrap();
     assert_eq!(envelope["status"], "ok");
     assert_eq!(envelope["data"]["authenticated"], true);
     assert!(!String::from_utf8_lossy(&output.stdout).contains(&token));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains(&token));
     let config = fs::read_to_string(tmp.path().join("config/config.toml")).unwrap_or_default();
     assert!(!config.contains(&token));
     assert!(!config.contains("[auth]"));
@@ -61,7 +76,12 @@ fn bad_token_file_never_starts_device_login() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let envelope: Value = serde_json::from_slice(if output.status.success() {
+        &output.stdout
+    } else {
+        &output.stderr
+    })
+    .unwrap();
     assert_eq!(envelope["error"]["code"], "auth.api_token_invalid");
     login.assert();
 }
@@ -95,9 +115,15 @@ fn rejected_or_redirected_token_never_falls_back_to_login() {
             .output()
             .unwrap();
         assert!(!output.status.success());
-        let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let envelope: Value = serde_json::from_slice(if output.status.success() {
+            &output.stdout
+        } else {
+            &output.stderr
+        })
+        .unwrap();
         assert_eq!(envelope["error"]["code"], "auth.api_token_invalid");
         assert!(!String::from_utf8_lossy(&output.stdout).contains(&token));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains(&token));
         check.assert();
         fallback.assert();
     }
@@ -155,12 +181,18 @@ fn incidents_use_injected_token_and_do_not_refresh_after_rejection() {
             "{}",
             String::from_utf8_lossy(&output.stdout)
         );
-        let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let envelope: Value = serde_json::from_slice(if output.status.success() {
+            &output.stdout
+        } else {
+            &output.stderr
+        })
+        .unwrap();
         assert_eq!(
             envelope["status"],
             if status == 200 { "ok" } else { "error" }
         );
         assert!(!String::from_utf8_lossy(&output.stdout).contains(&token));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains(&token));
         request.assert();
         refresh.assert();
     }
