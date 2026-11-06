@@ -3,9 +3,8 @@
 //!
 //! Mirrors the dapp's browser-wallet flows (see
 //! `packages/hooks/src/hooks/api/use-release-deploy.ts` and friends in the
-//! credible-layer-dapp repo). The backend remains the only calldata encoder;
-//! pcl only wraps operation calldata in `StateOracle.batch(bytes[])` or sends
-//! raw `{to, data}` transactions.
+//! credible-layer-dapp repo). Removal and manager transactions are signed only
+//! when they equal the `StateOracle.batch` pcl rebuilds (see `signed_batch`).
 
 use super::{
     ApiArgs,
@@ -94,6 +93,8 @@ struct ReleaseDeployCalldataResponse {
 struct ReleaseRemoveCalldataResponse {
     to: Address,
     data: Bytes,
+    #[serde(default, alias = "chainId")]
+    chain_id: Option<u64>,
     #[serde(default)]
     assertions: Vec<Value>,
     #[serde(default, alias = "requiredConfirmations")]
@@ -127,9 +128,17 @@ struct TransferCalldataResponse {
     #[serde(default)]
     calldata: Option<Bytes>,
     #[serde(default)]
+    contracts: Vec<BoundContractCall>,
+    #[serde(default)]
     total_contracts: Option<u64>,
     #[serde(default, alias = "requiredConfirmations")]
     required_confirmations: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BoundContractCall {
+    address: Address,
+    calldata: Bytes,
 }
 
 /// `GET /projects/{id}/protocol-manager/accept-calldata`
@@ -138,6 +147,8 @@ struct AcceptCalldataResponse {
     chain_id: u64,
     to: Address,
     calldata: Bytes,
+    #[serde(default)]
+    contracts: Vec<BoundContractCall>,
     #[serde(default, alias = "requiredConfirmations")]
     required_confirmations: Option<u64>,
 }
@@ -179,6 +190,18 @@ fn validate_release_deploy_calldata(
 // ---------------------------------------------------------------------------
 // Shared plumbing
 // ---------------------------------------------------------------------------
+
+/// Builds the refusal for an API transaction pcl will not sign, carrying the
+/// manual route an operator can use instead.
+fn refusal(action: &'static str, manual_route: Vec<String>) -> impl Fn(String) -> ApiCommandError {
+    move |reason| {
+        ApiCommandError::CalldataRefused {
+            action,
+            reason,
+            manual_route: manual_route.clone(),
+        }
+    }
+}
 
 async fn resolve_signer(
     wallet: &WalletArgs,
@@ -634,10 +657,10 @@ impl ApiArgs {
         let calldata: ReleaseRemoveCalldataResponse =
             parse_response("remove-calldata", &calldata_result.body)?;
 
-        // The remove-calldata response carries no chain id and its `{to,
-        // data}` would look valid on any network, so the project record is
-        // authoritative. An explicit --chain-id may only confirm it, never
-        // rebind the broadcast to another chain.
+        // The project record picks the chain. The release record picks the
+        // environment, and therefore which active StateOracle may be signed,
+        // and holds the assertions the batch may remove.
+        // An explicit --chain-id may only confirm the project chain.
         let chain_id = self
             .project_chain_id(config, cli_args, project, request_log_path)
             .await?;
@@ -650,6 +673,40 @@ impl ApiArgs {
                 ),
             });
         }
+        let refused = refusal(
+            "release removal",
+            vec![
+                format!("pcl releases calldata remove {project} {release_id} --json"),
+                "Check that `to` is the active StateOracle and `data` its batch of removeAssertion calls, then sign {to, data} with an external wallet".to_string(),
+                format!("After it lands, confirm it: pcl releases remove {project} {release_id} --field txHash=<tx-hash> --json"),
+            ],
+        );
+        if let Some(response_chain) = calldata.chain_id
+            && response_chain != chain_id
+        {
+            return Err(refused(format!(
+                "chain_id {response_chain} does not match the project's chain {chain_id}"
+            )));
+        }
+
+        let release_request =
+            get_operation("projects.getRelease", project, Some(release_id), Vec::new())?;
+        let release = self
+            .call_workflow_result(config, cli_args, &release_request, request_log_path)
+            .await?;
+        let environment = super::signed_batch::release_environment(&release.body)?;
+        let release_targets =
+            super::signed_batch::release_targets(&release.body).map_err(&refused)?;
+        super::signed_batch::validate_removal_batch(
+            &self.resolved_api_url(),
+            chain_id,
+            environment,
+            calldata.to,
+            &calldata.data,
+            &calldata.assertions,
+            &release_targets,
+        )
+        .map_err(refused)?;
 
         confirm_send(
             cli_args,
@@ -845,6 +902,11 @@ impl ApiArgs {
             .ok_or(ApiCommandError::InvalidWorkflow {
                 message: "--transfer-calldata --broadcast requires --new-manager".to_string(),
             })?;
+        let new_manager_address: Address = new_manager.parse().map_err(|_| {
+            ApiCommandError::InvalidWorkflow {
+                message: format!("--new-manager {new_manager} is not a 0x address"),
+            }
+        })?;
 
         progress(cli_args, "Fetching manager transfer calldata");
         let request = get_operation(
@@ -905,6 +967,42 @@ impl ApiArgs {
                 reason: "onchain mode without chain_id/to/calldata".to_string(),
             });
         };
+        let project_chain = self
+            .project_chain_id(config, cli_args, project, request_log_path)
+            .await?;
+        let refused = refusal(
+            "manager transfer",
+            vec![
+                format!(
+                    "pcl protocol-manager --project {project} --transfer-calldata --new-manager {new_manager} --json"
+                ),
+                format!(
+                    "Check that `to` is the active StateOracle and `calldata` its batch of transferManager calls to {new_manager}, then sign {{to, calldata}} with the current manager's external wallet"
+                ),
+                format!(
+                    "The new manager then fetches `pcl protocol-manager --project {project} --accept-calldata --json`, signs it externally and runs --confirm-transfer with the landed hash"
+                ),
+            ],
+        );
+        if chain_id != project_chain {
+            return Err(refused(format!(
+                "chain_id {chain_id} does not match the project's chain {project_chain}"
+            )));
+        }
+        let contracts = calldata
+            .contracts
+            .iter()
+            .map(|contract| (contract.address, contract.calldata.clone()))
+            .collect::<Vec<_>>();
+        super::signed_batch::validate_manager_batch(
+            &self.resolved_api_url(),
+            chain_id,
+            to,
+            &data,
+            &contracts,
+            Some(new_manager_address),
+        )
+        .map_err(refused)?;
 
         confirm_send(
             cli_args,
@@ -979,6 +1077,39 @@ impl ApiArgs {
             .await?;
         let calldata: AcceptCalldataResponse =
             parse_response("protocol-manager/accept-calldata", &calldata_result.body)?;
+        let project_chain = self
+            .project_chain_id(config, cli_args, project, request_log_path)
+            .await?;
+        let refused = refusal(
+            "manager acceptance",
+            vec![
+                format!("pcl protocol-manager --project {project} --accept-calldata --json"),
+                "Check that `to` is the active StateOracle and `calldata` its batch of acceptManagerTransfer calls, then sign {to, calldata} with the new manager's external wallet".to_string(),
+                format!(
+                    "pcl protocol-manager --project {project} --confirm-transfer --field mode=onchain --field tx_hash=<tx-hash> --field chain_id=<chain-id> --field new_manager_address=<new-manager> --json"
+                ),
+            ],
+        );
+        if calldata.chain_id != project_chain {
+            return Err(refused(format!(
+                "chain_id {} does not match the project's chain {project_chain}",
+                calldata.chain_id
+            )));
+        }
+        let contracts = calldata
+            .contracts
+            .iter()
+            .map(|contract| (contract.address, contract.calldata.clone()))
+            .collect::<Vec<_>>();
+        super::signed_batch::validate_manager_batch(
+            &self.resolved_api_url(),
+            calldata.chain_id,
+            calldata.to,
+            &calldata.calldata,
+            &contracts,
+            None,
+        )
+        .map_err(refused)?;
 
         confirm_send(
             cli_args,
@@ -1481,5 +1612,232 @@ mod tests {
         };
         assert!(!challenge_expired(&other));
         assert!(!challenge_expired(&ApiCommandError::BroadcastCancelled));
+    }
+
+    const PROJECT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+    const RELEASE: &str = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+    const TEST_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+    struct Harness {
+        api: ApiArgs,
+        config: CliConfig,
+        cli_args: CliArgs,
+        dir: tempfile::TempDir,
+    }
+
+    impl Harness {
+        fn new(url: &str) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            Self {
+                api: ApiArgs::headless(url.parse().unwrap()),
+                config: CliConfig {
+                    auth: Some(crate::config::UserAuth {
+                        issuer_platform_url: Some(url.to_string()),
+                        access_token: "access-token".to_string(),
+                        refresh_token: "refresh-token".to_string(),
+                        expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+                        refresh_expires_at: None,
+                        user_id: None,
+                        wallet_address: None,
+                        email: Some("agent@example.com".to_string()),
+                    }),
+                    platform_url: Some(url.to_string()),
+                    rpc: BTreeMap::new(),
+                },
+                cli_args: CliArgs {
+                    config_dir: Some(dir.path().to_path_buf()),
+                    ..CliArgs::default()
+                },
+                dir,
+            }
+        }
+
+        fn log(&self) -> std::path::PathBuf {
+            self.dir.path().join("requests.jsonl")
+        }
+    }
+
+    fn signing() -> BroadcastArgs {
+        BroadcastArgs {
+            broadcast: true,
+            yes: true,
+            wallet: crate::wallet::WalletArgs {
+                private_key: Some(TEST_KEY.to_string()),
+                ..crate::wallet::WalletArgs::default()
+            },
+            ..BroadcastArgs::default()
+        }
+    }
+
+    async fn get_json(server: &mut mockito::Server, path: &str, body: Value) -> mockito::Mock {
+        server
+            .mock("GET", format!("/api/v1/projects/{PROJECT}{path}").as_str())
+            .match_query(Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body.to_string())
+            .create_async()
+            .await
+    }
+
+    async fn accept(server: &mut mockito::Server, body: Value) -> ApiCommandError {
+        get_json(server, "", json!({"chain_id": 1})).await;
+        get_json(server, "/protocol-manager/accept-calldata", body).await;
+        let mut h = Harness::new(&server.url());
+        let args = ProtocolManagerArgs {
+            broadcast: signing(),
+            ..ProtocolManagerArgs::default()
+        };
+        let log = h.log();
+        h.api
+            .protocol_manager_accept_broadcast(&mut h.config, &h.cli_args, &args, PROJECT, &log)
+            .await
+            .unwrap_err()
+    }
+
+    async fn remove(server: &mut mockito::Server, release: Value, body: Value) -> ApiCommandError {
+        get_json(server, "", json!({"chain_id": 1})).await;
+        get_json(server, &format!("/releases/{RELEASE}"), release).await;
+        get_json(
+            server,
+            &format!("/releases/{RELEASE}/remove-calldata"),
+            body,
+        )
+        .await;
+        let mut h = Harness::new(&server.url());
+        let args = ReleasesArgs {
+            broadcast: signing(),
+            ..ReleasesArgs::default()
+        };
+        let log = h.log();
+        h.api
+            .broadcast_release_remove(&mut h.config, &h.cli_args, &args, PROJECT, RELEASE, &log)
+            .await
+            .unwrap_err()
+    }
+
+    fn assert_refused(err: &ApiCommandError, needle: &str) {
+        assert_eq!(err.code(), "broadcast.calldata_refused", "{err:?}");
+        assert!(!err.recoverable(), "{err:?}");
+        assert!(err.to_string().contains(needle), "{err}");
+        let actions = err.next_actions();
+        assert!(!actions.is_empty());
+        assert!(
+            actions.iter().all(|action| !action.contains("api inspect")),
+            "{actions:?}"
+        );
+    }
+
+    const ORACLE: &str = "0x8681e3fF0526C785FE82db9153E6E1F54551ebdF";
+
+    fn snapshot(assertion_id: &str) -> Value {
+        json!({
+            "environment": "production",
+            "configSnapshot": {"contracts": {"a": {
+                "address": "0x0101010101010101010101010101010101010101",
+                "assertions": [{"assertionId": assertion_id}]
+            }}}
+        })
+    }
+
+    fn removal(chain_id: u64, assertion_id: &str) -> Value {
+        json!({
+            "to": ORACLE,
+            "data": "0x01",
+            "chainId": chain_id,
+            "assertions": [{
+                "contractAddress": "0x0101010101010101010101010101010101010101",
+                "assertionId": assertion_id
+            }]
+        })
+    }
+
+    const AA: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[tokio::test]
+    async fn accept_broadcast_refuses_a_chain_other_than_the_project_chain() {
+        let mut server = mockito::Server::new_async().await;
+        let err = accept(
+            &mut server,
+            json!({"chain_id": 59144, "to": ORACLE, "calldata": "0x01", "contracts": []}),
+        )
+        .await;
+        assert_refused(&err, "59144");
+    }
+
+    #[tokio::test]
+    async fn accept_broadcast_refuses_an_unknown_platform_before_sending() {
+        let mut server = mockito::Server::new_async().await;
+        let err = accept(
+            &mut server,
+            json!({"chain_id": 1, "to": ORACLE, "calldata": "0x01", "contracts": []}),
+        )
+        .await;
+        assert_refused(&err, "127.0.0.1");
+        assert!(
+            err.next_actions()
+                .iter()
+                .any(|action| action.contains("--confirm-transfer")),
+            "{:?}",
+            err.next_actions()
+        );
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_refuses_a_chain_other_than_the_project_chain() {
+        let mut server = mockito::Server::new_async().await;
+        let err = remove(&mut server, snapshot(AA), removal(59144, AA)).await;
+        assert_refused(&err, "59144");
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_binds_entries_to_the_release_record() {
+        let mut server = mockito::Server::new_async().await;
+        let swapped = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let err = remove(&mut server, snapshot(AA), removal(1, swapped)).await;
+        assert_refused(&err, "release record");
+        assert!(
+            err.next_actions().iter().any(|action| {
+                action.ends_with(&format!(
+                    "pcl releases remove {PROJECT} {RELEASE} --field txHash=<tx-hash> --json"
+                ))
+            }),
+            "{:?}",
+            err.next_actions()
+        );
+    }
+
+    #[tokio::test]
+    async fn transfer_broadcast_refuses_a_token_transfer_before_signing() {
+        let mut server = mockito::Server::new_async().await;
+        get_json(&mut server, "", json!({"chain_id": 1})).await;
+        // ERC20 transfer(attacker, balance) aimed at a token contract.
+        get_json(
+            &mut server,
+            "/protocol-manager/transfer-calldata",
+            json!({
+                "mode": "onchain",
+                "chain_id": 1,
+                "to": "0x2222222222222222222222222222222222222222",
+                "calldata": "0xa9059cbb000000000000000000000000444444444444444444444444444444444444444400000000000000000000000000000000000000000000000000000000000f4240",
+                "contracts": []
+            }),
+        )
+        .await;
+        let mut h = Harness::new(&server.url());
+        let args = ProtocolManagerArgs {
+            new_manager: Some("0x0303030303030303030303030303030303030303".to_string()),
+            broadcast: signing(),
+            ..ProtocolManagerArgs::default()
+        };
+        let log = h.log();
+        let err = h
+            .api
+            .protocol_manager_transfer_broadcast(&mut h.config, &h.cli_args, &args, PROJECT, &log)
+            .await
+            .unwrap_err();
+        assert_refused(&err, "127.0.0.1");
     }
 }
