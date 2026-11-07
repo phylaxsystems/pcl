@@ -4025,6 +4025,9 @@ pub mod types {
     ///    "has_releases": {
     ///      "type": "boolean"
     ///    },
+    ///    "is_featured": {
+    ///      "type": "boolean"
+    ///    },
     ///    "is_private": {
     ///      "type": "boolean"
     ///    },
@@ -4136,6 +4139,8 @@ pub mod types {
         >,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub has_releases: ::std::option::Option<bool>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub is_featured: ::std::option::Option<bool>,
         pub is_private: bool,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub profile_image_url: ::std::option::Option<::std::string::String>,
@@ -5021,6 +5026,9 @@ pub mod types {
     ///    "has_releases": {
     ///      "type": "boolean"
     ///    },
+    ///    "is_featured": {
+    ///      "type": "boolean"
+    ///    },
     ///    "is_private": {
     ///      "type": "boolean"
     ///    },
@@ -5117,6 +5125,8 @@ pub mod types {
         pub github_url: ::std::option::Option<ProjectsGetProjectsResponseItemGithubUrl>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub has_releases: ::std::option::Option<bool>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub is_featured: ::std::option::Option<bool>,
         pub is_private: bool,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub profile_image_url: ::std::option::Option<::std::string::String>,
@@ -6185,6 +6195,9 @@ pub mod types {
     ///    "has_releases": {
     ///      "type": "boolean"
     ///    },
+    ///    "is_featured": {
+    ///      "type": "boolean"
+    ///    },
     ///    "is_private": {
     ///      "type": "boolean"
     ///    },
@@ -6285,6 +6298,8 @@ pub mod types {
         >,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub has_releases: ::std::option::Option<bool>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub is_featured: ::std::option::Option<bool>,
         pub is_private: bool,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub profile_image_url: ::std::option::Option<::std::string::String>,
@@ -15292,6 +15307,86 @@ pub mod types {
             ViewsPublicInvalidationsGetPublicInvalidationsSort::Desc
         }
     }
+    ///`WebAuthLogoutAuthorization`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "pattern": "^Bearer .+$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct WebAuthLogoutAuthorization(::std::string::String);
+    impl ::std::ops::Deref for WebAuthLogoutAuthorization {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<WebAuthLogoutAuthorization> for ::std::string::String {
+        fn from(value: WebAuthLogoutAuthorization) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&WebAuthLogoutAuthorization>
+    for WebAuthLogoutAuthorization {
+        fn from(value: &WebAuthLogoutAuthorization) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for WebAuthLogoutAuthorization {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^Bearer .+$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^Bearer .+$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for WebAuthLogoutAuthorization {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for WebAuthLogoutAuthorization {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for WebAuthLogoutAuthorization {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for WebAuthLogoutAuthorization {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
     ///`WebAuthLogoutResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -15359,7 +15454,7 @@ No Authorization header is needed when using cookie authentication.
 - Required Authorization headers indicate CLI-only endpoints
 - The authentication middleware automatically detects and validates the appropriate method
 
-Version: 22.0.0*/
+Version: 25.3.0*/
 pub struct Client {
     pub(crate) baseurl: String,
     pub(crate) client: reqwest::Client,
@@ -15395,7 +15490,7 @@ impl Client {
 }
 impl ClientInfo<()> for Client {
     fn api_version() -> &'static str {
-        "22.0.0"
+        "25.3.0"
     }
     fn baseurl(&self) -> &str {
         self.baseurl.as_str()
@@ -15504,6 +15599,9 @@ Sends a `GET` request to `/cli/auth/code`
         let response = result?;
         match response.status().as_u16() {
             200u16 => ResponseValue::from_response(response).await,
+            429u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
             500u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
@@ -16284,24 +16382,29 @@ Sends a `GET` request to `/views/public/invalidations`
     }
     /**Logout user
 
-Clear user session and invalidate tokens
+Clear browser session cookies and revoke the app-issued session named by the bearer token. Returns 401 when an app-issued bearer cannot be verified, because its session was not revoked.
 
 Sends a `POST` request to `/web/auth/logout`
 
 Arguments:
+- `authorization`
 - `body`: Body
 */
     pub async fn web_auth_logout<'a>(
         &'a self,
+        authorization: Option<&'a types::WebAuthLogoutAuthorization>,
         body: &'a ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     ) -> Result<ResponseValue<types::WebAuthLogoutResponse>, Error<types::ApiError>> {
         let url = format!("{}/web/auth/logout", self.baseurl,);
-        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
         header_map
             .append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(Self::api_version()),
             );
+        if let Some(value) = authorization {
+            header_map.append("authorization", value.to_string().try_into()?);
+        }
         #[allow(unused_mut)]
         let mut request = self
             .client
@@ -16322,6 +16425,9 @@ Arguments:
         let response = result?;
         match response.status().as_u16() {
             200u16 => ResponseValue::from_response(response).await,
+            401u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
             500u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
