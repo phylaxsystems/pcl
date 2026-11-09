@@ -1,0 +1,8 @@
+# The verify_cli tests each run `pcl`, which installs solc on first use. On a
+# fresh CI runner, parallel tests race that install ("Text file busy").
+[test-groups]
+solc = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = "binary(verify_cli)"
+test-group = "solc"
