@@ -9,7 +9,7 @@ These sources carry forward the dependency fix from [PCL #133](https://github.co
 | tch 0.22.0 | [90bcf3e9](https://github.com/LaurentMazare/tch-rs/tree/90bcf3e9aaab98db7b698fa949e8b4d271b40608) | Adapt archive-name APIs and writer options; propagate invalid-entry errors instead of panicking. |
 | torch-sys 0.22.0 | [90bcf3e9](https://github.com/LaurentMazare/tch-rs/tree/90bcf3e9aaab98db7b698fa949e8b4d271b40608/torch-sys) | Adapt fallible archive-name APIs in libtorch extraction. |
 
-Files are from the matching crates.io packages. Upstream example, benchmark and integration-test targets and their development dependencies are omitted. Source and bundled license files are retained; Soldeer's repository-root MIT license and torch-sys's repository-root MIT/Apache licenses are included explicitly. Most of the large diff is unchanged upstream source and generated bindings.
+Files are from the matching crates.io packages, with trailing whitespace normalized. Upstream example, benchmark and integration-test targets and their development dependencies are omitted. Source and bundled license files are retained; Soldeer's repository-root MIT license and torch-sys's repository-root MIT/Apache licenses are included explicitly. Most of the large diff is unchanged upstream source and generated bindings.
 
 `tch` and `torch-sys` preserve ZIP 0.6's default AES, bzip2, deflate, time and zstd features explicitly. Soldeer retains deflate support, and Candle retains its no-default-features setting. ZIP's additional legacy compression feature is not enabled.
 

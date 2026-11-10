@@ -1226,7 +1226,7 @@ impl Tensor {
     /// # Arguments
     ///
     /// * `target_h` - Target height
-    /// * `target_w` - Target width  
+    /// * `target_w` - Target width
     /// * `align_corners` - If true, corner pixels are aligned. If false (default),
     ///   pixels are treated as areas (matches PyTorch default behavior).
     ///

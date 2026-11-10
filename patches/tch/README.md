@@ -284,7 +284,7 @@ fn main() -> Result<()> {
 	let mut vs = VarStore::new(Device::cuda_if_available());
 	let model = resnet18(&vs.root(), 1000);
 	vs.load("resnet18.safetensors")?;
-	
+
 	// Load the image file and resize it to the usual imagenet dimension of 224x224.
 	let image = imagenet::load_image_and_resize224("dog.jpg")?
 		.to_device(vs.device());
@@ -294,12 +294,12 @@ fn main() -> Result<()> {
 		.unsqueeze(0)
 		.apply_t(&model, false)
 		.softmax(-1, Kind::Float);
-	
+
 	// Print the top 5 categories for this image.
     for (probability, class) in imagenet::top(&output, 5).iter() {
         println!("{:50} {:5.2}%", class, 100.0 * probability)
     }
-    
+
     Ok(())
 }
 ```
@@ -350,10 +350,10 @@ It is possible to call Rust/tch code from Python via PyO3,
 [tch-ext](https://github.com/LaurentMazare/tch-ext) provides an example of such
 a Python extension.
 
-### Error loading shared libraries. 
+### Error loading shared libraries.
 
 If you get an error about not finding some shared libraries when running the generated binaries
-(e.g. 
+(e.g.
 ` error while loading shared libraries: libtorch_cpu.so: cannot open shared object file: No such file or directory`).
 You can try adding the following to your `.bashrc` where `/path/to/libtorch` is the path to your
 libtorch install.

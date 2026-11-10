@@ -213,8 +213,8 @@ ivalue atm_method_(module,
                    ivalue *ivalues,
                    int nivalues);
 ivalue atm_create_class_(module,
-                   char *clz_name, 
-                   ivalue *ivalues, 
+                   char *clz_name,
+                   ivalue *ivalues,
                    int nivalues);
 void atm_eval(module);
 void atm_train(module);
