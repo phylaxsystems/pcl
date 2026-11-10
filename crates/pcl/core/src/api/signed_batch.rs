@@ -163,10 +163,20 @@ pub(crate) fn validate_removal_batch(
     check_batch(data, expected)
 }
 
+/// Page size for the active release list. The dapp keeps at most one active
+/// release per environment, so a full page is unexpected and refused as
+/// possibly truncated rather than trusted.
+pub(crate) const ACTIVE_RELEASE_PAGE: usize = 100;
+
 pub(crate) fn active_release_ids(body: &Value) -> Result<Vec<String>, String> {
     let items = body
         .as_array()
         .ok_or("active release list is not a JSON array")?;
+    if items.len() >= ACTIVE_RELEASE_PAGE {
+        return Err(
+            "active release page is full, so the contract set may be truncated".to_string(),
+        );
+    }
     let mut ids = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
         let status = item

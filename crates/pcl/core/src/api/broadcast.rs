@@ -1190,8 +1190,6 @@ impl ApiArgs {
         ))
     }
 
-    const ACTIVE_RELEASE_PAGE: usize = 100;
-
     async fn load_handover<F>(
         &self,
         config: &mut CliConfig,
@@ -1210,22 +1208,15 @@ impl ApiArgs {
             None,
             vec![
                 ("status".to_string(), "active".to_string()),
-                ("limit".to_string(), Self::ACTIVE_RELEASE_PAGE.to_string()),
+                (
+                    "limit".to_string(),
+                    super::signed_batch::ACTIVE_RELEASE_PAGE.to_string(),
+                ),
             ],
         )?;
         let listed = self
             .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
-        let page_len = listed
-            .body
-            .as_array()
-            .map(Vec::len)
-            .ok_or_else(|| refuse("active release list is not a JSON array".to_string()))?;
-        if page_len >= Self::ACTIVE_RELEASE_PAGE {
-            return Err(refuse(
-                "active release page is full, so the contract set may be truncated".to_string(),
-            ));
-        }
         let ids = super::signed_batch::active_release_ids(&listed.body).map_err(refuse)?;
         let mut releases = Vec::with_capacity(ids.len());
         for id in ids {
