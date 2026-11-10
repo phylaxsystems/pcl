@@ -228,17 +228,12 @@ pub(crate) fn bind_handover(
     let Some((environment, _)) = releases.first() else {
         return Err("the project has no active releases to bind the manager batch to".to_string());
     };
-    let mut names: Vec<&str> = releases
-        .iter()
-        .map(|(environment, _)| environment.as_str())
-        .collect();
-    names.sort_unstable();
-    names.dedup();
-    if names.len() != 1 {
-        return Err(format!(
-            "active releases span {}; pcl signs a manager handover for one environment's StateOracle",
-            names.join(" and ")
-        ));
+    // There are two environments, so a second one present means both are.
+    if releases.iter().any(|(other, _)| other != environment) {
+        return Err(
+            "active releases span production and staging; pcl signs a manager handover for one environment's StateOracle"
+                .to_string(),
+        );
     }
     let mut contracts = BTreeSet::new();
     for (_, addresses) in releases {
