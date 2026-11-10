@@ -989,6 +989,9 @@ impl ApiArgs {
                 "chain_id {chain_id} does not match the project's chain {project_chain}"
             )));
         }
+        let handover = self
+            .load_handover(config, cli_args, project, request_log_path, &refused)
+            .await?;
         let contracts = calldata
             .contracts
             .iter()
@@ -1001,6 +1004,7 @@ impl ApiArgs {
             &data,
             &contracts,
             Some(new_manager_address),
+            &handover,
         )
         .map_err(refused)?;
 
@@ -1096,6 +1100,9 @@ impl ApiArgs {
                 calldata.chain_id
             )));
         }
+        let handover = self
+            .load_handover(config, cli_args, project, request_log_path, &refused)
+            .await?;
         let contracts = calldata
             .contracts
             .iter()
@@ -1108,6 +1115,7 @@ impl ApiArgs {
             &calldata.calldata,
             &contracts,
             None,
+            &handover,
         )
         .map_err(refused)?;
 
@@ -1174,6 +1182,60 @@ impl ApiArgs {
             }),
             vec![format!("pcl protocol-manager --project {project}")],
         ))
+    }
+
+    const ACTIVE_RELEASE_PAGE: usize = 100;
+
+    /// Active releases and their snapshots. The batch is signed only when it
+    /// covers exactly this set, on this environment's oracle.
+    async fn load_handover<F>(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        project: &str,
+        request_log_path: &Path,
+        refuse: &F,
+    ) -> Result<super::signed_batch::HandoverBinding, ApiCommandError>
+    where
+        F: Fn(String) -> ApiCommandError,
+    {
+        progress(cli_args, "Fetching active releases");
+        let request = get_operation(
+            "projects.listReleases",
+            project,
+            None,
+            vec![
+                ("status".to_string(), "active".to_string()),
+                ("limit".to_string(), Self::ACTIVE_RELEASE_PAGE.to_string()),
+            ],
+        )?;
+        let listed = self
+            .call_workflow_result(config, cli_args, &request, request_log_path)
+            .await?;
+        let page_len = listed
+            .body
+            .as_array()
+            .map(Vec::len)
+            .ok_or_else(|| refuse("active release list is not a JSON array".to_string()))?;
+        if page_len >= Self::ACTIVE_RELEASE_PAGE {
+            return Err(refuse(
+                "active release page is full, so the contract set may be truncated".to_string(),
+            ));
+        }
+        let ids = super::signed_batch::active_release_ids(&listed.body).map_err(refuse)?;
+        let mut releases = Vec::with_capacity(ids.len());
+        for id in ids {
+            let request = get_operation("projects.getRelease", project, Some(&id), Vec::new())?;
+            let release = self
+                .call_workflow_result(config, cli_args, &request, request_log_path)
+                .await?;
+            let environment =
+                super::signed_batch::snapshot_environment(&release.body).map_err(refuse)?;
+            let addresses =
+                super::signed_batch::snapshot_addresses(&release.body).map_err(refuse)?;
+            releases.push((environment, addresses));
+        }
+        super::signed_batch::bind_handover(&releases).map_err(refuse)
     }
 }
 
@@ -1684,6 +1746,18 @@ mod tests {
 
     async fn accept(server: &mut mockito::Server, body: Value) -> ApiCommandError {
         get_json(server, "", json!({"chain_id": 1})).await;
+        get_json(
+            server,
+            "/releases",
+            release_list(&[("rel-1", "production")]),
+        )
+        .await;
+        get_json(
+            server,
+            "/releases/rel-1",
+            release_snapshot("production", &[]),
+        )
+        .await;
         get_json(server, "/protocol-manager/accept-calldata", body).await;
         let mut h = Harness::new(&server.url());
         let args = ProtocolManagerArgs {
@@ -1813,6 +1887,18 @@ mod tests {
     async fn transfer_broadcast_refuses_a_token_transfer_before_signing() {
         let mut server = mockito::Server::new_async().await;
         get_json(&mut server, "", json!({"chain_id": 1})).await;
+        get_json(
+            &mut server,
+            "/releases",
+            release_list(&[("rel-1", "production")]),
+        )
+        .await;
+        get_json(
+            &mut server,
+            "/releases/rel-1",
+            release_snapshot("production", &[]),
+        )
+        .await;
         // ERC20 transfer(attacker, balance) aimed at a token contract.
         get_json(
             &mut server,
@@ -1839,5 +1925,191 @@ mod tests {
             .await
             .unwrap_err();
         assert_refused(&err, "127.0.0.1");
+    }
+
+    const HELD_A: &str = "0x0101010101010101010101010101010101010101";
+    const HELD_B: &str = "0x0202020202020202020202020202020202020202";
+    const FOREIGN: &str = "0x0404040404040404040404040404040404040404";
+    const NEW_MANAGER: &str = "0x0303030303030303030303030303030303030303";
+    const PRODUCTION_ORACLE: &str = "0x14386aF70E91dFE12aC6243D4B5e087870d7f14D";
+    const STAGING_ORACLE: &str = "0xDE55F19430b3Ec5Fa7e5978B49E4467e74C4175b";
+
+    fn checksum(address: &str) -> String {
+        address.parse::<Address>().unwrap().to_string()
+    }
+
+    fn release_list(releases: &[(&str, &str)]) -> Value {
+        Value::Array(
+            releases
+                .iter()
+                .map(|(id, environment)| {
+                    json!({
+                        "id": id,
+                        "environment": environment,
+                        "status": "active",
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn release_snapshot(environment: &str, addresses: &[&str]) -> Value {
+        let mut contracts = serde_json::Map::new();
+        for (index, address) in addresses.iter().enumerate() {
+            contracts.insert(format!("c{index}"), json!({ "address": address }));
+        }
+        json!({
+            "environment": environment,
+            "configSnapshot": { "contracts": contracts },
+        })
+    }
+
+    fn manager_calldata(oracle: &str, addresses: &[&str]) -> Value {
+        json!({
+            "mode": "onchain",
+            "chain_id": 1,
+            "to": oracle,
+            "calldata": "0x01",
+            "contracts": addresses.iter().map(|address| json!({
+                "address": address,
+                "calldata": "0x",
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    async fn run_manager_broadcast(
+        server: &mut mockito::Server,
+        accept: bool,
+        oracle: &str,
+        batch: &[&str],
+        releases: &[(&str, &str, &[&str])],
+    ) -> Result<Value, ApiCommandError> {
+        get_json(server, "", json!({"chain_id": 1})).await;
+        get_json(
+            server,
+            "/releases",
+            release_list(
+                &releases
+                    .iter()
+                    .map(|(id, environment, _)| (*id, *environment))
+                    .collect::<Vec<_>>(),
+            ),
+        )
+        .await;
+        for (id, environment, addresses) in releases {
+            get_json(
+                server,
+                &format!("/releases/{id}"),
+                release_snapshot(environment, addresses),
+            )
+            .await;
+        }
+        let path = if accept {
+            "/protocol-manager/accept-calldata"
+        } else {
+            "/protocol-manager/transfer-calldata"
+        };
+        get_json(server, path, manager_calldata(oracle, batch)).await;
+        let mut h = Harness::new(&server.url());
+        let args = ProtocolManagerArgs {
+            new_manager: (!accept).then(|| NEW_MANAGER.to_string()),
+            broadcast: signing(),
+            ..ProtocolManagerArgs::default()
+        };
+        let log = h.log();
+        if accept {
+            h.api
+                .protocol_manager_accept_broadcast(&mut h.config, &h.cli_args, &args, PROJECT, &log)
+                .await
+        } else {
+            h.api
+                .protocol_manager_transfer_broadcast(
+                    &mut h.config,
+                    &h.cli_args,
+                    &args,
+                    PROJECT,
+                    &log,
+                )
+                .await
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_an_omitted_contract_before_signing() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[HELD_A],
+                &[("rel-1", "production", &[HELD_A, HELD_B])],
+            )
+            .await
+            .unwrap_err();
+            assert_refused(&err, &checksum(HELD_B));
+            assert!(!err.to_string().contains(&checksum(FOREIGN)), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_substituted_contract_before_signing() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[FOREIGN],
+                &[("rel-1", "production", &[HELD_A])],
+            )
+            .await
+            .unwrap_err();
+            assert_refused(&err, &checksum(HELD_A));
+            assert!(err.to_string().contains(&checksum(FOREIGN)), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_accepts_the_active_release_contract_set() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[HELD_A, HELD_B],
+                &[("rel-1", "production", &[HELD_A, HELD_B])],
+            )
+            .await
+            .unwrap_err();
+            let message = err.to_string();
+            assert!(
+                !message.contains(&checksum(HELD_A)) && !message.contains("active release"),
+                "complete contract set was refused: {message}"
+            );
+            assert_refused(&err, "127.0.0.1");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_active_releases_on_both_environments() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[HELD_A, HELD_B],
+                &[
+                    ("rel-prod", "production", &[HELD_A]),
+                    ("rel-stage", "staging", &[HELD_B]),
+                ],
+            )
+            .await
+            .unwrap_err();
+            assert_refused(&err, "production");
+            assert!(err.to_string().contains("staging"), "{err}");
+        }
     }
 }

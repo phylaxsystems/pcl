@@ -27,6 +27,7 @@ use alloy_sol_types::{
     sol,
 };
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 sol! {
     function removeAssertion(address contractAddress, bytes32 assertionId);
@@ -49,23 +50,21 @@ impl OracleEnvironment {
     }
 }
 
+/// The contracts a manager handover may cover, taken from the project's
+/// active releases on one environment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HandoverBinding {
+    pub environment: OracleEnvironment,
+    pub contracts: BTreeSet<Address>,
+}
+
 pub(crate) fn release_environment(body: &Value) -> Result<OracleEnvironment, ApiCommandError> {
-    match body.get("environment").and_then(Value::as_str) {
-        Some("production") => Ok(OracleEnvironment::Production),
-        Some("staging") => Ok(OracleEnvironment::Staging),
-        Some(other) => {
-            Err(ApiCommandError::UnexpectedResponse {
-                endpoint: "/projects/{project_id}/releases/{release_id}",
-                reason: format!("unknown release environment {other:?}"),
-            })
+    snapshot_environment(body).map_err(|reason| {
+        ApiCommandError::UnexpectedResponse {
+            endpoint: "/projects/{project_id}/releases/{release_id}",
+            reason,
         }
-        None => {
-            Err(ApiCommandError::UnexpectedResponse {
-                endpoint: "/projects/{project_id}/releases/{release_id}",
-                reason: "missing environment".to_string(),
-            })
-        }
-    }
+    })
 }
 
 /// Active `StateOracle` addresses compiled from the ethereum and linea dapp chain
@@ -180,9 +179,121 @@ pub(crate) fn validate_removal_batch(
     check_batch(data, expected)
 }
 
+/// Ids of releases the active-release list claims are active.
+pub(crate) fn active_release_ids(body: &Value) -> Result<Vec<String>, String> {
+    let items = body
+        .as_array()
+        .ok_or("active release list is not a JSON array")?;
+    let mut ids = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let status = item
+            .get("status")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("release {index} has no status"))?;
+        if status != "active" {
+            return Err(format!("release {index} has status {status}, not active"));
+        }
+        let id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| format!("release {index} has no id"))?;
+        ids.push(id.to_string());
+    }
+    Ok(ids)
+}
+
+pub(crate) fn snapshot_environment(release: &Value) -> Result<OracleEnvironment, String> {
+    match release.get("environment").and_then(Value::as_str) {
+        Some("production") => Ok(OracleEnvironment::Production),
+        Some("staging") => Ok(OracleEnvironment::Staging),
+        Some(other) => Err(format!("unknown release environment {other:?}")),
+        None => Err("missing environment".to_string()),
+    }
+}
+
+/// Contract addresses stored on one release snapshot.
+pub(crate) fn snapshot_addresses(release: &Value) -> Result<BTreeSet<Address>, String> {
+    let contracts = release
+        .get("configSnapshot")
+        .or_else(|| release.get("config_snapshot"))
+        .and_then(|snapshot| snapshot.get("contracts"))
+        .and_then(Value::as_object)
+        .ok_or("the release record has no config snapshot contracts")?;
+    let mut addresses = BTreeSet::new();
+    for contract in contracts.values() {
+        let address = contract
+            .get("address")
+            .and_then(Value::as_str)
+            .and_then(|address| address.parse().ok())
+            .ok_or("a release record contract has no valid address")?;
+        addresses.insert(address);
+    }
+    Ok(addresses)
+}
+
+/// One environment, and the union of its active release contracts.
+pub(crate) fn bind_handover(
+    releases: &[(OracleEnvironment, BTreeSet<Address>)],
+) -> Result<HandoverBinding, String> {
+    let Some((environment, _)) = releases.first() else {
+        return Err("the project has no active releases to bind the manager batch to".to_string());
+    };
+    let mut names: Vec<&str> = releases
+        .iter()
+        .map(|(environment, _)| environment.as_str())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    if names.len() != 1 {
+        return Err(format!(
+            "active releases span {}; pcl signs a manager handover for one environment's StateOracle",
+            names.join(" and ")
+        ));
+    }
+    let mut contracts = BTreeSet::new();
+    for (_, addresses) in releases {
+        contracts.extend(addresses.iter().copied());
+    }
+    Ok(HandoverBinding {
+        environment: *environment,
+        contracts,
+    })
+}
+
+fn require_exact_contracts(
+    held: &BTreeSet<Address>,
+    listed: &[(Address, Bytes)],
+) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    let mut repeated = BTreeSet::new();
+    for (address, _) in listed {
+        if !seen.insert(*address) {
+            repeated.insert(*address);
+        }
+    }
+    if repeated.is_empty() && &seen == held {
+        return Ok(());
+    }
+    let missing = held
+        .difference(&seen)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut extra: Vec<String> = seen.difference(held).map(ToString::to_string).collect();
+    extra.extend(repeated.iter().map(ToString::to_string));
+    extra.sort();
+    extra.dedup();
+    Err(format!(
+        "manager batch contracts are not the active release set (missing: {missing}; extra: {})",
+        extra.join(", ")
+    ))
+}
+
 /// Checks a manager batch: `transferManager(contract, new_manager)` per
 /// contract when `new_manager` is set (initiation), otherwise
-/// `acceptManagerTransfer(contract)` (acceptance).
+/// `acceptManagerTransfer(contract)` (acceptance). The batch must name
+/// exactly `handover`'s contracts, and `to` must be that environment's oracle.
 pub(crate) fn validate_manager_batch(
     platform: &Url,
     chain_id: u64,
@@ -190,11 +301,10 @@ pub(crate) fn validate_manager_batch(
     data: &Bytes,
     contracts: &[(Address, Bytes)],
     new_manager: Option<Address>,
+    handover: &HandoverBinding,
 ) -> Result<(), String> {
-    // Manager responses name no environment, and the dapp builds them for
-    // whichever single environment holds the project's active contracts, so
-    // either of the chain's active oracles may be the target.
-    check_target(platform, chain_id, None, to)?;
+    require_exact_contracts(&handover.contracts, contracts)?;
+    check_target(platform, chain_id, Some(handover.environment), to)?;
 
     let mut expected = Vec::with_capacity(contracts.len());
     for (index, (contract, inner)) in contracts.iter().enumerate() {
@@ -314,12 +424,20 @@ mod tests {
     use crate::onchain::encode_batch;
     use alloy_primitives::b256;
     use serde_json::json;
+    use std::collections::BTreeSet;
 
     sol! {
         function transfer(address to, uint256 amount);
     }
 
     const ETH_URL: &str = "https://ethereum.phylax.systems";
+
+    fn production_handover(contracts: impl IntoIterator<Item = Address>) -> HandoverBinding {
+        HandoverBinding {
+            environment: OracleEnvironment::Production,
+            contracts: contracts.into_iter().collect(),
+        }
+    }
     const ETH_PRODUCTION: Address = address!("14386aF70E91dFE12aC6243D4B5e087870d7f14D");
     const ETH_STAGING: Address = address!("DE55F19430b3Ec5Fa7e5978B49E4467e74C4175b");
     const ETH_RETIRED: Address = address!("B4951F9eA03C6bc7eE441E208C4AC996B2f6e369");
@@ -475,6 +593,7 @@ mod tests {
                 &data,
                 &[(ADOPTER, entry)],
                 None,
+                &production_handover([ADOPTER]),
             )
         };
         let batch = encode_batch(vec![accept_entry()]);
@@ -539,9 +658,38 @@ mod tests {
             let err = accept(chain_id, to, data, entry).unwrap_err();
             assert!(err.contains(reason), "{to}: {err}");
         }
-        for oracle in [ETH_PRODUCTION, ETH_STAGING] {
-            accept(1, oracle, batch.clone(), accept_entry()).unwrap();
-        }
+        accept(1, ETH_PRODUCTION, batch.clone(), accept_entry()).unwrap();
+        validate_manager_batch(
+            &ETH_URL.parse().unwrap(),
+            1,
+            ETH_STAGING,
+            &batch,
+            &[(ADOPTER, accept_entry())],
+            None,
+            &HandoverBinding {
+                environment: OracleEnvironment::Staging,
+                contracts: BTreeSet::from([ADOPTER]),
+            },
+        )
+        .unwrap();
+    }
+
+    /// The other active oracle on the same chain belongs to the other environment.
+    #[test]
+    fn manager_batch_refuses_the_other_environments_oracle() {
+        let batch = encode_batch(vec![accept_entry()]);
+        let err = validate_manager_batch(
+            &ETH_URL.parse().unwrap(),
+            1,
+            ETH_STAGING,
+            &batch,
+            &[(ADOPTER, accept_entry())],
+            None,
+            &production_handover([ADOPTER]),
+        )
+        .unwrap_err();
+        assert!(err.contains(&ETH_STAGING.to_string()), "{err}");
+        assert!(err.contains("production"), "{err}");
     }
 
     #[test]
@@ -563,6 +711,7 @@ mod tests {
                 &encode_batch(vec![inner.clone()]),
                 &[(ADOPTER, inner)],
                 Some(requested),
+                &production_handover([ADOPTER]),
             )
         };
         check(entry(requested)).unwrap();
