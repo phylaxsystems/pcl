@@ -1750,7 +1750,7 @@ mod tests {
         get_json(
             server,
             "/releases/rel-1",
-            release_snapshot("production", &[]),
+            release_snapshot("production", &[HELD_A]),
         )
         .await;
         get_json(server, "/protocol-manager/accept-calldata", body).await;
@@ -1841,7 +1841,12 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let err = accept(
             &mut server,
-            json!({"chain_id": 1, "to": ORACLE, "calldata": "0x01", "contracts": []}),
+            json!({
+                "chain_id": 1,
+                "to": ORACLE,
+                "calldata": "0x01",
+                "contracts": [{"address": HELD_A, "calldata": "0x"}],
+            }),
         )
         .await;
         assert_refused(&err, "127.0.0.1");
@@ -1891,7 +1896,7 @@ mod tests {
         get_json(
             &mut server,
             "/releases/rel-1",
-            release_snapshot("production", &[]),
+            release_snapshot("production", &[HELD_A]),
         )
         .await;
         // ERC20 transfer(attacker, balance) aimed at a token contract.
@@ -1903,7 +1908,7 @@ mod tests {
                 "chain_id": 1,
                 "to": "0x2222222222222222222222222222222222222222",
                 "calldata": "0xa9059cbb000000000000000000000000444444444444444444444444444444444444444400000000000000000000000000000000000000000000000000000000000f4240",
-                "contracts": []
+                "contracts": [{"address": HELD_A, "calldata": "0x"}]
             }),
         )
         .await;
@@ -2104,6 +2109,86 @@ mod tests {
             .unwrap_err();
             assert_refused(&err, "production");
             assert!(err.to_string().contains("staging"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_binds_the_only_environment_with_contracts() {
+        let cases: [(&str, &[(&str, &str, &[&str])]); 2] = [
+            (
+                HELD_A,
+                &[
+                    ("rel-prod", "production", &[HELD_A]),
+                    ("rel-stage", "staging", &[]),
+                ],
+            ),
+            (
+                HELD_B,
+                &[
+                    ("rel-prod", "production", &[]),
+                    ("rel-stage", "staging", &[HELD_B]),
+                ],
+            ),
+        ];
+        for (held, releases) in cases {
+            for accept in [false, true] {
+                let mut server = mockito::Server::new_async().await;
+                let err = run_manager_broadcast(
+                    &mut server,
+                    accept,
+                    PRODUCTION_ORACLE,
+                    &[held],
+                    releases,
+                )
+                .await
+                .unwrap_err();
+                // The harness platform is not a compiled one, so a bound batch
+                // is refused at the platform check, after the binding passed.
+                assert_refused(&err, "127.0.0.1");
+                assert!(!err.to_string().contains("active release"), "{err}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_when_no_active_release_has_contracts() {
+        let cases: [&[(&str, &str, &[&str])]; 3] = [
+            &[],
+            &[("rel-prod", "production", &[])],
+            &[
+                ("rel-prod", "production", &[]),
+                ("rel-stage", "staging", &[]),
+            ],
+        ];
+        for releases in cases {
+            for accept in [false, true] {
+                let mut server = mockito::Server::new_async().await;
+                let err =
+                    run_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[], releases)
+                        .await
+                        .unwrap_err();
+                assert_refused(&err, "no active release contracts");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_snapshot_with_a_malformed_address() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[HELD_B],
+                &[
+                    ("rel-prod", "production", &["not-an-address"]),
+                    ("rel-stage", "staging", &[HELD_B]),
+                ],
+            )
+            .await
+            .unwrap_err();
+            assert_refused(&err, "no valid address");
         }
     }
 }

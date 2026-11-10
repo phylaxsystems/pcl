@@ -235,23 +235,28 @@ fn snapshot_contracts(
 pub(crate) fn bind_handover(
     releases: &[(OracleEnvironment, BTreeSet<Address>)],
 ) -> Result<HandoverBinding, String> {
-    let Some((environment, _)) = releases.first() else {
-        return Err("the project has no active releases to bind the manager batch to".to_string());
+    // Like the dapp, a release with no contracts holds nothing to hand over
+    // and does not count toward the single environment.
+    let held = releases
+        .iter()
+        .filter(|(_, contracts)| !contracts.is_empty());
+    let Some((environment, _)) = held.clone().next() else {
+        return Err(
+            "the project has no active release contracts to bind the manager batch to".to_string(),
+        );
     };
     // There are two environments, so a second one present means both are.
-    if releases.iter().any(|(other, _)| other != environment) {
+    if held.clone().any(|(other, _)| other != environment) {
         return Err(
             "active releases span production and staging; pcl signs a manager handover for one environment's StateOracle"
                 .to_string(),
         );
     }
-    let mut contracts = BTreeSet::new();
-    for (_, addresses) in releases {
-        contracts.extend(addresses.iter().copied());
-    }
     Ok(HandoverBinding {
         environment: *environment,
-        contracts,
+        contracts: held
+            .flat_map(|(_, contracts)| contracts.iter().copied())
+            .collect(),
     })
 }
 
@@ -669,6 +674,30 @@ mod tests {
         .unwrap_err();
         assert!(err.contains(&ETH_STAGING.to_string()), "{err}");
         assert!(err.contains("production"), "{err}");
+    }
+
+    #[test]
+    fn handover_with_staging_contracts_only_targets_the_staging_oracle() {
+        let handover = bind_handover(&[
+            (OracleEnvironment::Production, BTreeSet::new()),
+            (OracleEnvironment::Staging, BTreeSet::from([ADOPTER])),
+        ])
+        .unwrap();
+        let batch = encode_batch(vec![accept_entry()]);
+        let validate = |to| {
+            validate_manager_batch(
+                &ETH_URL.parse().unwrap(),
+                1,
+                to,
+                &batch,
+                &[(ADOPTER, accept_entry())],
+                None,
+                &handover,
+            )
+        };
+        validate(ETH_STAGING).unwrap();
+        let err = validate(ETH_PRODUCTION).unwrap_err();
+        assert!(err.contains("staging"), "{err}");
     }
 
     #[test]
