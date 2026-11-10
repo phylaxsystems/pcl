@@ -95,14 +95,14 @@ const ACTIVE_ORACLES: &[(Network, u64, OracleEnvironment, Address)] = &[
     ),
 ];
 
-/// Requires `to` to be an active `StateOracle` for the platform, chain and,
-/// when known, environment. The platform must be a network's canonical
+/// Requires `to` to be the active `StateOracle` for the platform, chain and
+/// environment. The platform must be a network's canonical
 /// origin (`Network::from_url`), so another scheme, port, userinfo or a
 /// trailing-dot host is refused.
 fn check_target(
     platform: &Url,
     chain_id: u64,
-    environment: Option<OracleEnvironment>,
+    environment: OracleEnvironment,
     to: Address,
 ) -> Result<(), String> {
     let Some(network) = Network::from_url(platform) else {
@@ -115,18 +115,16 @@ fn check_target(
         ));
     };
     let scope = format!(
-        "{} chain {chain_id}{}",
+        "{} chain {chain_id} {}",
         network.host(),
-        environment.map_or(String::new(), |environment| {
-            format!(" {}", environment.as_str())
-        })
+        environment.as_str()
     );
     let active = ACTIVE_ORACLES
         .iter()
         .filter(|(oracle_network, oracle_chain, oracle_env, _)| {
             *oracle_network == network
                 && *oracle_chain == chain_id
-                && environment.is_none_or(|environment| *oracle_env == environment)
+                && *oracle_env == environment
         })
         .map(|(_, _, _, oracle)| *oracle)
         .collect::<Vec<_>>();
@@ -162,7 +160,7 @@ pub(crate) fn validate_removal_batch(
             "the listed assertions do not match the release record's config snapshot".to_string(),
         );
     }
-    check_target(platform, chain_id, Some(environment), to)?;
+    check_target(platform, chain_id, environment, to)?;
     let expected = targets
         .into_iter()
         .map(|(contract, assertion_id)| {
@@ -295,7 +293,7 @@ pub(crate) fn validate_manager_batch(
     handover: &HandoverBinding,
 ) -> Result<(), String> {
     require_exact_contracts(&handover.contracts, contracts)?;
-    check_target(platform, chain_id, Some(handover.environment), to)?;
+    check_target(platform, chain_id, handover.environment, to)?;
 
     let mut expected = Vec::with_capacity(contracts.len());
     for (index, (contract, inner)) in contracts.iter().enumerate() {
