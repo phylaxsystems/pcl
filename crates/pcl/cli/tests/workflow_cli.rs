@@ -182,17 +182,17 @@ fn workflow_body_templates_cover_project_release_families() {
     );
     assert_body_template_fields(
         temp_dir.path(),
-        "deployments",
+        "releases-deploy",
         &[
-            "deployments",
+            "releases",
             "--api-url",
             api,
-            "--project",
+            "deploy",
             "project-1",
-            "--confirm",
+            "release-1",
             "--body-template",
         ],
-        &["tx_hash", "chainId", "assertions"],
+        &["chainId", "txHash"],
     );
 }
 
@@ -503,4 +503,243 @@ fn contract_views_keep_envelopes_and_detail_guidance() {
         );
         request.assert();
     }
+}
+
+fn assert_local_parse_error(config_dir: &std::path::Path, args: &[&str], code: &str) {
+    let output = run_pcl(config_dir, args);
+    assert!(
+        !output.status.success(),
+        "{args:?} succeeded:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stderr).unwrap_or_else(|error| {
+            panic!(
+                "{args:?} did not return JSON ({error}):\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+    assert_eq!(envelope["error"]["code"], code, "{args:?}: {envelope}");
+}
+
+#[test]
+fn retired_commands_fail_before_any_request() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let mut server = mockito::Server::new();
+    let unexpected_get = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+    let unexpected_post = server
+        .mock("POST", mockito::Matcher::Any)
+        .expect(0)
+        .create();
+    // Requests would reach the mock: the config's platform URL is the server.
+    write_valid_auth_config_for_platform(config_dir.path(), &server.url());
+    let rejected: &[(&str, &[&str])] = &[
+        ("cli.invalid_subcommand", &["deployments", "--project", "p"]),
+        (
+            "cli.invalid_subcommand",
+            &["deployments", "--project", "p", "--confirm"],
+        ),
+        (
+            "cli.unknown_argument",
+            &["assertions", "--project-id", "p", "--remove-info"],
+        ),
+        (
+            "cli.unknown_argument",
+            &["assertions", "--project-id", "p", "--remove-calldata"],
+        ),
+        (
+            "cli.unknown_argument",
+            &["contracts", "--project", "p", "--remove-calldata"],
+        ),
+        (
+            "cli.unknown_argument",
+            &["contracts", "--project", "p", "--aa-address", "0xabc"],
+        ),
+        (
+            "cli.unknown_argument",
+            &["contracts", "--project", "p", "--assertion-id", "a"],
+        ),
+        (
+            "cli.unknown_argument",
+            &["contracts", "--project", "p", "--assertion-ids", "a"],
+        ),
+        (
+            "cli.unknown_argument",
+            &["contracts", "--project", "p", "--network", "1"],
+        ),
+        (
+            "cli.unknown_argument",
+            &["contracts", "--project", "p", "--environment", "production"],
+        ),
+    ];
+    for (code, args) in rejected {
+        assert_local_parse_error(config_dir.path(), args, code);
+    }
+    unexpected_get.assert();
+    unexpected_post.assert();
+}
+
+#[test]
+fn discovery_omits_retired_workflows() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let forbidden = [
+        "deployments",
+        "--remove-info",
+        "--remove-calldata",
+        "removeAssertionsInfo",
+        "removeAssertionsCalldata",
+        "confirmDeployment",
+        "getProjectDeployments",
+    ];
+    let contracts_only: &[&str] = &[
+        "--aa-address",
+        "--assertion-id",
+        "--network",
+        "--environment",
+    ];
+    let surfaces: &[(&[&str], &[&str])] = &[
+        (&["schema", "list"], &[]),
+        (&["workflows"], &[]),
+        (&["api", "manifest"], &[]),
+        (&["--llms"], &[]),
+        (&["llms"], &[]),
+        (&["completions", "bash"], &[]),
+        (&["completions", "zsh"], &[]),
+        (&["completions", "fish"], &[]),
+        (&["assertions", "--help"], &[]),
+        (&["contracts", "--help"], contracts_only),
+        (&["--help"], &[]),
+    ];
+    for (args, extra) in surfaces {
+        let output = run_pcl(config_dir.path(), args);
+        assert!(
+            output.status.success(),
+            "{args:?} failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8_lossy(&output.stdout);
+        for needle in forbidden.iter().chain(extra.iter()) {
+            assert!(
+                !text.contains(needle),
+                "{args:?} still advertises {needle:?}:\n{text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn retired_deployments_points_at_releases_not_deploy() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let mut server = mockito::Server::new();
+    let unexpected_get = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+    let unexpected_post = server
+        .mock("POST", mockito::Matcher::Any)
+        .expect(0)
+        .create();
+    write_valid_auth_config_for_platform(config_dir.path(), &server.url());
+    let args = ["deployments", "--project", "p"];
+
+    let output = run_pcl(config_dir.path(), &args);
+    assert_eq!(output.status.code(), Some(2));
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stderr).expect("json error");
+    assert_eq!(envelope["error"]["code"], "cli.invalid_subcommand");
+    assert!(
+        !envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("'deploy'")
+    );
+    assert_eq!(
+        envelope["next_actions"],
+        serde_json::json!([
+            "pcl releases list <project-ref> --json",
+            "pcl releases show <project-ref> <release-id> --json"
+        ])
+    );
+
+    let human = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .arg("--config-dir")
+        .arg(config_dir.path())
+        .args(args)
+        .output()
+        .expect("run pcl");
+    assert_eq!(human.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&human.stderr);
+    assert!(!stderr.contains("'deploy'"), "{stderr}");
+    assert!(
+        stderr.contains("pcl releases list <project-ref>"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("pcl releases show <project-ref> <release-id>"),
+        "{stderr}"
+    );
+    unexpected_get.assert();
+    unexpected_post.assert();
+}
+
+#[test]
+fn release_deploy_broadcast_next_actions_use_releases_commands() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let mut server = mockito::Server::new();
+    write_valid_auth_config_for_platform(config_dir.path(), &server.url());
+    let project = "11111111-1111-4111-8111-111111111111";
+    let calldata = server
+        .mock(
+            "GET",
+            format!("/api/v1/projects/{project}/releases/release-1/deploy-calldata").as_str(),
+        )
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "chainId": 1,
+                "stateOracleAddress": "0x0101010101010101010101010101010101010101",
+                "operations": [],
+                "calldata": [],
+                "isNoop": true,
+                "message": "Everything already deployed",
+            })
+            .to_string(),
+        )
+        .expect(1)
+        .create();
+    let confirm = server
+        .mock(
+            "POST",
+            format!("/api/v1/projects/{project}/releases/release-1/deploy").as_str(),
+        )
+        .match_body(Matcher::PartialJson(serde_json::json!({"mode": "noop"})))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body("{}")
+        .expect(1)
+        .create();
+
+    let output = run_pcl(
+        config_dir.path(),
+        &[
+            "releases",
+            "calldata",
+            "deploy",
+            project,
+            "release-1",
+            "--broadcast",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--yes",
+        ],
+    );
+    let envelope = assert_json_success(&output, "release deploy broadcast");
+    assert_eq!(envelope["data"]["noop"], true, "{envelope}");
+    assert_eq!(
+        envelope["next_actions"],
+        serde_json::json!([
+            format!("pcl releases show {project} release-1 --json"),
+            format!("pcl releases list {project} --json")
+        ])
+    );
+    calldata.assert();
+    confirm.assert();
 }

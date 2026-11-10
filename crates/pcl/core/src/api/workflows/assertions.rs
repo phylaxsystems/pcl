@@ -9,7 +9,6 @@ use super::{
     first_string_field,
     push_query,
     required_project_arg,
-    workflow_operation_get,
     workflow_operation_get_with_query,
 };
 use serde_json::Value;
@@ -88,24 +87,6 @@ pub(in crate::api) fn assertions_request(
             vec![format!("pcl assertions --project-id {project_id}")],
         );
     }
-    if args.remove_info {
-        return workflow_operation_get(
-            WorkflowOperation::new(HttpMethod::Get, "projects.removeAssertionsInfo")
-                .path_param("project_id", &project_id),
-            true,
-            vec![format!(
-                "pcl assertions --project-id {project_id} --remove-calldata"
-            )],
-        );
-    }
-    if args.remove_calldata {
-        return workflow_operation_get(
-            WorkflowOperation::new(HttpMethod::Get, "projects.removeAssertionsCalldata")
-                .path_param("project_id", &project_id),
-            true,
-            vec![format!("pcl releases list {project_id}")],
-        );
-    }
 
     if let Some(assertion_id) = &args.assertion_id {
         return workflow_operation_get_with_query(
@@ -137,16 +118,13 @@ pub(in crate::api) fn assertions_request(
 
 workflow_definition!(
     "assertions",
-    command: "pcl assertions --project <ref> [--assertion-id <id>|--registered|--remove-info|--remove-calldata]",
-    description: "List, inspect, and manage project assertion lifecycle state.",
-    output: "assertion index/detail, registered assertions, or removal info/calldata",
-    policy: MachineRaw,
+    command: "pcl assertions --project <ref> [--assertion-id <id>|--registered]",
+    description: "List and inspect project assertions.",
+    output: "assertion index, detail, registered assertions, or adopter lookup",
     actions: [
         action!("index", true, "views.projectAssertions.getProjectAssertions", "pcl assertions --project <project-ref>", required: ["--project"]),
         action!("detail", true, "views.assertionDetail.getAssertionDetail", "pcl assertions --project <project-ref> --assertion-id <assertion-id>", required: ["--project", "--assertion-id"]),
         action!("adopter_lookup", false, "assertions.getAssertions", "pcl assertions --adopter-address 0x... --network 1", required: ["--adopter-address"], optional: ["--network", "--environment", "--include-onchain-only"]),
         action!("registered", true, "views.projectAssertions.getProjectAssertions", "pcl assertions --project <project-ref> --registered", required: ["--project"]),
-        action!("remove_info", true, "projects.removeAssertionsInfo", "pcl assertions --project <project-ref> --remove-info", required: ["--project"]),
-        action!("remove_calldata", true, "projects.removeAssertionsCalldata", "pcl assertions --project <project-ref> --remove-calldata", required: ["--project"]),
     ],
 );

@@ -1630,7 +1630,7 @@ fn llms_guide() -> Value {
             }
         ],
         "command_surfaces": {
-            "workflows": ["pcl incidents", "pcl projects", "pcl assertions", "pcl account", "pcl contracts", "pcl releases", "pcl deployments", "pcl access", "pcl integrations", "pcl protocol-manager", "pcl events", "pcl search"],
+            "workflows": ["pcl incidents", "pcl projects", "pcl assertions", "pcl account", "pcl contracts", "pcl releases", "pcl access", "pcl integrations", "pcl protocol-manager", "pcl events", "pcl search"],
             "discovery": ["pcl --json --llms", "pcl llms --json", "pcl workflows --json", "pcl schema --json", "pcl api manifest --json", "pcl api list --json", "pcl api inspect --json"],
             "execution": ["pcl api call", "pcl export incidents", "pcl apply", "pcl deploy"],
             "state": ["pcl artifacts", "pcl requests", "pcl jobs"],

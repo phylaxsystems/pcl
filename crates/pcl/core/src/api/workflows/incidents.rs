@@ -205,7 +205,6 @@ workflow_definition!(
     command: "pcl incidents [--project-id <id>] [--incident-id <id>] [--stats] [--limit <n>] [--all --output <file>]",
     description: "List public incidents, project incidents, fetch all incident pages, inspect incident detail, incident stats, or incident trace.",
     output: "incident data from /views/public/invalidations, /views/projects/{projectId}/invalidations, /views/invalidations/{invalidationId}, or /projects/{project_id}/invalidations/stats",
-    policy: MachineRaw,
     actions: [
         action!("list_public", false, "views.publicInvalidations.getPublicInvalidations", "pcl incidents --limit 5", optional: ["--page", "--limit", "--network", "--sort", "--all", "--max-pages", "--output"]),
         action!("list_project", true, "views.projectInvalidations.getProjectInvalidations", "pcl incidents --project <project-ref> --all --limit 50 --output incidents.json", required: ["--project"], optional: ["--page", "--limit", "--assertion-id", "--adopter-id", "--environment", "--from", "--to", "--all", "--max-pages", "--output"]),
