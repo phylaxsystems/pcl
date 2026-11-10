@@ -9,7 +9,6 @@
 //! compiled into the ethereum (`eth-mainnet`) and linea (`linea-mainnet`)
 //! dapp deployments.
 
-use super::ApiCommandError;
 use crate::platform::{
     Network,
     SELECTABLE_NETWORKS,
@@ -54,15 +53,6 @@ impl OracleEnvironment {
 pub(crate) struct HandoverBinding {
     pub environment: OracleEnvironment,
     pub contracts: BTreeSet<Address>,
-}
-
-pub(crate) fn release_environment(body: &Value) -> Result<OracleEnvironment, ApiCommandError> {
-    snapshot_environment(body).map_err(|reason| {
-        ApiCommandError::UnexpectedResponse {
-            endpoint: "/projects/{project_id}/releases/{release_id}",
-            reason,
-        }
-    })
 }
 
 /// Active `StateOracle` addresses compiled from the ethereum and linea dapp chain
@@ -122,9 +112,7 @@ fn check_target(
     let active = ACTIVE_ORACLES
         .iter()
         .filter(|(oracle_network, oracle_chain, oracle_env, _)| {
-            *oracle_network == network
-                && *oracle_chain == chain_id
-                && *oracle_env == environment
+            *oracle_network == network && *oracle_chain == chain_id && *oracle_env == environment
         })
         .map(|(_, _, _, oracle)| *oracle)
         .collect::<Vec<_>>();

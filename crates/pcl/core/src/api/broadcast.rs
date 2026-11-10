@@ -694,7 +694,13 @@ impl ApiArgs {
         let release = self
             .call_workflow_result(config, cli_args, &release_request, request_log_path)
             .await?;
-        let environment = super::signed_batch::release_environment(&release.body)?;
+        let environment =
+            super::signed_batch::snapshot_environment(&release.body).map_err(|reason| {
+                ApiCommandError::UnexpectedResponse {
+                    endpoint: "/projects/{project_id}/releases/{release_id}",
+                    reason,
+                }
+            })?;
         let release_targets =
             super::signed_batch::release_targets(&release.body).map_err(&refused)?;
         super::signed_batch::validate_removal_batch(
