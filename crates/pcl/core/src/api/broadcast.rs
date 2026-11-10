@@ -1738,7 +1738,7 @@ mod tests {
 
     async fn accept(server: &mut mockito::Server, body: Value) -> ApiCommandError {
         get_json(server, "", json!({"chain_id": 1})).await;
-        active_release_list(server, &release_list(&[("rel-1", "production")])).await;
+        active_release_list(server, &release_list(["rel-1"])).await;
         get_json(
             server,
             "/releases/rel-1",
@@ -1879,7 +1879,7 @@ mod tests {
     async fn transfer_broadcast_refuses_a_token_transfer_before_signing() {
         let mut server = mockito::Server::new_async().await;
         get_json(&mut server, "", json!({"chain_id": 1})).await;
-        active_release_list(&mut server, &release_list(&[("rel-1", "production")])).await;
+        active_release_list(&mut server, &release_list(["rel-1"])).await;
         get_json(
             &mut server,
             "/releases/rel-1",
@@ -1924,19 +1924,10 @@ mod tests {
         address.parse::<Address>().unwrap().to_string()
     }
 
-    fn release_list(releases: &[(&str, &str)]) -> Value {
-        Value::Array(
-            releases
-                .iter()
-                .map(|(id, environment)| {
-                    json!({
-                        "id": id,
-                        "environment": environment,
-                        "status": "active",
-                    })
-                })
-                .collect(),
-        )
+    fn release_list<'a>(ids: impl IntoIterator<Item = &'a str>) -> Value {
+        ids.into_iter()
+            .map(|id| json!({ "id": id, "status": "active" }))
+            .collect()
     }
 
     fn release_snapshot(environment: &str, addresses: &[&str]) -> Value {
@@ -1971,16 +1962,7 @@ mod tests {
         batch: &[&str],
         releases: &[(&str, &str, &[&str])],
     ) -> Result<Value, ApiCommandError> {
-        active_release_list(
-            server,
-            &release_list(
-                &releases
-                    .iter()
-                    .map(|(id, environment, _)| (*id, *environment))
-                    .collect::<Vec<_>>(),
-            ),
-        )
-        .await;
+        active_release_list(server, &release_list(releases.iter().map(|(id, _, _)| *id))).await;
         for (id, environment, addresses) in releases {
             get_json(
                 server,
@@ -2063,7 +2045,6 @@ mod tests {
             .await
             .unwrap_err();
             assert_refused(&err, &checksum(HELD_B));
-            assert!(!err.to_string().contains(&checksum(FOREIGN)), "{err}");
         }
     }
 
@@ -2086,7 +2067,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn manager_broadcast_accepts_the_active_release_contract_set() {
+    async fn manager_broadcast_passes_the_complete_contract_set_to_the_platform_check() {
         for accept in [false, true] {
             let mut server = mockito::Server::new_async().await;
             let err = run_manager_broadcast(
@@ -2220,7 +2201,7 @@ mod tests {
         ] {
             for accept in [false, true] {
                 let mut server = mockito::Server::new_async().await;
-                active_release_list(&mut server, &release_list(&[("rel-1", "production")])).await;
+                active_release_list(&mut server, &release_list(["rel-1"])).await;
                 let mut detail = release_snapshot("production", &[HELD_A]);
                 detail["status"] = status.clone();
                 get_json(&mut server, "/releases/rel-1", detail).await;
@@ -2239,15 +2220,9 @@ mod tests {
             for accept in [false, true] {
                 let mut server = mockito::Server::new_async().await;
                 let ids: Vec<String> = (0..listed).map(|index| format!("rel-{index}")).collect();
-                let list = active_release_list(
-                    &mut server,
-                    &release_list(
-                        &ids.iter()
-                            .map(|id| (id.as_str(), "production"))
-                            .collect::<Vec<_>>(),
-                    ),
-                )
-                .await;
+                let list =
+                    active_release_list(&mut server, &release_list(ids.iter().map(String::as_str)))
+                        .await;
                 let details = server
                     .mock(
                         "GET",

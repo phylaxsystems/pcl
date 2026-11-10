@@ -422,20 +422,12 @@ mod tests {
     use crate::onchain::encode_batch;
     use alloy_primitives::b256;
     use serde_json::json;
-    use std::collections::BTreeSet;
 
     sol! {
         function transfer(address to, uint256 amount);
     }
 
     const ETH_URL: &str = "https://ethereum.phylax.systems";
-
-    fn production_handover(contracts: impl IntoIterator<Item = Address>) -> HandoverBinding {
-        HandoverBinding {
-            environment: OracleEnvironment::Production,
-            contracts: contracts.into_iter().collect(),
-        }
-    }
     const ETH_PRODUCTION: Address = address!("14386aF70E91dFE12aC6243D4B5e087870d7f14D");
     const ETH_STAGING: Address = address!("DE55F19430b3Ec5Fa7e5978B49E4467e74C4175b");
     const ETH_RETIRED: Address = address!("B4951F9eA03C6bc7eE441E208C4AC996B2f6e369");
@@ -454,6 +446,16 @@ mod tests {
         }
         .abi_encode()
         .into()
+    }
+
+    fn handover(
+        environment: OracleEnvironment,
+        contracts: impl IntoIterator<Item = Address>,
+    ) -> HandoverBinding {
+        HandoverBinding {
+            environment,
+            contracts: contracts.into_iter().collect(),
+        }
     }
 
     fn accept_entry() -> Bytes {
@@ -591,7 +593,7 @@ mod tests {
                 &data,
                 &[(ADOPTER, entry)],
                 None,
-                &production_handover([ADOPTER]),
+                &handover(OracleEnvironment::Production, [ADOPTER]),
             )
         };
         let batch = encode_batch(vec![accept_entry()]);
@@ -664,10 +666,7 @@ mod tests {
             &batch,
             &[(ADOPTER, accept_entry())],
             None,
-            &HandoverBinding {
-                environment: OracleEnvironment::Staging,
-                contracts: BTreeSet::from([ADOPTER]),
-            },
+            &handover(OracleEnvironment::Staging, [ADOPTER]),
         )
         .unwrap();
     }
@@ -682,7 +681,7 @@ mod tests {
             &batch,
             &[(ADOPTER, accept_entry())],
             None,
-            &production_handover([ADOPTER]),
+            &handover(OracleEnvironment::Production, [ADOPTER]),
         )
         .unwrap_err();
         assert!(err.contains(&ETH_STAGING.to_string()), "{err}");
@@ -732,7 +731,7 @@ mod tests {
                 &encode_batch(vec![inner.clone()]),
                 &[(ADOPTER, inner)],
                 Some(requested),
-                &production_handover([ADOPTER]),
+                &handover(OracleEnvironment::Production, [ADOPTER]),
             )
         };
         check(entry(requested)).unwrap();
