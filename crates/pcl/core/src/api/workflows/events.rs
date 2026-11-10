@@ -45,7 +45,6 @@ workflow_definition!(
     command: "pcl events --project <ref> [--audit-log]",
     description: "Inspect project events and audit logs.",
     output: "event or audit log data",
-    policy: MachineRaw,
     actions: [
         action!("events", true, "views.projectEvents.getProjectEvents", "pcl events --project <project-ref>", required: ["--project"], optional: ["--page", "--limit", "--environment"]),
         action!("audit_log", true, "views.auditLog.getAuditLog", "pcl events --project <project-ref> --audit-log", required: ["--project"], optional: ["--page", "--limit", "--environment"]),
