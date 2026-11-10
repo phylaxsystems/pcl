@@ -2194,22 +2194,26 @@ mod tests {
         // The list named rel-1 active, but the detail fetched after it reports
         // another status (or none), so its snapshot is not the active set.
         for status in [
-            json!("inactive"),
-            json!("removed"),
-            json!("Active"),
-            Value::Null,
+            Some(json!("inactive")),
+            Some(json!("removed")),
+            Some(json!("Active")),
+            Some(Value::Null),
+            None,
         ] {
             for accept in [false, true] {
                 let mut server = mockito::Server::new_async().await;
                 active_release_list(&mut server, &release_list(["rel-1"])).await;
                 let mut detail = release_snapshot("production", &[HELD_A]);
-                detail["status"] = status.clone();
+                match &status {
+                    Some(status) => detail["status"] = status.clone(),
+                    None => drop(detail.as_object_mut().unwrap().remove("status")),
+                }
                 get_json(&mut server, "/releases/rel-1", detail).await;
                 let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
                     .await
                     .unwrap_err();
                 assert_refused(&err, "rel-1");
-                assert!(!err.to_string().contains("127.0.0.1"), "{status}: {err}");
+                assert!(!err.to_string().contains("127.0.0.1"), "{status:?}: {err}");
             }
         }
     }
