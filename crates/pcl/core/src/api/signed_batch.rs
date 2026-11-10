@@ -179,13 +179,7 @@ pub(crate) fn active_release_ids(body: &Value) -> Result<Vec<String>, String> {
     }
     let mut ids = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
-        let status = item
-            .get("status")
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("release {index} has no status"))?;
-        if status != "active" {
-            return Err(format!("release {index} has status {status}, not active"));
-        }
+        require_active(item, index)?;
         let id = item
             .get("id")
             .and_then(Value::as_str)
@@ -194,6 +188,25 @@ pub(crate) fn active_release_ids(body: &Value) -> Result<Vec<String>, String> {
         ids.push(id.to_string());
     }
     Ok(ids)
+}
+
+/// Environment and contract set of a fetched release detail. The detail must
+/// itself still report `active`: the release may have been replaced between
+/// the list and this fetch.
+pub(crate) fn active_snapshot(
+    id: &str,
+    release: &Value,
+) -> Result<(OracleEnvironment, BTreeSet<Address>), String> {
+    require_active(release, id)?;
+    Ok((snapshot_environment(release)?, snapshot_addresses(release)?))
+}
+
+fn require_active(release: &Value, label: impl std::fmt::Display) -> Result<(), String> {
+    match release.get("status").and_then(Value::as_str) {
+        Some("active") => Ok(()),
+        Some(status) => Err(format!("release {label} has status {status}, not active")),
+        None => Err(format!("release {label} has no status")),
+    }
 }
 
 pub(crate) fn snapshot_environment(release: &Value) -> Result<OracleEnvironment, String> {
@@ -205,7 +218,7 @@ pub(crate) fn snapshot_environment(release: &Value) -> Result<OracleEnvironment,
     }
 }
 
-pub(crate) fn snapshot_addresses(release: &Value) -> Result<BTreeSet<Address>, String> {
+fn snapshot_addresses(release: &Value) -> Result<BTreeSet<Address>, String> {
     snapshot_contracts(release)?
         .map(|contract| contract.map(|(address, _)| address))
         .collect()

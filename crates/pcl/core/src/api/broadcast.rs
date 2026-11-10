@@ -1224,11 +1224,8 @@ impl ApiArgs {
             let release = self
                 .call_workflow_result(config, cli_args, &request, request_log_path)
                 .await?;
-            let environment =
-                super::signed_batch::snapshot_environment(&release.body).map_err(refuse)?;
-            let addresses =
-                super::signed_batch::snapshot_addresses(&release.body).map_err(refuse)?;
-            releases.push((environment, addresses));
+            releases
+                .push(super::signed_batch::active_snapshot(&id, &release.body).map_err(refuse)?);
         }
         super::signed_batch::bind_handover(&releases).map_err(refuse)
     }
@@ -1958,6 +1955,7 @@ mod tests {
             contracts.insert(format!("c{index}"), json!({ "address": address }));
         }
         json!({
+            "status": "active",
             "environment": environment,
             "configSnapshot": { "contracts": contracts },
         })
@@ -1983,7 +1981,6 @@ mod tests {
         batch: &[&str],
         releases: &[(&str, &str, &[&str])],
     ) -> Result<Value, ApiCommandError> {
-        get_json(server, "", json!({"chain_id": 1})).await;
         get_json(
             server,
             "/releases",
@@ -2003,6 +2000,18 @@ mod tests {
             )
             .await;
         }
+        send_manager_broadcast(server, accept, oracle, batch).await
+    }
+
+    /// Mocks the project and the manager calldata, then runs the broadcast;
+    /// the caller mocks the release list and details.
+    async fn send_manager_broadcast(
+        server: &mut mockito::Server,
+        accept: bool,
+        oracle: &str,
+        batch: &[&str],
+    ) -> Result<Value, ApiCommandError> {
+        get_json(server, "", json!({"chain_id": 1})).await;
         let path = if accept {
             "/protocol-manager/accept-calldata"
         } else {
@@ -2189,6 +2198,36 @@ mod tests {
             .await
             .unwrap_err();
             assert_refused(&err, "no valid address");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_release_detail_that_is_not_active() {
+        // The list named rel-1 active, but the detail fetched after it reports
+        // another status (or none), so its snapshot is not the active set.
+        for status in [
+            json!("inactive"),
+            json!("removed"),
+            json!("Active"),
+            Value::Null,
+        ] {
+            for accept in [false, true] {
+                let mut server = mockito::Server::new_async().await;
+                get_json(
+                    &mut server,
+                    "/releases",
+                    release_list(&[("rel-1", "production")]),
+                )
+                .await;
+                let mut detail = release_snapshot("production", &[HELD_A]);
+                detail["status"] = status.clone();
+                get_json(&mut server, "/releases/rel-1", detail).await;
+                let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                    .await
+                    .unwrap_err();
+                assert_refused(&err, "rel-1");
+                assert!(!err.to_string().contains("127.0.0.1"), "{status}: {err}");
+            }
         }
     }
 }
