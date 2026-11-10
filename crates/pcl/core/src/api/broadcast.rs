@@ -702,7 +702,13 @@ impl ApiArgs {
         let release = self
             .call_workflow_result(config, cli_args, &release_request, request_log_path)
             .await?;
-        let environment = super::signed_batch::release_environment(&release.body)?;
+        let environment =
+            super::signed_batch::snapshot_environment(&release.body).map_err(|reason| {
+                ApiCommandError::UnexpectedResponse {
+                    endpoint: "/projects/{project_id}/releases/{release_id}",
+                    reason,
+                }
+            })?;
         let release_targets =
             super::signed_batch::release_targets(&release.body).map_err(&refused)?;
         super::signed_batch::validate_removal_batch(
@@ -997,6 +1003,9 @@ impl ApiArgs {
                 "chain_id {chain_id} does not match the project's chain {project_chain}"
             )));
         }
+        let handover = self
+            .load_handover(config, cli_args, project, request_log_path, &refused)
+            .await?;
         let contracts = calldata
             .contracts
             .iter()
@@ -1009,6 +1018,7 @@ impl ApiArgs {
             &data,
             &contracts,
             Some(new_manager_address),
+            &handover,
         )
         .map_err(refused)?;
 
@@ -1104,6 +1114,9 @@ impl ApiArgs {
                 calldata.chain_id
             )));
         }
+        let handover = self
+            .load_handover(config, cli_args, project, request_log_path, &refused)
+            .await?;
         let contracts = calldata
             .contracts
             .iter()
@@ -1116,6 +1129,7 @@ impl ApiArgs {
             &calldata.calldata,
             &contracts,
             None,
+            &handover,
         )
         .map_err(refused)?;
 
@@ -1182,6 +1196,46 @@ impl ApiArgs {
             }),
             vec![format!("pcl protocol-manager --project {project}")],
         ))
+    }
+
+    async fn load_handover<F>(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        project: &str,
+        request_log_path: &Path,
+        refuse: &F,
+    ) -> Result<super::signed_batch::HandoverBinding, ApiCommandError>
+    where
+        F: Fn(String) -> ApiCommandError,
+    {
+        progress(cli_args, "Fetching active releases");
+        let request = get_operation(
+            "projects.listReleases",
+            project,
+            None,
+            vec![
+                ("status".to_string(), "active".to_string()),
+                (
+                    "limit".to_string(),
+                    super::signed_batch::ACTIVE_RELEASE_PAGE.to_string(),
+                ),
+            ],
+        )?;
+        let listed = self
+            .call_workflow_result(config, cli_args, &request, request_log_path)
+            .await?;
+        let ids = super::signed_batch::active_release_ids(&listed.body).map_err(refuse)?;
+        let mut releases = Vec::with_capacity(ids.len());
+        for id in ids {
+            let request = get_operation("projects.getRelease", project, Some(&id), Vec::new())?;
+            let release = self
+                .call_workflow_result(config, cli_args, &request, request_log_path)
+                .await?;
+            releases
+                .push(super::signed_batch::active_snapshot(&id, &release.body).map_err(refuse)?);
+        }
+        super::signed_batch::bind_handover(&releases).map_err(refuse)
     }
 }
 
@@ -1692,6 +1746,13 @@ mod tests {
 
     async fn accept(server: &mut mockito::Server, body: Value) -> ApiCommandError {
         get_json(server, "", json!({"chain_id": 1})).await;
+        active_release_list(server, &release_list(["rel-1"])).await;
+        get_json(
+            server,
+            "/releases/rel-1",
+            release_snapshot("production", &[HELD_A]),
+        )
+        .await;
         get_json(server, "/protocol-manager/accept-calldata", body).await;
         let mut h = Harness::new(&server.url());
         let args = ProtocolManagerArgs {
@@ -1780,7 +1841,12 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let err = accept(
             &mut server,
-            json!({"chain_id": 1, "to": ORACLE, "calldata": "0x01", "contracts": []}),
+            json!({
+                "chain_id": 1,
+                "to": ORACLE,
+                "calldata": "0x01",
+                "contracts": [{"address": HELD_A, "calldata": "0x"}],
+            }),
         )
         .await;
         assert_refused(&err, "127.0.0.1");
@@ -1821,6 +1887,13 @@ mod tests {
     async fn transfer_broadcast_refuses_a_token_transfer_before_signing() {
         let mut server = mockito::Server::new_async().await;
         get_json(&mut server, "", json!({"chain_id": 1})).await;
+        active_release_list(&mut server, &release_list(["rel-1"])).await;
+        get_json(
+            &mut server,
+            "/releases/rel-1",
+            release_snapshot("production", &[HELD_A]),
+        )
+        .await;
         // ERC20 transfer(attacker, balance) aimed at a token contract.
         get_json(
             &mut server,
@@ -1830,7 +1903,7 @@ mod tests {
                 "chain_id": 1,
                 "to": "0x2222222222222222222222222222222222222222",
                 "calldata": "0xa9059cbb000000000000000000000000444444444444444444444444444444444444444400000000000000000000000000000000000000000000000000000000000f4240",
-                "contracts": []
+                "contracts": [{"address": HELD_A, "calldata": "0x"}]
             }),
         )
         .await;
@@ -1847,5 +1920,346 @@ mod tests {
             .await
             .unwrap_err();
         assert_refused(&err, "127.0.0.1");
+    }
+
+    const HELD_A: &str = "0x0101010101010101010101010101010101010101";
+    const HELD_B: &str = "0x0202020202020202020202020202020202020202";
+    const FOREIGN: &str = "0x0404040404040404040404040404040404040404";
+    const NEW_MANAGER: &str = "0x0303030303030303030303030303030303030303";
+    const PRODUCTION_ORACLE: &str = "0x14386aF70E91dFE12aC6243D4B5e087870d7f14D";
+
+    fn checksum(address: &str) -> String {
+        address.parse::<Address>().unwrap().to_string()
+    }
+
+    fn release_list<'a>(ids: impl IntoIterator<Item = &'a str>) -> Value {
+        ids.into_iter()
+            .map(|id| json!({ "id": id, "status": "active" }))
+            .collect()
+    }
+
+    fn release_snapshot(environment: &str, addresses: &[&str]) -> Value {
+        let mut contracts = serde_json::Map::new();
+        for (index, address) in addresses.iter().enumerate() {
+            contracts.insert(format!("c{index}"), json!({ "address": address }));
+        }
+        json!({
+            "status": "active",
+            "environment": environment,
+            "configSnapshot": { "contracts": contracts },
+        })
+    }
+
+    fn manager_calldata(oracle: &str, addresses: &[&str]) -> Value {
+        json!({
+            "mode": "onchain",
+            "chain_id": 1,
+            "to": oracle,
+            "calldata": "0x01",
+            "contracts": addresses.iter().map(|address| json!({
+                "address": address,
+                "calldata": "0x",
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    /// Active releases as `(id, environment, contract addresses)`.
+    type Releases<'a> = &'a [(&'a str, &'a str, &'a [&'a str])];
+
+    async fn run_manager_broadcast(
+        server: &mut mockito::Server,
+        accept: bool,
+        oracle: &str,
+        batch: &[&str],
+        releases: Releases<'_>,
+    ) -> Result<Value, ApiCommandError> {
+        active_release_list(server, &release_list(releases.iter().map(|(id, _, _)| *id))).await;
+        for (id, environment, addresses) in releases {
+            get_json(
+                server,
+                &format!("/releases/{id}"),
+                release_snapshot(environment, addresses),
+            )
+            .await;
+        }
+        send_manager_broadcast(server, accept, oracle, batch).await
+    }
+
+    /// Serves the release list only for the one-page active query pcl sends.
+    async fn active_release_list(server: &mut mockito::Server, body: &Value) -> mockito::Mock {
+        server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{PROJECT}/releases").as_str(),
+            )
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("status".into(), "active".into()),
+                Matcher::UrlEncoded("limit".into(), "100".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body.to_string())
+            .create_async()
+            .await
+    }
+
+    /// Mocks the project and the manager calldata, then runs the broadcast;
+    /// the caller mocks the release list and details.
+    async fn send_manager_broadcast(
+        server: &mut mockito::Server,
+        accept: bool,
+        oracle: &str,
+        batch: &[&str],
+    ) -> Result<Value, ApiCommandError> {
+        get_json(server, "", json!({"chain_id": 1})).await;
+        let path = if accept {
+            "/protocol-manager/accept-calldata"
+        } else {
+            "/protocol-manager/transfer-calldata"
+        };
+        get_json(server, path, manager_calldata(oracle, batch)).await;
+        let mut h = Harness::new(&server.url());
+        let args = ProtocolManagerArgs {
+            new_manager: (!accept).then(|| NEW_MANAGER.to_string()),
+            broadcast: signing(),
+            ..ProtocolManagerArgs::default()
+        };
+        let log = h.log();
+        if accept {
+            h.api
+                .protocol_manager_accept_broadcast(&mut h.config, &h.cli_args, &args, PROJECT, &log)
+                .await
+        } else {
+            h.api
+                .protocol_manager_transfer_broadcast(
+                    &mut h.config,
+                    &h.cli_args,
+                    &args,
+                    PROJECT,
+                    &log,
+                )
+                .await
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_an_omitted_contract_before_signing() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[HELD_A],
+                &[("rel-1", "production", &[HELD_A, HELD_B])],
+            )
+            .await
+            .unwrap_err();
+            assert_refused(&err, &checksum(HELD_B));
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_substituted_contract_before_signing() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[FOREIGN],
+                &[("rel-1", "production", &[HELD_A])],
+            )
+            .await
+            .unwrap_err();
+            assert_refused(&err, &checksum(HELD_A));
+            assert!(err.to_string().contains(&checksum(FOREIGN)), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_passes_the_complete_contract_set_to_the_platform_check() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[HELD_A, HELD_B],
+                &[("rel-1", "production", &[HELD_A, HELD_B])],
+            )
+            .await
+            .unwrap_err();
+            let message = err.to_string();
+            assert!(
+                !message.contains(&checksum(HELD_A)) && !message.contains("active release"),
+                "complete contract set was refused: {message}"
+            );
+            assert_refused(&err, "127.0.0.1");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_active_releases_on_both_environments() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[HELD_A, HELD_B],
+                &[
+                    ("rel-prod", "production", &[HELD_A]),
+                    ("rel-stage", "staging", &[HELD_B]),
+                ],
+            )
+            .await
+            .unwrap_err();
+            assert_refused(&err, "production");
+            assert!(err.to_string().contains("staging"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_binds_the_only_environment_with_contracts() {
+        let cases: [(&str, Releases<'_>); 2] = [
+            (
+                HELD_A,
+                &[
+                    ("rel-prod", "production", &[HELD_A]),
+                    ("rel-stage", "staging", &[]),
+                ],
+            ),
+            (
+                HELD_B,
+                &[
+                    ("rel-prod", "production", &[]),
+                    ("rel-stage", "staging", &[HELD_B]),
+                ],
+            ),
+        ];
+        for (held, releases) in cases {
+            for accept in [false, true] {
+                let mut server = mockito::Server::new_async().await;
+                let err = run_manager_broadcast(
+                    &mut server,
+                    accept,
+                    PRODUCTION_ORACLE,
+                    &[held],
+                    releases,
+                )
+                .await
+                .unwrap_err();
+                // The harness platform is not a compiled one, so a bound batch
+                // is refused at the platform check, after the binding passed.
+                assert_refused(&err, "127.0.0.1");
+                assert!(!err.to_string().contains("active release"), "{err}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_when_no_active_release_has_contracts() {
+        let cases: [Releases<'_>; 3] = [
+            &[],
+            &[("rel-prod", "production", &[])],
+            &[
+                ("rel-prod", "production", &[]),
+                ("rel-stage", "staging", &[]),
+            ],
+        ];
+        for releases in cases {
+            for accept in [false, true] {
+                let mut server = mockito::Server::new_async().await;
+                let err =
+                    run_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[], releases)
+                        .await
+                        .unwrap_err();
+                assert_refused(&err, "no active release contracts");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_snapshot_with_a_malformed_address() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[HELD_B],
+                &[
+                    ("rel-prod", "production", &["not-an-address"]),
+                    ("rel-stage", "staging", &[HELD_B]),
+                ],
+            )
+            .await
+            .unwrap_err();
+            assert_refused(&err, "no valid address");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_release_detail_that_is_not_active() {
+        // The list named rel-1 active, but the detail fetched after it reports
+        // another status (or none), so its snapshot is not the active set.
+        for status in [
+            Some(json!("inactive")),
+            Some(json!("removed")),
+            Some(json!("Active")),
+            Some(Value::Null),
+            None,
+        ] {
+            for accept in [false, true] {
+                let mut server = mockito::Server::new_async().await;
+                active_release_list(&mut server, &release_list(["rel-1"])).await;
+                let mut detail = release_snapshot("production", &[HELD_A]);
+                match &status {
+                    Some(status) => detail["status"] = status.clone(),
+                    None => drop(detail.as_object_mut().unwrap().remove("status")),
+                }
+                get_json(&mut server, "/releases/rel-1", detail).await;
+                let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                    .await
+                    .unwrap_err();
+                assert_refused(&err, "rel-1");
+                assert!(!err.to_string().contains("127.0.0.1"), "{status:?}: {err}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_full_active_release_page() {
+        for (listed, fetched) in [(99, 99), (100, 0)] {
+            for accept in [false, true] {
+                let mut server = mockito::Server::new_async().await;
+                let ids: Vec<String> = (0..listed).map(|index| format!("rel-{index}")).collect();
+                let list =
+                    active_release_list(&mut server, &release_list(ids.iter().map(String::as_str)))
+                        .await;
+                let details = server
+                    .mock(
+                        "GET",
+                        Matcher::Regex(format!("^/api/v1/projects/{PROJECT}/releases/rel-\\d+$")),
+                    )
+                    .with_status(200)
+                    .with_header("content-type", "application/json")
+                    .with_body(release_snapshot("production", &[HELD_A]).to_string())
+                    .expect(fetched)
+                    .create_async()
+                    .await;
+                let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                    .await
+                    .unwrap_err();
+                list.assert_async().await;
+                details.assert_async().await;
+                if fetched == 0 {
+                    assert_refused(&err, "active release page is full");
+                } else {
+                    assert_refused(&err, "127.0.0.1");
+                }
+            }
+        }
     }
 }
