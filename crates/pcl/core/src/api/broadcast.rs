@@ -1955,12 +1955,15 @@ mod tests {
         })
     }
 
+    /// Active releases as `(id, environment, contract addresses)`.
+    type Releases<'a> = &'a [(&'a str, &'a str, &'a [&'a str])];
+
     async fn run_manager_broadcast(
         server: &mut mockito::Server,
         accept: bool,
         oracle: &str,
         batch: &[&str],
-        releases: &[(&str, &str, &[&str])],
+        releases: Releases<'_>,
     ) -> Result<Value, ApiCommandError> {
         active_release_list(server, &release_list(releases.iter().map(|(id, _, _)| *id))).await;
         for (id, environment, addresses) in releases {
@@ -2111,7 +2114,7 @@ mod tests {
 
     #[tokio::test]
     async fn manager_broadcast_binds_the_only_environment_with_contracts() {
-        let cases: [(&str, &[(&str, &str, &[&str])]); 2] = [
+        let cases: [(&str, Releases<'_>); 2] = [
             (
                 HELD_A,
                 &[
@@ -2149,7 +2152,7 @@ mod tests {
 
     #[tokio::test]
     async fn manager_broadcast_refuses_when_no_active_release_has_contracts() {
-        let cases: [&[(&str, &str, &[&str])]; 3] = [
+        let cases: [Releases<'_>; 3] = [
             &[],
             &[("rel-prod", "production", &[])],
             &[
