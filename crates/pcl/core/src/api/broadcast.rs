@@ -1930,7 +1930,6 @@ mod tests {
     const FOREIGN: &str = "0x0404040404040404040404040404040404040404";
     const NEW_MANAGER: &str = "0x0303030303030303030303030303030303030303";
     const PRODUCTION_ORACLE: &str = "0x14386aF70E91dFE12aC6243D4B5e087870d7f14D";
-    const STAGING_ORACLE: &str = "0xDE55F19430b3Ec5Fa7e5978B49E4467e74C4175b";
 
     fn checksum(address: &str) -> String {
         address.parse::<Address>().unwrap().to_string()
