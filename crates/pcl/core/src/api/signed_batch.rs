@@ -50,8 +50,6 @@ impl OracleEnvironment {
     }
 }
 
-/// The contracts a manager handover may cover, taken from the project's
-/// active releases on one environment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HandoverBinding {
     pub environment: OracleEnvironment,
@@ -179,7 +177,6 @@ pub(crate) fn validate_removal_batch(
     check_batch(data, expected)
 }
 
-/// Ids of releases the active-release list claims are active.
 pub(crate) fn active_release_ids(body: &Value) -> Result<Vec<String>, String> {
     let items = body
         .as_array()
@@ -212,7 +209,6 @@ pub(crate) fn snapshot_environment(release: &Value) -> Result<OracleEnvironment,
     }
 }
 
-/// Contract addresses stored on one release snapshot.
 pub(crate) fn snapshot_addresses(release: &Value) -> Result<BTreeSet<Address>, String> {
     let contracts = release
         .get("configSnapshot")
@@ -232,7 +228,6 @@ pub(crate) fn snapshot_addresses(release: &Value) -> Result<BTreeSet<Address>, S
     Ok(addresses)
 }
 
-/// One environment, and the union of its active release contracts.
 pub(crate) fn bind_handover(
     releases: &[(OracleEnvironment, BTreeSet<Address>)],
 ) -> Result<HandoverBinding, String> {
@@ -290,10 +285,6 @@ fn require_exact_contracts(
     ))
 }
 
-/// Checks a manager batch: `transferManager(contract, new_manager)` per
-/// contract when `new_manager` is set (initiation), otherwise
-/// `acceptManagerTransfer(contract)` (acceptance). The batch must name
-/// exactly `handover`'s contracts, and `to` must be that environment's oracle.
 pub(crate) fn validate_manager_batch(
     platform: &Url,
     chain_id: u64,
@@ -674,7 +665,6 @@ mod tests {
         .unwrap();
     }
 
-    /// The other active oracle on the same chain belongs to the other environment.
     #[test]
     fn manager_batch_refuses_the_other_environments_oracle() {
         let batch = encode_batch(vec![accept_entry()]);

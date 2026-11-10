@@ -1186,8 +1186,6 @@ impl ApiArgs {
 
     const ACTIVE_RELEASE_PAGE: usize = 100;
 
-    /// Active releases and their snapshots. The batch is signed only when it
-    /// covers exactly this set, on this environment's oracle.
     async fn load_handover<F>(
         &self,
         config: &mut CliConfig,
