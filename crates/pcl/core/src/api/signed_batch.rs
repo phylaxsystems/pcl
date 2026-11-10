@@ -196,22 +196,30 @@ pub(crate) fn snapshot_environment(release: &Value) -> Result<OracleEnvironment,
 }
 
 pub(crate) fn snapshot_addresses(release: &Value) -> Result<BTreeSet<Address>, String> {
+    snapshot_contracts(release)?
+        .map(|contract| contract.map(|(address, _)| address))
+        .collect()
+}
+
+/// Each `configSnapshot.contracts` entry of a release record with its parsed
+/// address, failing on the first entry without a valid one.
+fn snapshot_contracts(
+    release: &Value,
+) -> Result<impl Iterator<Item = Result<(Address, &Value), String>>, String> {
     let contracts = release
         .get("configSnapshot")
         .or_else(|| release.get("config_snapshot"))
         .and_then(|snapshot| snapshot.get("contracts"))
         .and_then(Value::as_object)
         .ok_or("the release record has no config snapshot contracts")?;
-    let mut addresses = BTreeSet::new();
-    for contract in contracts.values() {
+    Ok(contracts.values().map(|contract| {
         let address = contract
             .get("address")
             .and_then(Value::as_str)
             .and_then(|address| address.parse().ok())
             .ok_or("a release record contract has no valid address")?;
-        addresses.insert(address);
-    }
-    Ok(addresses)
+        Ok((address, contract))
+    }))
 }
 
 pub(crate) fn bind_handover(
@@ -348,19 +356,9 @@ pub(crate) fn removal_targets(assertions: &[Value]) -> Result<Vec<(Address, B256
 /// Every `(contract, assertionId)` in the release record's config snapshot:
 /// the set the API's `buildRemoveCalldata` removes, read from `getRelease`.
 pub(crate) fn release_targets(release: &Value) -> Result<Vec<(Address, B256)>, String> {
-    let contracts = release
-        .get("configSnapshot")
-        .or_else(|| release.get("config_snapshot"))
-        .and_then(|snapshot| snapshot.get("contracts"))
-        .and_then(Value::as_object)
-        .ok_or("the release record has no config snapshot contracts")?;
     let mut targets = Vec::new();
-    for contract in contracts.values() {
-        let address: Address = contract
-            .get("address")
-            .and_then(Value::as_str)
-            .and_then(|address| address.parse().ok())
-            .ok_or("a release record contract has no valid address")?;
+    for contract in snapshot_contracts(release)? {
+        let (address, contract) = contract?;
         let assertions = contract
             .get("assertions")
             .and_then(Value::as_array)
