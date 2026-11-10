@@ -1738,12 +1738,7 @@ mod tests {
 
     async fn accept(server: &mut mockito::Server, body: Value) -> ApiCommandError {
         get_json(server, "", json!({"chain_id": 1})).await;
-        get_json(
-            server,
-            "/releases",
-            release_list(&[("rel-1", "production")]),
-        )
-        .await;
+        active_release_list(server, &release_list(&[("rel-1", "production")])).await;
         get_json(
             server,
             "/releases/rel-1",
@@ -1884,12 +1879,7 @@ mod tests {
     async fn transfer_broadcast_refuses_a_token_transfer_before_signing() {
         let mut server = mockito::Server::new_async().await;
         get_json(&mut server, "", json!({"chain_id": 1})).await;
-        get_json(
-            &mut server,
-            "/releases",
-            release_list(&[("rel-1", "production")]),
-        )
-        .await;
+        active_release_list(&mut server, &release_list(&[("rel-1", "production")])).await;
         get_json(
             &mut server,
             "/releases/rel-1",
@@ -1981,10 +1971,9 @@ mod tests {
         batch: &[&str],
         releases: &[(&str, &str, &[&str])],
     ) -> Result<Value, ApiCommandError> {
-        get_json(
+        active_release_list(
             server,
-            "/releases",
-            release_list(
+            &release_list(
                 &releases
                     .iter()
                     .map(|(id, environment, _)| (*id, *environment))
@@ -2001,6 +1990,24 @@ mod tests {
             .await;
         }
         send_manager_broadcast(server, accept, oracle, batch).await
+    }
+
+    /// Serves the release list only for the one-page active query pcl sends.
+    async fn active_release_list(server: &mut mockito::Server, body: &Value) -> mockito::Mock {
+        server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{PROJECT}/releases").as_str(),
+            )
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("status".into(), "active".into()),
+                Matcher::UrlEncoded("limit".into(), "100".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body.to_string())
+            .create_async()
+            .await
     }
 
     /// Mocks the project and the manager calldata, then runs the broadcast;
@@ -2213,12 +2220,7 @@ mod tests {
         ] {
             for accept in [false, true] {
                 let mut server = mockito::Server::new_async().await;
-                get_json(
-                    &mut server,
-                    "/releases",
-                    release_list(&[("rel-1", "production")]),
-                )
-                .await;
+                active_release_list(&mut server, &release_list(&[("rel-1", "production")])).await;
                 let mut detail = release_snapshot("production", &[HELD_A]);
                 detail["status"] = status.clone();
                 get_json(&mut server, "/releases/rel-1", detail).await;
@@ -2227,6 +2229,46 @@ mod tests {
                     .unwrap_err();
                 assert_refused(&err, "rel-1");
                 assert!(!err.to_string().contains("127.0.0.1"), "{status}: {err}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_full_active_release_page() {
+        for (listed, fetched) in [(99, 99), (100, 0)] {
+            for accept in [false, true] {
+                let mut server = mockito::Server::new_async().await;
+                let ids: Vec<String> = (0..listed).map(|index| format!("rel-{index}")).collect();
+                let list = active_release_list(
+                    &mut server,
+                    &release_list(
+                        &ids.iter()
+                            .map(|id| (id.as_str(), "production"))
+                            .collect::<Vec<_>>(),
+                    ),
+                )
+                .await;
+                let details = server
+                    .mock(
+                        "GET",
+                        Matcher::Regex(format!("^/api/v1/projects/{PROJECT}/releases/rel-\\d+$")),
+                    )
+                    .with_status(200)
+                    .with_header("content-type", "application/json")
+                    .with_body(release_snapshot("production", &[HELD_A]).to_string())
+                    .expect(fetched)
+                    .create_async()
+                    .await;
+                let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                    .await
+                    .unwrap_err();
+                list.assert_async().await;
+                details.assert_async().await;
+                if fetched == 0 {
+                    assert_refused(&err, "active release page is full");
+                } else {
+                    assert_refused(&err, "127.0.0.1");
+                }
             }
         }
     }
