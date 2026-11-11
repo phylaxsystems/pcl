@@ -2588,24 +2588,24 @@ fn builds_account_workflow_requests() {
 }
 
 #[test]
-fn empty_object_workflows_send_body_by_default() {
-    let token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    let preview = access_request(&AccessArgs {
-        preview: true,
-        token: Some(token.to_string()),
-        ..access_args()
-    })
-    .unwrap();
-    assert_eq!(preview.path, format!("/invitations/{token}/preview"));
-    assert!(
-        preview
-            .next_actions
-            .iter()
-            .all(|action| !action.contains(token)),
-        "preview next action embedded the invitation token: {:?}",
-        preview.next_actions
-    );
+fn invitation_preview_next_actions_omit_the_token() {
+    for preview_flag in [true, false] {
+        let preview = access_request(&AccessArgs {
+            preview: preview_flag,
+            token: Some(INVITATION_TOKEN.to_string()),
+            ..access_args()
+        })
+        .unwrap();
+        assert_eq!(
+            preview.path,
+            format!("/invitations/{INVITATION_TOKEN}/preview")
+        );
+        assert_eq!(preview.next_actions, ["pcl access accept <token>"]);
+    }
+}
 
+#[test]
+fn empty_object_workflows_send_body_by_default() {
     let accept = access_request(&AccessArgs {
         accept: true,
         token: Some("token-1".to_string()),
