@@ -1242,10 +1242,12 @@ mod tests {
         let body = json!({
             "chainId": 84532,
             "stateOracleAddress": "0xed9A39bf60d325796De60D67b3BD00ce6c4B5007",
+            "activeReleaseId": null,
             "operations": [
-                { "type": "addAssertion", "adopterAddress": "0x0101010101010101010101010101010101010101", "assertionId": ADDED_ID }
+                assertion_op("removeAssertion", ADOPTER, REMOVED_ID),
+                assertion_op("addAssertion", ADOPTER, ADDED_ID),
             ],
-            "calldata": ["0x1234", "0x56"],
+            "calldata": [REMOVE, ADD_0_4_0],
             "isNoop": false,
             "message": null,
             "someFutureField": true,
@@ -1259,8 +1261,9 @@ mod tests {
         );
         assert_eq!(parsed.calldata.len(), 2);
         assert!(!parsed.is_noop);
-        assert_eq!(parsed.operations.len(), 1);
+        assert_eq!(parsed.operations.len(), 2);
         assert!(parsed.message.is_none());
+        release_deploy_confirmation("rel-1", &parsed).unwrap();
     }
 
     #[test]
@@ -1727,13 +1730,15 @@ mod tests {
         let deploy = json!({
             "chainId": 84532,
             "stateOracleAddress": "0xed9A39bf60d325796De60D67b3BD00ce6c4B5007",
-            "calldata": ["0x12"],
+            "operations": [assertion_op("removeAssertion", ADOPTER, REMOVED_ID)],
+            "calldata": [REMOVE],
             "isNoop": false,
             "requiredConfirmations": 6,
         });
         let parsed: ReleaseDeployCalldataResponse =
             parse_response("deploy-calldata", &deploy).unwrap();
         assert_eq!(parsed.required_confirmations, Some(6));
+        release_deploy_confirmation("rel-1", &parsed).unwrap();
 
         // Snake-case payloads accept both casings; absence stays None so the
         // fallback table applies.
