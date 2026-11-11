@@ -116,30 +116,28 @@ fn redact_record_path(record: &Value) -> Value {
     record
 }
 
-fn restrict_owner_mode(path: &Path, mode: u32) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (path, mode);
-    }
-    Ok(())
-}
-
 fn open_request_log(path: &Path) -> std::io::Result<fs::File> {
     let mut options = OpenOptions::new();
     options.create(true).append(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::fs::{
+            OpenOptionsExt,
+            PermissionsExt,
+        };
         options.mode(0o600);
+        let file = options.open(path)?;
+        // fchmod the opened file, never a device such as /dev/stderr. A failure
+        // fails closed: no record goes to a log we could not restrict.
+        if file.metadata()?.is_file() {
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(file)
     }
-    let file = options.open(path)?;
-    restrict_owner_mode(path, 0o600)?;
-    Ok(file)
+    #[cfg(not(unix))]
+    {
+        options.open(path)
+    }
 }
 
 pub fn append_request_record_at(path: &Path, record: &Value) -> std::io::Result<()> {
@@ -493,6 +491,24 @@ mod tests {
                 & 0o777;
             assert_eq!(mode, 0o700, "{} mode was {mode:o}", dir.display());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_regular_log_targets_are_not_chmodded() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dev_null = Path::new("/dev/null");
+        let before = fs::metadata(dev_null)
+            .expect("dev null")
+            .permissions()
+            .mode();
+        open_request_log(dev_null).expect("open a character device without chmod");
+        let after = fs::metadata(dev_null)
+            .expect("dev null")
+            .permissions()
+            .mode();
+        assert_eq!(before, after);
     }
 
     #[cfg(unix)]
