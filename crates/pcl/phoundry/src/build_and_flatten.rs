@@ -25,8 +25,14 @@ use serde_json::Value;
 use foundry_compilers::artifacts::BytecodeHash;
 use foundry_config::find_project_root;
 use std::{
-    collections::HashMap,
-    path::PathBuf,
+    collections::{
+        BTreeMap,
+        HashMap,
+    },
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 use crate::{
@@ -159,10 +165,10 @@ impl BuildAndFlattenArgs {
 
         let build = self.build()?;
         let info = ContractInfo::new(&self.assertion_contract);
-
-        // Find the contract artifact
+        let root = self.project_root()?;
+        let contract_path = select_contract_path(&build, &info.name, info.path.as_deref(), &root)?;
         let artifact = build
-            .find_contract(info)
+            .find(contract_path.as_path(), &info.name)
             .ok_or_else(|| PhoundryError::ContractNotFound(self.assertion_contract.clone()))?;
 
         let abi = artifact.abi.clone().ok_or_else(|| {
@@ -182,31 +188,22 @@ impl BuildAndFlattenArgs {
 
         let solc_version = format!("v{}", metadata.compiler.version);
 
-        // Find the source path for the contract
         let rel_source_path = metadata
             .settings
             .compilation_target
             .iter()
-            .find_map(|(path, name)| {
-                if name == &self.assertion_contract {
-                    Some(path)
-                } else {
-                    None
-                }
-            })
+            .find_map(|(path, name)| (name == &info.name).then_some(path))
             .ok_or_else(|| PhoundryError::ContractNotFound(self.assertion_contract.clone()))?;
+        let actual_target = normalize_source_path(Path::new(rel_source_path), &root);
+        let expected_target = normalize_source_path(&contract_path, &root);
+        if actual_target != expected_target {
+            return Err(Box::new(PhoundryError::ArtifactTargetMismatch {
+                requested: format!("{expected_target}:{}", info.name),
+                actual: format!("{actual_target}:{}", info.name),
+            }));
+        }
 
-        // Determine the full path to the contract
-        let path = match &self.root {
-            Some(root) => root.join(rel_source_path),
-            None => {
-                find_project_root(None)
-                    .map_err(|_| PhoundryError::DirectoryNotFound(PathBuf::from(".")))?
-                    .join(rel_source_path)
-            }
-        };
-
-        // Flatten the contract
+        let path = root.join(rel_source_path);
         let flattened = self.flatten(&path)?;
         let output = BuildAndFlatOutput::new(
             solc_version,
@@ -263,6 +260,16 @@ impl BuildAndFlattenArgs {
         crate::compile::compile(build_opts)
     }
 
+    fn project_root(&self) -> Result<PathBuf, Box<PhoundryError>> {
+        match &self.root {
+            Some(root) => Ok(root.clone()),
+            None => {
+                find_project_root(None)
+                    .map_err(|_| Box::new(PhoundryError::DirectoryNotFound(PathBuf::from("."))))
+            }
+        }
+    }
+
     /// Flattens the contract source code.
     fn flatten(&self, path: &PathBuf) -> Result<String, Box<PhoundryError>> {
         let build = BuildOpts {
@@ -298,6 +305,67 @@ impl BuildAndFlattenArgs {
 
         Ok(flattened_source)
     }
+}
+
+fn select_contract_path(
+    build: &ProjectCompileOutput,
+    contract_name: &str,
+    requested_path: Option<&str>,
+    root: &Path,
+) -> Result<PathBuf, Box<PhoundryError>> {
+    let mut paths: BTreeMap<String, PathBuf> = BTreeMap::new();
+    for (path, name, _) in build.artifacts_with_files() {
+        if name != contract_name {
+            continue;
+        }
+        paths
+            .entry(normalize_source_path(path, root))
+            .or_insert_with(|| path.clone());
+    }
+
+    let requested = requested_path.map(|path| normalize_source_path(Path::new(path), root));
+    match requested {
+        Some(requested) => {
+            paths.get(&requested).cloned().ok_or_else(|| {
+                Box::new(PhoundryError::ContractNotFound(format!(
+                    "{requested}:{contract_name}"
+                )))
+            })
+        }
+        None if paths.len() == 1 => {
+            Ok(paths
+                .into_values()
+                .next()
+                .expect("one matching artifact path"))
+        }
+        None if paths.is_empty() => {
+            Err(Box::new(PhoundryError::ContractNotFound(
+                contract_name.to_string(),
+            )))
+        }
+        None => {
+            let first = paths
+                .keys()
+                .next()
+                .expect("ambiguous contract has more than one path");
+            let example = format!("{first}:{contract_name}");
+            let paths = paths.into_keys().collect::<Vec<_>>().join(", ");
+            Err(Box::new(PhoundryError::AmbiguousContract {
+                name: contract_name.to_string(),
+                paths,
+                example,
+            }))
+        }
+    }
+}
+
+fn normalize_source_path(path: &Path, root: &Path) -> String {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    relative
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .to_string()
 }
 
 fn extract_bytecode<T: serde::Serialize>(bytecode: &T) -> Option<String> {
@@ -338,31 +406,6 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
-
-    // Helper function to create a temporary Solidity project
-    fn setup_test_project() -> (TempDir, PathBuf) {
-        let temp_dir = TempDir::new().unwrap();
-        let project_root = temp_dir.path().join("test_project");
-        fs::create_dir_all(&project_root).unwrap();
-
-        // Create a simple test contract
-        let contract_path = project_root.join("src").join("TestContract.sol");
-        fs::create_dir_all(contract_path.parent().unwrap()).unwrap();
-        fs::write(
-            &contract_path,
-            r"// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-contract TestContract {
-    function test() public pure returns (bool) {
-        return true;
-    }
-}",
-        )
-        .unwrap();
-
-        (temp_dir, project_root)
-    }
 
     #[test]
     fn test_build_and_flatten_args_new() {
@@ -420,23 +463,6 @@ contract TestContract {
         assert_eq!(output.compiler_version_short().unwrap(), "0.8.28");
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_build_and_flatten_integration() {
-        let (_temp_dir, project_root) = setup_test_project();
-
-        let args = BuildAndFlattenArgs {
-            root: Some(project_root),
-            assertion_contract: "TestContract".to_string(),
-            contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
-        };
-
-        let result = args.run();
-
-        // The actual result will depend on the test environment
-        // In a real test, we would verify the output
-        assert!(result.is_ok() || result.is_err());
-    }
-
     #[test]
     fn bare_name_rejects_two_contracts_with_the_same_name() {
         let project = duplicate_guard_project();
@@ -480,7 +506,7 @@ evm_version = "cancun"
         .expect("foundry.toml");
         fs::write(
             root.join("assertions/src/AWeak.a.sol"),
-            r#"// SPDX-License-Identifier: MIT
+            r"// SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
 contract Guard {
@@ -488,12 +514,12 @@ contract Guard {
         return 1;
     }
 }
-"#,
+",
         )
         .expect("weak guard");
         fs::write(
             root.join("assertions/src/ZStrong.a.sol"),
-            r#"// SPDX-License-Identifier: MIT
+            r"// SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
 contract Guard {
@@ -501,7 +527,7 @@ contract Guard {
         return 999;
     }
 }
-"#,
+",
         )
         .expect("strong guard");
         project

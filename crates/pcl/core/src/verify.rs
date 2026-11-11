@@ -3,7 +3,8 @@ use crate::{
     credible_config::{
         CredibleConfigError,
         CredibleToml,
-        assertion_contract_name,
+        assertion_lookup_key,
+        contract_name_from_lookup,
     },
     error::VerifyError,
     output::{
@@ -162,10 +163,11 @@ impl VerifyArgs {
     }
 
     fn build_single(&self, assertion: &str, root: &Path) -> Result<Vec<VerifyInput>, VerifyError> {
-        let contract_name = parse_assertion_name(assertion);
+        let lookup = assertion_lookup_key(assertion)?;
+        let contract_name = contract_name_from_lookup(&lookup).to_string();
         let output = BuildAndFlattenArgs {
             root: Some(root.to_path_buf()),
-            assertion_contract: contract_name.clone(),
+            assertion_contract: lookup,
             contracts: assertion_contracts_dir(assertion),
         }
         .run()
@@ -187,10 +189,11 @@ impl VerifyArgs {
         let mut inputs = Vec::new();
         for contract in credible.contracts.values() {
             for assertion in &contract.assertions {
-                let contract_name = assertion_contract_name(&assertion.file)?;
+                let lookup = assertion_lookup_key(&assertion.file)?;
+                let contract_name = contract_name_from_lookup(&lookup).to_string();
                 let output = BuildAndFlattenArgs {
                     root: Some(root.to_path_buf()),
-                    assertion_contract: contract_name.clone(),
+                    assertion_contract: lookup,
                     contracts: assertion_contracts_dir(&assertion.file),
                 }
                 .run()
@@ -214,18 +217,6 @@ impl VerifyArgs {
         }
 
         Ok(inputs)
-    }
-}
-
-/// Parses a CLI assertion argument into a contract name.
-///
-/// - `ContractName` -> `ContractName`
-/// - `file.sol:ContractName` -> `ContractName`
-fn parse_assertion_name(arg: &str) -> String {
-    if let Some((_, contract_name)) = arg.rsplit_once(':') {
-        contract_name.to_string()
-    } else {
-        arg.to_string()
     }
 }
 
@@ -355,19 +346,6 @@ pub fn print_human_result(display_name: &str, result: &VerificationResult) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_assertion_name_bare() {
-        assert_eq!(parse_assertion_name("MyContract"), "MyContract");
-    }
-
-    #[test]
-    fn parse_assertion_name_qualified() {
-        assert_eq!(
-            parse_assertion_name("MyContract.a.sol:MyContract"),
-            "MyContract"
-        );
-    }
 
     #[test]
     fn format_display_name_no_args() {

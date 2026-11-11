@@ -139,6 +139,47 @@ pub fn assertion_contract_name(file: &str) -> Result<String, CredibleConfigError
     )))
 }
 
+pub fn assertion_lookup_key(file: &str) -> Result<String, CredibleConfigError> {
+    let file = file.replace('\\', "/");
+    if is_bare_contract_name(&file) {
+        if file.is_empty() {
+            return Err(CredibleConfigError::Invalid(
+                "assertion contract name is empty".to_string(),
+            ));
+        }
+        return Ok(file);
+    }
+
+    let contract_name = assertion_contract_name(&file)?;
+    let source = match file.split_once(':') {
+        Some((path, _)) => path.to_string(),
+        None => file,
+    };
+    if source.is_empty() {
+        return Ok(contract_name);
+    }
+    Ok(format!(
+        "{}:{contract_name}",
+        normalize_assertion_path(&source)
+    ))
+}
+
+pub fn contract_name_from_lookup(lookup: &str) -> &str {
+    lookup.rsplit_once(':').map_or(lookup, |(_, name)| name)
+}
+
+fn is_bare_contract_name(file: &str) -> bool {
+    !file.contains(':')
+        && !file.contains('/')
+        && !Path::new(file)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("sol"))
+}
+
+fn normalize_assertion_path(path: &str) -> String {
+    path.replace('\\', "/").trim_start_matches("./").to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,6 +195,27 @@ mod tests {
         [[contracts.my_contract.assertions]]
         file = "src/NoArgsAssertion.a.sol"
     "#;
+
+    #[test]
+    fn lookup_key_preserves_a_qualified_source_path() {
+        assert_eq!(
+            assertion_lookup_key("assertions/src/ZStrong.a.sol:Guard").unwrap(),
+            "assertions/src/ZStrong.a.sol:Guard"
+        );
+        assert_eq!(
+            assertion_lookup_key("./assertions/src/ZStrong.a.sol:Guard").unwrap(),
+            "assertions/src/ZStrong.a.sol:Guard"
+        );
+        assert_eq!(
+            assertion_lookup_key("assertions/src/Guard.a.sol").unwrap(),
+            "assertions/src/Guard.a.sol:Guard"
+        );
+        assert_eq!(
+            assertion_lookup_key("assertions\\src\\Guard.a.sol").unwrap(),
+            "assertions/src/Guard.a.sol:Guard"
+        );
+        assert_eq!(assertion_lookup_key("Guard").unwrap(), "Guard");
+    }
 
     #[test]
     fn infers_assertion_contract_name_from_solidity_path() {

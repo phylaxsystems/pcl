@@ -17,7 +17,8 @@ use crate::{
     config::CliConfig,
     credible_config::{
         CredibleToml,
-        assertion_contract_name,
+        assertion_lookup_key,
+        contract_name_from_lookup,
     },
     diff::PreviewResponse,
     error::ApplyError,
@@ -397,11 +398,13 @@ impl ApplyArgs {
             let mut assertions = Vec::with_capacity(contract.assertions.len());
 
             for assertion in &contract.assertions {
+                let lookup = assertion_lookup_key(&assertion.file)?;
+                let contract_name = contract_name_from_lookup(&lookup).to_string();
                 let build_key = assertion.file.clone();
                 if !built_assertions.contains_key(&build_key) {
                     let output = BuildAndFlattenArgs {
                         root: Some(root.to_path_buf()),
-                        assertion_contract: assertion_contract_name(&assertion.file)?,
+                        assertion_contract: lookup,
                         contracts: assertion_contracts_dir(&assertion.file),
                     }
                     .run()
@@ -415,8 +418,6 @@ impl ApplyArgs {
                         assertion.file
                     ))
                 })?;
-
-                let contract_name = assertion_contract_name(&assertion.file)?;
 
                 #[cfg(feature = "credible")]
                 {
@@ -860,10 +861,7 @@ mod tests {
         let flattened = assertion.flattened_source.as_str();
         let file = assertion.file.as_str();
 
-        assert!(
-            file.contains("ZStrong.a.sol"),
-            "release file was {file}"
-        );
+        assert!(file.contains("ZStrong.a.sol"), "release file was {file}");
         assert!(
             flattened.contains("return 999"),
             "configured ZStrong.a.sol:Guard was replaced by another Guard\n{flattened}"
@@ -894,7 +892,7 @@ evm_version = "cancun"
         .expect("foundry.toml");
         std::fs::write(
             root.join("assertions/src/AWeak.a.sol"),
-            r#"// SPDX-License-Identifier: MIT
+            r"// SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
 contract Guard {
@@ -902,12 +900,12 @@ contract Guard {
         return 1;
     }
 }
-"#,
+",
         )
         .expect("weak guard");
         std::fs::write(
             root.join("assertions/src/ZStrong.a.sol"),
-            r#"// SPDX-License-Identifier: MIT
+            r"// SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
 contract Guard {
@@ -915,7 +913,7 @@ contract Guard {
         return 999;
     }
 }
-"#,
+",
         )
         .expect("strong guard");
         std::fs::write(

@@ -450,12 +450,8 @@ fn apply_error_envelope(err: &ApplyError) -> Value {
                 &["pcl apply --help"],
             )
         }
-        ApplyError::BuildFailed(_) => {
-            (
-                "build.failed",
-                err.to_string(),
-                &["pcl build", "pcl apply --dry-run"],
-            )
+        ApplyError::BuildFailed(err) => {
+            phoundry_failure_code(err, "build.failed", &["pcl build", "pcl apply --dry-run"])
         }
         ApplyError::NoProjectsFound => {
             (
@@ -598,10 +594,10 @@ fn verify_error_envelope(err: &VerifyError) -> Value {
                 &["pcl verify --help", "pcl apply --dry-run"],
             )
         }
-        VerifyError::BuildFailed(_) => {
-            (
+        VerifyError::BuildFailed(err) => {
+            phoundry_failure_code(
+                err,
                 "verify.build_failed",
-                err.to_string(),
                 &["pcl build --help", "pcl verify --help"],
             )
         }
@@ -669,6 +665,30 @@ fn verification_failed_message(summary: &VerificationSummary) -> String {
     )
 }
 
+fn phoundry_failure_code<'a>(
+    err: &'a PhoundryError,
+    fallback_code: &'static str,
+    fallback_actions: &'a [&'static str],
+) -> (&'static str, String, &'a [&'static str]) {
+    match err {
+        PhoundryError::AmbiguousContract { .. } => {
+            (
+                "build.ambiguous_contract",
+                err.to_string(),
+                &["Pass a path-qualified name such as assertions/src/Contract.a.sol:Contract"],
+            )
+        }
+        PhoundryError::ArtifactTargetMismatch { .. } => {
+            (
+                "build.artifact_target_mismatch",
+                err.to_string(),
+                &["pcl verify --help", "pcl apply --dry-run"],
+            )
+        }
+        _ => (fallback_code, err.to_string(), fallback_actions),
+    }
+}
+
 fn phoundry_error_envelope(err: &PhoundryError) -> Value {
     let (code, message, next_actions): (&str, String, &[&str]) = match err {
         PhoundryError::DirectoryNotFound(path) => {
@@ -684,6 +704,9 @@ fn phoundry_error_envelope(err: &PhoundryError) -> Value {
                 err.to_string(),
                 &["Install Foundry forge", "pcl doctor"],
             )
+        }
+        PhoundryError::AmbiguousContract { .. } | PhoundryError::ArtifactTargetMismatch { .. } => {
+            phoundry_failure_code(err, "build.failed", &["pcl build --help", "pcl doctor"])
         }
         _ => {
             (
