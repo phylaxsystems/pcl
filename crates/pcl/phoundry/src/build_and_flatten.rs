@@ -404,8 +404,6 @@ fn flatten_libraries(settings: &Value) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use tempfile::TempDir;
 
     #[test]
     fn test_build_and_flatten_args_new() {
@@ -461,75 +459,5 @@ mod tests {
         );
 
         assert_eq!(output.compiler_version_short().unwrap(), "0.8.28");
-    }
-
-    #[test]
-    fn bare_name_rejects_two_contracts_with_the_same_name() {
-        let project = duplicate_guard_project();
-        let args = BuildAndFlattenArgs {
-            root: Some(project.path().to_path_buf()),
-            assertion_contract: "Guard".to_string(),
-            contracts: PathBuf::from("assertions/src"),
-        };
-
-        let err = args
-            .run()
-            .expect_err("a bare name must not choose between two Guard artifacts");
-        let message = err.to_string();
-        assert!(
-            message.contains("AWeak.a.sol"),
-            "error should name the weak duplicate: {message}"
-        );
-        assert!(
-            message.contains("ZStrong.a.sol"),
-            "error should name the configured duplicate: {message}"
-        );
-    }
-
-    fn duplicate_guard_project() -> TempDir {
-        let project = TempDir::new().expect("temp project");
-        let root = project.path();
-        fs::create_dir_all(root.join("assertions/src")).expect("assertions dir");
-        fs::create_dir_all(root.join("lib")).expect("lib dir");
-        fs::write(
-            root.join("foundry.toml"),
-            r#"[profile.default]
-src = "assertions/src"
-out = "out"
-cache_path = "cache"
-libs = ["lib"]
-optimizer = false
-solc = "0.8.28"
-evm_version = "cancun"
-"#,
-        )
-        .expect("foundry.toml");
-        fs::write(
-            root.join("assertions/src/AWeak.a.sol"),
-            r"// SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
-
-contract Guard {
-    function policy() external pure returns (uint256) {
-        return 1;
-    }
-}
-",
-        )
-        .expect("weak guard");
-        fs::write(
-            root.join("assertions/src/ZStrong.a.sol"),
-            r"// SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
-
-contract Guard {
-    function policy() external pure returns (uint256) {
-        return 999;
-    }
-}
-",
-        )
-        .expect("strong guard");
-        project
     }
 }

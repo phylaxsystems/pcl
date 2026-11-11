@@ -1,0 +1,9 @@
+environment = "staging"
+project_name = "duplicate-guard-poc"
+
+[contracts.target]
+address = "0x0101010101010101010101010101010101010101"
+name = "Target"
+
+[[contracts.target.assertions]]
+file = "assertions/src/ZStrong.a.sol:Guard"
