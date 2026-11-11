@@ -121,7 +121,7 @@ fn render_added(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     )
     .unwrap();
     for a in &entry.assertions {
-        render_assertion_diff(out, entry.address.as_str(), a);
+        render_assertion_diff(out, (&entry.address, &entry.address), a);
     }
     writeln!(out).unwrap();
 }
@@ -136,7 +136,7 @@ fn render_removed(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     )
     .unwrap();
     for a in &entry.assertions {
-        render_assertion_diff(out, entry.address.as_str(), a);
+        render_assertion_diff(out, (&entry.address, &entry.address), a);
     }
     writeln!(out).unwrap();
 }
@@ -167,18 +167,29 @@ fn render_modified(out: &mut String, label: &str, entry: &ContractDiffEntry) {
         }
     }
 
+    // Removed assertions live on the old address; added ones on the new.
+    let adopters = entry
+        .metadata_changes
+        .as_ref()
+        .and_then(|meta| meta.address.as_ref())
+        .map_or((entry.address.as_str(), entry.address.as_str()), |change| {
+            (change.from.as_str(), change.to.as_str())
+        });
     for a in &entry.assertions {
-        render_assertion_diff(out, entry.address.as_str(), a);
+        render_assertion_diff(out, adopters, a);
     }
     writeln!(out).unwrap();
 }
 
-fn render_assertion_diff(out: &mut String, adopter: &str, a: &AssertionDiffEntry) {
+fn render_assertion_diff(out: &mut String, (old, new): (&str, &str), a: &AssertionDiffEntry) {
     let file = shown(a.file.as_deref().unwrap_or("(unknown)"));
-    let marker = match a.change_type {
-        AssertionChangeType::Added => "+".green(),
-        AssertionChangeType::Removed => "-".red(),
-        AssertionChangeType::Modified => "~".yellow(),
+    let (marker, adopter) = match a.change_type {
+        AssertionChangeType::Added => ("+".green(), Cow::Borrowed(new)),
+        AssertionChangeType::Removed => ("-".red(), Cow::Borrowed(old)),
+        AssertionChangeType::Modified if !old.eq_ignore_ascii_case(new) => {
+            ("~".yellow(), Cow::Owned(format!("{old} \u{2192} {new}")))
+        }
+        AssertionChangeType::Modified => ("~".yellow(), Cow::Borrowed(new)),
         AssertionChangeType::Unchanged => return,
     };
     writeln!(out, "      {marker} {file}").unwrap();
@@ -234,7 +245,7 @@ fn render_unchanged(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     // A contract is "unchanged" when its metadata (name/address) is untouched,
     // but its assertions may still have changed — render those like the dApp does.
     for a in &entry.assertions {
-        render_assertion_diff(out, entry.address.as_str(), a);
+        render_assertion_diff(out, (&entry.address, &entry.address), a);
     }
     writeln!(out).unwrap();
 }
@@ -1114,5 +1125,78 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
         assert!(output.contains(&format!("{hostile:?}")));
         assert!(!output.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn address_change_attributes_each_assertion_to_its_adopter() {
+        disable_colors();
+
+        let old = "0x1111111111111111111111111111111111111111";
+        let new = "0x2222222222222222222222222222222222222222";
+        let assertion = |file: &str, change_type: &str| {
+            json!({
+                "file": file,
+                "args": [],
+                "changeType": change_type,
+                "assertionId": "0x3333333333333333333333333333333333333333333333333333333333333333",
+                "previousAssertionId": "0x4444444444444444444444444444444444444444444444444444444444444444",
+                "compilerVersionChange": null
+            })
+        };
+        let plan = |old: &str, new: &str| {
+            let preview: PreviewResponse = serde_json::from_value(json!({
+                "hasChanges": true,
+                "configMismatch": false,
+                "driftDetected": false,
+                "diff": {
+                    "contracts": {
+                        "migrated": {
+                            "address": new,
+                            "name": "Vault",
+                            "changeType": "modified",
+                            "metadataChanges": { "address": { "from": old, "to": new } },
+                            "assertions": [
+                                assertion("src/Old.sol", "removed"),
+                                assertion("src/New.sol", "added"),
+                                assertion("src/Same.sol", "modified")
+                            ]
+                        }
+                    },
+                    "summary": {
+                        "contracts": { "added": 0, "removed": 0, "modified": 1, "unchanged": 0 },
+                        "assertions": { "added": 1, "removed": 1, "modified": 1, "unchanged": 0 }
+                    }
+                },
+                "diffedAgainstReleaseId": null
+            }))
+            .unwrap();
+            preview.render_plan()
+        };
+
+        let output = plan(old, new);
+        assert!(
+            output.contains(&format!("- src/Old.sol\n          adopter: {old}\n")),
+            "{output}"
+        );
+        assert!(
+            output.contains(&format!("+ src/New.sol\n          adopter: {new}\n")),
+            "{output}"
+        );
+        assert!(
+            output.contains(&format!(
+                "~ src/Same.sol\n          adopter: {old} \u{2192} {new}\n"
+            )),
+            "{output}"
+        );
+
+        // A checksum-only change is the same adopter: no arrow.
+        let checksummed = "0xAbCdEf0123456789aBcDeF0123456789AbCdEf01";
+        let output = plan(&checksummed.to_lowercase(), checksummed);
+        assert!(
+            output.contains(&format!(
+                "~ src/Same.sol\n          adopter: {checksummed}\n"
+            )),
+            "{output}"
+        );
     }
 }
