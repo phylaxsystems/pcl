@@ -2619,3 +2619,46 @@ fn auth_poll_override_only_clears_the_stored_secret_it_used() {
         );
     }
 }
+
+/// A relative --config-dir is printed as an absolute path, so the emitted
+/// poll command works from any working directory.
+#[cfg(unix)]
+#[test]
+fn auth_ensure_poll_command_resolves_a_relative_config_dir() {
+    let work_dir = tempfile::tempdir().expect("create work dir");
+    let (mut server, _auth_code) = device_login_code_server();
+    let _status = server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"verified":false}"#)
+        .create();
+    let url = server.url();
+    let ensured = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .current_dir(work_dir.path())
+        .args([
+            "--config-dir",
+            "relative-config",
+            "--json",
+            "auth",
+            "--auth-url",
+            &url,
+            "ensure",
+        ])
+        .output()
+        .expect("run pcl auth ensure");
+    assert!(ensured.status.success());
+    let challenge: serde_json::Value =
+        serde_json::from_slice(&ensured.stdout).expect("ensure envelope");
+    let poll_command = challenge["data"]["poll_command"]
+        .as_str()
+        .expect("poll command");
+
+    // run_emitted_command runs from the test's working directory, not work_dir.
+    let output = run_emitted_command(poll_command);
+    assert!(
+        output.status.success(),
+        "{poll_command} failed outside its working directory: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

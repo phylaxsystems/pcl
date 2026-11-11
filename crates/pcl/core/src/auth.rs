@@ -834,6 +834,8 @@ impl AuthCommand {
     /// and credentials live) as the command that printed them.
     fn auth_command_prefix(&self, config_dir: Option<&Path>) -> String {
         let config_dir_flag = config_dir.map_or_else(String::new, |dir| {
+            // Absolute, so the command works from any working directory.
+            let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
             format!("--config-dir={} ", shell_quote(&dir.to_string_lossy()))
         });
         format!(
