@@ -47,7 +47,7 @@ pub fn append_request_record(record: &Value) -> std::io::Result<()> {
 
 pub fn append_request_record_at(path: &Path, record: &Value) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        crate::config::create_private_dir_all(parent)?;
     }
 
     let mut bytes = serde_json::to_vec(record)?;

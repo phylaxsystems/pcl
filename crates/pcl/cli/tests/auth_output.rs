@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
     process::Command,
@@ -276,12 +278,19 @@ fn auth_ensure_json_without_auth_outputs_login_challenge() {
     assert_eq!(envelope["data"]["reason"], "missing_auth");
     assert_eq!(envelope["data"]["requires_user"], true);
     assert_eq!(envelope["data"]["refresh_supported"], true);
-    assert_eq!(envelope["data"]["device_secret"], "test_secret");
+    assert!(envelope["data"].get("device_secret").is_none());
+    assert!(
+        envelope["data"]["poll_command"]
+            .as_str()
+            .is_some_and(|command| {
+                !command.contains("--device-secret") && !command.contains("test_secret")
+            })
+    );
     assert!(
         envelope["data"]["poll_command"]
             .as_str()
             .expect("poll command")
-            .contains("pcl auth --auth-url")
+            .contains(" auth --auth-url")
     );
     assert!(
         envelope["data"]["poll_command"]
@@ -383,7 +392,14 @@ fn auth_refresh_json_without_auth_outputs_login_challenge() {
     assert_eq!(envelope["status"], "action_required");
     assert_eq!(envelope["data"]["reason"], "missing_auth");
     assert_eq!(envelope["data"]["refresh_supported"], true);
-    assert_eq!(envelope["data"]["device_secret"], "test_secret");
+    assert!(envelope["data"].get("device_secret").is_none());
+    assert!(
+        envelope["data"]["poll_command"]
+            .as_str()
+            .is_some_and(|command| {
+                !command.contains("--device-secret") && !command.contains("test_secret")
+            })
+    );
     auth_code.assert();
 }
 
@@ -555,14 +571,11 @@ fn auth_login_json_fresh_flow_outputs_pending_and_terminal_events() {
         .expect(1)
         .create();
     let auth_status = server
-        .mock("GET", "/api/v1/cli/auth/status")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded(
-                "session_id".into(),
-                "550e8400-e29b-41d4-a716-446655440000".into(),
-            ),
-            mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-        ]))
+        .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -612,6 +625,11 @@ fn auth_login_json_fresh_flow_outputs_pending_and_terminal_events() {
     assert_eq!(terminal["data"]["email"], "agent@example.com");
     let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
     assert!(config.contains("access_token = \"test-token\""));
+    assert_secret_free(&stdout, "JSONL login events");
+    assert!(
+        pending_device_login_files(temp_dir.path()).is_empty(),
+        "a verified waiting login left the pending secret on disk"
+    );
     auth_code.assert();
     auth_status.assert();
 }
@@ -631,14 +649,11 @@ fn auth_login_force_starts_fresh_flow_even_with_existing_auth() {
         .expect(1)
         .create();
     let auth_status = server
-        .mock("GET", "/api/v1/cli/auth/status")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded(
-                "session_id".into(),
-                "550e8400-e29b-41d4-a716-446655440000".into(),
-            ),
-            mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-        ]))
+        .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -706,14 +721,11 @@ fn login_against_another_platform_does_not_short_circuit_on_the_old_token() {
         .expect(1)
         .create();
     let auth_status = server
-        .mock("GET", "/api/v1/cli/auth/status")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded(
-                "session_id".into(),
-                "550e8400-e29b-41d4-a716-446655440000".into(),
-            ),
-            mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-        ]))
+        .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -828,14 +840,11 @@ fn auth_poll_json_verified_stores_auth_and_returns_terminal_envelope() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     let mut server = mockito::Server::new();
     let auth_status = server
-        .mock("GET", "/api/v1/cli/auth/status")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded(
-                "session_id".into(),
-                "550e8400-e29b-41d4-a716-446655440000".into(),
-            ),
-            mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-        ]))
+        .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -891,14 +900,11 @@ fn auth_poll_json_pending_returns_pending_envelope_without_writing_auth() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     let mut server = mockito::Server::new();
     let auth_status = server
-        .mock("GET", "/api/v1/cli/auth/status")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded(
-                "session_id".into(),
-                "550e8400-e29b-41d4-a716-446655440000".into(),
-            ),
-            mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-        ]))
+        .mock("POST", "/api/v1/cli/auth/status")
+        .match_body(mockito::Matcher::Json(serde_json::json!({
+            "session_id": "550e8400-e29b-41d4-a716-446655440000",
+            "device_secret": "test_secret",
+        })))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"{"verified":false}"#)
@@ -1656,4 +1662,1308 @@ fn api_call_accepts_inline_query_string_under_json() {
         "req-inline-query"
     );
     health.assert();
+}
+
+/// Runs a command the CLI printed exactly as a user would paste it: through
+/// the shell, with `pcl` resolved from PATH and a HOME that holds no config,
+/// so the command only works if it names everything it needs.
+#[cfg(unix)]
+fn run_emitted_command(command: &str) -> std::process::Output {
+    let bin_dir = std::path::Path::new(env!("CARGO_BIN_EXE_pcl"))
+        .parent()
+        .expect("pcl binary directory");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let empty_home = tempfile::tempdir().expect("create empty home");
+    Command::new("sh")
+        .args(["-c", command])
+        .env("PATH", path)
+        .env("HOME", empty_home.path())
+        .env("XDG_CONFIG_HOME", empty_home.path())
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        // A command that does not name its platform must fail here, not
+        // reach a real one.
+        .env_remove("PCL_AUTH_URL")
+        .env("PCL_API_URL", "http://127.0.0.1:9")
+        .output()
+        .expect("run emitted command")
+}
+
+fn device_login_challenge_body() -> &'static str {
+    r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2099-12-31T00:00:00Z"}"#
+}
+
+fn run_ensure(config_dir: &std::path::Path, auth_url: &str, json: bool) -> std::process::Output {
+    let mut args = vec![
+        "--config-dir",
+        config_dir.to_str().expect("utf-8 temp path"),
+    ];
+    if json {
+        args.push("--json");
+    }
+    args.extend(["auth", "--auth-url", auth_url, "ensure"]);
+    Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args(args)
+        .output()
+        .expect("run pcl auth ensure")
+}
+
+#[test]
+fn auth_ensure_login_output_omits_device_secret() {
+    for json in [true, false] {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        let mut server = mockito::Server::new();
+        let auth_code = server
+            .mock("GET", "/api/v1/cli/auth/code")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(device_login_challenge_body())
+            .expect(1)
+            .create();
+
+        let output = run_ensure(temp_dir.path(), &server.url(), json);
+        assert!(
+            output.status.success(),
+            "command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let rendered = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !rendered.contains("test_secret"),
+            "login output leaked the device secret: {rendered}"
+        );
+        assert!(
+            !rendered.contains("--device-secret"),
+            "login output included a secret-bearing poll command: {rendered}"
+        );
+        if json {
+            let envelope: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("json envelope");
+            assert!(envelope["data"].get("device_secret").is_none());
+            assert!(
+                envelope["data"]["poll_command"]
+                    .as_str()
+                    .is_some_and(|command| !command.contains("--device-secret"))
+            );
+        }
+        auth_code.assert();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn auth_ensure_stores_pending_device_secret_owner_only() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let mut server = mockito::Server::new();
+    let auth_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(device_login_challenge_body())
+        .expect(1)
+        .create();
+
+    let output = run_ensure(temp_dir.path(), &server.url(), true);
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mut pending = Vec::new();
+    for entry in fs::read_dir(temp_dir.path()).expect("read config dir") {
+        let path = entry.expect("config dir entry").path();
+        if fs::read_to_string(&path).ok().as_deref() == Some("test_secret") {
+            pending.push(path);
+        }
+    }
+    assert_eq!(
+        pending.len(),
+        1,
+        "expected one owner-only file holding the pending device secret"
+    );
+    let mode = fs::metadata(&pending[0])
+        .expect("pending secret metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "pending device secret file must be mode 0600");
+    auth_code.assert();
+}
+
+#[cfg(unix)]
+#[test]
+fn auth_poll_reads_pending_device_secret_without_cli_flag() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let mut server = mockito::Server::new();
+    let auth_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(device_login_challenge_body())
+        .expect(1)
+        .create();
+    let auth_status = server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .match_body(mockito::Matcher::Json(serde_json::json!({
+            "session_id": "550e8400-e29b-41d4-a716-446655440000",
+            "device_secret": "test_secret",
+        })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"verified":false}"#)
+        .expect(1)
+        .create();
+
+    let ensured = run_ensure(temp_dir.path(), &server.url(), true);
+    assert!(
+        ensured.status.success(),
+        "ensure failed: {}",
+        String::from_utf8_lossy(&ensured.stderr)
+    );
+    let challenge: serde_json::Value =
+        serde_json::from_slice(&ensured.stdout).expect("ensure envelope");
+    let poll_command = challenge["data"]["poll_command"]
+        .as_str()
+        .expect("poll command");
+    assert!(!poll_command.contains("--device-secret"));
+    assert!(!poll_command.contains("test_secret"));
+
+    let output = run_emitted_command(poll_command);
+    assert!(
+        output.status.success(),
+        "poll without --device-secret failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rendered = String::from_utf8_lossy(&output.stdout);
+    assert!(!rendered.contains("test_secret"));
+    auth_code.assert();
+    auth_status.assert();
+}
+
+const PENDING_DEVICE_LOGIN_FILE: &str = "device-login-550e8400-e29b-41d4-a716-446655440000";
+
+fn device_login_code_server() -> (mockito::ServerGuard, mockito::Mock) {
+    let mut server = mockito::Server::new();
+    let auth_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(device_login_challenge_body())
+        .create();
+    (server, auth_code)
+}
+
+/// A file planted at the pending-secret path (a symlink, or a file someone
+/// already holds open) must never receive the secret.
+#[cfg(unix)]
+#[test]
+fn auth_ensure_never_writes_the_secret_through_a_planted_path() {
+    use std::io::Read;
+
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let target = temp_dir.path().join("elsewhere");
+    fs::write(&target, "").expect("write symlink target");
+    std::os::unix::fs::symlink(&target, temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE))
+        .expect("plant symlink");
+    let (server, _auth_code) = device_login_code_server();
+
+    let output = run_ensure(temp_dir.path(), &server.url(), true);
+    assert!(
+        !output.status.success(),
+        "ensure must refuse a planted pending-secret path"
+    );
+    assert_eq!(
+        fs::read_to_string(&target).expect("read symlink target"),
+        "",
+        "the secret was written through a planted symlink"
+    );
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(rendered.contains("already exists"), "{rendered}");
+
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let planted = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
+    fs::write(&planted, "").expect("plant file");
+    fs::set_permissions(&planted, fs::Permissions::from_mode(0o644)).expect("chmod planted");
+    let mut reader = fs::File::open(&planted).expect("hold planted file open");
+    let output = run_ensure(temp_dir.path(), &server.url(), true);
+    assert!(!output.status.success());
+    let mut leaked = String::new();
+    reader
+        .read_to_string(&mut leaked)
+        .expect("read planted file");
+    assert_eq!(leaked, "", "an fd opened before ensure read the secret");
+}
+
+#[cfg(unix)]
+#[test]
+fn auth_ensure_creates_a_missing_config_dir_owner_only() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let config_dir = temp_dir.path().join("new").join("pcl");
+    let (server, _auth_code) = device_login_code_server();
+
+    let output = run_ensure(&config_dir, &server.url(), true);
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mode = fs::metadata(&config_dir)
+        .expect("config dir metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        mode, 0o700,
+        "a config dir created for the secret must be 0700"
+    );
+    assert!(config_dir.join(PENDING_DEVICE_LOGIN_FILE).exists());
+
+    // An existing user dir keeps its mode.
+    let existing = tempfile::tempdir().expect("create temp dir");
+    fs::set_permissions(existing.path(), fs::Permissions::from_mode(0o755)).expect("chmod");
+    let output = run_ensure(existing.path(), &server.url(), true);
+    assert!(output.status.success());
+    let mode = fs::metadata(existing.path())
+        .expect("existing dir metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o755, "an existing config dir must not be chmodded");
+}
+
+fn run_poll(config_dir: &std::path::Path, auth_url: &str, extra: &[&str]) -> std::process::Output {
+    let mut args = vec![
+        "--config-dir",
+        config_dir.to_str().expect("utf-8 temp path"),
+        "--json",
+        "auth",
+        "--auth-url",
+        auth_url,
+        "poll",
+        "--session-id",
+        "550e8400-e29b-41d4-a716-446655440000",
+        "--expires-at",
+        "2099-12-31T00:00:00Z",
+    ];
+    args.extend(extra);
+    Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args(args)
+        .output()
+        .expect("run pcl auth poll")
+}
+
+fn verified_status_mock(server: &mut mockito::ServerGuard) -> mockito::Mock {
+    server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"verified":true,"user_id":"550e8400-e29b-41d4-a716-446655440000","token":"opaque-token","refresh_token":"new-refresh-token","email":"agent@example.com"}"#,
+        )
+        .create()
+}
+
+/// An unreadable pending file is not "no pending login": the real I/O error
+/// must reach the caller.
+#[test]
+fn auth_poll_reports_why_the_pending_secret_could_not_be_read() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    fs::create_dir(temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE)).expect("plant dir");
+    let server = mockito::Server::new();
+
+    let output = run_poll(temp_dir.path(), &server.url(), &[]);
+    assert!(!output.status.success());
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !rendered.contains("No pending device login"),
+        "a read failure was reported as a missing login: {rendered}"
+    );
+    assert!(rendered.contains("directory"), "{rendered}");
+}
+
+/// A pending secret that could not be removed after a successful claim is
+/// reported, not silently left on disk.
+#[test]
+fn auth_poll_warns_when_the_pending_secret_cannot_be_removed() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let stuck = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
+    fs::create_dir(&stuck).expect("plant dir");
+    fs::write(stuck.join("keep"), "").expect("make dir non-empty");
+    let mut server = mockito::Server::new();
+    let _status = verified_status_mock(&mut server);
+
+    let output = run_poll(
+        temp_dir.path(),
+        &server.url(),
+        &["--device-secret", "test_secret"],
+    );
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok");
+    let warnings = envelope["warnings"].as_array().cloned().unwrap_or_default();
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning["code"] == "auth.pending_device_login_cleanup_failed"),
+        "missing cleanup warning: {envelope}"
+    );
+}
+
+fn pending_device_login_files(config_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    fs::read_dir(config_dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("device-login-"))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The human blocking login prints no poll command, so it has no reason to
+/// leave the secret on disk while it waits.
+#[test]
+fn auth_login_human_blocking_does_not_store_the_pending_secret() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let (mut server, _auth_code) = device_login_code_server();
+    let status = server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"verified":false}"#)
+        .create();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "login",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn pcl auth login");
+    let started = std::time::Instant::now();
+    while !status.matched() && started.elapsed() < std::time::Duration::from_secs(20) {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let pending = pending_device_login_files(temp_dir.path());
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(status.matched(), "login never polled");
+    assert!(
+        pending.is_empty(),
+        "human blocking login stored a pending secret it never prints a poll command for: {pending:?}"
+    );
+}
+
+fn status_error_mock(
+    server: &mut mockito::ServerGuard,
+    status: usize,
+    body: &str,
+) -> mockito::Mock {
+    server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .with_status(status)
+        .with_header("content-type", "application/json")
+        .with_body(body)
+        .create()
+}
+
+/// A poll that ends the session for good removes the pending secret; a
+/// transient failure keeps it so the next poll can still claim the login.
+#[test]
+fn auth_poll_clears_the_pending_secret_only_on_terminal_failures() {
+    let cases = [
+        (400, r#"{"error":"expired","code":"SESSION_EXPIRED"}"#, true),
+        (
+            400,
+            r#"{"error":"missing","code":"SESSION_NOT_FOUND"}"#,
+            true,
+        ),
+        (400, r#"{"error":"no user","code":"USER_NOT_FOUND"}"#, true),
+        (500, r#"{"error":"boom","code":"INTERNAL_ERROR"}"#, false),
+    ];
+    for (status, body, terminal) in cases {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        let pending = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
+        fs::write(&pending, "test_secret").expect("write pending secret");
+        let mut server = mockito::Server::new();
+        let _status = status_error_mock(&mut server, status, body);
+
+        let output = run_poll(temp_dir.path(), &server.url(), &[]);
+        assert!(!output.status.success(), "HTTP {status} {body} must fail");
+        assert_eq!(
+            !pending.exists(),
+            terminal,
+            "HTTP {status} {body}: pending secret removed must be {terminal}"
+        );
+    }
+
+    // A network failure is transient too.
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let pending = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
+    fs::write(&pending, "test_secret").expect("write pending secret");
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let url = format!("http://{}", closed.local_addr().expect("addr"));
+    drop(closed);
+    let output = run_poll(temp_dir.path(), &url, &[]);
+    assert!(!output.status.success());
+    assert!(
+        pending.exists(),
+        "a network failure removed the pending secret"
+    );
+}
+
+/// The waiting JSONL login removes the pending secret when the wait ends in
+/// a terminal failure.
+#[test]
+fn auth_login_json_clears_the_pending_secret_on_terminal_failure() {
+    for (code_body, status_body) in [
+        (
+            device_login_challenge_body().to_string(),
+            r#"{"error":"missing","code":"SESSION_NOT_FOUND"}"#,
+        ),
+        (
+            device_login_challenge_body().replace("2099-12-31", "2020-01-01"),
+            r#"{"verified":false}"#,
+        ),
+    ] {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        let mut server = mockito::Server::new();
+        let _auth_code = server
+            .mock("GET", "/api/v1/cli/auth/code")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&code_body)
+            .create();
+        let _status = status_error_mock(&mut server, 400, status_body);
+
+        let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+            .env("PCL_AUTH_NO_BROWSER", "1")
+            .args([
+                "--config-dir",
+                temp_dir.path().to_str().expect("utf-8 temp path"),
+                "--json",
+                "auth",
+                "--auth-url",
+                &server.url(),
+                "login",
+            ])
+            .output()
+            .expect("run pcl auth login");
+        assert!(!output.status.success(), "{code_body} must fail");
+        assert!(
+            pending_device_login_files(temp_dir.path()).is_empty(),
+            "terminal login failure left the pending secret ({code_body})"
+        );
+    }
+}
+
+/// Logging out ends every pending device login for this config dir, remote
+/// or --local, and reports a file it could not remove.
+#[test]
+fn auth_logout_removes_pending_device_logins() {
+    for local in [false, true] {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        let mut server = mockito::Server::new();
+        write_valid_auth_config_for_platform(temp_dir.path(), &server.url());
+        let _logout = server
+            .mock("POST", "/api/v1/web/auth/logout")
+            .with_status(200)
+            .with_body(r#"{"success":true}"#)
+            .create();
+        fs::write(
+            temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE),
+            "test_secret",
+        )
+        .expect("write pending secret");
+        fs::write(
+            temp_dir
+                .path()
+                .join("device-login-11111111-1111-1111-1111-111111111111"),
+            "other_secret",
+        )
+        .expect("write second pending secret");
+        let stuck = temp_dir
+            .path()
+            .join("device-login-22222222-2222-2222-2222-222222222222");
+        fs::create_dir(&stuck).expect("plant dir");
+        fs::write(stuck.join("keep"), "").expect("make dir non-empty");
+
+        let url = server.url();
+        let mut args = vec![
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            &url,
+            "logout",
+        ];
+        if local {
+            args.push("--local");
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+            .args(args)
+            .output()
+            .expect("run pcl auth logout");
+        assert!(
+            output.status.success(),
+            "command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            pending_device_login_files(temp_dir.path()),
+            vec![stuck.clone()],
+            "logout (local: {local}) left pending device secrets"
+        );
+        let envelope: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("json envelope");
+        let warnings = envelope["warnings"].as_array().cloned().unwrap_or_default();
+        assert!(
+            warnings.iter().any(|warning| {
+                warning["code"] == "auth.pending_device_login_cleanup_failed"
+                    && warning["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains("22222222"))
+            }),
+            "logout (local: {local}) hid a removal failure: {envelope}"
+        );
+    }
+}
+
+/// --device-secret stays accepted for poll commands printed by released pcl
+/// versions, but is no longer advertised.
+#[test]
+fn auth_poll_help_does_not_advertise_device_secret() {
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args(["auth", "poll", "--help"])
+        .output()
+        .expect("run pcl auth poll --help");
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("--session-id"), "{help}");
+    assert!(!help.contains("--device-secret"), "{help}");
+}
+
+fn assert_secret_free(rendered: &str, what: &str) {
+    assert!(
+        !rendered.contains("test_secret"),
+        "{what} leaked the device secret: {rendered}"
+    );
+    assert!(
+        !rendered.contains("--device-secret"),
+        "{what} printed a secret-bearing poll command: {rendered}"
+    );
+}
+
+/// Every login challenge output, human and --json, keeps the device secret
+/// out: login --no-wait, ensure and the refresh challenge.
+#[test]
+fn login_challenge_outputs_never_include_the_device_secret() {
+    for subcommand in [&["login", "--no-wait"][..], &["ensure"], &["refresh"]] {
+        for json in [false, true] {
+            let temp_dir = tempfile::tempdir().expect("create temp config dir");
+            let (server, _auth_code) = device_login_code_server();
+            let url = server.url();
+            let mut args = vec![
+                "--config-dir",
+                temp_dir.path().to_str().expect("utf-8 temp path"),
+            ];
+            if json {
+                args.push("--json");
+            }
+            args.extend(["auth", "--auth-url", &url]);
+            args.extend(subcommand);
+            let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+                .env("PCL_AUTH_NO_BROWSER", "1")
+                .args(&args)
+                .output()
+                .expect("run pcl auth");
+            assert!(
+                output.status.success(),
+                "{args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let rendered = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(rendered.contains("poll"), "{args:?}: {rendered}");
+            assert_secret_free(&rendered, &format!("{args:?}"));
+        }
+    }
+}
+
+/// A verified poll from the emitted command claims the login and removes the
+/// pending secret.
+#[cfg(unix)]
+#[test]
+fn auth_poll_verified_removes_the_pending_secret() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let (mut server, _auth_code) = device_login_code_server();
+    let _status = verified_status_mock(&mut server);
+
+    let ensured = run_ensure(temp_dir.path(), &server.url(), true);
+    assert!(ensured.status.success());
+    assert_eq!(pending_device_login_files(temp_dir.path()).len(), 1);
+    let challenge: serde_json::Value =
+        serde_json::from_slice(&ensured.stdout).expect("ensure envelope");
+    let output = run_emitted_command(
+        challenge["data"]["poll_command"]
+            .as_str()
+            .expect("poll command"),
+    );
+    assert!(
+        output.status.success(),
+        "poll failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("poll envelope");
+    assert_eq!(envelope["event"], "auth.login_complete");
+    assert!(
+        pending_device_login_files(temp_dir.path()).is_empty(),
+        "a verified poll left the pending secret on disk"
+    );
+}
+
+/// The JSON `wait_command` must target the same config dir and platform as the
+/// challenge that printed it.
+#[cfg(unix)]
+#[test]
+fn auth_ensure_json_wait_command_targets_the_originating_dir_and_platform() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let (mut server, auth_code) = device_login_code_server();
+    let _status = verified_status_mock(&mut server);
+
+    let ensured = run_ensure(temp_dir.path(), &server.url(), true);
+    assert!(ensured.status.success());
+    // A fresh login gets a fresh session.
+    auth_code.remove();
+    let _next_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(device_login_challenge_body().replace("550e8400", "660e8400"))
+        .create();
+    let challenge: serde_json::Value =
+        serde_json::from_slice(&ensured.stdout).expect("ensure envelope");
+    let wait_command = challenge["data"]["wait_command"]
+        .as_str()
+        .expect("wait command");
+
+    let output = run_emitted_command(wait_command);
+    assert!(
+        output.status.success(),
+        "wait_command {wait_command} failed: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
+    assert!(
+        config.contains("access_token = \"opaque-token\""),
+        "wait_command did not log in to the originating config dir:\n{config}"
+    );
+}
+
+/// Whatever command first creates the config dir (a config write, a logged
+/// API request) creates it owner-only.
+#[cfg(unix)]
+#[test]
+fn commands_create_a_missing_config_dir_owner_only() {
+    let mut server = mockito::Server::new();
+    let _health = server
+        .mock("GET", "/api/v1/health")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body("{}")
+        .create();
+    let url = server.url();
+    let cases: [&[&str]; 2] = [
+        // Records the platform before the (failing) login runs.
+        &["auth", "--auth-url", "http://127.0.0.1:9", "login"],
+        &[
+            "api",
+            "call",
+            "get",
+            "/health",
+            "--allow-unauthenticated",
+            "--api-url",
+            &url,
+        ],
+    ];
+    for command in cases {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let config_dir = temp_dir.path().join("new").join("pcl");
+        let mut args = vec![
+            "--config-dir",
+            config_dir.to_str().expect("utf-8 temp path"),
+            "--json",
+        ];
+        args.extend(command);
+        let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+            .env_remove("PCL_REQUEST_LOG")
+            .args(&args)
+            .output()
+            .expect("run pcl");
+        assert!(
+            config_dir.exists(),
+            "{command:?} did not create the config dir: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mode = fs::metadata(&config_dir)
+            .expect("config dir metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700, "{command:?} created the config dir {mode:o}");
+    }
+}
+
+/// A legacy GET whose error body echoes its request target must not put the
+/// device secret in the error output, human or --json.
+#[test]
+fn auth_poll_error_output_withholds_an_echoed_device_secret() {
+    for json in [true, false] {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        fs::write(
+            temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE),
+            "test_secret",
+        )
+        .expect("write pending secret");
+        let mut server = mockito::Server::new();
+        let _post = server
+            .mock("POST", "/api/v1/cli/auth/status")
+            .with_status(405)
+            .create();
+        let _get = server
+            .mock("GET", "/api/v1/cli/auth/status")
+            .match_query(mockito::Matcher::Any)
+            .with_status(400)
+            .with_body(
+                "upstream failure at /api/v1/cli/auth/status?device_secret=test_secret&session_id=550e8400-e29b-41d4-a716-446655440000",
+            )
+            .create();
+        let url = server.url();
+        let mut args = vec![
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+        ];
+        if json {
+            args.push("--json");
+        }
+        args.extend([
+            "auth",
+            "--auth-url",
+            &url,
+            "poll",
+            "--session-id",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ]);
+        let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+            .args(&args)
+            .output()
+            .expect("run pcl auth poll");
+        assert!(!output.status.success());
+        let rendered = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !rendered.contains("test_secret"),
+            "poll error output (json: {json}) leaked the device secret: {rendered}"
+        );
+    }
+}
+
+fn run_logout_local(config_dir: &std::path::Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            config_dir.to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            "http://127.0.0.1:9",
+            "logout",
+            "--local",
+        ])
+        .output()
+        .expect("run pcl auth logout")
+}
+
+/// Logout only deletes the exact `device-login-<uuid>` files it created.
+#[test]
+fn auth_logout_keeps_files_that_only_look_like_pending_logins() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let keep = [
+        "device-login-notes.txt",
+        "device-login-550e8400-e29b-41d4-a716-446655440000.bak",
+        // No uppercase UUID spelling: case-insensitive filesystems treat it
+        // as the pending file itself.
+        "device-login-550e8400e29b41d4a716446655440000",
+        "device-login-{550e8400-e29b-41d4-a716-446655440001}",
+        "device-login-",
+    ];
+    for name in keep {
+        fs::write(temp_dir.path().join(name), "keep").expect("write look-alike");
+    }
+    fs::write(
+        temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE),
+        "test_secret",
+    )
+    .expect("write pending secret");
+
+    let output = run_logout_local(temp_dir.path());
+    assert!(output.status.success());
+    assert!(!temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE).exists());
+    for name in keep {
+        assert!(
+            temp_dir.path().join(name).exists(),
+            "logout deleted {name}, which pcl never created"
+        );
+    }
+}
+
+/// When logout cannot list the config dir it must say the pending secrets may
+/// still be there instead of reporting a clean logout.
+#[cfg(unix)]
+#[test]
+fn auth_logout_warns_when_the_config_dir_cannot_be_listed() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    fs::write(
+        temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE),
+        "test_secret",
+    )
+    .expect("write pending secret");
+    fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o300)).expect("chmod");
+    let output = run_logout_local(temp_dir.path());
+    fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o700)).expect("restore");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json envelope");
+    let warnings = envelope["warnings"].as_array().cloned().unwrap_or_default();
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning["code"] == "auth.pending_device_login_cleanup_failed"),
+        "logout hid that it could not list pending logins: {envelope}"
+    );
+}
+
+/// A failed poll only proves the secret it sent is dead: a different
+/// --device-secret must not delete the stored one, an equal one may.
+#[test]
+fn auth_poll_override_only_clears_the_stored_secret_it_used() {
+    for (override_secret, stored_removed) in [("other_secret", false), ("test_secret", true)] {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        let pending = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
+        fs::write(&pending, "test_secret").expect("write pending secret");
+        let mut server = mockito::Server::new();
+        let _status = status_error_mock(
+            &mut server,
+            400,
+            r#"{"error":"Session not found","code":"SESSION_NOT_FOUND"}"#,
+        );
+
+        let output = run_poll(
+            temp_dir.path(),
+            &server.url(),
+            &["--device-secret", override_secret],
+        );
+        assert!(!output.status.success());
+        assert_eq!(
+            !pending.exists(),
+            stored_removed,
+            "--device-secret {override_secret}: stored secret removed must be {stored_removed}"
+        );
+    }
+}
+
+/// A relative --config-dir is printed as an absolute path, so the emitted
+/// poll command works from any working directory.
+#[cfg(unix)]
+#[test]
+fn auth_ensure_poll_command_resolves_a_relative_config_dir() {
+    let work_dir = tempfile::tempdir().expect("create work dir");
+    let (mut server, _auth_code) = device_login_code_server();
+    let _status = server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"verified":false}"#)
+        .create();
+    let url = server.url();
+    let ensured = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .current_dir(work_dir.path())
+        .args([
+            "--config-dir",
+            "relative-config",
+            "--json",
+            "auth",
+            "--auth-url",
+            &url,
+            "ensure",
+        ])
+        .output()
+        .expect("run pcl auth ensure");
+    assert!(ensured.status.success());
+    let challenge: serde_json::Value =
+        serde_json::from_slice(&ensured.stdout).expect("ensure envelope");
+    let poll_command = challenge["data"]["poll_command"]
+        .as_str()
+        .expect("poll command");
+
+    // run_emitted_command runs from the test's working directory, not work_dir.
+    let output = run_emitted_command(poll_command);
+    assert!(
+        output.status.success(),
+        "{poll_command} failed outside its working directory: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+const VERIFIED_STATUS_BODY: &str = r#"{"verified":true,"user_id":"550e8400-e29b-41d4-a716-446655440000","token":"opaque-token","refresh_token":"new-refresh-token","email":"agent@example.com"}"#;
+
+fn assert_no_false_success(output: &std::process::Output, what: &str) {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{what} succeeded: {stdout}");
+    assert!(
+        !stdout.contains("auth.login_complete")
+            && !stdout.contains("Authentication successful")
+            && !stdout.contains("\"status\":\"ok\"")
+            && !stdout.contains("\"status\": \"ok\""),
+        "{what} reported success before the credentials were saved: {stdout}"
+    );
+    assert!(
+        stderr.contains("Failed to write config file"),
+        "{what} did not report the write failure: {stderr}"
+    );
+}
+
+/// A verified claim is only reported once the credentials are on disk; if
+/// they cannot be saved, only the error is printed.
+#[cfg(unix)]
+#[test]
+fn auth_poll_reports_success_only_after_saving_credentials() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let config_path = temp_dir.path().join("config.toml");
+    fs::write(&config_path, "").expect("write config");
+    fs::set_permissions(&config_path, fs::Permissions::from_mode(0o400)).expect("chmod");
+    let mut server = mockito::Server::new();
+    let _status = verified_status_mock(&mut server);
+
+    let output = run_poll(
+        temp_dir.path(),
+        &server.url(),
+        &["--device-secret", "test_secret"],
+    );
+    assert_no_false_success(&output, "poll");
+}
+
+#[cfg(unix)]
+#[test]
+fn auth_login_reports_success_only_after_saving_credentials() {
+    for json in [true, false] {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        let config_path = temp_dir.path().join("config.toml");
+        let (mut server, _auth_code) = device_login_code_server();
+        let lock_config = config_path.clone();
+        // Make the config read-only once the login is under way (the platform
+        // is recorded before the command runs).
+        let _status = server
+            .mock("POST", "/api/v1/cli/auth/status")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body_from_request(move |_| {
+                let _ = fs::set_permissions(&lock_config, fs::Permissions::from_mode(0o400));
+                VERIFIED_STATUS_BODY.as_bytes().to_vec()
+            })
+            .create();
+        let url = server.url();
+        let mut args = vec![
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+        ];
+        if json {
+            args.push("--json");
+        }
+        args.extend(["auth", "--auth-url", &url, "login"]);
+        let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+            .env("PCL_AUTH_NO_BROWSER", "1")
+            .stdin(std::process::Stdio::null())
+            .args(&args)
+            .output()
+            .expect("run pcl auth login");
+        assert_no_false_success(&output, &format!("login (json: {json})"));
+    }
+}
+
+/// Saving claimed credentials over an unparseable config keeps the original
+/// bytes in config.toml.invalid, as the post-command write always did.
+#[test]
+fn auth_poll_over_an_unreadable_config_keeps_its_backup() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    fs::write(temp_dir.path().join("config.toml"), "not = [valid toml").expect("write config");
+    let mut server = mockito::Server::new();
+    let _status = verified_status_mock(&mut server);
+
+    let output = run_poll(
+        temp_dir.path(),
+        &server.url(),
+        &["--device-secret", "test_secret"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(temp_dir.path().join("config.toml.invalid")).expect("backup"),
+        "not = [valid toml"
+    );
+    let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("config");
+    assert!(config.contains("opaque-token"), "{config}");
+}
+
+fn single_error_envelope(output: &std::process::Output) -> serde_json::Value {
+    assert!(!output.status.success());
+    serde_json::from_slice(&output.stderr).unwrap_or_else(|error| {
+        panic!(
+            "stderr is not one JSON envelope ({error}): {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+fn has_cleanup_warning(envelope: &serde_json::Value) -> bool {
+    envelope["warnings"].as_array().is_some_and(|warnings| {
+        warnings
+            .iter()
+            .any(|warning| warning["code"] == "auth.pending_device_login_cleanup_failed")
+    })
+}
+
+/// A failed cleanup on a JSON error path is reported inside the one error
+/// envelope, not dropped.
+#[cfg(unix)]
+#[test]
+fn json_error_envelopes_carry_pending_cleanup_failures() {
+    // pcl auth poll: terminal failure, pending file cannot be removed.
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    fs::write(
+        temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE),
+        "test_secret",
+    )
+    .expect("write pending secret");
+    let mut server = mockito::Server::new();
+    let _status = status_error_mock(
+        &mut server,
+        400,
+        r#"{"error":"expired","code":"SESSION_EXPIRED"}"#,
+    );
+    fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o500)).expect("chmod");
+    let output = run_poll(temp_dir.path(), &server.url(), &[]);
+    fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o700)).expect("restore");
+    let envelope = single_error_envelope(&output);
+    assert_eq!(envelope["error"]["code"], "auth.session_invalid");
+    assert!(
+        has_cleanup_warning(&envelope),
+        "poll dropped it: {envelope}"
+    );
+
+    // Waiting JSONL login: terminal failure, pending file cannot be removed.
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let (mut server, _auth_code) = device_login_code_server();
+    let dir = temp_dir.path().to_path_buf();
+    let _status = server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .with_status(400)
+        .with_header("content-type", "application/json")
+        .with_body_from_request(move |_| {
+            let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o500));
+            br#"{"error":"expired","code":"SESSION_EXPIRED"}"#.to_vec()
+        })
+        .create();
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "login",
+        ])
+        .output()
+        .expect("run pcl auth login");
+    fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o700)).expect("restore");
+    let envelope = single_error_envelope(&output);
+    assert!(
+        has_cleanup_warning(&envelope),
+        "login dropped it: {envelope}"
+    );
+}
+
+/// A claimed login is saved once. A refresh that rotates the pair after that
+/// save (here while poll is still blocked writing its output) must survive
+/// the end of the poll command.
+#[test]
+fn claims_do_not_overwrite_a_pair_rotated_after_their_save() {
+    for command in [
+        &[
+            "poll",
+            "--session-id",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "--device-secret",
+            "test_secret",
+        ][..],
+        &["login"],
+    ] {
+        assert_claim_keeps_a_later_rotation(command);
+    }
+}
+
+fn assert_claim_keeps_a_later_rotation(command: &[&str]) {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let config_path = temp_dir.path().join("config.toml");
+    let (mut server, _auth_code) = device_login_code_server();
+    // An envelope larger than the pipe buffer blocks poll on stdout after it
+    // saved the claim and before it returns to main.
+    let _status = server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "verified": true,
+                "user_id": "550e8400-e29b-41d4-a716-446655440000",
+                "token": "claimed-access",
+                "refresh_token": "claimed-refresh",
+                "email": format!("{}@example.com", "a".repeat(200_000)),
+            })
+            .to_string(),
+        )
+        .create();
+    let refresh = server
+        .mock("POST", "/api/v1/auth/refresh")
+        .match_body(mockito::Matcher::Json(
+            serde_json::json!({ "refresh_token": "claimed-refresh" }),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"token":"rotated-access","refresh_token":"rotated-refresh","expires_at":"2099-01-01T00:00:00Z","refresh_expires_at":"2099-02-01T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create();
+    let url = server.url();
+    let config_dir = temp_dir.path().to_str().expect("utf-8 temp path");
+
+    let mut poll = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .args([
+            "--config-dir",
+            config_dir,
+            "--json",
+            "auth",
+            "--auth-url",
+            &url,
+        ])
+        .args(command)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn pcl auth poll");
+    let started = std::time::Instant::now();
+    while !fs::read_to_string(&config_path).is_ok_and(|config| config.contains("claimed-refresh")) {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(20),
+            "{command:?} never saved the claim"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        poll.try_wait().expect("poll status").is_none(),
+        "{command:?} must still be blocked on its output"
+    );
+
+    let refreshed = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            config_dir,
+            "--json",
+            "auth",
+            "--auth-url",
+            &url,
+            "refresh",
+            "--force",
+        ])
+        .output()
+        .expect("run pcl auth refresh");
+    assert!(
+        refreshed.status.success(),
+        "refresh failed: {}",
+        String::from_utf8_lossy(&refreshed.stderr)
+    );
+
+    let polled = poll.wait_with_output().expect("finish poll");
+    assert!(
+        polled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&polled.stderr)
+    );
+    let config = fs::read_to_string(&config_path).expect("read config");
+    assert!(
+        config.contains("rotated-refresh") && !config.contains("claimed-refresh"),
+        "{command:?} overwrote the rotated pair with the spent one:\n{}",
+        config
+            .lines()
+            .filter(|line| line.contains("token"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    refresh.assert();
 }

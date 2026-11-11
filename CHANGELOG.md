@@ -17,6 +17,7 @@ All notable user-facing changes should be recorded here.
 
 ### Breaking changes
 
+- Security: login envelopes (`pcl auth ensure`, `pcl auth refresh`, `pcl auth login --no-wait`, and the JSONL `auth.login_instructions` event) no longer include `data.device_secret`, and `data.poll_command` no longer carries `--device-secret`. The pending secret is stored in an owner-only (`0600`) file in the config directory and `pcl auth poll` reads it from there; the file is removed after a successful claim, a terminal failure, or `pcl auth logout`. `poll_command` names `--config-dir` when one was given. `pcl auth poll --device-secret` is still accepted (hidden) so poll commands printed by earlier versions keep working. The status poll sends the secret in a POST body and only falls back to the older GET when the server lacks the POST route.
 - Removed `pcl deployments`, including project deployment listing and `--confirm`. Inspect releases with `pcl releases list` and `pcl releases show`. Confirm a release deployment with `pcl releases deploy`.
 - Removed `pcl assertions --remove-info` and `--remove-calldata`. Assertion listing, detail, registered lookup, and adopter lookup remain.
 - Removed `pcl contracts --remove-calldata` and the `--aa-address`, `--assertion-id`, `--network`, and `--environment` options that existed only for adopter-removal calldata. Contract listing and detail remain. Use `pcl releases calldata remove` for release removal calldata and `pcl releases remove` to confirm removal.

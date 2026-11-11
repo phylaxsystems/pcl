@@ -604,6 +604,15 @@ pub enum AuthError {
     /// Error when config operations fail during auth
     #[error("Config error: {0}")]
     ConfigError(#[source] ConfigError),
+
+    /// An auth failure plus non-fatal warnings (such as a pending device
+    /// login that could not be removed) for the same error envelope.
+    #[error("{source}")]
+    WithWarnings {
+        #[source]
+        source: Box<AuthError>,
+        warnings: Vec<serde_json::Value>,
+    },
 }
 
 /// Structured error codes returned by the dapp CLI auth status endpoint.
@@ -638,31 +647,30 @@ impl From<GeneratedApiError<DappApiError>> for AuthError {
             GeneratedApiError::ErrorResponse(response) => {
                 let status = response.status();
                 let body = response.into_inner();
+                // Body text and codes are server-controlled and can echo the
+                // device secret; report the HTTP status only.
+                let detail = format!("HTTP {status}");
                 match DappErrorCode::from_api_code(body.code.as_deref()) {
                     DappErrorCode::SessionExpired => Self::SessionExpired,
                     DappErrorCode::SessionNotFound => Self::SessionNotFound,
                     DappErrorCode::UserNotFound => Self::UserNotFound,
-                    DappErrorCode::InternalError => Self::ServerError(body.error),
-                    DappErrorCode::Other if status.is_server_error() => {
-                        Self::ServerError(body.error)
-                    }
-                    DappErrorCode::Other => Self::InvalidSession(body.error),
+                    DappErrorCode::InternalError => Self::ServerError(detail),
+                    DappErrorCode::Other if status.is_server_error() => Self::ServerError(detail),
+                    DappErrorCode::Other => Self::InvalidSession(detail),
                 }
             }
             GeneratedApiError::InvalidResponsePayload(bytes, _) => {
                 if let Ok(body) = serde_json::from_slice::<DappApiError>(&bytes) {
+                    let detail = "unexpected error response".to_string();
                     return match DappErrorCode::from_api_code(body.code.as_deref()) {
                         DappErrorCode::SessionExpired => Self::SessionExpired,
                         DappErrorCode::SessionNotFound => Self::SessionNotFound,
                         DappErrorCode::UserNotFound => Self::UserNotFound,
-                        DappErrorCode::InternalError => Self::ServerError(body.error),
-                        DappErrorCode::Other => Self::InvalidSession(body.error),
+                        DappErrorCode::InternalError => Self::ServerError(detail),
+                        DappErrorCode::Other => Self::InvalidSession(detail),
                     };
                 }
-                Self::StatusRequestFailed(format!(
-                    "Invalid response payload: {}",
-                    String::from_utf8_lossy(&bytes)
-                ))
+                Self::StatusRequestFailed("Invalid response payload".to_string())
             }
             GeneratedApiError::UnexpectedResponse(response) => {
                 let status = response.status();
@@ -675,7 +683,8 @@ impl From<GeneratedApiError<DappApiError>> for AuthError {
             GeneratedApiError::CommunicationError(error)
             | GeneratedApiError::InvalidUpgrade(error)
             | GeneratedApiError::ResponseBodyError(error) => {
-                Self::StatusRequestFailed(error.to_string())
+                // The legacy GET carries the device secret in its URL.
+                Self::StatusRequestFailed(error.without_url().to_string())
             }
             GeneratedApiError::InvalidRequest(message) | GeneratedApiError::Custom(message) => {
                 Self::StatusRequestFailed(message)

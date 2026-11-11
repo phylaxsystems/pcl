@@ -1652,8 +1652,8 @@ fn llms_guide() -> Value {
             "ensure_command": "pcl auth ensure --json",
             "expires_soon": "true when five minutes or less remain; renew before long-running work.",
             "renew_command": "pcl auth ensure --force --json",
-            "single_envelope_login": "pcl auth login --no-wait --force --json returns status=action_required with device_url, code, device_secret, expires_at, and poll_command.",
-            "poll_command": "pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --json",
+            "single_envelope_login": "pcl auth login --no-wait --force --json returns status=action_required with device_url, code, session_id, expires_at, and poll_command. The device secret stays in an owner-only file and is not part of the envelope.",
+            "poll_command": "pcl auth poll --session-id <uuid> --expires-at <rfc3339> --json",
             "refresh_command": "pcl auth refresh --json rotates the stored refresh token when available; if the refresh token is missing or rejected, it returns a login challenge.",
             "logout": "pcl auth logout attempts remote logout first, then clears local credentials; pass --local to skip the remote request."
         },
@@ -2000,7 +2000,8 @@ async fn auth_capability_check(api_url: &url::Url) -> Value {
     let spec = response.into_inner();
     let refresh_supported = openapi_has_operation(&spec, "/auth/refresh", "post");
     let login_supported = openapi_has_operation(&spec, "/cli/auth/code", "get")
-        && openapi_has_operation(&spec, "/cli/auth/status", "get")
+        && (openapi_has_operation(&spec, "/cli/auth/status", "post")
+            || openapi_has_operation(&spec, "/cli/auth/status", "get"))
         && openapi_has_operation(&spec, "/cli/auth/verify", "post");
     let logout_revocation_supported = openapi_has_operation(&spec, "/web/auth/logout", "post")
         || openapi_has_operation(&spec, "/cli/auth/revoke", "post")
@@ -3144,5 +3145,35 @@ mod tests {
         assert_eq!(job["stats"]["incidents_written"], 0);
         assert_eq!(job["stats"]["errors_written"], 1);
         assert_eq!(job["stats"]["retries_attempted"], 0);
+    }
+
+    #[tokio::test]
+    async fn doctor_accepts_a_post_only_cli_auth_status_route() {
+        for status_method in ["post", "get"] {
+            let mut server = mockito::Server::new_async().await;
+            let _spec = server
+                .mock("GET", "/api/v1/openapi")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(
+                    json!({
+                        "paths": {
+                            "/auth/refresh": { "post": {} },
+                            "/cli/auth/code": { "get": {} },
+                            "/cli/auth/status": { status_method: {} },
+                            "/cli/auth/verify": { "post": {} },
+                        }
+                    })
+                    .to_string(),
+                )
+                .create_async()
+                .await;
+            let url = url::Url::parse(&server.url()).unwrap();
+            let check = auth_capability_check(&url).await;
+            assert_eq!(
+                check["login_supported"], true,
+                "{status_method} /cli/auth/status: {check}"
+            );
+        }
     }
 }

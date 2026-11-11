@@ -156,12 +156,17 @@ async fn main() -> Result<()> {
         }
 
         let baseline_config = config.clone();
+        let saves_own_changes = cli.command.saves_its_own_config_changes();
         run_command(cli.command, &cli.args, &mut config, cli.args.json_output()).await?;
         let command_changed_config = config != baseline_config;
         let passive_config_changed = baseline_config != original_config;
-        let should_persist_config = command_changed_config
-            || passive_config_changed
-            || (!read_valid_config && should_write_after_invalid_config);
+        // A claimed login is already saved, passive changes included; writing
+        // it again could replace a pair another process refreshed since.
+        let command_saved_config = command_changed_config && saves_own_changes;
+        let should_persist_config = !command_saved_config
+            && (command_changed_config
+                || passive_config_changed
+                || (!read_valid_config && should_write_after_invalid_config));
         let force_config_write =
             should_force_config_write && (command_changed_config || !read_valid_config);
         if (read_valid_config || should_write_after_invalid_config) && should_persist_config {
@@ -957,6 +962,11 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
 }
 
 fn auth_error_envelope(err: &AuthError) -> Value {
+    if let AuthError::WithWarnings { source, warnings } = err {
+        let mut envelope = auth_error_envelope(source);
+        envelope["warnings"] = json!(warnings);
+        return envelope;
+    }
     if let Some(envelope) = auth_refresh_error_envelope(err) {
         return envelope;
     }
@@ -1039,7 +1049,8 @@ fn auth_error_envelope(err: &AuthError) -> Value {
         | AuthError::RefreshRateLimited { .. }
         | AuthError::RefreshServerError { .. }
         | AuthError::RefreshRequestFailed(_)
-        | AuthError::RefreshLockTimeout => {
+        | AuthError::RefreshLockTimeout
+        | AuthError::WithWarnings { .. } => {
             with_envelope_metadata(simple_error_value(
                 "auth.request_failed",
                 &err.to_string(),
