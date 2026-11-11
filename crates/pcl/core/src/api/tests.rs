@@ -1575,6 +1575,87 @@ async fn invitation_workflow_history_omits_the_bearer_token() {
     retried_accept.assert_async().await;
 }
 
+fn raw_get(path: &str) -> ApiRequestInput<'_> {
+    ApiRequestInput {
+        method: HttpMethod::Get,
+        path,
+        query: &[],
+        header: &[],
+        body: None,
+        body_file: None,
+        field: &[],
+        require_auth: false,
+    }
+}
+
+#[tokio::test]
+async fn raw_calls_that_normalize_onto_invitation_routes_redact_every_sink() {
+    let t = INVITATION_TOKEN;
+    let variants = [
+        format!("/invitations/{t}/./preview"),
+        format!("/invitations/{t}/%2e/preview"),
+        format!("/invitations/{t}/junk/../preview"),
+        format!("/invitations/{t}/junk/%2e%2e/accept"),
+        format!("/invitations/{t}\\preview"),
+        format!("/Invitations/{t}/junk/%2E%2E/accept"),
+    ];
+    for status in [200, 404] {
+        let mut server = mockito::Server::new_async().await;
+        let live_routes = [
+            format!("/api/v1/invitations/{t}/preview"),
+            format!("/api/v1/Invitations/{t}/accept"),
+            format!("/api/v1/invitations/{t}/accept"),
+        ];
+        let mut mocks = Vec::new();
+        for route in &live_routes {
+            mocks.push(
+                server
+                    .mock("GET", route.as_str())
+                    .with_status(status)
+                    .with_header("content-type", "application/json")
+                    .with_body(r#"{"ok":true}"#)
+                    .create_async()
+                    .await,
+            );
+        }
+        let api = test_api(server.url(), true);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("requests.jsonl");
+        let mut config = CliConfig::default();
+
+        for path in &variants {
+            let rendered = match api
+                .call_api(&mut config, &CliArgs::default(), raw_get(path), &log_path)
+                .await
+            {
+                Ok(output) => {
+                    assert_eq!(output["response"]["status"], 200, "{path}: {output}");
+                    output["request"].to_string()
+                }
+                Err(error) => {
+                    assert!(
+                        matches!(error, ApiCommandError::HttpStatus { status: 404, .. }),
+                        "{path}: did not reach the live route: {error}"
+                    );
+                    format!("{error} {}", error.json_envelope())
+                }
+            };
+            assert!(
+                !rendered.contains(t),
+                "{path}: status {status} output kept the token: {rendered}"
+            );
+            assert!(rendered.contains("<redacted>"), "{path}: {rendered}");
+        }
+        let history = fs::read_to_string(&log_path).expect("raw request history");
+        assert!(
+            !history.contains(t),
+            "raw history kept the token: {history}"
+        );
+        let hits = history.lines().count();
+        assert_eq!(hits, variants.len(), "{history}");
+    }
+}
+
 #[tokio::test]
 async fn raw_401_preserves_original_error_when_refresh_endpoint_is_missing() {
     let mut server = mockito::Server::new_async().await;

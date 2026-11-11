@@ -20,6 +20,7 @@ use std::{
 
 const REQUEST_LOG_ENV: &str = "PCL_REQUEST_LOG";
 const REQUEST_LOG_FILE: &str = "requests.jsonl";
+const REDACTED_SEGMENT: &str = "<redacted>";
 
 pub fn request_log_path() -> PathBuf {
     request_log_path_for_config_dir(None)
@@ -45,28 +46,59 @@ pub fn append_request_record(record: &Value) -> std::io::Result<()> {
     append_request_record_at(&path, record)
 }
 
+/// Redacts the token in `/invitations/{token}/preview|accept`, matching the
+/// route the runner actually sends: `Url::set_path` resolves `.`/`..` (also
+/// `%2e`), turns `\` into `/` and drops tabs and newlines. Names match
+/// case-insensitively across empty segments. The percent-decoded form also
+/// covers servers that decode `%2F` or letters before routing.
 pub(crate) fn redact_sensitive_request_path(path: &str) -> String {
     let split_at = path.find(['?', '#']).unwrap_or(path.len());
     let (route, suffix) = path.split_at(split_at);
-    let mut parts = route.split('/').collect::<Vec<_>>();
-    let mut changed = false;
-    let mut index = 0;
-    while index + 2 < parts.len() {
-        if parts[index] == "invitations"
-            && matches!(parts[index + 2], "preview" | "accept")
-            && !parts[index + 1].is_empty()
-        {
-            parts[index + 1] = "<redacted>";
-            changed = true;
-        }
-        index += 1;
-    }
-    if !changed {
+    let Ok(mut canonical) = url::Url::parse("http://pcl.invalid/") else {
         return path.to_string();
+    };
+    canonical.set_path(route);
+    let decoded = percent_encoding::percent_decode_str(canonical.path()).decode_utf8_lossy();
+    match redact_invitation_tokens(canonical.path()).or_else(|| redact_invitation_tokens(&decoded))
+    {
+        Some(mut redacted) => {
+            redacted.push_str(suffix);
+            redacted
+        }
+        None => path.to_string(),
     }
-    let mut redacted = parts.join("/");
-    redacted.push_str(suffix);
-    redacted
+}
+
+fn redact_invitation_tokens(path: &str) -> Option<String> {
+    let mut segments = path.split('/').collect::<Vec<_>>();
+    let filled = (0..segments.len())
+        .filter(|&index| !segments[index].is_empty())
+        .collect::<Vec<_>>();
+    let tokens = filled
+        .windows(3)
+        .filter(|window| {
+            is_route_name(segments[window[0]], "invitations")
+                && ["preview", "accept"]
+                    .iter()
+                    .any(|name| is_route_name(segments[window[2]], name))
+        })
+        .map(|window| window[1])
+        .collect::<Vec<_>>();
+    if tokens.is_empty() {
+        return None;
+    }
+    for index in tokens {
+        segments[index] = REDACTED_SEGMENT;
+    }
+    Some(segments.join("/"))
+}
+
+// Also matches `preview;params` or `preview.json`: some servers strip those before routing.
+fn is_route_name(segment: &str, name: &str) -> bool {
+    segment
+        .get(..name.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(name))
+        && !segment[name.len()..].starts_with(|c: char| c.is_ascii_alphanumeric())
 }
 
 fn redact_record_path(record: &Value) -> Value {
@@ -312,6 +344,128 @@ mod tests {
             records[0]["path"],
             "/invitations/<redacted>/preview?unused=1"
         );
+    }
+
+    /// Inputs that `Url::set_path` sends to the live preview/accept route.
+    fn invitation_route_variants() -> Vec<String> {
+        let t = INVITATION_TOKEN;
+        [
+            "/invitations/{t}/./preview",
+            "/invitations/{t}/%2e/preview",
+            "/invitations/{t}/%2E/accept",
+            "/invitations/{t}/junk/../preview",
+            "/invitations/{t}/junk/%2e%2e/accept",
+            "/invitations/{t}/junk/%2E%2e/preview",
+            "/invitations/{t}/junk/.%2e/accept",
+            "/invitations/{t}\\preview",
+            "\\invitations\\{t}\\accept",
+            "/invitations/{t}/pre\tview",
+            "/Invitations/{t}/Preview",
+            "/INVITATIONS/{t}/ACCEPT",
+            "/%69nvitations/{t}/%70review",
+            "/invitations//{t}/preview",
+            "/invitations/{t}//accept",
+            "/invitations/{t}/preview/",
+            "/invitations/{t}/accept?x=1#frag",
+            "/invitations/{t}/preview#frag",
+            "/api/v1/invitations/{t}/preview",
+            "/x/../invitations/{t}/accept",
+            "/invitations/{t}/<redacted>/../preview",
+            "/invitations/{t}%2Fpreview",
+            "/invitations/{t}%2faccept",
+            "/invitations/{t}/pre%76iew",
+            "/invitations/{t}%2F..%2Fx/preview",
+            "/invitations/{t}/preview;x",
+            "/invitations/{t}/preview%23x",
+            "/invitations;v=1/{t}/accept.json",
+        ]
+        .iter()
+        .map(|template| template.replace("{t}", t))
+        .collect()
+    }
+
+    #[test]
+    fn equivalent_invitation_route_forms_are_redacted_on_write() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("requests.jsonl");
+        for route in invitation_route_variants() {
+            append_request_record_at(
+                &path,
+                &invitation_record("GET", &route, "previewInvitation"),
+            )
+            .expect("append variant");
+        }
+        let content = fs::read_to_string(&path).expect("read request log");
+        assert!(
+            !content.contains(INVITATION_TOKEN),
+            "request history persisted the invitation token: {content}"
+        );
+    }
+
+    #[test]
+    fn equivalent_invitation_route_forms_in_existing_history_are_redacted_on_read() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("requests.jsonl");
+        let seeded = invitation_route_variants()
+            .iter()
+            .map(|route| invitation_record("GET", route, "previewInvitation").to_string() + "\n")
+            .collect::<String>();
+        fs::write(&path, seeded).expect("seed request log");
+
+        let records = read_request_records_at(&path, 100).expect("read records");
+        assert_eq!(records.len(), invitation_route_variants().len());
+        for record in records {
+            let rendered = record.to_string();
+            assert!(
+                !rendered.contains(INVITATION_TOKEN),
+                "pcl requests list returned the invitation token: {rendered}"
+            );
+            assert!(rendered.contains("<redacted>"), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn neighbouring_routes_and_input_markers_are_left_unchanged() {
+        for route in [
+            "/projects/project-1/invitations/invite-1",
+            "/projects/project-1/invitations/invite-1/resend",
+            "/invitations/pending",
+            "/invitations/token/other",
+            "/invitations/token/previews",
+            "/invitationsx/token/accept",
+            "/health?next=/invitations/x/preview",
+            "/notes/<redacted>/preview",
+            "/projects/a/../b",
+            "relative/invitations",
+            "",
+        ] {
+            assert_eq!(redact_sensitive_request_path(route), route);
+        }
+        assert_eq!(
+            redact_sensitive_request_path("/invitations/<redacted>/./preview"),
+            "/invitations/<redacted>/preview"
+        );
+    }
+
+    #[test]
+    fn redaction_stays_linear_on_hostile_history_lines() {
+        const SIZE: usize = 64 * 1024;
+        let inputs = [
+            "/invitations/".repeat(SIZE / "/invitations/".len()),
+            format!("/{}", "a".repeat(SIZE)),
+            "/./../%2e/%2e%2e/".repeat(SIZE / "/./../%2e/%2e%2e/".len()),
+            "/invitations/t/preview".repeat(SIZE / "/invitations/t/preview".len()),
+        ];
+        for input in &inputs {
+            let started = std::time::Instant::now();
+            let _ = redact_sensitive_request_path(input);
+            let elapsed = started.elapsed();
+            eprintln!("redact {} bytes: {elapsed:?}", input.len());
+            assert!(
+                elapsed < std::time::Duration::from_secs(1),
+                "redaction took {elapsed:?}"
+            );
+        }
     }
 
     #[cfg(unix)]
