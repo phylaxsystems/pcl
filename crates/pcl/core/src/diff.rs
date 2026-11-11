@@ -17,7 +17,10 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use std::fmt::Write;
+use std::{
+    borrow::Cow,
+    fmt::Write,
+};
 use uuid::Uuid;
 
 /// Message displayed when the diff contains no changes.
@@ -112,7 +115,7 @@ fn render_added(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     let name = contract_display_name(label, entry);
     writeln!(
         out,
-        "  {} contract \"{name}\" ({})",
+        "  {} contract {name:?} ({})",
         "+".green(),
         *entry.address,
     )
@@ -127,7 +130,7 @@ fn render_removed(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     let name = contract_display_name(label, entry);
     writeln!(
         out,
-        "  {} contract \"{name}\" ({})",
+        "  {} contract {name:?} ({})",
         "-".red(),
         *entry.address,
     )
@@ -142,7 +145,7 @@ fn render_modified(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     let name = contract_display_name(label, entry);
     writeln!(
         out,
-        "  {} contract \"{name}\" ({})",
+        "  {} contract {name:?} ({})",
         "~".yellow(),
         *entry.address,
     )
@@ -152,7 +155,7 @@ fn render_modified(out: &mut String, label: &str, entry: &ContractDiffEntry) {
         if let Some(name_change) = &meta.name {
             let from = name_change.from.as_deref().unwrap_or("(none)");
             let to = name_change.to.as_deref().unwrap_or("(none)");
-            writeln!(out, "      name: \"{from}\" \u{2192} \"{to}\"").unwrap();
+            writeln!(out, "      name: {from:?} \u{2192} {to:?}").unwrap();
         }
         if let Some(addr_change) = &meta.address {
             writeln!(
@@ -171,7 +174,7 @@ fn render_modified(out: &mut String, label: &str, entry: &ContractDiffEntry) {
 }
 
 fn render_assertion_diff(out: &mut String, adopter: &str, a: &AssertionDiffEntry) {
-    let file = a.file.as_deref().unwrap_or("(unknown)");
+    let file = shown(a.file.as_deref().unwrap_or("(unknown)"));
     let marker = match a.change_type {
         AssertionChangeType::Added => "+".green(),
         AssertionChangeType::Removed => "-".red(),
@@ -192,13 +195,31 @@ fn render_assertion_diff(out: &mut String, adopter: &str, a: &AssertionDiffEntry
     } else {
         writeln!(out, "          args:").unwrap();
         for arg in &a.args {
-            writeln!(out, "            {arg}").unwrap();
+            writeln!(out, "            {}", shown(arg)).unwrap();
         }
     }
     if a.change_type == AssertionChangeType::Modified
         && let Some(vc) = &a.compiler_version_change
     {
-        writeln!(out, "          compiler: {} \u{2192} {}", vc.from, vc.to).unwrap();
+        writeln!(
+            out,
+            "          compiler: {} \u{2192} {}",
+            shown(&vc.from),
+            shown(&vc.to)
+        )
+        .unwrap();
+    }
+}
+
+/// Untrusted text as given when it is plain, otherwise its quoted Rust escape,
+/// so control, bidi and zero-width characters cannot redraw the plan while the
+/// value stays complete and reversible.
+fn shown(text: &str) -> Cow<'_, str> {
+    let quoted = format!("{text:?}");
+    if quoted.get(1..quoted.len() - 1) == Some(text) {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(quoted)
     }
 }
 
@@ -207,7 +228,7 @@ fn render_unchanged(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     writeln!(
         out,
         "  {}",
-        format!("contract \"{name}\" (unchanged)").dimmed(),
+        format!("contract {name:?} (unchanged)").dimmed(),
     )
     .unwrap();
     // A contract is "unchanged" when its metadata (name/address) is untouched,
@@ -966,5 +987,132 @@ mod tests {
         assert!(output.contains(&constructor_arg), "{output}");
         assert!(!output.contains('…'), "{output}");
         assert!(!output.contains("..."), "{output}");
+    }
+
+    /// A plan where `hostile` fills every free-text field the renderer prints:
+    /// contract label and name, a name change, the assertion file, its
+    /// constructor arg and its compiler version.
+    fn hostile_plan(hostile: &str) -> String {
+        let assertion = |change_type: &str| {
+            json!({
+                "file": hostile,
+                "args": [hostile],
+                "changeType": change_type,
+                "assertionId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+                "previousAssertionId": "0x2222222222222222222222222222222222222222222222222222222222222222",
+                "compilerVersionChange": { "from": hostile, "to": "0.8.28" }
+            })
+        };
+        let preview: PreviewResponse = serde_json::from_value(json!({
+            "hasChanges": true,
+            "configMismatch": false,
+            "driftDetected": false,
+            "diff": {
+                "contracts": {
+                    "renamed": {
+                        "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "name": hostile,
+                        "changeType": "modified",
+                        "metadataChanges": { "name": { "from": hostile, "to": "Vault" } },
+                        "assertions": [assertion("modified")]
+                    },
+                    hostile: {
+                        "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "name": null,
+                        "changeType": "unchanged",
+                        "metadataChanges": null,
+                        "assertions": [assertion("added")]
+                    }
+                },
+                "summary": {
+                    "contracts": { "added": 0, "removed": 0, "modified": 1, "unchanged": 1 },
+                    "assertions": { "added": 1, "removed": 0, "modified": 1, "unchanged": 0 }
+                }
+            },
+            "diffedAgainstReleaseId": null
+        }))
+        .unwrap();
+        preview.render_plan()
+    }
+
+    #[test]
+    fn plan_escapes_terminal_control_in_untrusted_strings() {
+        disable_colors();
+
+        let variants = [
+            "x\n          previous: 0xforged",
+            "x\r          previous: 0xforged",
+            "x\tforged",
+            "\u{1b}[1A\u{1b}[2Kforged",
+            "\u{1b}[2J\u{1b}[H<forged plan>",
+            "\u{9b}2Jforged",
+            "safe\u{202e}degrof",
+            "safe\u{2066}forged\u{2069}",
+            "zero\u{200b}width\u{feff}",
+            "C:\\assertions\\Guard.sol",
+            "\"quoted\"",
+        ];
+        for hostile in variants {
+            let output = hostile_plan(hostile);
+            let escaped = format!("{hostile:?}");
+            for line in [
+                format!("contract {escaped} ("),
+                format!("contract {escaped} (unchanged)"),
+                format!("name: {escaped} \u{2192} \"Vault\""),
+                format!("~ {escaped}\n"),
+                format!("+ {escaped}\n"),
+                format!("            {escaped}\n"),
+                format!("compiler: {escaped} \u{2192} 0.8.28"),
+            ] {
+                assert!(
+                    output.contains(&line),
+                    "{hostile:?} missing {line:?}:\n{output}"
+                );
+            }
+            for c in output.chars() {
+                assert!(
+                    c == '\n' || c.escape_debug().eq([c]) || matches!(c, '"' | '\'' | '\\'),
+                    "{hostile:?} leaked {c:?}:\n{output}"
+                );
+            }
+            assert!(
+                !output.contains("\n          previous: 0xforged"),
+                "{output}"
+            );
+        }
+    }
+
+    #[test]
+    fn plan_prints_clean_strings_unchanged() {
+        disable_colors();
+
+        for clean in [
+            "0x9999999999999999999999999999999999999999",
+            "it's fine",
+            "Vault",
+        ] {
+            let output = hostile_plan(clean);
+            assert!(
+                output.contains(&format!("            {clean}\n")),
+                "{output}"
+            );
+            assert!(output.contains(&format!("~ {clean}\n")), "{output}");
+            assert!(
+                output.contains(&format!("contract \"{clean}\" (unchanged)")),
+                "{output}"
+            );
+        }
+    }
+
+    #[test]
+    fn plan_escapes_a_64kb_hostile_arg_in_linear_time() {
+        disable_colors();
+
+        let hostile = "\u{1b}[2J".repeat(16 * 1024);
+        let started = std::time::Instant::now();
+        let output = hostile_plan(&hostile);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert!(output.contains(&format!("{hostile:?}")));
+        assert!(!output.contains('\u{1b}'));
     }
 }
