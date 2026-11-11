@@ -326,12 +326,22 @@ fn select_contract_path(
 
     if let Some(requested) = requested_path {
         let requested = resolve_source(root, Path::new(requested));
-        return paths.get(&requested).cloned().ok_or_else(|| {
-            Box::new(PhoundryError::ContractNotFound(format!(
-                "{}:{contract_name}",
-                display_source(root, &requested)
-            )))
-        });
+        return match paths.get(&requested) {
+            Some(path) => Ok(path.clone()),
+            None if paths.is_empty() => {
+                Err(Box::new(PhoundryError::ContractNotFound(format!(
+                    "{}:{contract_name}",
+                    display_source(root, &requested)
+                ))))
+            }
+            None => {
+                Err(Box::new(PhoundryError::ContractNotAtPath {
+                    name: contract_name.to_string(),
+                    requested: display_source(root, &requested),
+                    paths: display_sources(root, &paths),
+                }))
+            }
+        };
     }
 
     let mut matches = paths.iter();
@@ -344,14 +354,9 @@ fn select_contract_path(
         }
         (Some((first, _)), Some(_)) => {
             let example = format!("{}:{contract_name}", display_source(root, first));
-            let paths = paths
-                .keys()
-                .map(|path| display_source(root, path))
-                .collect::<Vec<_>>()
-                .join(", ");
             Err(Box::new(PhoundryError::AmbiguousContract {
                 name: contract_name.to_string(),
-                paths,
+                paths: display_sources(root, &paths),
                 example,
             }))
         }
@@ -382,6 +387,14 @@ fn check_compilation_target(
 fn resolve_source(root: &Path, path: &Path) -> PathBuf {
     let joined = root.join(path);
     joined.canonicalize().unwrap_or(joined)
+}
+
+fn display_sources(root: &Path, paths: &BTreeMap<PathBuf, PathBuf>) -> String {
+    paths
+        .keys()
+        .map(|path| display_source(root, path))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn display_source(root: &Path, path: &Path) -> String {

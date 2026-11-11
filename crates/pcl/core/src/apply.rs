@@ -959,6 +959,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn config_path_without_its_directory_lists_the_built_sources() {
+        let project = duplicate_guard_project();
+        configure_assertion(&project, "ZStrong.a.sol:Guard");
+
+        let err = released_source(&project).expect_err("dir-less path must not resolve");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("assertions/src/AWeak.a.sol")
+                && message.contains("assertions/src/ZStrong.a.sol"),
+            "{message}"
+        );
+    }
+
     /// Copies the two-`Guard` fixture (`AWeak` returns 1, `ZStrong` returns 999)
     /// into a temp project whose credible.toml names ZStrong.a.sol:Guard.
     fn duplicate_guard_project() -> tempfile::TempDir {

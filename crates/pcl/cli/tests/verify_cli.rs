@@ -319,3 +319,31 @@ fn verify_cli_accepts_a_unique_bare_name() {
 
     assert_verify_success(output);
 }
+
+#[cfg(feature = "credible")]
+#[test]
+fn verify_cli_lists_built_sources_for_a_path_without_its_directory() {
+    let project = fixture_project();
+    let root = project.path().to_str().expect("utf-8 temp path");
+
+    let envelope = pcl_error_envelope(&[
+        "verify",
+        "--root",
+        root,
+        "NoArgsAssertion.a.sol:NoArgsAssertion",
+        "--json",
+    ]);
+
+    assert_eq!(envelope["error"]["code"], "verify.build_failed");
+    let message = envelope["error"]["message"].as_str().expect("message");
+    assert!(
+        message.contains("assertions/src/NoArgsAssertion.a.sol"),
+        "{message}"
+    );
+    assert!(
+        envelope["next_actions"][0]
+            .as_str()
+            .is_some_and(|action| action.contains("project-root-relative")),
+        "{envelope}"
+    );
+}

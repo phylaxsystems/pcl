@@ -665,6 +665,9 @@ fn verification_failed_message(summary: &VerificationSummary) -> String {
     )
 }
 
+const SOURCE_PATH_HINT: &[&str] =
+    &["Pass a project-root-relative path such as assertions/src/Contract.a.sol:Contract"];
+
 fn phoundry_failure_code<'a>(
     err: &'a PhoundryError,
     fallback_code: &'static str,
@@ -675,8 +678,11 @@ fn phoundry_failure_code<'a>(
             (
                 "build.ambiguous_contract",
                 err.to_string(),
-                &["Pass a path-qualified name such as assertions/src/Contract.a.sol:Contract"],
+                SOURCE_PATH_HINT,
             )
+        }
+        PhoundryError::ContractNotAtPath { .. } => {
+            (fallback_code, err.to_string(), SOURCE_PATH_HINT)
         }
         PhoundryError::ArtifactTargetMismatch { .. } => {
             (
