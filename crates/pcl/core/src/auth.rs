@@ -1175,7 +1175,7 @@ impl AuthCommand {
         device_secret: &str,
         session_id: &Uuid,
     ) -> Result<CliAuthStatusResponse, AuthError> {
-        let result = match post_cli_auth_status(client, session_id, device_secret).await {
+        match post_cli_auth_status(client, session_id, device_secret).await {
             Ok(status) => Ok(status),
             Err(CliAuthStatusPostError::RouteMissing) => {
                 client
@@ -1185,8 +1185,7 @@ impl AuthCommand {
                     .map_err(AuthError::from)
             }
             Err(CliAuthStatusPostError::Call(error)) => Err(AuthError::from(*error)),
-        };
-        result.map_err(|error| withhold_echoed_secret(error, device_secret))
+        }
     }
 
     async fn remote_logout(&self, config: &CliConfig, local_only: bool) -> Value {
@@ -1899,61 +1898,6 @@ fn update_config_from_verified_status(
         issuer_platform_url: Some(crate::platform::trim_platform_url(issuer)),
     });
     Ok(())
-}
-
-/// Error text from the auth status endpoint is server-controlled and can echo
-/// the request (the legacy GET puts the secret in its URL). Withhold any
-/// message that carries the secret raw, percent/form-encoded (to two levels,
-/// either hex case) or JSON-escaped.
-fn withhold_echoed_secret(error: AuthError, device_secret: &str) -> AuthError {
-    const WITHHELD: &str = "response withheld because it echoed the device secret";
-    let leaks = |message: &str| {
-        !device_secret.is_empty()
-            && echoed_secret_forms(device_secret)
-                .iter()
-                .any(|form| message.contains(form.as_str()))
-    };
-    match error {
-        AuthError::StatusRequestFailed(message) if leaks(&message) => {
-            AuthError::StatusRequestFailed(WITHHELD.to_string())
-        }
-        AuthError::ServerError(message) if leaks(&message) => {
-            AuthError::ServerError(WITHHELD.to_string())
-        }
-        AuthError::InvalidSession(message) if leaks(&message) => {
-            AuthError::InvalidSession(WITHHELD.to_string())
-        }
-        other => other,
-    }
-}
-
-fn echoed_secret_forms(secret: &str) -> Vec<String> {
-    let percent = |text: &str, lower: bool| -> String {
-        text.bytes()
-            .map(|byte| {
-                match (byte.is_ascii_alphanumeric(), lower) {
-                    (true, _) => char::from(byte).to_string(),
-                    (false, false) => format!("%{byte:02X}"),
-                    (false, true) => format!("%{byte:02x}"),
-                }
-            })
-            .collect()
-    };
-    let form =
-        |text: &str| -> String { url::form_urlencoded::byte_serialize(text.as_bytes()).collect() };
-    let json = serde_json::to_string(secret).map_or_else(
-        |_| secret.to_string(),
-        |quoted| quoted.trim_matches('"').to_string(),
-    );
-    let mut forms = vec![secret.to_string(), json];
-    for _ in 0..2 {
-        let encoded: Vec<String> = forms
-            .iter()
-            .flat_map(|text| [percent(text, false), percent(text, true), form(text)])
-            .collect();
-        forms.extend(encoded);
-    }
-    forms
 }
 
 /// Saves claimed credentials before success is reported, with the writer
@@ -3837,6 +3781,94 @@ mod tests {
                     get.assert_async().await;
                 }
             }
+        }
+    }
+
+    type ExpectAuthError = fn(&AuthError) -> bool;
+
+    /// Server error text is never shown for auth status failures, however
+    /// the secret is spelled in it; the typed classification is unchanged.
+    #[tokio::test]
+    async fn auth_status_errors_keep_server_text_out_and_classification_intact() {
+        let session = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        for (secret, echo) in [
+            ("tok/en+value", "tok%2fen%2Bvalue"),
+            ("test_secret", "%74%65%73%74%5F%73%65%63%72%65%74"),
+        ] {
+            for status in [400_u16, 500] {
+                let mut server = Server::new_async().await;
+                let _post = server
+                    .mock("POST", "/api/v1/cli/auth/status")
+                    .with_status(status.into())
+                    .with_header("content-type", "application/json")
+                    .with_body(json!({ "error": echo, "code": "SOME_CODE" }).to_string())
+                    .create_async()
+                    .await;
+                let cmd =
+                    AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
+                        .unwrap();
+                let error = AuthCommand::check_auth_status(&cmd.api_client(), secret, &session)
+                    .await
+                    .expect_err("error response must fail");
+                for rendered in [error.to_string(), format!("{error:?}")] {
+                    assert!(
+                        !rendered.contains(echo),
+                        "HTTP {status} echoed {echo:?}: {rendered}"
+                    );
+                    assert!(rendered.contains("SOME_CODE"), "{rendered}");
+                }
+            }
+        }
+
+        // A code outside [A-Z0-9_]{1,64} is server free text too.
+        let mut server = Server::new_async().await;
+        let _post = server
+            .mock("POST", "/api/v1/cli/auth/status")
+            .with_status(400)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"error":"x","code":"test_secret"}"#)
+            .create_async()
+            .await;
+        let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
+            .unwrap();
+        let error = AuthCommand::check_auth_status(&cmd.api_client(), "test_secret", &session)
+            .await
+            .expect_err("error response must fail");
+        assert!(!error.to_string().contains("test_secret"), "{error}");
+
+        let cases: [(u16, &str, ExpectAuthError); 5] = [
+            (400, r#"{"error":"gone","code":"SESSION_EXPIRED"}"#, |e| {
+                matches!(e, AuthError::SessionExpired)
+            }),
+            (400, r#"{"error":"none","code":"SESSION_NOT_FOUND"}"#, |e| {
+                matches!(e, AuthError::SessionNotFound)
+            }),
+            (500, r#"{"error":"boom","code":"INTERNAL_ERROR"}"#, |e| {
+                matches!(e, AuthError::ServerError(_))
+            }),
+            (400, r#"{"error":"bad","code":"OTHER"}"#, |e| {
+                matches!(e, AuthError::InvalidSession(_))
+            }),
+            (500, "<html>down</html>", |e| {
+                matches!(e, AuthError::StatusRequestFailed(_))
+            }),
+        ];
+        for (status, body, expected) in cases {
+            let mut server = Server::new_async().await;
+            let _post = server
+                .mock("POST", "/api/v1/cli/auth/status")
+                .with_status(status.into())
+                .with_header("content-type", "application/json")
+                .with_body(body)
+                .create_async()
+                .await;
+            let cmd =
+                AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
+                    .unwrap();
+            let error = AuthCommand::check_auth_status(&cmd.api_client(), "test_secret", &session)
+                .await
+                .expect_err("error response must fail");
+            assert!(expected(&error), "HTTP {status} {body}: got {error:?}");
         }
     }
 }
