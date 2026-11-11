@@ -756,7 +756,7 @@ const ANVIL_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784
 fn mock_deploy_calldata(
     server: &mut mockito::ServerGuard,
     project: &str,
-    operations: serde_json::Value,
+    operations: &serde_json::Value,
 ) -> (mockito::Mock, mockito::Mock) {
     let calldata = server
         .mock(
@@ -795,7 +795,7 @@ fn release_deploy_broadcast_refuses_an_unshowable_batch_before_any_send() {
     let (calldata, deploy) = mock_deploy_calldata(
         &mut server,
         project,
-        serde_json::json!([{
+        &serde_json::json!([{
             "type": "addAssertion",
             "adopterAddress": DEPLOY_ADOPTER,
             "assertionId": DEPLOY_REMOVED_ID,
@@ -846,7 +846,7 @@ fn release_deploy_broadcast_yes_prints_the_operations_before_sending() {
     let (calldata, deploy) = mock_deploy_calldata(
         &mut server,
         project,
-        serde_json::json!([{
+        &serde_json::json!([{
             "type": "removeAssertion",
             "adopterAddress": DEPLOY_ADOPTER,
             "assertionId": DEPLOY_REMOVED_ID,
