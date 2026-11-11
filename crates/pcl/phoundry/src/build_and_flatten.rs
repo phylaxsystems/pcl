@@ -440,6 +440,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn compilation_target_must_be_the_requested_source() {
+        let project = tempfile::tempdir().expect("temp project");
+        let root = project.path().canonicalize().expect("canonical root");
+        std::fs::create_dir_all(root.join("src")).expect("src dir");
+        for file in ["src/A.a.sol", "src/B.a.sol"] {
+            std::fs::write(root.join(file), "").expect("source file");
+        }
+
+        check_compilation_target(
+            &root,
+            "Guard",
+            Path::new("./src//A.a.sol"),
+            Path::new("src/A.a.sol"),
+        )
+        .expect("same source in another spelling");
+        let err = check_compilation_target(
+            &root,
+            "Guard",
+            Path::new("src/A.a.sol"),
+            Path::new("src/B.a.sol"),
+        )
+        .expect_err("artifact compiled from another source");
+        assert!(
+            matches!(
+                &*err,
+                PhoundryError::ArtifactTargetMismatch { requested, actual }
+                    if requested == "src/A.a.sol:Guard" && actual == "src/B.a.sol:Guard"
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn test_build_and_flatten_args_new() {
         let args = BuildAndFlattenArgs {
             root: None,
