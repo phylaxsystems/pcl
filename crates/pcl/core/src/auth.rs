@@ -3224,9 +3224,62 @@ mod tests {
         );
     }
 
+    /// Only a missing route may fall back to the GET that puts the secret in
+    /// the URL: 405, or the exact ts-rest unmatched-route 404 body. Any other
+    /// 404 is an error and must not send the secret in a query string.
     #[tokio::test]
-    async fn check_auth_status_falls_back_to_get_when_post_is_unavailable() {
-        for status in [404_u16, 405] {
+    async fn check_auth_status_falls_back_to_get_only_when_the_post_route_is_missing() {
+        let cases: [(u16, &str, &str, bool); 9] = [
+            (
+                405,
+                "application/json",
+                r#"{"error":"method not allowed"}"#,
+                true,
+            ),
+            (405, "text/plain", "", true),
+            (404, "application/json", r#"{"message":"Not Found"}"#, true),
+            (
+                404,
+                "application/json",
+                r#" { "message" : "Not Found" } "#,
+                true,
+            ),
+            (
+                404,
+                "application/json",
+                r#"{"message":"Not Found","code":"X"}"#,
+                false,
+            ),
+            (
+                404,
+                "application/json",
+                r#"{"error":"Session not found","code":"SESSION_NOT_FOUND"}"#,
+                false,
+            ),
+            (
+                404,
+                "text/html",
+                "<html><body>Not Found</body></html>",
+                false,
+            ),
+            (404, "application/json", "", false),
+            (404, "application/json", r#"{"message":"not found"}"#, false),
+        ];
+        let extra = [
+            (
+                404_u16,
+                "application/json",
+                r#"{"message":"Not Found","error":"x"}"#,
+                false,
+            ),
+            (
+                404,
+                "application/json",
+                r#"{"message":"Not Found "}"#,
+                false,
+            ),
+        ];
+        for (status, content_type, body, falls_back) in cases.into_iter().chain(extra) {
             let mut server = Server::new_async().await;
             let post = server
                 .mock("POST", "/api/v1/cli/auth/status")
@@ -3236,24 +3289,18 @@ mod tests {
                     "device_secret": "test_secret",
                 })))
                 .with_status(status.into())
-                .with_header("content-type", "application/json")
-                .with_body(r#"{"error":"method not available"}"#)
+                .with_header("content-type", content_type)
+                .with_body(body)
                 .expect(1)
                 .create_async()
                 .await;
             let get = server
                 .mock("GET", "/api/v1/cli/auth/status")
-                .match_query(Matcher::AllOf(vec![
-                    Matcher::UrlEncoded(
-                        "session_id".into(),
-                        "550e8400-e29b-41d4-a716-446655440000".into(),
-                    ),
-                    Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-                ]))
+                .match_query(Matcher::Any)
                 .with_status(200)
                 .with_header("content-type", "application/json")
                 .with_body(r#"{"verified":false}"#)
-                .expect(1)
+                .expect(usize::from(falls_back))
                 .create_async()
                 .await;
 
@@ -3270,12 +3317,45 @@ mod tests {
             )
             .await;
 
-            assert!(
-                result.as_ref().is_ok_and(|status| !status.verified),
-                "HTTP {status} from POST should fall back to GET once, got {result:?}"
-            );
+            if falls_back {
+                assert!(
+                    result.as_ref().is_ok_and(|status| !status.verified),
+                    "HTTP {status} {body:?} should fall back to GET once, got {result:?}"
+                );
+            } else {
+                assert!(
+                    result.is_err(),
+                    "HTTP {status} {body:?} must be an error, got {result:?}"
+                );
+            }
             post.assert_async().await;
             get.assert_async().await;
         }
+    }
+
+    #[tokio::test]
+    async fn check_auth_status_maps_a_coded_post_404_to_its_typed_error() {
+        let mut server = Server::new_async().await;
+        let _post = server
+            .mock("POST", "/api/v1/cli/auth/status")
+            .with_status(404)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"error":"Session not found","code":"SESSION_NOT_FOUND"}"#)
+            .create_async()
+            .await;
+        let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
+            .unwrap();
+        let auth_response: CliAuthRequestCodeResponse =
+            serde_json::from_str(test_auth_response_json()).unwrap();
+        let result = AuthCommand::check_auth_status(
+            &cmd.api_client(),
+            &auth_response.device_secret,
+            &auth_response.session_id,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AuthError::SessionNotFound)),
+            "got {result:?}"
+        );
     }
 }

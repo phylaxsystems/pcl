@@ -47,7 +47,8 @@ pub async fn post_cli_auth_status(
         })?;
 
     match response.status().as_u16() {
-        404 | 405 => Err(CliAuthStatusPostError::RouteMissing),
+        405 => Err(CliAuthStatusPostError::RouteMissing),
+        404 => Err(not_found_error(response).await),
         200 => {
             match ResponseValue::<CliAuthStatusResponse>::from_response::<ApiError>(response).await
             {
@@ -71,4 +72,29 @@ pub async fn post_cli_auth_status(
             )))
         }
     }
+}
+
+/// A server without the POST route answers through the ts-rest catch-all with
+/// exactly `{"message":"Not Found"}`. Any other 404 comes from a server that
+/// has the route (or a proxy) and must not trigger the GET that puts the
+/// secret in the URL.
+async fn not_found_error(response: reqwest::Response) -> CliAuthStatusPostError {
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return CliAuthStatusPostError::Call(Box::new(Error::ResponseBodyError(error)));
+        }
+    };
+    if serde_json::from_slice::<serde_json::Value>(&bytes).ok()
+        == Some(serde_json::json!({ "message": "Not Found" }))
+    {
+        return CliAuthStatusPostError::RouteMissing;
+    }
+    let error = match serde_json::from_slice::<ApiError>(&bytes) {
+        Ok(body) => Error::ErrorResponse(ResponseValue::new(body, status, headers)),
+        Err(error) => Error::InvalidResponsePayload(bytes, error),
+    };
+    CliAuthStatusPostError::Call(Box::new(error))
 }
