@@ -244,7 +244,11 @@ pub enum ApplyError {
 
 impl From<CredibleConfigError> for ApplyError {
     fn from(e: CredibleConfigError) -> Self {
-        Self::InvalidConfig(e.to_string())
+        match e {
+            // `InvalidConfig` already renders the "Invalid credible.toml: " prefix.
+            CredibleConfigError::Invalid(message) => Self::InvalidConfig(message),
+            other => Self::InvalidConfig(other.to_string()),
+        }
     }
 }
 

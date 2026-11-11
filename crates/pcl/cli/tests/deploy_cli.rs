@@ -178,5 +178,12 @@ contract Breaker {
 
         let envelope = error_envelope(&output);
         assert_eq!(envelope["error"]["code"], code, "{file}: {envelope}");
+        if file == "Breaker" {
+            assert_eq!(
+                envelope["error"]["message"],
+                "Invalid credible.toml: assertion `Breaker` must name its source file, such as \
+                 assertions/src/Breaker.a.sol:Breaker"
+            );
+        }
     }
 }

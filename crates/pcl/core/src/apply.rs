@@ -974,6 +974,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn config_error_names_credible_toml_once() {
+        let project = duplicate_guard_project();
+        configure_assertion(&project, "Guard");
+
+        let err = released_source(&project).expect_err("bare config entry");
+
+        assert_eq!(
+            err.to_string(),
+            "Invalid credible.toml: assertion `Guard` must name its source file, such as \
+             assertions/src/Guard.a.sol:Guard"
+        );
+    }
+
     /// Copies the two-`Guard` fixture (`AWeak` returns 1, `ZStrong` returns 999)
     /// into a temp project whose credible.toml names ZStrong.a.sol:Guard.
     fn duplicate_guard_project() -> tempfile::TempDir {
