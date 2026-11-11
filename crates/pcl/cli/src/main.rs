@@ -714,18 +714,11 @@ fn phoundry_error_envelope(err: &PhoundryError) -> Value {
                 &["Install Foundry forge", "pcl doctor"],
             )
         }
-        PhoundryError::AmbiguousContract { .. } | PhoundryError::ArtifactTargetMismatch { .. } => {
+        _ => {
             phoundry_failure_code(
                 err,
                 err.to_string(),
                 "build.failed",
-                &["pcl build --help", "pcl doctor"],
-            )
-        }
-        _ => {
-            (
-                "build.failed",
-                err.to_string(),
                 &["pcl build --help", "pcl doctor"],
             )
         }
@@ -1515,6 +1508,11 @@ mod tests {
                 "{envelope}"
             );
         }
+        let build = phoundry_error_envelope(&ambiguous());
+        assert_eq!(build["error"]["code"], "build.ambiguous_contract");
+        let build = phoundry_error_envelope(&PhoundryError::ContractNotFound("X".to_string()));
+        assert_eq!(build["error"]["code"], "build.failed");
+        assert_eq!(build["next_actions"][0], "pcl build --help");
     }
 
     #[test]
