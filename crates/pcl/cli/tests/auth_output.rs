@@ -2360,7 +2360,7 @@ fn auth_poll_verified_removes_the_pending_secret() {
     );
 }
 
-/// The JSON wait_command must target the same config dir and platform as the
+/// The JSON `wait_command` must target the same config dir and platform as the
 /// challenge that printed it.
 #[cfg(unix)]
 #[test]
