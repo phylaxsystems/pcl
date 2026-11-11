@@ -2181,3 +2181,76 @@ fn auth_login_json_clears_the_pending_secret_on_terminal_failure() {
         );
     }
 }
+
+/// Logging out ends every pending device login for this config dir, remote
+/// or --local, and reports a file it could not remove.
+#[test]
+fn auth_logout_removes_pending_device_logins() {
+    for local in [false, true] {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        let mut server = mockito::Server::new();
+        write_valid_auth_config_for_platform(temp_dir.path(), &server.url());
+        let _logout = server
+            .mock("POST", "/api/v1/web/auth/logout")
+            .with_status(200)
+            .with_body(r#"{"success":true}"#)
+            .create();
+        fs::write(
+            temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE),
+            "test_secret",
+        )
+        .expect("write pending secret");
+        fs::write(
+            temp_dir
+                .path()
+                .join("device-login-11111111-1111-1111-1111-111111111111"),
+            "other_secret",
+        )
+        .expect("write second pending secret");
+        let stuck = temp_dir
+            .path()
+            .join("device-login-22222222-2222-2222-2222-222222222222");
+        fs::create_dir(&stuck).expect("plant dir");
+        fs::write(stuck.join("keep"), "").expect("make dir non-empty");
+
+        let url = server.url();
+        let mut args = vec![
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            &url,
+            "logout",
+        ];
+        if local {
+            args.push("--local");
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+            .args(args)
+            .output()
+            .expect("run pcl auth logout");
+        assert!(
+            output.status.success(),
+            "command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            pending_device_login_files(temp_dir.path()),
+            vec![stuck.clone()],
+            "logout (local: {local}) left pending device secrets"
+        );
+        let envelope: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("json envelope");
+        let warnings = envelope["warnings"].as_array().cloned().unwrap_or_default();
+        assert!(
+            warnings.iter().any(|warning| {
+                warning["code"] == "auth.pending_device_login_cleanup_failed"
+                    && warning["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains("22222222"))
+            }),
+            "logout (local: {local}) hid a removal failure: {envelope}"
+        );
+    }
+}

@@ -350,19 +350,20 @@ impl AuthCommand {
             AuthSubcommands::Logout { local } => {
                 let logout = self.remote_logout(config, *local).await;
                 Self::logout(config);
-                Self::print_output(
-                    &json!({
-                        "status": "ok",
-                        "data": {
-                            "authenticated": false,
-                            "platform_url": self.reported_platform_url(),
-                            "local_credentials_removed": true,
-                            "remote_logout": logout,
-                        },
-                        "next_actions": ["pcl auth login"],
-                    }),
-                    json_output,
-                )?;
+                let mut output = json!({
+                    "status": "ok",
+                    "data": {
+                        "authenticated": false,
+                        "platform_url": self.reported_platform_url(),
+                        "local_credentials_removed": true,
+                        "remote_logout": logout,
+                    },
+                    "next_actions": ["pcl auth login"],
+                });
+                for warning in Self::clear_all_pending_device_secrets(cli_args) {
+                    push_warning(&mut output, Some(warning));
+                }
+                Self::print_output(&output, json_output)?;
                 Ok(())
             }
             AuthSubcommands::Status => self.status(config, json_output),
@@ -1093,8 +1094,32 @@ impl AuthCommand {
     /// Removes the pending secret; returns a warning when a file that may
     /// still hold it could not be removed.
     fn clear_pending_device_secret(cli_args: &CliArgs, session_id: &Uuid) -> Option<Value> {
-        let path = Self::pending_device_secret_path(&Self::config_dir_for(cli_args), session_id);
-        match std::fs::remove_file(&path) {
+        Self::remove_pending_device_secret(&Self::pending_device_secret_path(
+            &Self::config_dir_for(cli_args),
+            session_id,
+        ))
+    }
+
+    /// Removes every pending device login in the config dir; returns a
+    /// warning for each file that could not be removed.
+    fn clear_all_pending_device_secrets(cli_args: &CliArgs) -> Vec<Value> {
+        let Ok(entries) = std::fs::read_dir(Self::config_dir_for(cli_args)) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with("device-login-"))
+            })
+            .filter_map(|entry| Self::remove_pending_device_secret(&entry.path()))
+            .collect()
+    }
+
+    fn remove_pending_device_secret(path: &Path) -> Option<Value> {
+        match std::fs::remove_file(path) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => {
                 Some(json!({
                     "code": "auth.pending_device_login_cleanup_failed",
