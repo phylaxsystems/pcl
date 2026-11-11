@@ -449,17 +449,13 @@ impl CliConfig {
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
         {
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temp_file)
-                .map_err(ConfigError::WriteError)?;
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            // Set the mode at creation so the tokens are never readable in a
+            // window before a chmod.
             #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&temp_file, std::fs::Permissions::from_mode(0o600))
-                    .map_err(ConfigError::WriteError)?;
-            }
+            std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+            let mut file = options.open(&temp_file).map_err(ConfigError::WriteError)?;
             file.write_all(config_str.as_bytes())
                 .map_err(ConfigError::WriteError)?;
             file.sync_all().map_err(ConfigError::WriteError)?;
@@ -991,6 +987,15 @@ mod tests {
 
         // Test writing
         config.write_to_file_at_dir(&config_dir).unwrap();
+        assert_eq!(
+            fs::metadata(config_dir.join(CONFIG_FILE))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600,
+            "the credentials file must be owner-only"
+        );
 
         // Test reading
         let read_config = CliConfig::read_from_file_at_dir(&config_dir).unwrap();
