@@ -18,7 +18,11 @@ use std::{
     cell::Cell,
     collections::BTreeMap,
     fs,
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
+    sync::LazyLock,
 };
 
 const RETIRED_OPERATION_IDS: &[&str] = &[
@@ -30,7 +34,23 @@ const RETIRED_OPERATION_IDS: &[&str] = &[
 ];
 
 fn test_request_log_path() -> &'static Path {
-    Path::new("/tmp/pcl-test-requests.jsonl")
+    // One log per test process, so parallel runs never share or grow a fixed file.
+    static DIR: LazyLock<tempfile::TempDir> =
+        LazyLock::new(|| tempfile::tempdir().expect("create test request log dir"));
+    static PATH: LazyLock<PathBuf> = LazyLock::new(|| DIR.path().join("requests.jsonl"));
+    PATH.as_path()
+}
+
+#[test]
+fn test_request_log_is_private_to_this_process() {
+    let path = test_request_log_path();
+    assert_ne!(path, Path::new("/tmp/pcl-test-requests.jsonl"));
+    assert!(path.starts_with(std::env::temp_dir()), "{}", path.display());
+    assert!(
+        path.parent().is_some_and(Path::is_dir),
+        "{}",
+        path.display()
+    );
 }
 
 fn test_api(api_url: impl AsRef<str>, allow_unauthenticated: bool) -> ApiArgs {
