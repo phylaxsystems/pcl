@@ -1,6 +1,7 @@
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     process::Command,
 };
 
@@ -1661,6 +1662,7 @@ fn api_call_accepts_inline_query_string_under_json() {
 /// Runs a command the CLI printed exactly as a user would paste it: through
 /// the shell, with `pcl` resolved from PATH and a HOME that holds no config,
 /// so the command only works if it names everything it needs.
+#[cfg(unix)]
 fn run_emitted_command(command: &str) -> std::process::Output {
     let bin_dir = std::path::Path::new(env!("CARGO_BIN_EXE_pcl"))
         .parent()
@@ -1746,6 +1748,7 @@ fn auth_ensure_login_output_omits_device_secret() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn auth_ensure_stores_pending_device_secret_owner_only() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
@@ -1786,6 +1789,7 @@ fn auth_ensure_stores_pending_device_secret_owner_only() {
     auth_code.assert();
 }
 
+#[cfg(unix)]
 #[test]
 fn auth_poll_reads_pending_device_secret_without_cli_flag() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
