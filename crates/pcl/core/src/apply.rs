@@ -16,8 +16,8 @@ use crate::{
     },
     config::CliConfig,
     credible_config::{
+        AssertionIdentity,
         CredibleToml,
-        assertion_contract_name,
     },
     diff::PreviewResponse,
     error::ApplyError,
@@ -47,10 +47,7 @@ use pcl_common::args::{
     CliArgs,
     OutputMode,
 };
-use pcl_phoundry::{
-    DEFAULT_ASSERTION_CONTRACTS_DIR,
-    build_and_flatten::BuildAndFlattenArgs,
-};
+use pcl_phoundry::build_and_flatten::BuildAndFlattenArgs;
 use serde_json::{
     Value,
     json,
@@ -397,12 +394,14 @@ impl ApplyArgs {
             let mut assertions = Vec::with_capacity(contract.assertions.len());
 
             for assertion in &contract.assertions {
+                let identity = AssertionIdentity::from_config(&assertion.file)?;
+                let contract_name = identity.contract_name.clone();
                 let build_key = assertion.file.clone();
                 if !built_assertions.contains_key(&build_key) {
                     let output = BuildAndFlattenArgs {
                         root: Some(root.to_path_buf()),
-                        assertion_contract: assertion_contract_name(&assertion.file)?,
-                        contracts: assertion_contracts_dir(&assertion.file),
+                        assertion_contract: identity.lookup_key(),
+                        contracts: identity.contracts_dir(),
                     }
                     .run()
                     .map_err(ApplyError::BuildFailed)?;
@@ -415,8 +414,6 @@ impl ApplyArgs {
                         assertion.file
                     ))
                 })?;
-
-                let contract_name = assertion_contract_name(&assertion.file)?;
 
                 #[cfg(feature = "credible")]
                 {
@@ -594,17 +591,6 @@ where
     value
         .parse()
         .map_err(|e| ApplyError::InvalidConfig(format!("Invalid {field}: {e}")))
-}
-
-fn assertion_contracts_dir(file: &str) -> PathBuf {
-    let source_path = file.split_once(':').map_or(file, |(path, _)| path);
-    Path::new(source_path)
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map_or_else(
-            || PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
-            Path::to_path_buf,
-        )
 }
 
 fn build_assertion_item(
@@ -842,5 +828,201 @@ mod tests {
             .expect("signature is forwarded");
         assert_eq!(sig.as_str(), "constructor()");
         assert!(item.args.is_empty());
+    }
+
+    #[test]
+    fn duplicate_contract_name_releases_the_configured_source() {
+        let project = duplicate_guard_project();
+        let (file, flattened) = released_source(&project).expect("duplicate Guard project builds");
+
+        assert!(file.contains("ZStrong.a.sol"), "release file was {file}");
+        assert!(
+            flattened.contains("return 999"),
+            "configured ZStrong.a.sol:Guard was replaced by another Guard\n{flattened}"
+        );
+        assert!(
+            !flattened.contains("return 1;"),
+            "release source is the weak duplicate\n{flattened}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn equivalent_source_spellings_release_the_configured_source() {
+        let project = duplicate_guard_project();
+        let canonical = project.path().canonicalize().expect("canonical root");
+        let links = tempfile::tempdir().expect("symlink dir");
+        let alias = links.path().join("alias");
+        std::os::unix::fs::symlink(&canonical, &alias).expect("symlink project");
+
+        for file in [
+            "./assertions/src/ZStrong.a.sol:Guard".to_string(),
+            "assertions//src/ZStrong.a.sol:Guard".to_string(),
+            "assertions/src/./ZStrong.a.sol:Guard".to_string(),
+            "assertions/src/../src/ZStrong.a.sol:Guard".to_string(),
+            r"assertions\src\ZStrong.a.sol:Guard".to_string(),
+            format!(
+                "{}/assertions/src/ZStrong.a.sol:Guard",
+                project.path().display()
+            ),
+            format!("{}/assertions/src/ZStrong.a.sol:Guard", canonical.display()),
+            format!("{}/assertions/src/ZStrong.a.sol:Guard", alias.display()),
+        ] {
+            configure_assertion(&project, &file);
+            let (_, flattened) =
+                released_source(&project).unwrap_or_else(|err| panic!("{file}: {err}"));
+            assert!(
+                flattened.contains("return 999"),
+                "{file} released\n{flattened}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_to_a_different_file_fails_closed() {
+        let project = duplicate_guard_project();
+        for file in [
+            "assertions/ZStrong.a.sol:Guard",
+            "assertions/src/../ZStrong.a.sol:Guard",
+            "src/ZStrong.a.sol:Guard",
+            "assertions/src/Missing.a.sol:Guard",
+        ] {
+            configure_assertion(&project, file);
+            let err = released_source(&project).expect_err(file);
+            assert!(matches!(err, ApplyError::BuildFailed(_)), "{file}: {err}");
+        }
+
+        configure_assertion(&project, "assertions/src/AWeak.a.sol:Guard");
+        let (_, flattened) = released_source(&project).expect("AWeak builds");
+        assert!(flattened.contains("return 1;"), "{flattened}");
+    }
+
+    #[test]
+    fn padded_identity_releases_the_trimmed_contract_name() {
+        let project = duplicate_guard_project();
+        for file in [
+            " assertions/src/ZStrong.a.sol:Guard ",
+            "assertions/src/ZStrong.a.sol : Guard",
+        ] {
+            configure_assertion(&project, file);
+            let credible =
+                CredibleToml::from_path(&project.path().join("assertions/credible.toml"))
+                    .expect("credible.toml parses");
+            let (payload, _) = ApplyArgs::build_payload(&credible, project.path())
+                .unwrap_or_else(|err| panic!("{file}: {err}"));
+            let assertion = &payload.contracts.get("target").expect("target").assertions[0];
+            assert_eq!(assertion.contract_name.as_str(), "Guard", "{file}");
+            assert!(
+                assertion.flattened_source.as_str().contains("return 999"),
+                "{file}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_identity_is_rejected_before_building() {
+        let project = duplicate_guard_project();
+        for file in [
+            "assertions/src/AWeak.a.sol:Ignored:Guard",
+            "assertions/src/ZStrong.a.sol:",
+            "assertions/src/ZStrong.a.sol: ",
+        ] {
+            configure_assertion(&project, file);
+            let err = released_source(&project).expect_err(file);
+            assert!(matches!(err, ApplyError::InvalidConfig(_)), "{file}: {err}");
+        }
+    }
+
+    #[test]
+    fn config_entry_must_name_its_source_file() {
+        let project = duplicate_guard_project();
+        for file in ["Guard", " Guard ", ":Guard", " : Guard"] {
+            configure_assertion(&project, file);
+            let err = released_source(&project).expect_err(file);
+            assert!(
+                matches!(&err, ApplyError::InvalidConfig(message) if message.contains("source")),
+                "{file}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn config_path_without_its_directory_lists_the_built_sources() {
+        let project = duplicate_guard_project();
+        configure_assertion(&project, "ZStrong.a.sol:Guard");
+
+        let err = released_source(&project).expect_err("dir-less path must not resolve");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("assertions/src/AWeak.a.sol")
+                && message.contains("assertions/src/ZStrong.a.sol"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn config_error_names_credible_toml_once() {
+        let project = duplicate_guard_project();
+        configure_assertion(&project, "Guard");
+
+        let err = released_source(&project).expect_err("bare config entry");
+
+        assert_eq!(
+            err.to_string(),
+            "Invalid credible.toml: assertion `Guard` must name its source file, such as \
+             assertions/src/Guard.a.sol:Guard"
+        );
+    }
+
+    /// Copies the two-`Guard` fixture (`AWeak` returns 1, `ZStrong` returns 999)
+    /// into a temp project whose credible.toml names ZStrong.a.sol:Guard.
+    fn duplicate_guard_project() -> tempfile::TempDir {
+        let fixture = duplicate_guard_fixture();
+        let project = tempfile::tempdir().expect("temp project");
+        for file in [
+            "foundry.toml",
+            "assertions/credible.toml",
+            "assertions/src/AWeak.a.sol",
+            "assertions/src/ZStrong.a.sol",
+        ] {
+            let target = project.path().join(file);
+            std::fs::create_dir_all(target.parent().expect("fixture file has a parent"))
+                .expect("fixture dir");
+            std::fs::copy(fixture.join(file), target).expect("copy fixture file");
+        }
+        project
+    }
+
+    fn duplicate_guard_fixture() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../cli/tests/fixtures/duplicate-guard")
+    }
+
+    /// Points the fixture's only assertion at `file`.
+    fn configure_assertion(project: &tempfile::TempDir, file: &str) {
+        let toml =
+            std::fs::read_to_string(duplicate_guard_fixture().join("assertions/credible.toml"))
+                .expect("fixture credible.toml")
+                .replace(
+                    "\"assertions/src/ZStrong.a.sol:Guard\"",
+                    &format!("'{file}'"),
+                );
+        std::fs::write(project.path().join("assertions/credible.toml"), toml)
+            .expect("write credible.toml");
+    }
+
+    /// Builds the release payload and returns the file and flattened source it would upload.
+    fn released_source(project: &tempfile::TempDir) -> Result<(String, String), ApplyError> {
+        let credible = CredibleToml::from_path(&project.path().join("assertions/credible.toml"))?;
+        let (payload, _) = ApplyArgs::build_payload(&credible, project.path())?;
+        let assertion = &payload
+            .contracts
+            .get("target")
+            .expect("target contract")
+            .assertions[0];
+        Ok((
+            assertion.file.as_str().to_string(),
+            assertion.flattened_source.as_str().to_string(),
+        ))
     }
 }

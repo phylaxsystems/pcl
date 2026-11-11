@@ -1,0 +1,8 @@
+[profile.default]
+src = "assertions/src"
+out = "out"
+cache_path = "cache"
+libs = ["lib"]
+optimizer = false
+solc = "0.8.28"
+evm_version = "cancun"

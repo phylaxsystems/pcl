@@ -30,6 +30,20 @@ pub enum PhoundryError {
     FoundryConfigError(#[source] foundry_config::error::ExtractConfigError),
     #[error("Contract {0} was not found in the build output")]
     ContractNotFound(String),
+    #[error(
+        "ambiguous contract {name}. Found {paths}. Pass a project-root-relative path such as <path>:{name}"
+    )]
+    AmbiguousContract { name: String, paths: String },
+    #[error(
+        "contract {name} was not found at {requested}. Contracts named {name} were built from {paths}. Pass a project-root-relative path such as <path>:{name}"
+    )]
+    ContractNotAtPath {
+        name: String,
+        requested: String,
+        paths: String,
+    },
+    #[error("compiled artifact target {actual} does not match requested {requested}")]
+    ArtifactTargetMismatch { requested: String, actual: String },
     #[error("Invalid path: {0:?}")]
     InvalidPath(PathBuf),
     #[error("Directory not found: {0:?}")]

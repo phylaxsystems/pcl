@@ -22,7 +22,14 @@ fn copy_dir(from: &Path, to: &Path) {
 
 #[cfg(feature = "credible")]
 fn fixture_project() -> tempfile::TempDir {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/verify-project");
+    copy_fixture("verify-project")
+}
+
+#[cfg(feature = "credible")]
+fn copy_fixture(name: &str) -> tempfile::TempDir {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
     let temp_dir = tempfile::tempdir().expect("create temp project");
     copy_dir(&fixture, temp_dir.path());
     temp_dir
@@ -256,4 +263,112 @@ fn verify_cli_succeeds_for_credible_toml_fixture() {
         .expect("run pcl verify");
 
     assert_verify_success(output);
+}
+
+#[cfg(feature = "credible")]
+fn pcl_error_envelope(args: &[&str]) -> serde_json::Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args(args)
+        .output()
+        .expect("run pcl");
+    assert!(
+        !output.status.success(),
+        "pcl {args:?} unexpectedly succeeded\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    serde_json::from_slice(&output.stderr).unwrap_or_else(|err| {
+        panic!(
+            "json error envelope ({err}):\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+#[cfg(feature = "credible")]
+#[test]
+fn verify_cli_rejects_a_bare_name_shared_by_two_contracts() {
+    let project = copy_fixture("duplicate-guard");
+    let root = project.path().to_str().expect("utf-8 temp path");
+
+    let envelope = pcl_error_envelope(&["verify", "--root", root, "Guard", "--json"]);
+
+    assert_eq!(envelope["error"]["code"], "build.ambiguous_contract");
+    let message = envelope["error"]["message"].as_str().expect("message");
+    assert!(
+        message.contains("assertions/src/AWeak.a.sol")
+            && message.contains("assertions/src/ZStrong.a.sol"),
+        "{message}"
+    );
+    // The example must not steer users toward either duplicate.
+    assert!(message.contains("such as <path>:Guard"), "{message}");
+}
+
+#[cfg(feature = "credible")]
+#[test]
+fn verify_cli_accepts_a_unique_bare_name() {
+    let project = fixture_project();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "verify",
+            "--root",
+            project.path().to_str().expect("utf-8 temp path"),
+            "NoArgsAssertion",
+            "--json",
+        ])
+        .output()
+        .expect("run pcl verify");
+
+    assert_verify_success(output);
+}
+
+#[cfg(feature = "credible")]
+#[test]
+fn verify_cli_lists_built_sources_for_a_path_without_its_directory() {
+    let project = fixture_project();
+    let root = project.path().to_str().expect("utf-8 temp path");
+
+    let envelope = pcl_error_envelope(&[
+        "verify",
+        "--root",
+        root,
+        "NoArgsAssertion.a.sol:NoArgsAssertion",
+        "--json",
+    ]);
+
+    assert_eq!(envelope["error"]["code"], "verify.build_failed");
+    let message = envelope["error"]["message"].as_str().expect("message");
+    assert!(
+        message.contains("assertions/src/NoArgsAssertion.a.sol"),
+        "{message}"
+    );
+    assert!(
+        envelope["next_actions"][0]
+            .as_str()
+            .is_some_and(|action| action.contains("project-root-relative")),
+        "{envelope}"
+    );
+}
+
+#[cfg(feature = "credible")]
+#[test]
+fn verify_cli_names_the_argument_in_a_parse_error() {
+    let project = fixture_project();
+    let root = project.path().to_str().expect("utf-8 temp path");
+
+    let envelope = pcl_error_envelope(&[
+        "verify",
+        "--root",
+        root,
+        "assertions/src/NoArgsAssertion.a.sol:Ignored:NoArgsAssertion",
+        "--json",
+    ]);
+
+    assert_eq!(envelope["error"]["code"], "verify.invalid_config");
+    assert_eq!(
+        envelope["error"]["message"],
+        "Invalid `pcl verify` argument: assertion \
+         `assertions/src/NoArgsAssertion.a.sol:Ignored:NoArgsAssertion` must be \
+         `path/to/File.a.sol:Contract` with one contract name"
+    );
 }
