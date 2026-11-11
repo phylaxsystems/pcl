@@ -2510,3 +2510,52 @@ fn auth_poll_error_output_withholds_an_echoed_device_secret() {
         );
     }
 }
+
+fn run_logout_local(config_dir: &std::path::Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            config_dir.to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            "http://127.0.0.1:9",
+            "logout",
+            "--local",
+        ])
+        .output()
+        .expect("run pcl auth logout")
+}
+
+/// Logout only deletes the exact `device-login-<uuid>` files it created.
+#[test]
+fn auth_logout_keeps_files_that_only_look_like_pending_logins() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let keep = [
+        "device-login-notes.txt",
+        "device-login-550e8400-e29b-41d4-a716-446655440000.bak",
+        // No uppercase UUID spelling: case-insensitive filesystems treat it
+        // as the pending file itself.
+        "device-login-550e8400e29b41d4a716446655440000",
+        "device-login-{550e8400-e29b-41d4-a716-446655440001}",
+        "device-login-",
+    ];
+    for name in keep {
+        fs::write(temp_dir.path().join(name), "keep").expect("write look-alike");
+    }
+    fs::write(
+        temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE),
+        "test_secret",
+    )
+    .expect("write pending secret");
+
+    let output = run_logout_local(temp_dir.path());
+    assert!(output.status.success());
+    assert!(!temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE).exists());
+    for name in keep {
+        assert!(
+            temp_dir.path().join(name).exists(),
+            "logout deleted {name}, which pcl never created"
+        );
+    }
+}

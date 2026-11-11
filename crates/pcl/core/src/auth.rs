@@ -1105,10 +1105,12 @@ impl AuthCommand {
         entries
             .filter_map(Result::ok)
             .filter(|entry| {
+                // Only the exact names pending_device_secret_path creates.
                 entry
                     .file_name()
                     .to_str()
-                    .is_some_and(|name| name.starts_with("device-login-"))
+                    .and_then(|name| name.strip_prefix("device-login-"))
+                    .is_some_and(|id| Uuid::parse_str(id).is_ok_and(|uuid| uuid.to_string() == id))
             })
             .filter_map(|entry| Self::remove_pending_device_secret(&entry.path()))
             .collect()
