@@ -1684,6 +1684,10 @@ fn run_emitted_command(command: &str) -> std::process::Output {
         .env("HOME", empty_home.path())
         .env("XDG_CONFIG_HOME", empty_home.path())
         .env("PCL_AUTH_NO_BROWSER", "1")
+        // A command that does not name its platform must fail here, not
+        // reach a real one.
+        .env_remove("PCL_AUTH_URL")
+        .env("PCL_API_URL", "http://127.0.0.1:9")
         .output()
         .expect("run emitted command")
 }
@@ -2353,5 +2357,44 @@ fn auth_poll_verified_removes_the_pending_secret() {
     assert!(
         pending_device_login_files(temp_dir.path()).is_empty(),
         "a verified poll left the pending secret on disk"
+    );
+}
+
+/// The JSON wait_command must target the same config dir and platform as the
+/// challenge that printed it.
+#[cfg(unix)]
+#[test]
+fn auth_ensure_json_wait_command_targets_the_originating_dir_and_platform() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let (mut server, auth_code) = device_login_code_server();
+    let _status = verified_status_mock(&mut server);
+
+    let ensured = run_ensure(temp_dir.path(), &server.url(), true);
+    assert!(ensured.status.success());
+    // A fresh login gets a fresh session.
+    auth_code.remove();
+    let _next_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(device_login_challenge_body().replace("550e8400", "660e8400"))
+        .create();
+    let challenge: serde_json::Value =
+        serde_json::from_slice(&ensured.stdout).expect("ensure envelope");
+    let wait_command = challenge["data"]["wait_command"]
+        .as_str()
+        .expect("wait command");
+
+    let output = run_emitted_command(wait_command);
+    assert!(
+        output.status.success(),
+        "wait_command {wait_command} failed: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
+    assert!(
+        config.contains("access_token = \"opaque-token\""),
+        "wait_command did not log in to the originating config dir:\n{config}"
     );
 }

@@ -775,7 +775,7 @@ impl AuthCommand {
                 "expires_at": auth_response.expires_at.to_rfc3339(),
                 "poll_command": poll_command,
                 "wait_command": if json_output {
-                    "pcl auth login --force --json".to_string()
+                    format!("{} login --force --json", self.auth_command_prefix(config_dir))
                 } else {
                     self.poll_command(auth_response, false, config_dir)
                 },
@@ -832,8 +832,19 @@ impl AuthCommand {
         }))
     }
 
-    /// The pending secret lives in the config dir, so a poll command from a
-    /// non-default `--config-dir` must name it to find the secret.
+    /// `pcl [--config-dir=…] auth --auth-url=…`: printed follow-up commands
+    /// must reach the same platform and config dir (where the pending secret
+    /// and credentials live) as the command that printed them.
+    fn auth_command_prefix(&self, config_dir: Option<&Path>) -> String {
+        let config_dir_flag = config_dir.map_or_else(String::new, |dir| {
+            format!("--config-dir={} ", shell_quote(&dir.to_string_lossy()))
+        });
+        format!(
+            "pcl {config_dir_flag}auth --auth-url={}",
+            shell_quote(self.effective_auth_url().as_str())
+        )
+    }
+
     fn poll_command(
         &self,
         auth_response: &CliAuthRequestCodeResponse,
@@ -841,14 +852,9 @@ impl AuthCommand {
         config_dir: Option<&Path>,
     ) -> String {
         let output_flag = if json_output { " --json" } else { "" };
-        let config_dir_flag = config_dir.map_or_else(String::new, |dir| {
-            format!("--config-dir={} ", shell_quote(&dir.to_string_lossy()))
-        });
-        let auth_url = self.effective_auth_url();
         format!(
-            "pcl {}auth --auth-url={} poll --session-id={} --expires-at={}{}",
-            config_dir_flag,
-            shell_quote(auth_url.as_str()),
+            "{} poll --session-id={} --expires-at={}{}",
+            self.auth_command_prefix(config_dir),
             auth_response.session_id,
             shell_quote(&auth_response.expires_at.to_rfc3339()),
             output_flag
@@ -2187,7 +2193,7 @@ mod tests {
         );
         assert_eq!(
             json["data"]["wait_command"],
-            "pcl auth login --force --json"
+            "pcl auth --auth-url=https://app.phylax.systems/ login --force --json"
         );
     }
 
