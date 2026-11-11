@@ -613,10 +613,14 @@ impl AuthCommand {
                 expired_auth,
                 cli_args.config_dir.as_deref(),
             ))?;
-            self.wait_for_verification(config, &client, &auth_response, true)
-                .await?;
+            // Every wait failure is terminal (transient errors retry until the
+            // deadline), so the secret is spent either way.
+            let waited = self
+                .wait_for_verification(config, &client, &auth_response, true)
+                .await;
             let cleanup_warning =
                 Self::clear_pending_device_secret(cli_args, &auth_response.session_id);
+            waited?;
             let mut output = self.with_v2_spec_warning(self.status_envelope(config));
             push_warning(&mut output, cleanup_warning);
             if let Some(object) = output.as_object_mut() {
@@ -959,7 +963,24 @@ impl AuthCommand {
         device_secret: &str,
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AuthError> {
-        let status = Self::check_auth_status(&self.api_client(), device_secret, session_id).await?;
+        let status =
+            match Self::check_auth_status(&self.api_client(), device_secret, session_id).await {
+                Ok(status) => status,
+                // The session can never verify now; keep the secret only for
+                // retryable failures.
+                Err(
+                    error @ (AuthError::SessionExpired
+                    | AuthError::SessionNotFound
+                    | AuthError::UserNotFound),
+                ) => {
+                    print_human_warning(
+                        Self::clear_pending_device_secret(cli_args, session_id),
+                        json_output,
+                    );
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
         if status.verified {
             update_config_from_verified_status(
                 config,
@@ -1815,6 +1836,21 @@ fn update_config_from_verified_status(
         issuer_platform_url: Some(crate::platform::trim_platform_url(issuer)),
     });
     Ok(())
+}
+
+/// Prints a warning for people; machine callers get warnings in envelopes,
+/// and an error envelope on stderr must stay parseable.
+fn print_human_warning(warning: Option<Value>, json_output: bool) {
+    if let Some(warning) = warning
+        && !json_output
+        && current_output_mode() == OutputMode::Human
+    {
+        eprintln!(
+            "{} {}",
+            "Warning:".yellow().bold(),
+            warning["message"].as_str().unwrap_or_default()
+        );
+    }
 }
 
 /// Appends a warning to an envelope's top-level `warnings` array.

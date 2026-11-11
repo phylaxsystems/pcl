@@ -2078,3 +2078,106 @@ fn auth_login_human_blocking_does_not_store_the_pending_secret() {
         "human blocking login stored a pending secret it never prints a poll command for: {pending:?}"
     );
 }
+
+fn status_error_mock(
+    server: &mut mockito::ServerGuard,
+    status: usize,
+    body: &str,
+) -> mockito::Mock {
+    server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .with_status(status)
+        .with_header("content-type", "application/json")
+        .with_body(body)
+        .create()
+}
+
+/// A poll that ends the session for good removes the pending secret; a
+/// transient failure keeps it so the next poll can still claim the login.
+#[test]
+fn auth_poll_clears_the_pending_secret_only_on_terminal_failures() {
+    let cases = [
+        (400, r#"{"error":"expired","code":"SESSION_EXPIRED"}"#, true),
+        (
+            400,
+            r#"{"error":"missing","code":"SESSION_NOT_FOUND"}"#,
+            true,
+        ),
+        (400, r#"{"error":"no user","code":"USER_NOT_FOUND"}"#, true),
+        (500, r#"{"error":"boom","code":"INTERNAL_ERROR"}"#, false),
+    ];
+    for (status, body, terminal) in cases {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        let pending = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
+        fs::write(&pending, "test_secret").expect("write pending secret");
+        let mut server = mockito::Server::new();
+        let _status = status_error_mock(&mut server, status, body);
+
+        let output = run_poll(temp_dir.path(), &server.url(), &[]);
+        assert!(!output.status.success(), "HTTP {status} {body} must fail");
+        assert_eq!(
+            !pending.exists(),
+            terminal,
+            "HTTP {status} {body}: pending secret removed must be {terminal}"
+        );
+    }
+
+    // A network failure is transient too.
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let pending = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
+    fs::write(&pending, "test_secret").expect("write pending secret");
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let url = format!("http://{}", closed.local_addr().expect("addr"));
+    drop(closed);
+    let output = run_poll(temp_dir.path(), &url, &[]);
+    assert!(!output.status.success());
+    assert!(
+        pending.exists(),
+        "a network failure removed the pending secret"
+    );
+}
+
+/// The waiting JSONL login removes the pending secret when the wait ends in
+/// a terminal failure.
+#[test]
+fn auth_login_json_clears_the_pending_secret_on_terminal_failure() {
+    for (code_body, status_body) in [
+        (
+            device_login_challenge_body().to_string(),
+            r#"{"error":"missing","code":"SESSION_NOT_FOUND"}"#,
+        ),
+        (
+            device_login_challenge_body().replace("2099-12-31", "2020-01-01"),
+            r#"{"verified":false}"#,
+        ),
+    ] {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        let mut server = mockito::Server::new();
+        let _auth_code = server
+            .mock("GET", "/api/v1/cli/auth/code")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&code_body)
+            .create();
+        let _status = status_error_mock(&mut server, 400, status_body);
+
+        let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+            .env("PCL_AUTH_NO_BROWSER", "1")
+            .args([
+                "--config-dir",
+                temp_dir.path().to_str().expect("utf-8 temp path"),
+                "--json",
+                "auth",
+                "--auth-url",
+                &server.url(),
+                "login",
+            ])
+            .output()
+            .expect("run pcl auth login");
+        assert!(!output.status.success(), "{code_body} must fail");
+        assert!(
+            pending_device_login_files(temp_dir.path()).is_empty(),
+            "terminal login failure left the pending secret ({code_body})"
+        );
+    }
+}
