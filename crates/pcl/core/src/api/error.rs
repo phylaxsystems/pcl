@@ -328,7 +328,7 @@ impl ApiCommandError {
                     format!(
                         "pcl api inspect {} {} --json",
                         method.to_ascii_lowercase(),
-                        path
+                        crate::request_log::redact_sensitive_request_path(path)
                     ),
                     "pcl api manifest --json".to_string(),
                     "Read error.http.body for the rejected field details".to_string(),
@@ -352,7 +352,7 @@ impl ApiCommandError {
                         format!(
                             "Do not retry immediately; inspect the target resource for {} {} to confirm whether the mutation applied",
                             method.to_ascii_lowercase(),
-                            path
+                            crate::request_log::redact_sensitive_request_path(path)
                         ),
                         "pcl requests list --json".to_string(),
                         "Read error.http.body for API-provided failure details".to_string(),
@@ -515,10 +515,27 @@ impl ApiCommandError {
         }
     }
 
+    fn diagnostic_message(&self) -> String {
+        match self {
+            Self::HttpStatus {
+                status,
+                method,
+                path,
+                ..
+            } => {
+                format!(
+                    "API request failed with status {status} for {method} {}",
+                    crate::request_log::redact_sensitive_request_path(path)
+                )
+            }
+            _ => self.to_string(),
+        }
+    }
+
     pub fn json_envelope(&self) -> Value {
         let mut error = Map::new();
         error.insert("code".to_string(), json!(self.code()));
-        error.insert("message".to_string(), json!(self.to_string()));
+        error.insert("message".to_string(), json!(self.diagnostic_message()));
         error.insert("recoverable".to_string(), json!(self.recoverable()));
 
         if let Self::HttpStatus {
@@ -529,6 +546,7 @@ impl ApiCommandError {
             body,
         } = self
         {
+            let path = crate::request_log::redact_sensitive_request_path(path);
             let outcome_ambiguous = mutation_outcome_ambiguous(method, *status);
             if let Some(request_id) = request_id {
                 error.insert("request_id".to_string(), json!(request_id));
@@ -613,7 +631,10 @@ impl ApiCommandError {
         {
             object.insert("http_status".to_string(), json!(status));
             object.insert("method".to_string(), json!(method));
-            object.insert("path".to_string(), json!(path));
+            object.insert(
+                "path".to_string(),
+                json!(crate::request_log::redact_sensitive_request_path(path)),
+            );
             object.insert("request_id".to_string(), json!(request_id));
             object.insert(
                 "outcome_ambiguous".to_string(),

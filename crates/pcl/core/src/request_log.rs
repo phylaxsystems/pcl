@@ -45,15 +45,88 @@ pub fn append_request_record(record: &Value) -> std::io::Result<()> {
     append_request_record_at(&path, record)
 }
 
+pub(crate) fn redact_sensitive_request_path(path: &str) -> String {
+    let split_at = path.find(['?', '#']).unwrap_or(path.len());
+    let (route, suffix) = path.split_at(split_at);
+    let mut parts = route.split('/').collect::<Vec<_>>();
+    let mut changed = false;
+    let mut index = 0;
+    while index + 2 < parts.len() {
+        if parts[index] == "invitations"
+            && matches!(parts[index + 2], "preview" | "accept")
+            && !parts[index + 1].is_empty()
+        {
+            parts[index + 1] = "<redacted>";
+            changed = true;
+        }
+        index += 1;
+    }
+    if !changed {
+        return path.to_string();
+    }
+    let mut redacted = parts.join("/");
+    redacted.push_str(suffix);
+    redacted
+}
+
+fn redact_record_path(record: &Value) -> Value {
+    let Some(path) = record.get("path").and_then(Value::as_str) else {
+        return record.clone();
+    };
+    let redacted = redact_sensitive_request_path(path);
+    if redacted == path {
+        return record.clone();
+    }
+    let mut record = record.clone();
+    if let Some(object) = record.as_object_mut() {
+        object.insert("path".to_string(), Value::String(redacted));
+    }
+    record
+}
+
+fn restrict_owner_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+    }
+    Ok(())
+}
+
+fn open_request_log(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(path)?;
+    restrict_owner_mode(path, 0o600)?;
+    Ok(file)
+}
+
 pub fn append_request_record_at(path: &Path, record: &Value) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        let create_parent = !parent.exists();
         fs::create_dir_all(parent)?;
+        if create_parent {
+            restrict_owner_mode(parent, 0o700)?;
+        }
     }
 
-    let mut bytes = serde_json::to_vec(record)?;
+    let record = redact_record_path(record);
+    let mut bytes = serde_json::to_vec(&record)?;
     bytes.push(b'\n');
 
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    let mut file = open_request_log(path)?;
     file.write_all(&bytes)?;
     file.sync_all()?;
     Ok(())
@@ -75,6 +148,7 @@ pub fn read_request_records_at(path: &Path, limit: usize) -> std::io::Result<Vec
         .lines()
         .map_while(Result::ok)
         .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
+        .map(|record| redact_record_path(&record))
         .collect::<Vec<_>>();
 
     if records.len() > limit {
