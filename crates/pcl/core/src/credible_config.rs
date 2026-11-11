@@ -1,5 +1,6 @@
 //! Shared types and parsing for `credible.toml` deployment configuration files.
 
+use pcl_phoundry::DEFAULT_ASSERTION_CONTRACTS_DIR;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -7,7 +8,10 @@ use std::{
         BTreeMap,
         HashMap,
     },
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -165,6 +169,18 @@ impl AssertionIdentity {
         Ok(identity)
     }
 
+    /// Directory Foundry compiles for this assertion: the source's parent, or
+    /// the default assertions directory for a bare name or dir-less path.
+    pub fn contracts_dir(&self) -> PathBuf {
+        Path::new(self.source.as_deref().unwrap_or_default())
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map_or_else(
+                || PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
+                Path::to_path_buf,
+            )
+    }
+
     /// The `path:Contract` (or bare name) key that selects the Foundry artifact.
     pub fn lookup_key(&self) -> String {
         match &self.source {
@@ -256,6 +272,20 @@ mod tests {
         ] {
             assert!(parse(file).is_err(), "{file} should be rejected");
         }
+    }
+
+    #[test]
+    fn contracts_dir_is_the_source_parent_or_the_default() {
+        let dir = |file: &str| AssertionIdentity::parse(file).unwrap().contracts_dir();
+        assert_eq!(
+            dir("custom/src/Guard.a.sol:Guard"),
+            PathBuf::from("custom/src")
+        );
+        assert_eq!(
+            dir("Guard.a.sol:Guard"),
+            PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR)
+        );
+        assert_eq!(dir("Guard"), PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR));
     }
 
     #[test]

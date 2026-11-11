@@ -29,10 +29,7 @@ use pcl_common::args::{
     CliArgs,
     OutputMode,
 };
-use pcl_phoundry::{
-    DEFAULT_ASSERTION_CONTRACTS_DIR,
-    build_and_flatten::BuildAndFlattenArgs,
-};
+use pcl_phoundry::build_and_flatten::BuildAndFlattenArgs;
 use serde::Serialize;
 use serde_json::json;
 use std::path::{
@@ -168,7 +165,7 @@ impl VerifyArgs {
         let output = BuildAndFlattenArgs {
             root: Some(root.to_path_buf()),
             assertion_contract: identity.lookup_key(),
-            contracts: assertion_contracts_dir(&identity),
+            contracts: identity.contracts_dir(),
         }
         .run()
         .map_err(VerifyError::BuildFailed)?;
@@ -194,7 +191,7 @@ impl VerifyArgs {
                 let output = BuildAndFlattenArgs {
                     root: Some(root.to_path_buf()),
                     assertion_contract: identity.lookup_key(),
-                    contracts: assertion_contracts_dir(&identity),
+                    contracts: identity.contracts_dir(),
                 }
                 .run()
                 .map_err(VerifyError::BuildFailed)?;
@@ -218,16 +215,6 @@ impl VerifyArgs {
 
         Ok(inputs)
     }
-}
-
-fn assertion_contracts_dir(identity: &AssertionIdentity) -> PathBuf {
-    Path::new(identity.source.as_deref().unwrap_or_default())
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map_or_else(
-            || PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
-            Path::to_path_buf,
-        )
 }
 
 /// Result of verifying a set of assertions.

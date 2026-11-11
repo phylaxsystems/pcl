@@ -47,10 +47,7 @@ use pcl_common::args::{
     CliArgs,
     OutputMode,
 };
-use pcl_phoundry::{
-    DEFAULT_ASSERTION_CONTRACTS_DIR,
-    build_and_flatten::BuildAndFlattenArgs,
-};
+use pcl_phoundry::build_and_flatten::BuildAndFlattenArgs;
 use serde_json::{
     Value,
     json,
@@ -404,7 +401,7 @@ impl ApplyArgs {
                     let output = BuildAndFlattenArgs {
                         root: Some(root.to_path_buf()),
                         assertion_contract: identity.lookup_key(),
-                        contracts: assertion_contracts_dir(&identity),
+                        contracts: identity.contracts_dir(),
                     }
                     .run()
                     .map_err(ApplyError::BuildFailed)?;
@@ -594,16 +591,6 @@ where
     value
         .parse()
         .map_err(|e| ApplyError::InvalidConfig(format!("Invalid {field}: {e}")))
-}
-
-fn assertion_contracts_dir(identity: &AssertionIdentity) -> PathBuf {
-    Path::new(identity.source.as_deref().unwrap_or_default())
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map_or_else(
-            || PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
-            Path::to_path_buf,
-        )
 }
 
 fn build_assertion_item(
