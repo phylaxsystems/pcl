@@ -162,10 +162,9 @@ pub enum AuthSubcommands {
             help = "Device-login session ID from auth ensure/login --no-wait"
         )]
         session_id: Uuid,
-        #[arg(
-            long,
-            help = "Device secret. Omit to read the pending secret stored by the last login challenge."
-        )]
+        /// Accepted for poll commands printed by older pcl versions; hidden
+        /// because a secret on argv is visible to other local processes.
+        #[arg(long, hide = true)]
         device_secret: Option<String>,
         #[arg(long, help = "Device-login expiry from auth ensure/login --no-wait")]
         expires_at: Option<chrono::DateTime<chrono::Utc>>,

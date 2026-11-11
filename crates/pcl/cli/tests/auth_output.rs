@@ -2254,3 +2254,16 @@ fn auth_logout_removes_pending_device_logins() {
         );
     }
 }
+
+/// --device-secret stays accepted for poll commands printed by released pcl
+/// versions, but is no longer advertised.
+#[test]
+fn auth_poll_help_does_not_advertise_device_secret() {
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args(["auth", "poll", "--help"])
+        .output()
+        .expect("run pcl auth poll --help");
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("--session-id"), "{help}");
+    assert!(!help.contains("--device-secret"), "{help}");
+}
