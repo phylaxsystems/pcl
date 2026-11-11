@@ -21,16 +21,22 @@ use crate::{
 use alloy_primitives::Address;
 use color_eyre::Result;
 use colored::Colorize;
-use dapp_api_client::generated::client::{
-    Client as GeneratedClient,
-    Error as GeneratedError,
-    types::{
-        ApiError as GeneratedApiErrorBody,
-        AuthRefreshBody,
-        AuthRefreshBodyRefreshToken,
-        AuthRefreshResponse,
-        CliAuthRequestCodeResponse,
-        CliAuthStatusResponse,
+use dapp_api_client::{
+    cli_auth::{
+        CliAuthStatusPostError,
+        post_cli_auth_status,
+    },
+    generated::client::{
+        Client as GeneratedClient,
+        Error as GeneratedError,
+        types::{
+            ApiError as GeneratedApiErrorBody,
+            AuthRefreshBody,
+            AuthRefreshBodyRefreshToken,
+            AuthRefreshResponse,
+            CliAuthRequestCodeResponse,
+            CliAuthStatusResponse,
+        },
     },
 };
 use indicatif::{
@@ -53,10 +59,18 @@ use serde_json::{
     Value,
     json,
 };
-use std::io::{
-    self,
-    BufRead,
-    Write,
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::{
+    io::{
+        self,
+        BufRead,
+        Write,
+    },
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 use tokio::time::{
     Duration,
@@ -137,7 +151,7 @@ pub enum AuthSubcommands {
     /// Poll a pending device-login session once
     #[command(
         long_about = "Checks a device-login session once and stores credentials if verification completed.",
-        after_help = "Example: pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --json"
+        after_help = "Example: pcl auth poll --session-id <uuid> --expires-at <rfc3339> --json"
     )]
     Poll {
         #[arg(
@@ -145,8 +159,11 @@ pub enum AuthSubcommands {
             help = "Device-login session ID from auth ensure/login --no-wait"
         )]
         session_id: Uuid,
-        #[arg(long, help = "Device-login secret from auth ensure/login --no-wait")]
-        device_secret: String,
+        #[arg(
+            long,
+            help = "Device secret. Omit to read the pending secret stored by the last login challenge."
+        )]
+        device_secret: Option<String>,
         #[arg(long, help = "Device-login expiry from auth ensure/login --no-wait")]
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
     },
@@ -302,18 +319,24 @@ impl AuthCommand {
                 self.ensure(config, cli_args, json_output, *force).await
             }
             AuthSubcommands::Login { force, no_wait } => {
-                self.login(config, json_output, *force, *no_wait).await
+                self.login(config, cli_args, json_output, *force, *no_wait)
+                    .await
             }
             AuthSubcommands::Poll {
                 session_id,
                 device_secret,
                 expires_at,
             } => {
+                let secret = match device_secret.as_deref().filter(|secret| !secret.is_empty()) {
+                    Some(secret) => secret.to_string(),
+                    None => Self::load_pending_device_secret(cli_args, session_id)?,
+                };
                 self.poll(
                     config,
+                    cli_args,
                     json_output,
                     session_id,
-                    device_secret,
+                    &secret,
                     expires_at.to_owned(),
                 )
                 .await
@@ -395,6 +418,7 @@ impl AuthCommand {
             refresh_challenge_reason.unwrap_or_else(|| auth_challenge_reason(config, force))
         };
         let auth_response = Self::request_auth_code(&self.api_client()).await?;
+        Self::store_pending_device_secret(cli_args, &auth_response)?;
         Self::print_output(
             &self.login_challenge_envelope(&auth_response, reason, json_output),
             json_output,
@@ -413,6 +437,7 @@ impl AuthCommand {
         // resolved URL applies — only a fresh login challenge.
         if self.switching_platform(config) {
             let auth_response = Self::request_auth_code(&self.api_client()).await?;
+            Self::store_pending_device_secret(cli_args, &auth_response)?;
             return Self::print_output(
                 &self.login_challenge_envelope(
                     &auth_response,
@@ -463,6 +488,7 @@ impl AuthCommand {
         }
 
         let auth_response = Self::request_auth_code(&self.api_client()).await?;
+        Self::store_pending_device_secret(cli_args, &auth_response)?;
         let reason = refresh_challenge_reason.unwrap_or(AuthChallengeReason::Missing);
         Self::print_output(
             &self.login_challenge_envelope(&auth_response, reason, json_output),
@@ -510,6 +536,7 @@ impl AuthCommand {
     async fn login(
         &self,
         config: &mut CliConfig,
+        cli_args: &CliArgs,
         json_output: bool,
         force: bool,
         no_wait: bool,
@@ -545,6 +572,7 @@ impl AuthCommand {
 
         let client = self.api_client();
         let auth_response = Self::request_auth_code(&client).await?;
+        Self::store_pending_device_secret(cli_args, &auth_response)?;
         if no_wait {
             Self::print_output(
                 &self.with_v2_spec_warning(self.login_challenge_envelope(
@@ -567,6 +595,7 @@ impl AuthCommand {
             )?;
             self.wait_for_verification(config, &client, &auth_response, true)
                 .await?;
+            Self::clear_pending_device_secret(cli_args, &auth_response.session_id);
             let mut output = self.with_v2_spec_warning(self.status_envelope(config));
             if let Some(object) = output.as_object_mut() {
                 object.insert("event".to_string(), json!("auth.login_complete"));
@@ -580,6 +609,7 @@ impl AuthCommand {
         self.display_login_instructions(&auth_response);
         self.wait_for_verification(config, &client, &auth_response, json_output)
             .await?;
+        Self::clear_pending_device_secret(cli_args, &auth_response.session_id);
         self.print_v2_spec_notice(json_output);
         Ok(())
     }
@@ -683,7 +713,6 @@ impl AuthCommand {
                 "device_url": device_url.as_str(),
                 "code": auth_response.code.as_str(),
                 "session_id": auth_response.session_id.to_string(),
-                "device_secret": auth_response.device_secret.as_str(),
                 "expires_at": auth_response.expires_at.to_rfc3339(),
                 "previous_token_expired_at": previous_token_expires_at.map(|expires_at| expires_at.to_rfc3339()),
                 "browser_opened": false,
@@ -716,7 +745,6 @@ impl AuthCommand {
                 "device_url": device_url.as_str(),
                 "code": auth_response.code.as_str(),
                 "session_id": auth_response.session_id.to_string(),
-                "device_secret": auth_response.device_secret.as_str(),
                 "expires_at": auth_response.expires_at.to_rfc3339(),
                 "poll_command": poll_command,
                 "wait_command": if json_output {
@@ -785,10 +813,9 @@ impl AuthCommand {
         let output_flag = if json_output { " --json" } else { "" };
         let auth_url = self.effective_auth_url();
         format!(
-            "pcl auth --auth-url={} poll --session-id={} --device-secret={} --expires-at={}{}",
+            "pcl auth --auth-url={} poll --session-id={} --expires-at={}{}",
             shell_quote(auth_url.as_str()),
             auth_response.session_id,
-            shell_quote(&auth_response.device_secret),
             shell_quote(&auth_response.expires_at.to_rfc3339()),
             output_flag
         )
@@ -896,6 +923,7 @@ impl AuthCommand {
     async fn poll(
         &self,
         config: &mut CliConfig,
+        cli_args: &CliArgs,
         json_output: bool,
         session_id: &Uuid,
         device_secret: &str,
@@ -909,6 +937,7 @@ impl AuthCommand {
                 expires_at.unwrap_or_else(default_poll_fallback_expires_at),
                 &self.effective_auth_url(),
             )?;
+            Self::clear_pending_device_secret(cli_args, session_id);
             self.remember_platform_url(config);
             let mut output = self.with_v2_spec_warning(self.status_envelope(config));
             if let Some(object) = output.as_object_mut() {
@@ -939,17 +968,80 @@ impl AuthCommand {
         )
     }
 
-    /// Check authentication status using the generated client.
+    fn config_dir_for(cli_args: &CliArgs) -> PathBuf {
+        cli_args
+            .config_dir
+            .clone()
+            .unwrap_or_else(CliConfig::get_config_dir)
+    }
+
+    fn pending_device_secret_path(config_dir: &Path, session_id: &Uuid) -> PathBuf {
+        config_dir.join(format!("device-login-{session_id}"))
+    }
+
+    fn store_pending_device_secret(
+        cli_args: &CliArgs,
+        auth_response: &CliAuthRequestCodeResponse,
+    ) -> Result<(), AuthError> {
+        let dir = Self::config_dir_for(cli_args);
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| AuthError::ConfigError(ConfigError::WriteError(error)))?;
+        let path = Self::pending_device_secret_path(&dir, &auth_response.session_id);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .map_err(|error| AuthError::ConfigError(ConfigError::WriteError(error)))?;
+        #[cfg(unix)]
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| AuthError::ConfigError(ConfigError::WriteError(error)))?;
+        file.write_all(auth_response.device_secret.as_bytes())
+            .map_err(|error| AuthError::ConfigError(ConfigError::WriteError(error)))?;
+        Ok(())
+    }
+
+    fn load_pending_device_secret(
+        cli_args: &CliArgs,
+        session_id: &Uuid,
+    ) -> Result<String, AuthError> {
+        let path = Self::pending_device_secret_path(&Self::config_dir_for(cli_args), session_id);
+        let secret = std::fs::read_to_string(&path).map_err(|_| {
+            AuthError::InvalidAuthData(
+                "No pending device login is stored for this session. Run pcl auth ensure again."
+                    .to_string(),
+            )
+        })?;
+        let secret = secret.trim().to_string();
+        if secret.is_empty() {
+            return Err(AuthError::InvalidAuthData(
+                "The stored device login secret is empty. Run pcl auth ensure again.".to_string(),
+            ));
+        }
+        Ok(secret)
+    }
+
+    fn clear_pending_device_secret(cli_args: &CliArgs, session_id: &Uuid) {
+        let path = Self::pending_device_secret_path(&Self::config_dir_for(cli_args), session_id);
+        let _ = std::fs::remove_file(path);
+    }
+
     async fn check_auth_status(
         client: &GeneratedClient,
         device_secret: &str,
         session_id: &Uuid,
     ) -> Result<CliAuthStatusResponse, AuthError> {
-        client
-            .cli_auth_status(device_secret, session_id)
-            .await
-            .map(dapp_api_client::generated::client::ResponseValue::into_inner)
-            .map_err(AuthError::from)
+        match post_cli_auth_status(client, session_id, device_secret).await {
+            Ok(status) => Ok(status),
+            Err(CliAuthStatusPostError::RouteMissing) => {
+                client
+                    .cli_auth_status(device_secret, session_id)
+                    .await
+                    .map(dapp_api_client::generated::client::ResponseValue::into_inner)
+                    .map_err(AuthError::from)
+            }
+            Err(CliAuthStatusPostError::Call(error)) => Err(AuthError::from(*error)),
+        }
     }
 
     async fn remote_logout(&self, config: &CliConfig, local_only: bool) -> Value {
@@ -1966,7 +2058,7 @@ mod tests {
     }
 
     #[test]
-    fn login_challenge_poll_command_handles_leading_dash_secret() {
+    fn login_challenge_poll_command_omits_device_secret() {
         let cmd = AuthCommand {
             command: AuthSubcommands::Login {
                 force: false,
@@ -1980,8 +2072,8 @@ mod tests {
 
         let command = cmd.poll_command(&auth_response, false);
 
-        assert!(command.contains("--device-secret=-dash_secret"));
-        assert!(!command.contains("--device-secret -dash_secret"));
+        assert!(!command.contains("dash_secret"));
+        assert!(!command.contains("--device-secret"));
     }
 
     #[test]
@@ -2191,11 +2283,11 @@ mod tests {
         let mut server = Server::new_async().await;
 
         let mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded("session_id".into(), "550e8400-e29b-41d4-a716-446655440000".into()),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"verified":true,"user_id":"550e8400-e29b-41d4-a716-446655440000","address":"0x1234567890123456789012345678901234567890","token":"test_token","refresh_token":"test_refresh"}"#)
@@ -2231,14 +2323,11 @@ mod tests {
         let mut server = Server::new_async().await;
 
         let mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded(
-                    "session_id".into(),
-                    "550e8400-e29b-41d4-a716-446655440000".into(),
-                ),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"verified":false}"#)
@@ -2269,11 +2358,11 @@ mod tests {
         let mut server = Server::new_async().await;
 
         let mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded("session_id".into(), "550e8400-e29b-41d4-a716-446655440000".into()),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .expect(1)
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -2602,7 +2691,16 @@ mod tests {
         ])
         .unwrap();
 
-        let result = cmd.login(&mut config, false, false, true).await;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = cmd
+            .login(
+                &mut config,
+                &test_cli_args(temp_dir.path()),
+                false,
+                false,
+                true,
+            )
+            .await;
 
         assert!(result.is_ok());
         mock.assert();
@@ -2622,8 +2720,9 @@ mod tests {
         let cmd = AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "ensure"])
             .unwrap();
 
+        let temp_dir = tempfile::tempdir().unwrap();
         let result = cmd
-            .ensure(&mut config, &CliArgs::default(), false, false)
+            .ensure(&mut config, &test_cli_args(temp_dir.path()), false, false)
             .await;
 
         assert!(result.is_ok());
@@ -2646,7 +2745,16 @@ mod tests {
         ])
         .unwrap();
 
-        let result = cmd.login(&mut config, false, false, false).await;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = cmd
+            .login(
+                &mut config,
+                &test_cli_args(temp_dir.path()),
+                false,
+                false,
+                false,
+            )
+            .await;
         assert!(result.is_ok());
         assert_eq!(
             config.auth.as_ref().unwrap().wallet_address,
@@ -2664,14 +2772,11 @@ mod tests {
 
         // verified:true but missing optional token/address fields
         let mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded(
-                    "session_id".into(),
-                    "550e8400-e29b-41d4-a716-446655440000".into(),
-                ),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"verified":true}"#)
@@ -2736,14 +2841,11 @@ mod tests {
 
         // Server returns 400 with SESSION_EXPIRED error code
         let mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded(
-                    "session_id".into(),
-                    "550e8400-e29b-41d4-a716-446655440000".into(),
-                ),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .with_status(400)
             .with_header("content-type", "application/json")
             .with_body(r#"{"error":"Session has expired","code":"SESSION_EXPIRED"}"#)
@@ -2774,14 +2876,11 @@ mod tests {
         let mut server = Server::new_async().await;
 
         let mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded(
-                    "session_id".into(),
-                    "550e8400-e29b-41d4-a716-446655440000".into(),
-                ),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .with_status(400)
             .with_header("content-type", "application/json")
             .with_body(r#"{"error":"Session not found","code":"SESSION_NOT_FOUND"}"#)
@@ -2812,14 +2911,11 @@ mod tests {
         let mut server = Server::new_async().await;
 
         let mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded(
-                    "session_id".into(),
-                    "550e8400-e29b-41d4-a716-446655440000".into(),
-                ),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .with_status(400)
             .with_header("content-type", "application/json")
             .with_body(r#"{"error":"User not found. Request a new code and try again.","code":"USER_NOT_FOUND"}"#)
@@ -2850,14 +2946,11 @@ mod tests {
         let mut server = Server::new_async().await;
 
         let mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded(
-                    "session_id".into(),
-                    "550e8400-e29b-41d4-a716-446655440000".into(),
-                ),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .with_status(500)
             .with_header("content-type", "application/json")
             .with_body(r#"{"error":"Internal server error","code":"INTERNAL_ERROR"}"#)
@@ -2889,14 +2982,11 @@ mod tests {
 
         // First poll: pending. Second poll: session expired.
         let pending_mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded(
-                    "session_id".into(),
-                    "550e8400-e29b-41d4-a716-446655440000".into(),
-                ),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"verified":false}"#)
@@ -2904,14 +2994,11 @@ mod tests {
             .create();
 
         let expired_mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded(
-                    "session_id".into(),
-                    "550e8400-e29b-41d4-a716-446655440000".into(),
-                ),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .with_status(400)
             .with_header("content-type", "application/json")
             .with_body(r#"{"error":"Session has expired","code":"SESSION_EXPIRED"}"#)
@@ -2948,14 +3035,11 @@ mod tests {
 
         // First poll: 500 (transient). Second poll: success.
         let error_mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded(
-                    "session_id".into(),
-                    "550e8400-e29b-41d4-a716-446655440000".into(),
-                ),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .with_status(500)
             .with_header("content-type", "application/json")
             .with_body(r#"{"error":"Internal server error","code":"INTERNAL_ERROR"}"#)
@@ -2963,14 +3047,11 @@ mod tests {
             .create();
 
         let success_mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded(
-                    "session_id".into(),
-                    "550e8400-e29b-41d4-a716-446655440000".into(),
-                ),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"verified":true,"user_id":"550e8400-e29b-41d4-a716-446655440000","token":"test_token","refresh_token":"test_refresh","address":"0x1234567890123456789012345678901234567890"}"#)
@@ -3005,14 +3086,11 @@ mod tests {
         let mut server = Server::new_async().await;
 
         let mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded(
-                    "session_id".into(),
-                    "550e8400-e29b-41d4-a716-446655440000".into(),
-                ),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r"not valid json")
@@ -3041,14 +3119,11 @@ mod tests {
         // Server returns verified:true but without tokens — wait_for_verification
         // should bail with InvalidAuthData instead of silently continuing.
         let mock = server
-            .mock("GET", "/api/v1/cli/auth/status")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded(
-                    "session_id".into(),
-                    "550e8400-e29b-41d4-a716-446655440000".into(),
-                ),
-                mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-            ]))
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Json(json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"verified":true}"#)

@@ -1652,8 +1652,8 @@ fn llms_guide() -> Value {
             "ensure_command": "pcl auth ensure --json",
             "expires_soon": "true when five minutes or less remain; renew before long-running work.",
             "renew_command": "pcl auth ensure --force --json",
-            "single_envelope_login": "pcl auth login --no-wait --force --json returns status=action_required with device_url, code, device_secret, expires_at, and poll_command.",
-            "poll_command": "pcl auth poll --session-id <uuid> --device-secret <secret> --expires-at <rfc3339> --json",
+            "single_envelope_login": "pcl auth login --no-wait --force --json returns status=action_required with device_url, code, session_id, expires_at, and poll_command. The device secret stays in an owner-only file and is not part of the envelope.",
+            "poll_command": "pcl auth poll --session-id <uuid> --expires-at <rfc3339> --json",
             "refresh_command": "pcl auth refresh --json rotates the stored refresh token when available; if the refresh token is missing or rejected, it returns a login challenge.",
             "logout": "pcl auth logout attempts remote logout first, then clears local credentials; pass --local to skip the remote request."
         },

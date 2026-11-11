@@ -277,7 +277,14 @@ fn auth_ensure_json_without_auth_outputs_login_challenge() {
     assert_eq!(envelope["data"]["reason"], "missing_auth");
     assert_eq!(envelope["data"]["requires_user"], true);
     assert_eq!(envelope["data"]["refresh_supported"], true);
-    assert_eq!(envelope["data"]["device_secret"], "test_secret");
+    assert!(envelope["data"].get("device_secret").is_none());
+    assert!(
+        envelope["data"]["poll_command"]
+            .as_str()
+            .is_some_and(|command| {
+                !command.contains("--device-secret") && !command.contains("test_secret")
+            })
+    );
     assert!(
         envelope["data"]["poll_command"]
             .as_str()
@@ -384,7 +391,14 @@ fn auth_refresh_json_without_auth_outputs_login_challenge() {
     assert_eq!(envelope["status"], "action_required");
     assert_eq!(envelope["data"]["reason"], "missing_auth");
     assert_eq!(envelope["data"]["refresh_supported"], true);
-    assert_eq!(envelope["data"]["device_secret"], "test_secret");
+    assert!(envelope["data"].get("device_secret").is_none());
+    assert!(
+        envelope["data"]["poll_command"]
+            .as_str()
+            .is_some_and(|command| {
+                !command.contains("--device-secret") && !command.contains("test_secret")
+            })
+    );
     auth_code.assert();
 }
 
@@ -556,14 +570,11 @@ fn auth_login_json_fresh_flow_outputs_pending_and_terminal_events() {
         .expect(1)
         .create();
     let auth_status = server
-        .mock("GET", "/api/v1/cli/auth/status")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded(
-                "session_id".into(),
-                "550e8400-e29b-41d4-a716-446655440000".into(),
-            ),
-            mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-        ]))
+        .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -632,14 +643,11 @@ fn auth_login_force_starts_fresh_flow_even_with_existing_auth() {
         .expect(1)
         .create();
     let auth_status = server
-        .mock("GET", "/api/v1/cli/auth/status")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded(
-                "session_id".into(),
-                "550e8400-e29b-41d4-a716-446655440000".into(),
-            ),
-            mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-        ]))
+        .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -707,14 +715,11 @@ fn login_against_another_platform_does_not_short_circuit_on_the_old_token() {
         .expect(1)
         .create();
     let auth_status = server
-        .mock("GET", "/api/v1/cli/auth/status")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded(
-                "session_id".into(),
-                "550e8400-e29b-41d4-a716-446655440000".into(),
-            ),
-            mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-        ]))
+        .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -829,14 +834,11 @@ fn auth_poll_json_verified_stores_auth_and_returns_terminal_envelope() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     let mut server = mockito::Server::new();
     let auth_status = server
-        .mock("GET", "/api/v1/cli/auth/status")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded(
-                "session_id".into(),
-                "550e8400-e29b-41d4-a716-446655440000".into(),
-            ),
-            mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-        ]))
+        .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_secret": "test_secret",
+            })))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -892,14 +894,11 @@ fn auth_poll_json_pending_returns_pending_envelope_without_writing_auth() {
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     let mut server = mockito::Server::new();
     let auth_status = server
-        .mock("GET", "/api/v1/cli/auth/status")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded(
-                "session_id".into(),
-                "550e8400-e29b-41d4-a716-446655440000".into(),
-            ),
-            mockito::Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
-        ]))
+        .mock("POST", "/api/v1/cli/auth/status")
+        .match_body(mockito::Matcher::Json(serde_json::json!({
+            "session_id": "550e8400-e29b-41d4-a716-446655440000",
+            "device_secret": "test_secret",
+        })))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"{"verified":false}"#)
