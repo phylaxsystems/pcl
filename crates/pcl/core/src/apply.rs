@@ -843,4 +843,95 @@ mod tests {
         assert_eq!(sig.as_str(), "constructor()");
         assert!(item.args.is_empty());
     }
+
+    #[test]
+    fn duplicate_contract_name_releases_the_configured_source() {
+        let project = duplicate_guard_project();
+        let credible = CredibleToml::from_path(&project.path().join("assertions/credible.toml"))
+            .expect("credible.toml parses");
+
+        let (payload, _) = ApplyArgs::build_payload(&credible, project.path())
+            .expect("duplicate Guard project builds");
+        let assertion = &payload
+            .contracts
+            .get("target")
+            .expect("target contract")
+            .assertions[0];
+        let flattened = assertion.flattened_source.as_str();
+        let file = assertion.file.as_str();
+
+        assert!(
+            file.contains("ZStrong.a.sol"),
+            "release file was {file}"
+        );
+        assert!(
+            flattened.contains("return 999"),
+            "configured ZStrong.a.sol:Guard was replaced by another Guard\n{flattened}"
+        );
+        assert!(
+            !flattened.contains("return 1;"),
+            "release source is the weak duplicate\n{flattened}"
+        );
+    }
+
+    fn duplicate_guard_project() -> tempfile::TempDir {
+        let project = tempfile::tempdir().expect("temp project");
+        let root = project.path();
+        std::fs::create_dir_all(root.join("assertions/src")).expect("assertions dir");
+        std::fs::create_dir_all(root.join("lib")).expect("lib dir");
+        std::fs::write(
+            root.join("foundry.toml"),
+            r#"[profile.default]
+src = "assertions/src"
+out = "out"
+cache_path = "cache"
+libs = ["lib"]
+optimizer = false
+solc = "0.8.28"
+evm_version = "cancun"
+"#,
+        )
+        .expect("foundry.toml");
+        std::fs::write(
+            root.join("assertions/src/AWeak.a.sol"),
+            r#"// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+contract Guard {
+    function policy() external pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+        )
+        .expect("weak guard");
+        std::fs::write(
+            root.join("assertions/src/ZStrong.a.sol"),
+            r#"// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+contract Guard {
+    function policy() external pure returns (uint256) {
+        return 999;
+    }
+}
+"#,
+        )
+        .expect("strong guard");
+        std::fs::write(
+            root.join("assertions/credible.toml"),
+            r#"environment = "staging"
+project_name = "duplicate-guard-poc"
+
+[contracts.target]
+address = "0x0101010101010101010101010101010101010101"
+name = "Target"
+
+[[contracts.target.assertions]]
+file = "assertions/src/ZStrong.a.sol:Guard"
+"#,
+        )
+        .expect("credible.toml");
+        project
+    }
 }
