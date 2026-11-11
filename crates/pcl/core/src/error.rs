@@ -675,7 +675,8 @@ impl From<GeneratedApiError<DappApiError>> for AuthError {
             GeneratedApiError::CommunicationError(error)
             | GeneratedApiError::InvalidUpgrade(error)
             | GeneratedApiError::ResponseBodyError(error) => {
-                Self::StatusRequestFailed(error.to_string())
+                // The legacy GET carries the device secret in its URL.
+                Self::StatusRequestFailed(error.without_url().to_string())
             }
             GeneratedApiError::InvalidRequest(message) | GeneratedApiError::Custom(message) => {
                 Self::StatusRequestFailed(message)

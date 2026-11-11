@@ -3358,4 +3358,69 @@ mod tests {
             "got {result:?}"
         );
     }
+
+    /// A GET-only server answers the POST with 405, then the fallback GET
+    /// fails in transport. reqwest's error text appends the request URL, which
+    /// carries the secret on that GET; the reported error must not.
+    #[tokio::test]
+    async fn fallback_get_transport_error_does_not_report_the_device_secret() {
+        // Dropped connection (CommunicationError), then a truncated body
+        // (ResponseBodyError).
+        for get_answer in [
+            &b""[..],
+            &b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{"[..],
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let mut request_lines = Vec::new();
+                let answers: [&[u8]; 2] = [
+                b"HTTP/1.1 405 Method Not Allowed\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                get_answer,
+            ];
+                for answer in answers {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut buf = [0_u8; 4096];
+                    let read = socket.read(&mut buf).await.unwrap();
+                    let raw = String::from_utf8_lossy(&buf[..read]).to_string();
+                    request_lines.push(raw.lines().next().unwrap_or_default().to_string());
+                    socket.write_all(answer).await.unwrap();
+                }
+                request_lines
+            });
+
+            let cmd = AuthCommand::try_parse_from(vec![
+                "auth",
+                "--auth-url",
+                &format!("http://{address}"),
+                "login",
+            ])
+            .unwrap();
+            let auth_response: CliAuthRequestCodeResponse =
+                serde_json::from_str(test_auth_response_json()).unwrap();
+            let result = AuthCommand::check_auth_status(
+                &cmd.api_client(),
+                &auth_response.device_secret,
+                &auth_response.session_id,
+            )
+            .await;
+
+            let request_lines = server.await.unwrap();
+            assert!(
+                request_lines[1].starts_with("GET ") && request_lines[1].contains("test_secret"),
+                "expected the legacy GET fallback, got {request_lines:?}"
+            );
+            let error = result.expect_err("dropped GET connection must fail");
+            assert!(
+                matches!(error, AuthError::StatusRequestFailed(_)),
+                "got {error:?}"
+            );
+            for rendered in [error.to_string(), format!("{error:?}")] {
+                assert!(
+                    !rendered.contains("test_secret") && !rendered.contains("device_secret"),
+                    "auth status error leaked the device secret: {rendered}"
+                );
+            }
+        }
+    }
 }
