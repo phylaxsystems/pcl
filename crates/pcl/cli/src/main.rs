@@ -957,6 +957,11 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
 }
 
 fn auth_error_envelope(err: &AuthError) -> Value {
+    if let AuthError::WithWarnings { source, warnings } = err {
+        let mut envelope = auth_error_envelope(source);
+        envelope["warnings"] = json!(warnings);
+        return envelope;
+    }
     if let Some(envelope) = auth_refresh_error_envelope(err) {
         return envelope;
     }
@@ -1039,7 +1044,8 @@ fn auth_error_envelope(err: &AuthError) -> Value {
         | AuthError::RefreshRateLimited { .. }
         | AuthError::RefreshServerError { .. }
         | AuthError::RefreshRequestFailed(_)
-        | AuthError::RefreshLockTimeout => {
+        | AuthError::RefreshLockTimeout
+        | AuthError::WithWarnings { .. } => {
             with_envelope_metadata(simple_error_value(
                 "auth.request_failed",
                 &err.to_string(),

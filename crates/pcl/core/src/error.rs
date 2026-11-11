@@ -604,6 +604,15 @@ pub enum AuthError {
     /// Error when config operations fail during auth
     #[error("Config error: {0}")]
     ConfigError(#[source] ConfigError),
+
+    /// An auth failure plus non-fatal warnings (such as a pending device
+    /// login that could not be removed) for the same error envelope.
+    #[error("{source}")]
+    WithWarnings {
+        #[source]
+        source: Box<AuthError>,
+        warnings: Vec<serde_json::Value>,
+    },
 }
 
 /// Structured error codes returned by the dapp CLI auth status endpoint.

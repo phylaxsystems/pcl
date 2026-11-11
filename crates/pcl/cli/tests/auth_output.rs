@@ -2766,3 +2766,83 @@ fn auth_poll_over_an_unreadable_config_keeps_its_backup() {
     let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("config");
     assert!(config.contains("opaque-token"), "{config}");
 }
+
+fn single_error_envelope(output: &std::process::Output) -> serde_json::Value {
+    assert!(!output.status.success());
+    serde_json::from_slice(&output.stderr).unwrap_or_else(|error| {
+        panic!(
+            "stderr is not one JSON envelope ({error}): {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+fn has_cleanup_warning(envelope: &serde_json::Value) -> bool {
+    envelope["warnings"].as_array().is_some_and(|warnings| {
+        warnings
+            .iter()
+            .any(|warning| warning["code"] == "auth.pending_device_login_cleanup_failed")
+    })
+}
+
+/// A failed cleanup on a JSON error path is reported inside the one error
+/// envelope, not dropped.
+#[cfg(unix)]
+#[test]
+fn json_error_envelopes_carry_pending_cleanup_failures() {
+    // pcl auth poll: terminal failure, pending file cannot be removed.
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    fs::write(
+        temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE),
+        "test_secret",
+    )
+    .expect("write pending secret");
+    let mut server = mockito::Server::new();
+    let _status = status_error_mock(
+        &mut server,
+        400,
+        r#"{"error":"expired","code":"SESSION_EXPIRED"}"#,
+    );
+    fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o500)).expect("chmod");
+    let output = run_poll(temp_dir.path(), &server.url(), &[]);
+    fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o700)).expect("restore");
+    let envelope = single_error_envelope(&output);
+    assert_eq!(envelope["error"]["code"], "auth.session_invalid");
+    assert!(
+        has_cleanup_warning(&envelope),
+        "poll dropped it: {envelope}"
+    );
+
+    // Waiting JSONL login: terminal failure, pending file cannot be removed.
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let (mut server, _auth_code) = device_login_code_server();
+    let dir = temp_dir.path().to_path_buf();
+    let _status = server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .with_status(400)
+        .with_header("content-type", "application/json")
+        .with_body_from_request(move |_| {
+            let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o500));
+            br#"{"error":"expired","code":"SESSION_EXPIRED"}"#.to_vec()
+        })
+        .create();
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "login",
+        ])
+        .output()
+        .expect("run pcl auth login");
+    fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o700)).expect("restore");
+    let envelope = single_error_envelope(&output);
+    assert!(
+        has_cleanup_warning(&envelope),
+        "login dropped it: {envelope}"
+    );
+}

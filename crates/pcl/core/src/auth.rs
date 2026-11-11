@@ -617,7 +617,9 @@ impl AuthCommand {
                 .await;
             let cleanup_warning =
                 Self::clear_pending_device_secret(cli_args, &auth_response.session_id);
-            waited?;
+            if let Err(error) = waited {
+                return Err(with_cleanup_warning(error, cleanup_warning));
+            }
             let mut output = self.with_v2_spec_warning(self.status_envelope(config));
             push_warning(&mut output, cleanup_warning);
             if let Some(object) = output.as_object_mut() {
@@ -994,11 +996,10 @@ impl AuthCommand {
                 ) if Self::load_pending_device_secret(cli_args, session_id)
                     .is_ok_and(|stored| stored == device_secret) =>
                 {
-                    print_human_warning(
+                    return Err(with_cleanup_warning(
+                        error,
                         Self::clear_pending_device_secret(cli_args, session_id),
-                        json_output,
-                    );
-                    return Err(error);
+                    ));
                 }
                 Err(error) => return Err(error),
             };
@@ -1014,7 +1015,9 @@ impl AuthCommand {
             // fails; success is only reported once the credentials are saved.
             let saved = persist_claimed_auth(config, cli_args);
             let cleanup_warning = Self::clear_pending_device_secret(cli_args, session_id);
-            saved?;
+            if let Err(error) = saved {
+                return Err(with_cleanup_warning(error, cleanup_warning));
+            }
             let mut output = self.with_v2_spec_warning(self.status_envelope(config));
             push_warning(&mut output, cleanup_warning);
             if let Some(object) = output.as_object_mut() {
@@ -1124,13 +1127,10 @@ impl AuthCommand {
     fn clear_all_pending_device_secrets(cli_args: &CliArgs) -> Vec<Value> {
         let dir = Self::config_dir_for(cli_args);
         let listing_failed = |error: &io::Error| {
-            json!({
-                "code": "auth.pending_device_login_cleanup_failed",
-                "message": format!(
-                    "Could not list {} to remove pending device logins: {error}",
-                    dir.display()
-                ),
-            })
+            cleanup_warning(&format!(
+                "Could not list {} to remove pending device logins: {error}",
+                dir.display()
+            ))
         };
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
@@ -1161,13 +1161,10 @@ impl AuthCommand {
     fn remove_pending_device_secret(path: &Path) -> Option<Value> {
         match std::fs::remove_file(path) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => {
-                Some(json!({
-                    "code": "auth.pending_device_login_cleanup_failed",
-                    "message": format!(
-                        "Could not remove the pending device login file {}: {error}",
-                        path.display()
-                    ),
-                }))
+                Some(cleanup_warning(&format!(
+                    "Could not remove the pending device login file {}: {error}",
+                    path.display()
+                )))
             }
             _ => None,
         }
@@ -1971,18 +1968,30 @@ fn persist_claimed_auth(config: &CliConfig, cli_args: &CliArgs) -> Result<(), Au
         .map_err(AuthError::ConfigError)
 }
 
-/// Prints a warning for people; machine callers get warnings in envelopes,
-/// and an error envelope on stderr must stay parseable.
-fn print_human_warning(warning: Option<Value>, json_output: bool) {
-    if let Some(warning) = warning
-        && !json_output
-        && current_output_mode() == OutputMode::Human
-    {
-        eprintln!(
-            "{} {}",
-            "Warning:".yellow().bold(),
-            warning["message"].as_str().unwrap_or_default()
-        );
+/// A pending-login cleanup failure. Machine output carries it in the
+/// envelope's `warnings`; the human renderer does not show those, so people
+/// get it on stderr here.
+fn cleanup_warning(message: &str) -> Value {
+    if current_output_mode() == OutputMode::Human {
+        eprintln!("{} {message}", "Warning:".yellow().bold());
+    }
+    json!({
+        "code": "auth.pending_device_login_cleanup_failed",
+        "message": message,
+    })
+}
+
+/// Attaches a pending-login cleanup failure to the error being returned, so
+/// it reaches the same error envelope instead of being dropped.
+fn with_cleanup_warning(error: AuthError, warning: Option<Value>) -> AuthError {
+    match warning {
+        Some(warning) => {
+            AuthError::WithWarnings {
+                source: Box::new(error),
+                warnings: vec![warning],
+            }
+        }
+        None => error,
     }
 }
 
