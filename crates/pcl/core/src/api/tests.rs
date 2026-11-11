@@ -1457,6 +1457,124 @@ async fn authenticated_workflow_retries_once_after_refresh_on_401() {
     retry.assert_async().await;
 }
 
+const INVITATION_TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+#[tokio::test]
+async fn invitation_workflow_history_omits_the_bearer_token() {
+    let mut server = mockito::Server::new_async().await;
+    let preview = server
+        .mock(
+            "GET",
+            format!("/api/v1/invitations/{INVITATION_TOKEN}/preview").as_str(),
+        )
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-preview")
+        .with_body(r#"{"error":"invitation not found"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let first_accept = server
+        .mock(
+            "POST",
+            format!("/api/v1/invitations/{INVITATION_TOKEN}/accept").as_str(),
+        )
+        .match_header("authorization", "Bearer old_access")
+        .with_status(401)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"code":"TOKEN_EXPIRED","error":"expired"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let refresh = server
+        .mock("POST", "/api/v1/auth/refresh")
+        .match_body(Matcher::Json(json!({ "refresh_token": "old_refresh" })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"token":"new_access","refresh_token":"new_refresh","expires_at":"2030-01-01T00:00:00Z","refresh_expires_at":"2030-02-01T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create_async()
+        .await;
+    let retried_accept = server
+        .mock(
+            "POST",
+            format!("/api/v1/invitations/{INVITATION_TOKEN}/accept").as_str(),
+        )
+        .match_header("authorization", "Bearer new_access")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-accept")
+        .with_body(r#"{"accepted":true}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let api = test_api(server.url(), false);
+    let temp_dir = tempfile::tempdir().unwrap();
+    let log_path = temp_dir.path().join("requests.jsonl");
+    let cli_args = CliArgs {
+        config_dir: Some(temp_dir.path().to_path_buf()),
+        ..Default::default()
+    };
+    let mut config = valid_auth_config("old_access", "old_refresh");
+    config.set_test_platform(&server.url());
+    config.write_to_file(&cli_args).unwrap();
+
+    let preview_request = test_workflow_request_for_operation(
+        WorkflowOperation::new(HttpMethod::Get, "previewInvitation")
+            .path_param("token", INVITATION_TOKEN),
+        false,
+        Vec::<String>::new(),
+    );
+    let preview_error = api
+        .call_workflow_result(&mut config, &cli_args, &preview_request, &log_path)
+        .await
+        .unwrap_err();
+    let preview_envelope = preview_error.json_envelope().to_string();
+    assert!(
+        !preview_envelope.contains(INVITATION_TOKEN),
+        "preview error envelope kept the invitation token: {preview_envelope}"
+    );
+    assert!(preview_envelope.contains("/invitations/<redacted>/preview"));
+
+    let accept_request = test_workflow_request_for_operation(
+        WorkflowOperation::new(HttpMethod::Post, "acceptInvitation")
+            .path_param("token", INVITATION_TOKEN),
+        true,
+        Vec::<String>::new(),
+    );
+    let accept_result = api
+        .call_workflow_result(&mut config, &cli_args, &accept_request, &log_path)
+        .await
+        .unwrap();
+    let accept_rendered = accept_result.request.to_string();
+    assert!(
+        !accept_rendered.contains(INVITATION_TOKEN),
+        "accept result kept the invitation token: {accept_rendered}"
+    );
+    assert_eq!(
+        accept_result.request["path"],
+        "/invitations/<redacted>/accept"
+    );
+    assert_eq!(accept_result.request["operation_id"], "acceptInvitation");
+    assert_eq!(accept_result.request["retried_after_refresh"], true);
+
+    let history = fs::read_to_string(&log_path).expect("workflow request history");
+    assert!(
+        !history.contains(INVITATION_TOKEN),
+        "workflow request history kept the invitation token: {history}"
+    );
+    assert!(history.contains("/invitations/<redacted>/preview"));
+    assert!(history.contains("/invitations/<redacted>/accept"));
+
+    preview.assert_async().await;
+    first_accept.assert_async().await;
+    refresh.assert_async().await;
+    retried_accept.assert_async().await;
+}
+
 #[tokio::test]
 async fn raw_401_preserves_original_error_when_refresh_endpoint_is_missing() {
     let mut server = mockito::Server::new_async().await;
@@ -2292,6 +2410,23 @@ fn builds_account_workflow_requests() {
 
 #[test]
 fn empty_object_workflows_send_body_by_default() {
+    let token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let preview = access_request(&AccessArgs {
+        preview: true,
+        token: Some(token.to_string()),
+        ..access_args()
+    })
+    .unwrap();
+    assert_eq!(preview.path, format!("/invitations/{token}/preview"));
+    assert!(
+        preview
+            .next_actions
+            .iter()
+            .all(|action| !action.contains(token)),
+        "preview next action embedded the invitation token: {:?}",
+        preview.next_actions
+    );
+
     let accept = access_request(&AccessArgs {
         accept: true,
         token: Some("token-1".to_string()),

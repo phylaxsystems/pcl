@@ -146,4 +146,140 @@ mod tests {
             serde_json::from_str::<Value>(line).expect("request log line should be valid json");
         }
     }
+
+    const INVITATION_TOKEN: &str =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn invitation_record(method: &str, route: &str, operation_id: &str) -> Value {
+        json!({
+            "timestamp": "2026-11-02T00:00:00Z",
+            "kind": "workflow",
+            "method": method,
+            "path": route,
+            "status": 200,
+            "success": true,
+            "request_id": "poc-response",
+            "operation_id": operation_id,
+        })
+    }
+
+    #[test]
+    fn invitation_tokens_are_redacted_in_new_request_history() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("state").join("requests.jsonl");
+        let preview = format!("/invitations/{INVITATION_TOKEN}/preview");
+        let accept = format!("/invitations/{INVITATION_TOKEN}/accept");
+
+        append_request_record_at(
+            &path,
+            &invitation_record("GET", &preview, "previewInvitation"),
+        )
+        .expect("append preview");
+        append_request_record_at(
+            &path,
+            &invitation_record("POST", &accept, "acceptInvitation"),
+        )
+        .expect("append accept");
+        append_request_record_at(
+            &path,
+            &invitation_record(
+                "DELETE",
+                "/projects/project-1/invitations/invite-1",
+                "revokeInvitation",
+            ),
+        )
+        .expect("append revoke");
+
+        let content = fs::read_to_string(&path).expect("read request log");
+        assert!(
+            !content.contains(INVITATION_TOKEN),
+            "request history persisted the invitation token: {content}"
+        );
+        assert!(content.contains("/invitations/<redacted>/preview"));
+        assert!(content.contains("/invitations/<redacted>/accept"));
+        assert!(content.contains("/projects/project-1/invitations/invite-1"));
+
+        let records = read_request_records_at(&path, 10).expect("read records");
+        let paths = records
+            .iter()
+            .map(|record| record["path"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            paths,
+            vec![
+                "/invitations/<redacted>/preview",
+                "/invitations/<redacted>/accept",
+                "/projects/project-1/invitations/invite-1",
+            ]
+        );
+    }
+
+    #[test]
+    fn existing_request_history_does_not_return_invitation_tokens() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("requests.jsonl");
+        let route = format!("/invitations/{INVITATION_TOKEN}/preview?unused=1");
+        fs::write(
+            &path,
+            format!(
+                "{}\n",
+                invitation_record("GET", &route, "previewInvitation")
+            ),
+        )
+        .expect("seed request log");
+
+        let records = read_request_records_at(&path, 10).expect("read records");
+        let rendered = records[0].to_string();
+        assert!(
+            !rendered.contains(INVITATION_TOKEN),
+            "pcl requests list returned the invitation token: {rendered}"
+        );
+        assert_eq!(
+            records[0]["path"],
+            "/invitations/<redacted>/preview?unused=1"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn request_logs_are_created_owner_only_and_existing_logs_are_tightened() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let created = temp_dir.path().join("fresh").join("requests.jsonl");
+        append_request_record_at(&created, &json!({"path": "/health", "status": 200}))
+            .expect("append new log");
+
+        let file_mode = fs::metadata(&created)
+            .expect("new log metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        let dir_mode = fs::metadata(created.parent().expect("log parent"))
+            .expect("new log directory metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(file_mode, 0o600, "new request log mode was {file_mode:o}");
+        assert_eq!(
+            dir_mode, 0o700,
+            "new request log directory mode was {dir_mode:o}"
+        );
+
+        let existing = temp_dir.path().join("existing.jsonl");
+        fs::write(&existing, "").expect("seed existing log");
+        fs::set_permissions(&existing, fs::Permissions::from_mode(0o644))
+            .expect("widen existing log");
+        append_request_record_at(&existing, &json!({"path": "/health", "status": 200}))
+            .expect("append existing log");
+        let existing_mode = fs::metadata(&existing)
+            .expect("existing log metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            existing_mode, 0o600,
+            "existing request log mode stayed {existing_mode:o}"
+        );
+    }
 }
