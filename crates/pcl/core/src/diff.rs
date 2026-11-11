@@ -180,18 +180,13 @@ fn render_assertion_diff(out: &mut String, adopter: &str, a: &AssertionDiffEntry
     };
     writeln!(out, "      {marker} {file}").unwrap();
     writeln!(out, "          adopter: {adopter}").unwrap();
-    writeln!(
-        out,
-        "          assertion: {}",
-        shown_id(a.assertion_id.as_deref().map(String::as_str))
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "          previous: {}",
-        shown_id(a.previous_assertion_id.as_deref().map(String::as_str))
-    )
-    .unwrap();
+    let assertion = a.assertion_id.as_deref().map_or("(none)", String::as_str);
+    let previous = a
+        .previous_assertion_id
+        .as_deref()
+        .map_or("(none)", String::as_str);
+    writeln!(out, "          assertion: {assertion}").unwrap();
+    writeln!(out, "          previous: {previous}").unwrap();
     if a.args.is_empty() {
         writeln!(out, "          args: (none)").unwrap();
     } else {
@@ -205,10 +200,6 @@ fn render_assertion_diff(out: &mut String, adopter: &str, a: &AssertionDiffEntry
     {
         writeln!(out, "          compiler: {} \u{2192} {}", vc.from, vc.to).unwrap();
     }
-}
-
-fn shown_id(id: Option<&str>) -> &str {
-    id.unwrap_or("(none)")
 }
 
 fn render_unchanged(out: &mut String, label: &str, entry: &ContractDiffEntry) {
