@@ -586,7 +586,10 @@ impl AuthCommand {
 
         let client = self.api_client();
         let auth_response = Self::request_auth_code(&client).await?;
-        Self::store_pending_device_secret(cli_args, &auth_response)?;
+        // Only outputs that print a poll_command need the secret on disk.
+        if no_wait || json_output {
+            Self::store_pending_device_secret(cli_args, &auth_response)?;
+        }
         if no_wait {
             Self::print_output(
                 &self.with_v2_spec_warning(self.login_challenge_envelope(
@@ -628,15 +631,6 @@ impl AuthCommand {
         self.display_login_instructions(&auth_response);
         self.wait_for_verification(config, &client, &auth_response, json_output)
             .await?;
-        if let Some(warning) =
-            Self::clear_pending_device_secret(cli_args, &auth_response.session_id)
-        {
-            eprintln!(
-                "{} {}",
-                "Warning:".yellow().bold(),
-                warning["message"].as_str().unwrap_or_default()
-            );
-        }
         self.print_v2_spec_notice(json_output);
         Ok(())
     }

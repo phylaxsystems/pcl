@@ -2020,3 +2020,61 @@ fn auth_poll_warns_when_the_pending_secret_cannot_be_removed() {
         "missing cleanup warning: {envelope}"
     );
 }
+
+fn pending_device_login_files(config_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    fs::read_dir(config_dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("device-login-"))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The human blocking login prints no poll command, so it has no reason to
+/// leave the secret on disk while it waits.
+#[test]
+fn auth_login_human_blocking_does_not_store_the_pending_secret() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let (mut server, _auth_code) = device_login_code_server();
+    let status = server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"verified":false}"#)
+        .create();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "login",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn pcl auth login");
+    let started = std::time::Instant::now();
+    while !status.matched() && started.elapsed() < std::time::Duration::from_secs(20) {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let pending = pending_device_login_files(temp_dir.path());
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(status.matched(), "login never polled");
+    assert!(
+        pending.is_empty(),
+        "human blocking login stored a pending secret it never prints a poll command for: {pending:?}"
+    );
+}
