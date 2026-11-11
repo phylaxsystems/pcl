@@ -17,7 +17,10 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use std::fmt::Write;
+use std::{
+    borrow::Cow,
+    fmt::Write,
+};
 use uuid::Uuid;
 
 /// Message displayed when the diff contains no changes.
@@ -112,15 +115,13 @@ fn render_added(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     let name = contract_display_name(label, entry);
     writeln!(
         out,
-        "  {} contract \"{name}\" ({})",
+        "  {} contract {name:?} ({})",
         "+".green(),
         *entry.address,
     )
     .unwrap();
     for a in &entry.assertions {
-        if let Some(file) = &a.file {
-            writeln!(out, "      {} {file}", "+".green()).unwrap();
-        }
+        render_assertion_diff(out, (&entry.address, &entry.address), a);
     }
     writeln!(out).unwrap();
 }
@@ -129,15 +130,13 @@ fn render_removed(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     let name = contract_display_name(label, entry);
     writeln!(
         out,
-        "  {} contract \"{name}\" ({})",
+        "  {} contract {name:?} ({})",
         "-".red(),
         *entry.address,
     )
     .unwrap();
     for a in &entry.assertions {
-        if let Some(file) = &a.file {
-            writeln!(out, "      {} {file}", "-".red()).unwrap();
-        }
+        render_assertion_diff(out, (&entry.address, &entry.address), a);
     }
     writeln!(out).unwrap();
 }
@@ -146,7 +145,7 @@ fn render_modified(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     let name = contract_display_name(label, entry);
     writeln!(
         out,
-        "  {} contract \"{name}\" ({})",
+        "  {} contract {name:?} ({})",
         "~".yellow(),
         *entry.address,
     )
@@ -156,7 +155,7 @@ fn render_modified(out: &mut String, label: &str, entry: &ContractDiffEntry) {
         if let Some(name_change) = &meta.name {
             let from = name_change.from.as_deref().unwrap_or("(none)");
             let to = name_change.to.as_deref().unwrap_or("(none)");
-            writeln!(out, "      name: \"{from}\" \u{2192} \"{to}\"").unwrap();
+            writeln!(out, "      name: {from:?} \u{2192} {to:?}").unwrap();
         }
         if let Some(addr_change) = &meta.address {
             writeln!(
@@ -168,28 +167,70 @@ fn render_modified(out: &mut String, label: &str, entry: &ContractDiffEntry) {
         }
     }
 
+    // Removed assertions live on the old address; added ones on the new.
+    let adopters = entry
+        .metadata_changes
+        .as_ref()
+        .and_then(|meta| meta.address.as_ref())
+        .map_or((entry.address.as_str(), entry.address.as_str()), |change| {
+            (change.from.as_str(), change.to.as_str())
+        });
     for a in &entry.assertions {
-        render_assertion_diff(out, a);
+        render_assertion_diff(out, adopters, a);
     }
     writeln!(out).unwrap();
 }
 
-fn render_assertion_diff(out: &mut String, a: &AssertionDiffEntry) {
-    let file = a.file.as_deref().unwrap_or("(unknown)");
-    match a.change_type {
-        AssertionChangeType::Added => {
-            writeln!(out, "      {} {file}", "+".green()).unwrap();
+fn render_assertion_diff(out: &mut String, (old, new): (&str, &str), a: &AssertionDiffEntry) {
+    let file = shown(a.file.as_deref().unwrap_or("(unknown)"));
+    let (marker, adopter) = match a.change_type {
+        AssertionChangeType::Added => ("+".green(), Cow::Borrowed(new)),
+        AssertionChangeType::Removed => ("-".red(), Cow::Borrowed(old)),
+        AssertionChangeType::Modified if !old.eq_ignore_ascii_case(new) => {
+            ("~".yellow(), Cow::Owned(format!("{old} \u{2192} {new}")))
         }
-        AssertionChangeType::Removed => {
-            writeln!(out, "      {} {file}", "-".red()).unwrap();
+        AssertionChangeType::Modified => ("~".yellow(), Cow::Borrowed(new)),
+        AssertionChangeType::Unchanged => return,
+    };
+    writeln!(out, "      {marker} {file}").unwrap();
+    writeln!(out, "          adopter: {adopter}").unwrap();
+    let assertion = a.assertion_id.as_deref().map_or("(none)", String::as_str);
+    let previous = a
+        .previous_assertion_id
+        .as_deref()
+        .map_or("(none)", String::as_str);
+    writeln!(out, "          assertion: {assertion}").unwrap();
+    writeln!(out, "          previous: {previous}").unwrap();
+    if a.args.is_empty() {
+        writeln!(out, "          args: (none)").unwrap();
+    } else {
+        writeln!(out, "          args:").unwrap();
+        for arg in &a.args {
+            writeln!(out, "            {}", shown(arg)).unwrap();
         }
-        AssertionChangeType::Modified => {
-            writeln!(out, "      {} {file}", "~".yellow()).unwrap();
-            if let Some(vc) = &a.compiler_version_change {
-                writeln!(out, "          compiler: {} \u{2192} {}", vc.from, vc.to).unwrap();
-            }
-        }
-        AssertionChangeType::Unchanged => {}
+    }
+    if a.change_type == AssertionChangeType::Modified
+        && let Some(vc) = &a.compiler_version_change
+    {
+        writeln!(
+            out,
+            "          compiler: {} \u{2192} {}",
+            shown(&vc.from),
+            shown(&vc.to)
+        )
+        .unwrap();
+    }
+}
+
+/// Untrusted text as given when it is plain, otherwise its quoted Rust escape,
+/// so control, bidi and zero-width characters cannot redraw the plan while the
+/// value stays complete and reversible.
+fn shown(text: &str) -> Cow<'_, str> {
+    let quoted = format!("{text:?}");
+    if quoted.get(1..quoted.len() - 1) == Some(text) {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(quoted)
     }
 }
 
@@ -198,13 +239,13 @@ fn render_unchanged(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     writeln!(
         out,
         "  {}",
-        format!("contract \"{name}\" (unchanged)").dimmed(),
+        format!("contract {name:?} (unchanged)").dimmed(),
     )
     .unwrap();
     // A contract is "unchanged" when its metadata (name/address) is untouched,
     // but its assertions may still have changed — render those like the dApp does.
     for a in &entry.assertions {
-        render_assertion_diff(out, a);
+        render_assertion_diff(out, (&entry.address, &entry.address), a);
     }
     writeln!(out).unwrap();
 }
@@ -807,5 +848,355 @@ mod tests {
         assert!(output.contains("+ contract \"B\" (0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)"));
         assert!(output.contains("+ B1.sol"));
         assert!(output.contains("+ B2.sol"));
+    }
+
+    #[test]
+    fn renders_same_file_constructor_argument_change_with_ids_and_adopter() {
+        disable_colors();
+
+        let new_id = "0x1111111111111111111111111111111111111111111111111111111111111111";
+        let old_id = "0x2222222222222222222222222222222222222222222222222222222222222222";
+        let constructor_arg = "0x9999999999999999999999999999999999999999";
+        let adopter = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+        let preview: PreviewResponse = serde_json::from_value(json!({
+            "hasChanges": true,
+            "configMismatch": false,
+            "driftDetected": false,
+            "diff": {
+                "contracts": {
+                    "vault": {
+                        "address": adopter,
+                        "name": "Vault",
+                        "changeType": "unchanged",
+                        "metadataChanges": null,
+                        "assertions": [{
+                            "file": "src/Guard.sol",
+                            "args": [constructor_arg],
+                            "changeType": "modified",
+                            "assertionId": new_id,
+                            "previousAssertionId": old_id,
+                            "compilerVersionChange": null
+                        }]
+                    }
+                },
+                "summary": {
+                    "contracts": { "added": 0, "removed": 0, "modified": 0, "unchanged": 1 },
+                    "assertions": { "added": 0, "removed": 0, "modified": 1, "unchanged": 0 }
+                }
+            },
+            "diffedAgainstReleaseId": null
+        }))
+        .unwrap();
+
+        let output = preview.render_plan();
+        assert!(output.contains("~ src/Guard.sol"), "{output}");
+        assert!(output.contains(adopter), "{output}");
+        assert!(output.contains(new_id), "{output}");
+        assert!(output.contains(old_id), "{output}");
+        assert!(output.contains(constructor_arg), "{output}");
+        assert!(
+            output.contains("Plan: 0 added, 1 changed, 0 removed."),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn renders_same_file_added_and_removed_argument_change() {
+        disable_colors();
+
+        let new_id = "0x3333333333333333333333333333333333333333333333333333333333333333";
+        let old_id = "0x4444444444444444444444444444444444444444444444444444444444444444";
+        let new_arg = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let old_arg = "0xcccccccccccccccccccccccccccccccccccccccc";
+        let adopter = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+        let preview: PreviewResponse = serde_json::from_value(json!({
+            "hasChanges": true,
+            "configMismatch": false,
+            "driftDetected": false,
+            "diff": {
+                "contracts": {
+                    "vault": {
+                        "address": adopter,
+                        "name": "Vault",
+                        "changeType": "unchanged",
+                        "metadataChanges": null,
+                        "assertions": [
+                            {
+                                "file": "src/Guard.sol",
+                                "args": [new_arg],
+                                "changeType": "added",
+                                "assertionId": new_id,
+                                "previousAssertionId": null,
+                                "compilerVersionChange": null
+                            },
+                            {
+                                "file": "src/Guard.sol",
+                                "args": [old_arg],
+                                "changeType": "removed",
+                                "assertionId": null,
+                                "previousAssertionId": old_id,
+                                "compilerVersionChange": null
+                            }
+                        ]
+                    }
+                },
+                "summary": {
+                    "contracts": { "added": 0, "removed": 0, "modified": 0, "unchanged": 1 },
+                    "assertions": { "added": 1, "removed": 1, "modified": 0, "unchanged": 0 }
+                }
+            },
+            "diffedAgainstReleaseId": null
+        }))
+        .unwrap();
+
+        let output = preview.render_plan();
+        assert!(output.contains(adopter), "{output}");
+        assert!(output.contains(new_id), "{output}");
+        assert!(output.contains(old_id), "{output}");
+        assert!(output.contains(new_arg), "{output}");
+        assert!(output.contains(old_arg), "{output}");
+    }
+
+    #[test]
+    fn renders_long_constructor_args_in_full() {
+        disable_colors();
+
+        let constructor_arg = format!("0x{}", "ab".repeat(256));
+        let preview: PreviewResponse = serde_json::from_value(json!({
+            "hasChanges": true,
+            "configMismatch": false,
+            "driftDetected": false,
+            "diff": {
+                "contracts": {
+                    "vault": {
+                        "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "name": "Vault",
+                        "changeType": "modified",
+                        "metadataChanges": null,
+                        "assertions": [{
+                            "file": "src/Guard.sol",
+                            "args": [constructor_arg],
+                            "changeType": "added",
+                            "assertionId": "0x5555555555555555555555555555555555555555555555555555555555555555",
+                            "previousAssertionId": null,
+                            "compilerVersionChange": null
+                        }]
+                    }
+                },
+                "summary": {
+                    "contracts": { "added": 0, "removed": 0, "modified": 1, "unchanged": 0 },
+                    "assertions": { "added": 1, "removed": 0, "modified": 0, "unchanged": 0 }
+                }
+            },
+            "diffedAgainstReleaseId": null
+        }))
+        .unwrap();
+
+        let output = preview.render_plan();
+        assert!(output.contains(&constructor_arg), "{output}");
+        assert!(!output.contains('…'), "{output}");
+        assert!(!output.contains("..."), "{output}");
+    }
+
+    /// A plan where `hostile` fills every free-text field the renderer prints:
+    /// contract label and name, a name change, the assertion file, its
+    /// constructor arg and its compiler version.
+    fn hostile_plan(hostile: &str) -> String {
+        let assertion = |change_type: &str| {
+            json!({
+                "file": hostile,
+                "args": [hostile],
+                "changeType": change_type,
+                "assertionId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+                "previousAssertionId": "0x2222222222222222222222222222222222222222222222222222222222222222",
+                "compilerVersionChange": { "from": hostile, "to": "0.8.28" }
+            })
+        };
+        let preview: PreviewResponse = serde_json::from_value(json!({
+            "hasChanges": true,
+            "configMismatch": false,
+            "driftDetected": false,
+            "diff": {
+                "contracts": {
+                    "renamed": {
+                        "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "name": hostile,
+                        "changeType": "modified",
+                        "metadataChanges": { "name": { "from": hostile, "to": "Vault" } },
+                        "assertions": [assertion("modified")]
+                    },
+                    hostile: {
+                        "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "name": null,
+                        "changeType": "unchanged",
+                        "metadataChanges": null,
+                        "assertions": [assertion("added")]
+                    }
+                },
+                "summary": {
+                    "contracts": { "added": 0, "removed": 0, "modified": 1, "unchanged": 1 },
+                    "assertions": { "added": 1, "removed": 0, "modified": 1, "unchanged": 0 }
+                }
+            },
+            "diffedAgainstReleaseId": null
+        }))
+        .unwrap();
+        preview.render_plan()
+    }
+
+    #[test]
+    fn plan_escapes_terminal_control_in_untrusted_strings() {
+        disable_colors();
+
+        let variants = [
+            "x\n          previous: 0xforged",
+            "x\r          previous: 0xforged",
+            "x\tforged",
+            "\u{1b}[1A\u{1b}[2Kforged",
+            "\u{1b}[2J\u{1b}[H<forged plan>",
+            "\u{9b}2Jforged",
+            "safe\u{202e}degrof",
+            "safe\u{2066}forged\u{2069}",
+            "zero\u{200b}width\u{feff}",
+            "C:\\assertions\\Guard.sol",
+            "\"quoted\"",
+        ];
+        for hostile in variants {
+            let output = hostile_plan(hostile);
+            let escaped = format!("{hostile:?}");
+            for line in [
+                format!("contract {escaped} ("),
+                format!("contract {escaped} (unchanged)"),
+                format!("name: {escaped} \u{2192} \"Vault\""),
+                format!("~ {escaped}\n"),
+                format!("+ {escaped}\n"),
+                format!("            {escaped}\n"),
+                format!("compiler: {escaped} \u{2192} 0.8.28"),
+            ] {
+                assert!(
+                    output.contains(&line),
+                    "{hostile:?} missing {line:?}:\n{output}"
+                );
+            }
+            for c in output.chars() {
+                assert!(
+                    c == '\n' || c.escape_debug().eq([c]) || matches!(c, '"' | '\'' | '\\'),
+                    "{hostile:?} leaked {c:?}:\n{output}"
+                );
+            }
+            assert!(
+                !output.contains("\n          previous: 0xforged"),
+                "{output}"
+            );
+        }
+    }
+
+    #[test]
+    fn plan_prints_clean_strings_unchanged() {
+        disable_colors();
+
+        for clean in [
+            "0x9999999999999999999999999999999999999999",
+            "it's fine",
+            "Vault",
+        ] {
+            let output = hostile_plan(clean);
+            assert!(
+                output.contains(&format!("            {clean}\n")),
+                "{output}"
+            );
+            assert!(output.contains(&format!("~ {clean}\n")), "{output}");
+            assert!(
+                output.contains(&format!("contract \"{clean}\" (unchanged)")),
+                "{output}"
+            );
+        }
+    }
+
+    #[test]
+    fn plan_escapes_a_64kb_hostile_arg_in_linear_time() {
+        disable_colors();
+
+        let hostile = "\u{1b}[2J".repeat(16 * 1024);
+        let started = std::time::Instant::now();
+        let output = hostile_plan(&hostile);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert!(output.contains(&format!("{hostile:?}")));
+        assert!(!output.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn address_change_attributes_each_assertion_to_its_adopter() {
+        disable_colors();
+
+        let old = "0x1111111111111111111111111111111111111111";
+        let new = "0x2222222222222222222222222222222222222222";
+        let assertion = |file: &str, change_type: &str| {
+            json!({
+                "file": file,
+                "args": [],
+                "changeType": change_type,
+                "assertionId": "0x3333333333333333333333333333333333333333333333333333333333333333",
+                "previousAssertionId": "0x4444444444444444444444444444444444444444444444444444444444444444",
+                "compilerVersionChange": null
+            })
+        };
+        let plan = |old: &str, new: &str| {
+            let preview: PreviewResponse = serde_json::from_value(json!({
+                "hasChanges": true,
+                "configMismatch": false,
+                "driftDetected": false,
+                "diff": {
+                    "contracts": {
+                        "migrated": {
+                            "address": new,
+                            "name": "Vault",
+                            "changeType": "modified",
+                            "metadataChanges": { "address": { "from": old, "to": new } },
+                            "assertions": [
+                                assertion("src/Old.sol", "removed"),
+                                assertion("src/New.sol", "added"),
+                                assertion("src/Same.sol", "modified")
+                            ]
+                        }
+                    },
+                    "summary": {
+                        "contracts": { "added": 0, "removed": 0, "modified": 1, "unchanged": 0 },
+                        "assertions": { "added": 1, "removed": 1, "modified": 1, "unchanged": 0 }
+                    }
+                },
+                "diffedAgainstReleaseId": null
+            }))
+            .unwrap();
+            preview.render_plan()
+        };
+
+        let output = plan(old, new);
+        assert!(
+            output.contains(&format!("- src/Old.sol\n          adopter: {old}\n")),
+            "{output}"
+        );
+        assert!(
+            output.contains(&format!("+ src/New.sol\n          adopter: {new}\n")),
+            "{output}"
+        );
+        assert!(
+            output.contains(&format!(
+                "~ src/Same.sol\n          adopter: {old} \u{2192} {new}\n"
+            )),
+            "{output}"
+        );
+
+        // A checksum-only change is the same adopter: no arrow.
+        let checksummed = "0xAbCdEf0123456789aBcDeF0123456789AbCdEf01";
+        let output = plan(&checksummed.to_lowercase(), checksummed);
+        assert!(
+            output.contains(&format!(
+                "~ src/Same.sol\n          adopter: {checksummed}\n"
+            )),
+            "{output}"
+        );
     }
 }

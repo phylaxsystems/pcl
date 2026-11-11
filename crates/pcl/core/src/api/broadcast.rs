@@ -34,10 +34,15 @@ use crate::{
 };
 use alloy_primitives::{
     Address,
+    B256,
     Bytes,
 };
 use alloy_rpc_types_eth::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::{
+    SolInterface,
+    sol,
+};
 use colored::Colorize;
 use pcl_common::args::CliArgs;
 use serde::Deserialize;
@@ -81,12 +86,46 @@ struct ReleaseDeployCalldataResponse {
     #[serde(default)]
     message: Option<String>,
     #[serde(default)]
-    operations: Vec<Value>,
+    operations: Vec<DeployOperation>,
     /// The confirmation count the platform's chain profile requires before
     /// it accepts the deploy confirmation. Authoritative when present; the
     /// static per-chain fallback applies otherwise.
     #[serde(default, alias = "required_confirmations")]
     required_confirmations: Option<u64>,
+}
+
+/// One entry of the deploy-calldata `operations` list, paired 1:1 with
+/// `calldata`.
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum DeployOperation {
+    RegisterAssertionAdopter {
+        adopter_address: Address,
+        verifier_address: Address,
+    },
+    RemoveAssertion {
+        adopter_address: Address,
+        assertion_id: B256,
+    },
+    AddAssertion {
+        adopter_address: Address,
+        assertion_id: B256,
+    },
+}
+
+sol! {
+    /// The `StateOracle` calls a release deploy batches. `addAssertion` is
+    /// 0.2.0's signature, then 0.4.0's, which adds the DA verifier.
+    interface DeployCalls {
+        function registerAssertionAdopter(address contractAddress, address adminVerifier, bytes data);
+        function removeAssertion(address contractAddress, bytes32 assertionId);
+        function addAssertion(address contractAddress, bytes32 assertionId, bytes metadata, bytes proof);
+        function addAssertion(address contractAddress, bytes32 assertionId, address daVerifier, bytes metadata, bytes proof);
+    }
 }
 
 /// `GET /projects/{id}/releases/{rid}/remove-calldata`
@@ -185,6 +224,106 @@ async fn resolve_signer(
     cli_args: &CliArgs,
 ) -> Result<PrivateKeySigner, ApiCommandError> {
     Ok(wallet.signer(cli_args.human_output()).await?)
+}
+
+/// The prompt lists what the signed calldata does, decoded from the bytes
+/// themselves, and refuses unless each entry matches its listed operation.
+fn release_deploy_confirmation(
+    release_id: &str,
+    calldata: &ReleaseDeployCalldataResponse,
+) -> Result<String, ApiCommandError> {
+    if calldata.operations.is_empty() || calldata.operations.len() != calldata.calldata.len() {
+        return Err(unshowable_operations(
+            "the operation list does not cover every calldata entry",
+        ));
+    }
+
+    let mut lines = Vec::with_capacity(calldata.operations.len());
+    for (operation, data) in calldata.operations.iter().zip(&calldata.calldata) {
+        let (decoded, line) = decode_deploy_call(data)?;
+        if decoded != *operation {
+            return Err(unshowable_operations(
+                "an operation does not match its calldata",
+            ));
+        }
+        lines.push(line);
+    }
+
+    Ok(format!(
+        "StateOracle.batch with {} operation(s) for release {release_id}\n{}",
+        lines.len(),
+        lines.join("\n")
+    ))
+}
+
+fn decode_deploy_call(data: &[u8]) -> Result<(DeployOperation, String), ApiCommandError> {
+    use DeployCalls::DeployCallsCalls as Call;
+    // Re-encoding must give back the exact bytes, so nothing signed is unshown.
+    let call = Call::abi_decode_validate(data)
+        .ok()
+        .filter(|call| call.abi_encode() == data)
+        .ok_or_else(|| {
+            unshowable_operations("a calldata entry is not a known StateOracle deploy call")
+        })?;
+    Ok(match call {
+        Call::registerAssertionAdopter(c) => {
+            (
+                DeployOperation::RegisterAssertionAdopter {
+                    adopter_address: c.contractAddress,
+                    verifier_address: c.adminVerifier,
+                },
+                format!(
+                    "  registerAssertionAdopter adopter {} verifier {}",
+                    c.contractAddress, c.adminVerifier
+                ),
+            )
+        }
+        Call::removeAssertion(c) => {
+            (
+                DeployOperation::RemoveAssertion {
+                    adopter_address: c.contractAddress,
+                    assertion_id: c.assertionId,
+                },
+                format!(
+                    "  removeAssertion adopter {} assertion {}",
+                    c.contractAddress, c.assertionId
+                ),
+            )
+        }
+        Call::addAssertion_0(c) => {
+            (
+                DeployOperation::AddAssertion {
+                    adopter_address: c.contractAddress,
+                    assertion_id: c.assertionId,
+                },
+                format!(
+                    "  addAssertion adopter {} assertion {}",
+                    c.contractAddress, c.assertionId
+                ),
+            )
+        }
+        Call::addAssertion_1(c) => {
+            (
+                DeployOperation::AddAssertion {
+                    adopter_address: c.contractAddress,
+                    assertion_id: c.assertionId,
+                },
+                format!(
+                    "  addAssertion adopter {} assertion {} da verifier {}",
+                    c.contractAddress, c.assertionId, c.daVerifier
+                ),
+            )
+        }
+    })
+}
+
+fn unshowable_operations(reason: &str) -> ApiCommandError {
+    ApiCommandError::UnexpectedResponse {
+        endpoint: "deploy-calldata",
+        reason: format!(
+            "refusing to broadcast because the operation list cannot be shown: {reason}"
+        ),
+    }
 }
 
 /// Interactive guard before spending gas. Machine mode treats `--broadcast`
@@ -558,16 +697,17 @@ impl ApiArgs {
             ));
         }
 
+        let confirmation = release_deploy_confirmation(release_id, &calldata)?;
+        if cli_args.human_output() && args.broadcast.yes {
+            eprintln!("{confirmation}");
+        }
         confirm_send(
             cli_args,
             args.broadcast.yes,
             signer.address(),
             calldata.chain_id,
             calldata.state_oracle_address,
-            &format!(
-                "StateOracle.batch with {} operation(s) for release {release_id}",
-                calldata.operations.len().max(calldata.calldata.len())
-            ),
+            &confirmation,
         )?;
 
         progress(cli_args, "Broadcasting StateOracle.batch transaction");
@@ -1102,10 +1242,12 @@ mod tests {
         let body = json!({
             "chainId": 84532,
             "stateOracleAddress": "0xed9A39bf60d325796De60D67b3BD00ce6c4B5007",
+            "activeReleaseId": null,
             "operations": [
-                { "type": "addAssertion", "adopterAddress": "0x0101010101010101010101010101010101010101", "assertionId": "0xabcd" }
+                assertion_op("removeAssertion", ADOPTER, REMOVED_ID),
+                assertion_op("addAssertion", ADOPTER, ADDED_ID),
             ],
-            "calldata": ["0x1234", "0x56"],
+            "calldata": [REMOVE, ADD_0_4_0],
             "isNoop": false,
             "message": null,
             "someFutureField": true,
@@ -1119,8 +1261,9 @@ mod tests {
         );
         assert_eq!(parsed.calldata.len(), 2);
         assert!(!parsed.is_noop);
-        assert_eq!(parsed.operations.len(), 1);
+        assert_eq!(parsed.operations.len(), 2);
         assert!(parsed.message.is_none());
+        release_deploy_confirmation("rel-1", &parsed).unwrap();
     }
 
     #[test]
@@ -1302,6 +1445,180 @@ mod tests {
         confirm.assert_async().await;
     }
 
+    // Calldata encoded by viem from the dApp's StateOracle signatures, so the
+    // fixtures do not share pcl's ABI declaration.
+    const ADOPTER: &str = "0xabCDeF0123456789AbcdEf0123456789aBCDEF01";
+    const VERIFIER: &str = "0x0303030303030303030303030303030303030303";
+    const DA_VERIFIER: &str = "0x0404040404040404040404040404040404040404";
+    const ADDED_ID: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const REMOVED_ID: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
+    const REGISTER: &str = "0xb099ad0f000000000000000000000000abcdef0123456789abcdef0123456789abcdef01000000000000000000000000030303030303030303030303030303030303030300000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000";
+    const REMOVE: &str = "0x81347190000000000000000000000000abcdef0123456789abcdef0123456789abcdef012222222222222222222222222222222222222222222222222222222222222222";
+    const ADD_0_2_0: &str = "0x1c85212d000000000000000000000000abcdef0123456789abcdef0123456789abcdef011111111111111111111111111111111111111111111111111111111111111111000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000026080000000000000000000000000000000000000000000000000000000000000";
+    const ADD_0_4_0: &str = "0x4c5cad2f000000000000000000000000abcdef0123456789abcdef0123456789abcdef011111111111111111111111111111111111111111111111111111111111111111000000000000000000000000040404040404040404040404040404040404040400000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000026080000000000000000000000000000000000000000000000000000000000000";
+
+    fn deploy_confirmation(
+        operations: &Value,
+        calldata: &[&str],
+    ) -> Result<String, ApiCommandError> {
+        let response: ReleaseDeployCalldataResponse = parse_response(
+            "deploy-calldata",
+            &json!({
+                "chainId": 1,
+                "stateOracleAddress": "0x0101010101010101010101010101010101010101",
+                "operations": operations,
+                "calldata": calldata,
+                "isNoop": false,
+                "message": null,
+            }),
+        )?;
+        release_deploy_confirmation("rel-1", &response)
+    }
+
+    fn register_op(adopter: &str, verifier: &str) -> Value {
+        json!({ "type": "registerAssertionAdopter", "adopterAddress": adopter, "verifierAddress": verifier })
+    }
+
+    fn assertion_op(kind: &str, adopter: &str, assertion_id: &str) -> Value {
+        json!({ "type": kind, "adopterAddress": adopter, "assertionId": assertion_id })
+    }
+
+    #[test]
+    fn release_deploy_confirmation_shows_each_decoded_operation() {
+        // The JSON spells the adopter in lowercase; the calldata decodes to
+        // the same 20 bytes, which the prompt shows checksummed.
+        let lower = ADOPTER.to_lowercase();
+        let text = deploy_confirmation(
+            &json!([
+                register_op(&lower, VERIFIER),
+                assertion_op("removeAssertion", &lower, REMOVED_ID),
+                assertion_op("addAssertion", &lower, ADDED_ID),
+                // A wrong checksum still names the same 20 bytes.
+                assertion_op(
+                    "addAssertion",
+                    "0xABCDEF0123456789abcdef0123456789abcdef01",
+                    ADDED_ID
+                ),
+            ]),
+            &[REGISTER, REMOVE, ADD_0_2_0, ADD_0_4_0],
+        )
+        .unwrap();
+
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "StateOracle.batch with 4 operation(s) for release rel-1",
+                &format!("  registerAssertionAdopter adopter {ADOPTER} verifier {VERIFIER}"),
+                &format!("  removeAssertion adopter {ADOPTER} assertion {REMOVED_ID}"),
+                &format!("  addAssertion adopter {ADOPTER} assertion {ADDED_ID}"),
+                &format!(
+                    "  addAssertion adopter {ADOPTER} assertion {ADDED_ID} da verifier {DA_VERIFIER}"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn release_deploy_confirmation_refuses_operations_it_cannot_bind_to_calldata() {
+        let other = "0x0505050505050505050505050505050505050505";
+        let truncated = &REMOVE[..REMOVE.len() - 2];
+        // A non-canonical address word: the validating decode must reject it.
+        let dirty_address = REMOVE.replacen("0x81347190000000", "0x81347190ff0000", 1);
+        let unknown_selector = REMOVE.replacen("0x81347190", "0xdeadbeef", 1);
+        let trailing = format!("{REMOVE}00");
+        let cases: Vec<(&str, Value, Vec<&str>)> = vec![
+            (
+                "kind",
+                json!([assertion_op("addAssertion", ADOPTER, REMOVED_ID)]),
+                vec![REMOVE],
+            ),
+            (
+                "adopter",
+                json!([assertion_op("removeAssertion", other, REMOVED_ID)]),
+                vec![REMOVE],
+            ),
+            (
+                "assertion id",
+                json!([assertion_op("removeAssertion", ADOPTER, ADDED_ID)]),
+                vec![REMOVE],
+            ),
+            (
+                "verifier",
+                json!([register_op(ADOPTER, other)]),
+                vec![REGISTER],
+            ),
+            (
+                "add as remove",
+                json!([assertion_op("removeAssertion", ADOPTER, ADDED_ID)]),
+                vec![ADD_0_4_0],
+            ),
+            (
+                "unknown selector",
+                json!([assertion_op("removeAssertion", ADOPTER, REMOVED_ID)]),
+                vec![&unknown_selector],
+            ),
+            (
+                "truncated",
+                json!([assertion_op("removeAssertion", ADOPTER, REMOVED_ID)]),
+                vec![truncated],
+            ),
+            (
+                "trailing byte",
+                json!([assertion_op("removeAssertion", ADOPTER, REMOVED_ID)]),
+                vec![&trailing],
+            ),
+            (
+                "dirty address word",
+                json!([assertion_op("removeAssertion", ADOPTER, REMOVED_ID)]),
+                vec![&dirty_address],
+            ),
+            ("no operations", json!([]), vec![REMOVE]),
+            (
+                "length",
+                json!([assertion_op("removeAssertion", ADOPTER, REMOVED_ID)]),
+                vec![REMOVE, REMOVE],
+            ),
+            (
+                "unknown type",
+                json!([{ "type": "setManager", "adopterAddress": ADOPTER }]),
+                vec![REMOVE],
+            ),
+            (
+                "hostile type",
+                json!([assertion_op(
+                    "removeAssertion\n  addAssertion",
+                    ADOPTER,
+                    REMOVED_ID
+                )]),
+                vec![REMOVE],
+            ),
+            (
+                "missing assertion id",
+                json!([{ "type": "removeAssertion", "adopterAddress": ADOPTER }]),
+                vec![REMOVE],
+            ),
+            (
+                "short assertion id",
+                json!([assertion_op("removeAssertion", ADOPTER, "0xabcd")]),
+                vec![REMOVE],
+            ),
+        ];
+        for (name, operations, calldata) in cases {
+            let result = deploy_confirmation(&operations, &calldata);
+            assert!(
+                matches!(
+                    result,
+                    Err(ApiCommandError::UnexpectedResponse {
+                        endpoint: "deploy-calldata",
+                        ..
+                    })
+                ),
+                "{name}: {result:?}"
+            );
+        }
+    }
+
     #[test]
     fn deploy_calldata_requires_noop_and_calldata_to_agree() {
         let response = |is_noop, calldata| {
@@ -1413,13 +1730,15 @@ mod tests {
         let deploy = json!({
             "chainId": 84532,
             "stateOracleAddress": "0xed9A39bf60d325796De60D67b3BD00ce6c4B5007",
-            "calldata": ["0x12"],
+            "operations": [assertion_op("removeAssertion", ADOPTER, REMOVED_ID)],
+            "calldata": [REMOVE],
             "isNoop": false,
             "requiredConfirmations": 6,
         });
         let parsed: ReleaseDeployCalldataResponse =
             parse_response("deploy-calldata", &deploy).unwrap();
         assert_eq!(parsed.required_confirmations, Some(6));
+        release_deploy_confirmation("rel-1", &parsed).unwrap();
 
         // Snake-case payloads accept both casings; absence stays None so the
         // fallback table applies.
