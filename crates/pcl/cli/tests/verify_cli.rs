@@ -299,6 +299,8 @@ fn verify_cli_rejects_a_bare_name_shared_by_two_contracts() {
             && message.contains("assertions/src/ZStrong.a.sol"),
         "{message}"
     );
+    // The example must not steer users toward either duplicate.
+    assert!(message.contains("such as <path>:Guard"), "{message}");
 }
 
 #[cfg(feature = "credible")]

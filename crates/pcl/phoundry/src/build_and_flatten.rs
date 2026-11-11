@@ -352,12 +352,10 @@ fn select_contract_path(
                 contract_name.to_string(),
             )))
         }
-        (Some((first, _)), Some(_)) => {
-            let example = format!("{}:{contract_name}", display_source(root, first));
+        (Some(_), Some(_)) => {
             Err(Box::new(PhoundryError::AmbiguousContract {
                 name: contract_name.to_string(),
                 paths: display_sources(root, &paths),
-                example,
             }))
         }
     }

@@ -31,13 +31,9 @@ pub enum PhoundryError {
     #[error("Contract {0} was not found in the build output")]
     ContractNotFound(String),
     #[error(
-        "ambiguous contract {name}. Found {paths}. Pass a path-qualified name such as {example}"
+        "ambiguous contract {name}. Found {paths}. Pass a project-root-relative path such as <path>:{name}"
     )]
-    AmbiguousContract {
-        name: String,
-        paths: String,
-        example: String,
-    },
+    AmbiguousContract { name: String, paths: String },
     #[error(
         "contract {name} was not found at {requested}. Contracts named {name} were built from {paths}. Pass a project-root-relative path such as <path>:{name}"
     )]
