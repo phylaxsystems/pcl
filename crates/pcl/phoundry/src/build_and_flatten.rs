@@ -194,15 +194,12 @@ impl BuildAndFlattenArgs {
             .iter()
             .find_map(|(path, name)| (name == &info.name).then_some(path))
             .ok_or_else(|| PhoundryError::ContractNotFound(self.assertion_contract.clone()))?;
-        let actual_target = normalize_source_path(Path::new(rel_source_path), &root);
-        let expected_target = normalize_source_path(&contract_path, &root);
-        if actual_target != expected_target {
-            return Err(Box::new(PhoundryError::ArtifactTargetMismatch {
-                requested: format!("{expected_target}:{}", info.name),
-                actual: format!("{actual_target}:{}", info.name),
-            }));
-        }
-
+        check_compilation_target(
+            &root,
+            &info.name,
+            &contract_path,
+            Path::new(rel_source_path),
+        )?;
         let path = root.join(rel_source_path);
         let flattened = self.flatten(&path)?;
         let output = BuildAndFlatOutput::new(
@@ -260,14 +257,18 @@ impl BuildAndFlattenArgs {
         crate::compile::compile(build_opts)
     }
 
+    /// The canonical project root: Foundry reports canonical artifact paths
+    /// (`/private/var` on macOS), so source paths are compared against it.
     fn project_root(&self) -> Result<PathBuf, Box<PhoundryError>> {
-        match &self.root {
-            Some(root) => Ok(root.clone()),
+        let root = match &self.root {
+            Some(root) => root.clone(),
             None => {
                 find_project_root(None)
-                    .map_err(|_| Box::new(PhoundryError::DirectoryNotFound(PathBuf::from("."))))
+                    .map_err(|_| Box::new(PhoundryError::DirectoryNotFound(PathBuf::from("."))))?
             }
-        }
+        };
+        root.canonicalize()
+            .map_err(|_| Box::new(PhoundryError::DirectoryNotFound(root)))
     }
 
     /// Flattens the contract source code.
@@ -313,43 +314,41 @@ fn select_contract_path(
     requested_path: Option<&str>,
     root: &Path,
 ) -> Result<PathBuf, Box<PhoundryError>> {
-    let mut paths: BTreeMap<String, PathBuf> = BTreeMap::new();
+    // Keyed by resolved path, so every spelling of one file is one entry.
+    let mut paths: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
     for (path, name, _) in build.artifacts_with_files() {
-        if name != contract_name {
-            continue;
+        if name == contract_name {
+            paths
+                .entry(resolve_source(root, path))
+                .or_insert_with(|| path.clone());
         }
-        paths
-            .entry(normalize_source_path(path, root))
-            .or_insert_with(|| path.clone());
     }
 
-    let requested = requested_path.map(|path| normalize_source_path(Path::new(path), root));
-    match requested {
-        Some(requested) => {
-            paths.get(&requested).cloned().ok_or_else(|| {
-                Box::new(PhoundryError::ContractNotFound(format!(
-                    "{requested}:{contract_name}"
-                )))
-            })
-        }
-        None if paths.len() == 1 => {
-            Ok(paths
-                .into_values()
-                .next()
-                .expect("one matching artifact path"))
-        }
-        None if paths.is_empty() => {
+    if let Some(requested) = requested_path {
+        let requested = resolve_source(root, Path::new(requested));
+        return paths.get(&requested).cloned().ok_or_else(|| {
+            Box::new(PhoundryError::ContractNotFound(format!(
+                "{}:{contract_name}",
+                display_source(root, &requested)
+            )))
+        });
+    }
+
+    let mut matches = paths.iter();
+    match (matches.next(), matches.next()) {
+        (Some((_, path)), None) => Ok(path.clone()),
+        (None, _) => {
             Err(Box::new(PhoundryError::ContractNotFound(
                 contract_name.to_string(),
             )))
         }
-        None => {
-            let first = paths
+        (Some((first, _)), Some(_)) => {
+            let example = format!("{}:{contract_name}", display_source(root, first));
+            let paths = paths
                 .keys()
-                .next()
-                .expect("ambiguous contract has more than one path");
-            let example = format!("{first}:{contract_name}");
-            let paths = paths.into_keys().collect::<Vec<_>>().join(", ");
+                .map(|path| display_source(root, path))
+                .collect::<Vec<_>>()
+                .join(", ");
             Err(Box::new(PhoundryError::AmbiguousContract {
                 name: contract_name.to_string(),
                 paths,
@@ -359,13 +358,37 @@ fn select_contract_path(
     }
 }
 
-fn normalize_source_path(path: &Path, root: &Path) -> String {
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    relative
+/// Fails closed unless the artifact was compiled from the requested source.
+fn check_compilation_target(
+    root: &Path,
+    contract_name: &str,
+    requested: &Path,
+    target: &Path,
+) -> Result<(), Box<PhoundryError>> {
+    let requested = resolve_source(root, requested);
+    let target = resolve_source(root, target);
+    if requested == target {
+        return Ok(());
+    }
+    Err(Box::new(PhoundryError::ArtifactTargetMismatch {
+        requested: format!("{}:{contract_name}", display_source(root, &requested)),
+        actual: format!("{}:{contract_name}", display_source(root, &target)),
+    }))
+}
+
+/// Resolves `path` against the canonical root so `./`, `//`, `..` and symlink
+/// spellings of one file compare equal. A missing file stays unresolved and so
+/// matches no compiled source.
+fn resolve_source(root: &Path, path: &Path) -> PathBuf {
+    let joined = root.join(path);
+    joined.canonicalize().unwrap_or(joined)
+}
+
+fn display_source(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
-        .trim_start_matches("./")
-        .to_string()
 }
 
 fn extract_bytecode<T: serde::Serialize>(bytecode: &T) -> Option<String> {

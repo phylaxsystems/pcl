@@ -861,6 +861,57 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn equivalent_source_spellings_release_the_configured_source() {
+        let project = duplicate_guard_project();
+        let canonical = project.path().canonicalize().expect("canonical root");
+        let links = tempfile::tempdir().expect("symlink dir");
+        let alias = links.path().join("alias");
+        std::os::unix::fs::symlink(&canonical, &alias).expect("symlink project");
+
+        for file in [
+            "./assertions/src/ZStrong.a.sol:Guard".to_string(),
+            "assertions//src/ZStrong.a.sol:Guard".to_string(),
+            "assertions/src/./ZStrong.a.sol:Guard".to_string(),
+            "assertions/src/../src/ZStrong.a.sol:Guard".to_string(),
+            r"assertions\src\ZStrong.a.sol:Guard".to_string(),
+            format!(
+                "{}/assertions/src/ZStrong.a.sol:Guard",
+                project.path().display()
+            ),
+            format!("{}/assertions/src/ZStrong.a.sol:Guard", canonical.display()),
+            format!("{}/assertions/src/ZStrong.a.sol:Guard", alias.display()),
+        ] {
+            configure_assertion(&project, &file);
+            let (_, flattened) =
+                released_source(&project).unwrap_or_else(|err| panic!("{file}: {err}"));
+            assert!(
+                flattened.contains("return 999"),
+                "{file} released\n{flattened}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_to_a_different_file_fails_closed() {
+        let project = duplicate_guard_project();
+        for file in [
+            "assertions/ZStrong.a.sol:Guard",
+            "assertions/src/../ZStrong.a.sol:Guard",
+            "src/ZStrong.a.sol:Guard",
+            "assertions/src/Missing.a.sol:Guard",
+        ] {
+            configure_assertion(&project, file);
+            let err = released_source(&project).expect_err(file);
+            assert!(matches!(err, ApplyError::BuildFailed(_)), "{file}: {err}");
+        }
+
+        configure_assertion(&project, "assertions/src/AWeak.a.sol:Guard");
+        let (_, flattened) = released_source(&project).expect("AWeak builds");
+        assert!(flattened.contains("return 1;"), "{flattened}");
+    }
+
     /// Copies the two-`Guard` fixture (`AWeak` returns 1, `ZStrong` returns 999)
     /// into a temp project whose credible.toml names ZStrong.a.sol:Guard.
     fn duplicate_guard_project() -> tempfile::TempDir {
@@ -882,6 +933,19 @@ mod tests {
 
     fn duplicate_guard_fixture() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../cli/tests/fixtures/duplicate-guard")
+    }
+
+    /// Points the fixture's only assertion at `file`.
+    fn configure_assertion(project: &tempfile::TempDir, file: &str) {
+        let toml =
+            std::fs::read_to_string(duplicate_guard_fixture().join("assertions/credible.toml"))
+                .expect("fixture credible.toml")
+                .replace(
+                    "\"assertions/src/ZStrong.a.sol:Guard\"",
+                    &format!("'{file}'"),
+                );
+        std::fs::write(project.path().join("assertions/credible.toml"), toml)
+            .expect("write credible.toml");
     }
 
     /// Builds the release payload and returns the file and flattened source it would upload.
