@@ -60,7 +60,10 @@ use serde_json::{
     json,
 };
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{
+    DirBuilderExt,
+    OpenOptionsExt,
+};
 use std::{
     io::{
         self,
@@ -1007,18 +1010,31 @@ impl AuthCommand {
         auth_response: &CliAuthRequestCodeResponse,
     ) -> Result<(), AuthError> {
         let dir = Self::config_dir_for(cli_args);
-        std::fs::create_dir_all(&dir)
+        let mut dir_builder = std::fs::DirBuilder::new();
+        dir_builder.recursive(true);
+        // Only directories created here get 0700; an existing dir keeps its mode.
+        #[cfg(unix)]
+        dir_builder.mode(0o700);
+        dir_builder
+            .create(&dir)
             .map_err(|error| AuthError::ConfigError(ConfigError::WriteError(error)))?;
         let path = Self::pending_device_secret_path(&dir, &auth_response.session_id);
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&path)
-            .map_err(|error| AuthError::ConfigError(ConfigError::WriteError(error)))?;
+        // create_new refuses an existing path (never follows a planted symlink
+        // or reuses a file someone holds open); the mode is set at creation.
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
         #[cfg(unix)]
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|error| AuthError::ConfigError(ConfigError::WriteError(error)))?;
+        options.mode(0o600);
+        let mut file = options.open(&path).map_err(|error| {
+            if error.kind() == io::ErrorKind::AlreadyExists {
+                AuthError::InvalidAuthData(format!(
+                    "A pending device login file already exists at {}. Remove it and run pcl auth ensure again.",
+                    path.display()
+                ))
+            } else {
+                AuthError::ConfigError(ConfigError::WriteError(error))
+            }
+        })?;
         file.write_all(auth_response.device_secret.as_bytes())
             .map_err(|error| AuthError::ConfigError(ConfigError::WriteError(error)))?;
         Ok(())

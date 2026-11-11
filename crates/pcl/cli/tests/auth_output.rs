@@ -1838,3 +1838,98 @@ fn auth_poll_reads_pending_device_secret_without_cli_flag() {
     auth_code.assert();
     auth_status.assert();
 }
+
+const PENDING_DEVICE_LOGIN_FILE: &str = "device-login-550e8400-e29b-41d4-a716-446655440000";
+
+fn device_login_code_server() -> (mockito::ServerGuard, mockito::Mock) {
+    let mut server = mockito::Server::new();
+    let auth_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(device_login_challenge_body())
+        .create();
+    (server, auth_code)
+}
+
+/// A file planted at the pending-secret path (a symlink, or a file someone
+/// already holds open) must never receive the secret.
+#[cfg(unix)]
+#[test]
+fn auth_ensure_never_writes_the_secret_through_a_planted_path() {
+    use std::io::Read;
+
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let target = temp_dir.path().join("elsewhere");
+    fs::write(&target, "").expect("write symlink target");
+    std::os::unix::fs::symlink(&target, temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE))
+        .expect("plant symlink");
+    let (server, _auth_code) = device_login_code_server();
+
+    let output = run_ensure(temp_dir.path(), &server.url(), true);
+    assert!(
+        !output.status.success(),
+        "ensure must refuse a planted pending-secret path"
+    );
+    assert_eq!(
+        fs::read_to_string(&target).expect("read symlink target"),
+        "",
+        "the secret was written through a planted symlink"
+    );
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(rendered.contains("already exists"), "{rendered}");
+
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let planted = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
+    fs::write(&planted, "").expect("plant file");
+    fs::set_permissions(&planted, fs::Permissions::from_mode(0o644)).expect("chmod planted");
+    let mut reader = fs::File::open(&planted).expect("hold planted file open");
+    let output = run_ensure(temp_dir.path(), &server.url(), true);
+    assert!(!output.status.success());
+    let mut leaked = String::new();
+    reader
+        .read_to_string(&mut leaked)
+        .expect("read planted file");
+    assert_eq!(leaked, "", "an fd opened before ensure read the secret");
+}
+
+#[cfg(unix)]
+#[test]
+fn auth_ensure_creates_a_missing_config_dir_owner_only() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let config_dir = temp_dir.path().join("new").join("pcl");
+    let (server, _auth_code) = device_login_code_server();
+
+    let output = run_ensure(&config_dir, &server.url(), true);
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mode = fs::metadata(&config_dir)
+        .expect("config dir metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        mode, 0o700,
+        "a config dir created for the secret must be 0700"
+    );
+    assert!(config_dir.join(PENDING_DEVICE_LOGIN_FILE).exists());
+
+    // An existing user dir keeps its mode.
+    let existing = tempfile::tempdir().expect("create temp dir");
+    fs::set_permissions(existing.path(), fs::Permissions::from_mode(0o755)).expect("chmod");
+    let output = run_ensure(existing.path(), &server.url(), true);
+    assert!(output.status.success());
+    let mode = fs::metadata(existing.path())
+        .expect("existing dir metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o755, "an existing config dir must not be chmodded");
+}
