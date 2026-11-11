@@ -1632,7 +1632,9 @@ impl ApiArgs {
 
     pub(in crate::api) fn api_url(&self, path: &str) -> Result<url::Url, ApiCommandError> {
         if !path.starts_with('/') {
-            return Err(ApiCommandError::InvalidPath(path.to_string()));
+            return Err(ApiCommandError::InvalidPath(
+                crate::request_log::redact_sensitive_path_input(path),
+            ));
         }
 
         let mut url = self.resolved_api_url();

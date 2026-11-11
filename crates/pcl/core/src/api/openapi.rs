@@ -513,7 +513,11 @@ pub(super) fn inspect_operation(
             .get(path)
             .and_then(|path_item| path_item.get(method.openapi_key()))
             .ok_or_else(|| {
-                ApiCommandError::OperationNotFound(format!("{} {}", method.as_str(), path))
+                ApiCommandError::OperationNotFound(format!(
+                    "{} {}",
+                    method.as_str(),
+                    crate::request_log::redact_sensitive_path_input(path)
+                ))
             })?;
         let operation_id = operation
             .get("operationId")
@@ -562,7 +566,9 @@ pub(super) fn inspect_operation(
         }
     }
 
-    Err(ApiCommandError::OperationNotFound(operation.to_string()))
+    Err(ApiCommandError::OperationNotFound(
+        crate::request_log::redact_sensitive_path_input(operation),
+    ))
 }
 
 fn operation_manifest(

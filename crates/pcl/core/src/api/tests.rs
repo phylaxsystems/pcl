@@ -1737,6 +1737,64 @@ async fn invitation_transport_errors_omit_the_bearer_token() {
 }
 
 #[tokio::test]
+async fn invalid_raw_paths_do_not_echo_invitation_tokens() {
+    let api = test_api("http://127.0.0.1:9", true);
+    for path in [
+        format!("invitations/{INVITATION_TOKEN}/preview"),
+        format!("https://h/api/v1/invitations/{INVITATION_TOKEN}/preview"),
+        format!("invitations/{INVITATION_TOKEN}/accept?x=1"),
+    ] {
+        let error = api
+            .call_api(
+                &mut CliConfig::default(),
+                &CliArgs::default(),
+                raw_get(&path),
+                test_request_log_path(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), "input.invalid_path", "{path}");
+        let rendered = format!("{error} {}", error.json_envelope());
+        assert!(
+            !rendered.contains(INVITATION_TOKEN),
+            "{path}: invalid path error kept the token: {rendered}"
+        );
+        assert!(rendered.contains("invitations/<redacted>/"), "{rendered}");
+    }
+    for path in ["relative/path", "https://h/api/v1/health"] {
+        let error = api.api_url(path).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("Invalid API path `{path}`. Paths must start with `/`.")
+        );
+    }
+}
+
+#[test]
+fn inspecting_a_concrete_invitation_path_does_not_echo_the_token() {
+    let spec = json!({"paths": {"/invitations/{token}/preview": {"get": {"operationId": "previewInvitation"}}}});
+    let concrete = format!("/invitations/{INVITATION_TOKEN}/preview");
+    let dotted = format!("/invitations/{INVITATION_TOKEN}/./accept");
+    for (operation, path) in [
+        ("get", Some(concrete.as_str())),
+        ("get", Some(dotted.as_str())),
+        (concrete.as_str(), None),
+    ] {
+        let error = inspect_operation(&spec, operation, path, false).unwrap_err();
+        let rendered = format!("{error} {}", error.json_envelope());
+        assert!(
+            !rendered.contains(INVITATION_TOKEN),
+            "operation-not-found kept the token: {rendered}"
+        );
+    }
+    let error = inspect_operation(&spec, "projects.unknown", None, false).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "No API operation matched `projects.unknown`"
+    );
+}
+
+#[tokio::test]
 async fn non_invitation_transport_errors_keep_the_request_url() {
     let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()

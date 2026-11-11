@@ -70,6 +70,15 @@ pub(crate) fn redact_sensitive_request_path(path: &str) -> String {
     }
 }
 
+/// Redacts path input echoed back in an error, which may lack the leading `/`.
+pub(crate) fn redact_sensitive_path_input(input: &str) -> String {
+    if input.starts_with('/') {
+        return redact_sensitive_request_path(input);
+    }
+    let redacted = redact_sensitive_request_path(&format!("/{input}"));
+    redacted.strip_prefix('/').unwrap_or(&redacted).to_string()
+}
+
 fn redact_invitation_tokens(path: &str) -> Option<String> {
     let mut segments = path.split('/').collect::<Vec<_>>();
     let filled = (0..segments.len())
