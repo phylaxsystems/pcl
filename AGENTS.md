@@ -135,7 +135,7 @@ When reporting results, preserve:
 - Incident IDs, transaction hashes, trace IDs, project IDs, and artifact paths.
 - The exact command used, especially for exports and mutations.
 
-Use `pcl requests list --json` to recover recent request metadata.
+Use `pcl requests list --json` to recover recent request metadata. Invitation bearer tokens are redacted in that history. On Unix the log file itself is created mode `0600`. Do not treat `requests.jsonl` as safe to upload from CI. A log created before this redaction can still contain tokens until it is deleted.
 
 ## Shell Completions
 

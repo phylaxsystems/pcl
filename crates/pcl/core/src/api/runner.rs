@@ -142,7 +142,7 @@ where
             });
             ApiCommandError::HttpStatus {
                 method,
-                path: path.to_string(),
+                path: crate::request_log::redact_sensitive_request_path(path),
                 status,
                 request_id,
                 body: Box::new(body),
@@ -159,19 +159,19 @@ where
                 .to_string();
             let bytes = match response.bytes().await {
                 Ok(bytes) => bytes,
-                Err(error) => return ApiCommandError::Request(error),
+                Err(error) => return error.into(),
             };
             ApiCommandError::HttpStatus {
                 method,
-                path: path.to_string(),
+                path: crate::request_log::redact_sensitive_request_path(path),
                 status,
                 request_id,
                 body: Box::new(response_body_value(&content_type, &bytes)),
             }
         }
-        GeneratedError::CommunicationError(error) => ApiCommandError::Request(error),
-        GeneratedError::InvalidUpgrade(error) => ApiCommandError::Request(error),
-        GeneratedError::ResponseBodyError(error) => ApiCommandError::Request(error),
+        GeneratedError::CommunicationError(error) => error.into(),
+        GeneratedError::InvalidUpgrade(error) => error.into(),
+        GeneratedError::ResponseBodyError(error) => error.into(),
         GeneratedError::InvalidResponsePayload(bytes, error) => {
             let body = response_body_value("application/json", &bytes);
             ApiCommandError::InvalidWorkflow {
@@ -501,6 +501,7 @@ impl ApiArgs {
         let (path, mut base_query) = split_path_and_inline_query(input.path)?;
         base_query.extend(parse_key_values("query", input.query)?);
         let url = self.api_url(&path)?;
+        let recorded_path = crate::request_log::redact_sensitive_request_path(&path);
         let headers = parse_headers(input.header)?;
         let operation_id = self.resolve_operation_id(config, input.method, &path).await;
         self.ensure_request_auth(config, cli_args, input.require_auth)
@@ -538,7 +539,7 @@ impl ApiArgs {
                 request_log_path,
                 "raw_paginated",
                 input.method.as_str(),
-                &path,
+                &recorded_path,
                 response.status.as_u16(),
                 response.request_id.as_deref(),
                 operation_id.as_deref(),
@@ -546,7 +547,7 @@ impl ApiArgs {
             if !response.status.is_success() {
                 return Err(ApiCommandError::HttpStatus {
                     method: input.method.as_str(),
-                    path,
+                    path: recorded_path,
                     status: response.status.as_u16(),
                     request_id: response.request_id,
                     body: Box::new(response.body),
@@ -575,7 +576,7 @@ impl ApiArgs {
         Ok(json!({
             "request": {
                 "method": input.method.as_str(),
-                "path": path,
+                "path": recorded_path,
                 "operation_id": operation_id,
                 "query": query_pairs_value(&base_query),
                 "pagination": {
@@ -1066,6 +1067,7 @@ impl ApiArgs {
         let (path, mut query) = split_path_and_inline_query(input.path)?;
         query.extend(parse_key_values("query", input.query)?);
         let url = self.api_url(&path)?;
+        let recorded_path = crate::request_log::redact_sensitive_request_path(&path);
         let headers = parse_headers(input.header)?;
         let body = request_body(input.body, input.body_file, input.field)?;
         let operation_id = self.resolve_operation_id(config, input.method, &path).await;
@@ -1096,7 +1098,7 @@ impl ApiArgs {
             request_log_path,
             "raw",
             input.method.as_str(),
-            &path,
+            &recorded_path,
             response.status.as_u16(),
             response.request_id.as_deref(),
             operation_id.as_deref(),
@@ -1124,7 +1126,7 @@ impl ApiArgs {
                 request_log_path,
                 "raw_retry_after_refresh",
                 input.method.as_str(),
-                &path,
+                &recorded_path,
                 response.status.as_u16(),
                 response.request_id.as_deref(),
                 operation_id.as_deref(),
@@ -1132,7 +1134,7 @@ impl ApiArgs {
             if !response.status.is_success() {
                 return Err(ApiCommandError::HttpStatus {
                     method: input.method.as_str(),
-                    path,
+                    path: recorded_path.clone(),
                     status: response.status.as_u16(),
                     request_id: response.request_id,
                     body: Box::new(response.body),
@@ -1141,7 +1143,7 @@ impl ApiArgs {
             return Ok(json!({
                 "request": {
                     "method": input.method.as_str(),
-                    "path": path,
+                    "path": recorded_path,
                     "operation_id": operation_id,
                     "query": query_pairs_value(&query),
                     "retried_after_refresh": true,
@@ -1158,7 +1160,7 @@ impl ApiArgs {
         if !response.status.is_success() {
             return Err(ApiCommandError::HttpStatus {
                 method: input.method.as_str(),
-                path,
+                path: recorded_path.clone(),
                 status: response.status.as_u16(),
                 request_id: response.request_id,
                 body: Box::new(response.body),
@@ -1168,7 +1170,7 @@ impl ApiArgs {
         Ok(json!({
             "request": {
                 "method": input.method.as_str(),
-                "path": path,
+                "path": recorded_path,
                 "operation_id": operation_id,
                 "query": query_pairs_value(&query),
             },
@@ -1204,6 +1206,7 @@ impl ApiArgs {
             .await?;
         let path = resolved_request.path.clone();
         let url = self.api_url(&path)?;
+        let recorded_path = crate::request_log::redact_sensitive_request_path(&path);
         let json_body = if let Some(body) = &request.body {
             Some(
                 self.normalize_request_body(
@@ -1228,7 +1231,7 @@ impl ApiArgs {
             request_log_path,
             "workflow",
             request.method.as_str(),
-            &path,
+            &recorded_path,
             response.status.as_u16(),
             response.request_id.as_deref(),
             Some(request.operation_id),
@@ -1248,7 +1251,7 @@ impl ApiArgs {
                 request_log_path,
                 "workflow_retry_after_refresh",
                 request.method.as_str(),
-                &path,
+                &recorded_path,
                 response.status.as_u16(),
                 response.request_id.as_deref(),
                 Some(request.operation_id),
@@ -1257,7 +1260,7 @@ impl ApiArgs {
         if !response.status.is_success() {
             return Err(ApiCommandError::HttpStatus {
                 method: request.method.as_str(),
-                path,
+                path: recorded_path,
                 status: response.status.as_u16(),
                 request_id: response.request_id,
                 body: Box::new(response.body),
@@ -1270,7 +1273,7 @@ impl ApiArgs {
             request: json!({
                 "method": request.method.as_str(),
                 "operation_id": request.operation_id,
-                "path": path,
+                "path": recorded_path,
                 "query": query_pairs_value(&request.query),
                 "auth": self.auth_plan(request.require_auth, request.attach_auth, config),
                 "side_effecting": request.method != HttpMethod::Get,
@@ -1598,7 +1601,7 @@ impl ApiArgs {
         reqwest::Client::builder()
             .default_headers(headers)
             .build()
-            .map_err(ApiCommandError::Request)
+            .map_err(ApiCommandError::from)
     }
 
     pub(in crate::api) fn generated_client(
@@ -1629,7 +1632,9 @@ impl ApiArgs {
 
     pub(in crate::api) fn api_url(&self, path: &str) -> Result<url::Url, ApiCommandError> {
         if !path.starts_with('/') {
-            return Err(ApiCommandError::InvalidPath(path.to_string()));
+            return Err(ApiCommandError::InvalidPath(
+                crate::request_log::redact_sensitive_path_input(path),
+            ));
         }
 
         let mut url = self.resolved_api_url();

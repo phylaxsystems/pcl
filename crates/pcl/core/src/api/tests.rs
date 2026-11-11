@@ -18,7 +18,11 @@ use std::{
     cell::Cell,
     collections::BTreeMap,
     fs,
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
+    sync::LazyLock,
 };
 
 const RETIRED_OPERATION_IDS: &[&str] = &[
@@ -30,7 +34,23 @@ const RETIRED_OPERATION_IDS: &[&str] = &[
 ];
 
 fn test_request_log_path() -> &'static Path {
-    Path::new("/tmp/pcl-test-requests.jsonl")
+    // One log per test process, so parallel runs never share or grow a fixed file.
+    static DIR: LazyLock<tempfile::TempDir> =
+        LazyLock::new(|| tempfile::tempdir().expect("create test request log dir"));
+    static PATH: LazyLock<PathBuf> = LazyLock::new(|| DIR.path().join("requests.jsonl"));
+    PATH.as_path()
+}
+
+#[test]
+fn test_request_log_is_private_to_this_process() {
+    let path = test_request_log_path();
+    assert_ne!(path, Path::new("/tmp/pcl-test-requests.jsonl"));
+    assert!(path.starts_with(std::env::temp_dir()), "{}", path.display());
+    assert!(
+        path.parent().is_some_and(Path::is_dir),
+        "{}",
+        path.display()
+    );
 }
 
 fn test_api(api_url: impl AsRef<str>, allow_unauthenticated: bool) -> ApiArgs {
@@ -1457,6 +1477,343 @@ async fn authenticated_workflow_retries_once_after_refresh_on_401() {
     retry.assert_async().await;
 }
 
+const INVITATION_TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+#[tokio::test]
+async fn invitation_workflow_history_omits_the_bearer_token() {
+    let mut server = mockito::Server::new_async().await;
+    let preview = server
+        .mock(
+            "GET",
+            format!("/api/v1/invitations/{INVITATION_TOKEN}/preview").as_str(),
+        )
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-preview")
+        .with_body(r#"{"error":"invitation not found"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let first_accept = server
+        .mock(
+            "POST",
+            format!("/api/v1/invitations/{INVITATION_TOKEN}/accept").as_str(),
+        )
+        .match_header("authorization", "Bearer old_access")
+        .with_status(401)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"code":"TOKEN_EXPIRED","error":"expired"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let refresh = server
+        .mock("POST", "/api/v1/auth/refresh")
+        .match_body(Matcher::Json(json!({ "refresh_token": "old_refresh" })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"token":"new_access","refresh_token":"new_refresh","expires_at":"2030-01-01T00:00:00Z","refresh_expires_at":"2030-02-01T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create_async()
+        .await;
+    let retried_accept = server
+        .mock(
+            "POST",
+            format!("/api/v1/invitations/{INVITATION_TOKEN}/accept").as_str(),
+        )
+        .match_header("authorization", "Bearer new_access")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_header("x-request-id", "req-accept")
+        .with_body(r#"{"accepted":true}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let api = test_api(server.url(), false);
+    let temp_dir = tempfile::tempdir().unwrap();
+    let log_path = temp_dir.path().join("requests.jsonl");
+    let cli_args = CliArgs {
+        config_dir: Some(temp_dir.path().to_path_buf()),
+        ..Default::default()
+    };
+    let mut config = valid_auth_config("old_access", "old_refresh");
+    config.set_test_platform(&server.url());
+    config.write_to_file(&cli_args).unwrap();
+
+    let preview_request = test_workflow_request_for_operation(
+        WorkflowOperation::new(HttpMethod::Get, "previewInvitation")
+            .path_param("token", INVITATION_TOKEN),
+        false,
+        Vec::<String>::new(),
+    );
+    let preview_error = api
+        .call_workflow_result(&mut config, &cli_args, &preview_request, &log_path)
+        .await
+        .unwrap_err();
+    let preview_envelope = preview_error.json_envelope().to_string();
+    assert!(
+        !preview_envelope.contains(INVITATION_TOKEN),
+        "preview error envelope kept the invitation token: {preview_envelope}"
+    );
+    assert!(preview_envelope.contains("/invitations/<redacted>/preview"));
+
+    let accept_request = test_workflow_request_for_operation(
+        WorkflowOperation::new(HttpMethod::Post, "acceptInvitation")
+            .path_param("token", INVITATION_TOKEN),
+        true,
+        Vec::<String>::new(),
+    );
+    let accept_result = api
+        .call_workflow_result(&mut config, &cli_args, &accept_request, &log_path)
+        .await
+        .unwrap();
+    let accept_rendered = accept_result.request.to_string();
+    assert!(
+        !accept_rendered.contains(INVITATION_TOKEN),
+        "accept result kept the invitation token: {accept_rendered}"
+    );
+    assert_eq!(
+        accept_result.request["path"],
+        "/invitations/<redacted>/accept"
+    );
+    assert_eq!(accept_result.request["operation_id"], "acceptInvitation");
+    assert_eq!(accept_result.request["retried_after_refresh"], true);
+
+    let history = fs::read_to_string(&log_path).expect("workflow request history");
+    assert!(
+        !history.contains(INVITATION_TOKEN),
+        "workflow request history kept the invitation token: {history}"
+    );
+    assert!(history.contains("/invitations/<redacted>/preview"));
+    assert!(history.contains("/invitations/<redacted>/accept"));
+
+    preview.assert_async().await;
+    first_accept.assert_async().await;
+    refresh.assert_async().await;
+    retried_accept.assert_async().await;
+}
+
+fn raw_get(path: &str) -> ApiRequestInput<'_> {
+    ApiRequestInput {
+        method: HttpMethod::Get,
+        path,
+        query: &[],
+        header: &[],
+        body: None,
+        body_file: None,
+        field: &[],
+        require_auth: false,
+    }
+}
+
+#[tokio::test]
+async fn raw_calls_that_normalize_onto_invitation_routes_redact_every_sink() {
+    let t = INVITATION_TOKEN;
+    let variants = [
+        format!("/invitations/{t}/./preview"),
+        format!("/invitations/{t}/%2e/preview"),
+        format!("/invitations/{t}/junk/../preview"),
+        format!("/invitations/{t}/junk/%2e%2e/accept"),
+        format!("/invitations/{t}\\preview"),
+        format!("/Invitations/{t}/junk/%2E%2E/accept"),
+        format!("/x#/../invitations/{t}/preview"),
+        format!("/x%3F/../invitations/{t}/preview"),
+    ];
+    for status in [200, 404] {
+        let mut server = mockito::Server::new_async().await;
+        let live_routes = [
+            format!("/api/v1/invitations/{t}/preview"),
+            format!("/api/v1/Invitations/{t}/accept"),
+            format!("/api/v1/invitations/{t}/accept"),
+        ];
+        let mut mocks = Vec::new();
+        for route in &live_routes {
+            mocks.push(
+                server
+                    .mock("GET", route.as_str())
+                    .with_status(status)
+                    .with_header("content-type", "application/json")
+                    .with_body(r#"{"ok":true}"#)
+                    .create_async()
+                    .await,
+            );
+        }
+        let api = test_api(server.url(), true);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("requests.jsonl");
+        let mut config = CliConfig::default();
+
+        for path in &variants {
+            let rendered = match api
+                .call_api(&mut config, &CliArgs::default(), raw_get(path), &log_path)
+                .await
+            {
+                Ok(output) => {
+                    assert_eq!(output["response"]["status"], 200, "{path}: {output}");
+                    output["request"].to_string()
+                }
+                Err(error) => {
+                    assert!(
+                        matches!(error, ApiCommandError::HttpStatus { status: 404, .. }),
+                        "{path}: did not reach the live route: {error}"
+                    );
+                    format!("{error} {}", error.json_envelope())
+                }
+            };
+            assert!(
+                !rendered.contains(t),
+                "{path}: status {status} output kept the token: {rendered}"
+            );
+            assert!(rendered.contains("<redacted>"), "{path}: {rendered}");
+        }
+        let history = fs::read_to_string(&log_path).expect("raw request history");
+        assert!(
+            !history.contains(t),
+            "raw history kept the token: {history}"
+        );
+        let hits = history.lines().count();
+        assert_eq!(hits, variants.len(), "{history}");
+    }
+}
+
+#[tokio::test]
+async fn invitation_transport_errors_omit_the_bearer_token() {
+    let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let api_url = format!("http://127.0.0.1:{closed_port}");
+    let api = test_api(&api_url, true);
+    let temp_dir = tempfile::tempdir().unwrap();
+    let log_path = temp_dir.path().join("requests.jsonl");
+    let cli_args = CliArgs {
+        config_dir: Some(temp_dir.path().to_path_buf()),
+        ..Default::default()
+    };
+    let mut config = valid_auth_config("access", "refresh");
+    config.set_test_platform(&api_url);
+    config.write_to_file(&cli_args).unwrap();
+
+    let mut errors = Vec::new();
+    for (method, operation_id, require_auth) in [
+        (HttpMethod::Get, "previewInvitation", false),
+        (HttpMethod::Post, "acceptInvitation", true),
+    ] {
+        let request = test_workflow_request_for_operation(
+            WorkflowOperation::new(method, operation_id).path_param("token", INVITATION_TOKEN),
+            require_auth,
+            Vec::<String>::new(),
+        );
+        errors.push(
+            api.call_workflow_result(&mut config, &cli_args, &request, &log_path)
+                .await
+                .unwrap_err(),
+        );
+    }
+    let raw_path = format!("/invitations/{INVITATION_TOKEN}/preview");
+    errors.push(
+        api.call_api(&mut config, &cli_args, raw_get(&raw_path), &log_path)
+            .await
+            .unwrap_err(),
+    );
+
+    for error in errors {
+        assert!(matches!(error, ApiCommandError::Request(_)), "{error:?}");
+        assert_eq!(error.code(), "network.request_failed");
+        let display = error.to_string();
+        let envelope = error.json_envelope().to_string();
+        assert!(
+            !display.contains(INVITATION_TOKEN),
+            "transport error Display kept the token: {display}"
+        );
+        assert!(
+            !envelope.contains(INVITATION_TOKEN),
+            "transport error envelope kept the token: {envelope}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn invalid_raw_paths_do_not_echo_invitation_tokens() {
+    let api = test_api("http://127.0.0.1:9", true);
+    for path in [
+        format!("invitations/{INVITATION_TOKEN}/preview"),
+        format!("https://h/api/v1/invitations/{INVITATION_TOKEN}/preview"),
+        format!("invitations/{INVITATION_TOKEN}/accept?x=1"),
+    ] {
+        let error = api
+            .call_api(
+                &mut CliConfig::default(),
+                &CliArgs::default(),
+                raw_get(&path),
+                test_request_log_path(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), "input.invalid_path", "{path}");
+        let rendered = format!("{error} {}", error.json_envelope());
+        assert!(
+            !rendered.contains(INVITATION_TOKEN),
+            "{path}: invalid path error kept the token: {rendered}"
+        );
+        assert!(rendered.contains("invitations/<redacted>/"), "{rendered}");
+    }
+    for path in ["relative/path", "https://h/api/v1/health"] {
+        let error = api.api_url(path).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("Invalid API path `{path}`. Paths must start with `/`.")
+        );
+    }
+}
+
+#[test]
+fn inspecting_a_concrete_invitation_path_does_not_echo_the_token() {
+    let spec = json!({"paths": {"/invitations/{token}/preview": {"get": {"operationId": "previewInvitation"}}}});
+    let concrete = format!("/invitations/{INVITATION_TOKEN}/preview");
+    let dotted = format!("/invitations/{INVITATION_TOKEN}/./accept");
+    for (operation, path) in [
+        ("get", Some(concrete.as_str())),
+        ("get", Some(dotted.as_str())),
+        (concrete.as_str(), None),
+    ] {
+        let error = inspect_operation(&spec, operation, path, false).unwrap_err();
+        let rendered = format!("{error} {}", error.json_envelope());
+        assert!(
+            !rendered.contains(INVITATION_TOKEN),
+            "operation-not-found kept the token: {rendered}"
+        );
+    }
+    let error = inspect_operation(&spec, "projects.unknown", None, false).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "No API operation matched `projects.unknown`"
+    );
+}
+
+#[tokio::test]
+async fn non_invitation_transport_errors_keep_the_request_url() {
+    let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let api = test_api(format!("http://127.0.0.1:{closed_port}"), true);
+    let error = api
+        .call_api(
+            &mut CliConfig::default(),
+            &CliArgs::default(),
+            raw_get("/health"),
+            test_request_log_path(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("/api/v1/health"), "{error}");
+}
+
 #[tokio::test]
 async fn raw_401_preserves_original_error_when_refresh_endpoint_is_missing() {
     let mut server = mockito::Server::new_async().await;
@@ -2288,6 +2645,23 @@ fn builds_account_workflow_requests() {
     assert_eq!(accept_terms.path, "/web/auth/accept-terms");
     assert_eq!(accept_terms.method.openapi_key(), "post");
     assert_eq!(accept_terms.body.as_deref(), Some("{}"));
+}
+
+#[test]
+fn invitation_preview_next_actions_omit_the_token() {
+    for preview_flag in [true, false] {
+        let preview = access_request(&AccessArgs {
+            preview: preview_flag,
+            token: Some(INVITATION_TOKEN.to_string()),
+            ..access_args()
+        })
+        .unwrap();
+        assert_eq!(
+            preview.path,
+            format!("/invitations/{INVITATION_TOKEN}/preview")
+        );
+        assert_eq!(preview.next_actions, ["pcl access accept <token>"]);
+    }
 }
 
 #[test]

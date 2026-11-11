@@ -80,7 +80,7 @@ pub enum ApiCommandError {
     Json(#[from] serde_json::Error),
 
     #[error("API request failed: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(reqwest::Error),
 
     #[error("API request failed with status {status} for {method} {path}")]
     HttpStatus {
@@ -133,6 +133,20 @@ pub enum ApiCommandError {
         endpoint: &'static str,
         reason: String,
     },
+}
+
+impl From<reqwest::Error> for ApiCommandError {
+    /// Drops the URL from transport errors on invitation routes: its path carries the token.
+    fn from(error: reqwest::Error) -> Self {
+        let sensitive = error.url().is_some_and(|url| {
+            crate::request_log::redact_sensitive_request_path(url.path()) != url.path()
+        });
+        Self::Request(if sensitive {
+            error.without_url()
+        } else {
+            error
+        })
+    }
 }
 
 impl ApiCommandError {

@@ -16,13 +16,17 @@ pub(in crate::api) fn split_path_and_inline_query(
     input: &str,
 ) -> Result<(String, Vec<(String, String)>), ApiCommandError> {
     if !input.starts_with('/') {
-        return Err(ApiCommandError::InvalidPath(input.to_string()));
+        return Err(ApiCommandError::InvalidPath(
+            crate::request_log::redact_sensitive_path_input(input),
+        ));
     }
     let Some((path, query)) = input.split_once('?') else {
         return Ok((input.to_string(), Vec::new()));
     };
     if path.is_empty() || !path.starts_with('/') {
-        return Err(ApiCommandError::InvalidPath(input.to_string()));
+        return Err(ApiCommandError::InvalidPath(
+            crate::request_log::redact_sensitive_path_input(input),
+        ));
     }
     let query = url::form_urlencoded::parse(query.as_bytes())
         .map(|(key, value)| (key.into_owned(), value.into_owned()))

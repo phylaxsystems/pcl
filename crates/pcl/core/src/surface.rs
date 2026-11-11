@@ -1588,6 +1588,7 @@ fn llms_guide() -> Value {
             "Treat every output as an envelope with status, data, error, and next_actions.",
             "Use JSONL export artifacts for long investigations.",
             "Use request IDs from errors and pcl requests for audit trails.",
+            "Request history redacts invitation tokens, but requests.jsonl can still hold other request paths. Do not publish it as a shared CI artifact.",
             "Prefer CLI contracts over MCP, browser automation, or scraped help text."
         ],
         "consumption_order": [
