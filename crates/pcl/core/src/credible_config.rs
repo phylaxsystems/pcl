@@ -126,8 +126,9 @@ pub struct AssertionIdentity {
 
 impl AssertionIdentity {
     /// Parses `path:Contract`, `path/Contract.a.sol` (contract inferred from the
-    /// file name) or a bare `Contract`.
-    pub fn parse(file: &str) -> Result<Self, CredibleConfigError> {
+    /// file name) or a bare `Contract`. The error is a bare message so each
+    /// caller can say where the input came from.
+    pub fn parse(file: &str) -> Result<Self, String> {
         let file = file.trim().replace('\\', "/");
         let (source, contract_name) = match file.split_once(':') {
             Some((source, name)) => (Some(source.trim().to_string()), name.trim().to_string()),
@@ -138,14 +139,12 @@ impl AssertionIdentity {
             None => (None, file.clone()),
         };
         if source.as_deref().is_some_and(str::is_empty) {
-            return Err(CredibleConfigError::Invalid(format!(
-                "assertion `{file}` has an empty source path"
-            )));
+            return Err(format!("assertion `{file}` has an empty source path"));
         }
         if !is_contract_name(&contract_name) {
-            return Err(CredibleConfigError::Invalid(format!(
+            return Err(format!(
                 "assertion `{file}` must be `path/to/File.a.sol:Contract` with one contract name"
-            )));
+            ));
         }
         Ok(Self {
             source,
@@ -156,7 +155,7 @@ impl AssertionIdentity {
     /// Parses a `credible.toml` entry, which must name its source file: the
     /// deploy circuit-breaker scan reads that file, so a bare name would skip it.
     pub fn from_config(file: &str) -> Result<Self, CredibleConfigError> {
-        let identity = Self::parse(file)?;
+        let identity = Self::parse(file).map_err(CredibleConfigError::Invalid)?;
         if identity.source.is_none() {
             return Err(CredibleConfigError::Invalid(format!(
                 "assertion `{}` must name its source file, such as assertions/src/{0}.a.sol:{0}",
@@ -175,13 +174,11 @@ impl AssertionIdentity {
     }
 }
 
-fn infer_contract_name(file: &str) -> Result<String, CredibleConfigError> {
+fn infer_contract_name(file: &str) -> Result<String, String> {
     let file_name = Path::new(file)
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| {
-            CredibleConfigError::Invalid(format!("Invalid assertion file path: {file}"))
-        })?;
+        .ok_or_else(|| format!("Invalid assertion file path: {file}"))?;
 
     for suffix in [".a.sol", ".sol"] {
         if let Some(contract_name) = file_name.strip_suffix(suffix) {
@@ -189,9 +186,9 @@ fn infer_contract_name(file: &str) -> Result<String, CredibleConfigError> {
         }
     }
 
-    Err(CredibleConfigError::Invalid(format!(
+    Err(format!(
         "Could not infer assertion contract from file {file}"
-    )))
+    ))
 }
 
 fn has_sol_extension(file: &str) -> bool {

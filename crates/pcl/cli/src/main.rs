@@ -592,7 +592,7 @@ fn verify_error_envelope(err: &VerifyError) -> Value {
                 &["pcl verify --help", "Check file paths and permissions"],
             )
         }
-        VerifyError::Config(_) => {
+        VerifyError::Config(_) | VerifyError::InvalidArgument(_) => {
             (
                 "verify.invalid_config",
                 err.to_string(),

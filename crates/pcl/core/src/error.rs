@@ -259,6 +259,9 @@ pub enum VerifyError {
     #[error(transparent)]
     Config(#[from] CredibleConfigError),
 
+    #[error("Invalid `pcl verify` argument: {0}")]
+    InvalidArgument(String),
+
     #[error("{message}: {source}")]
     Io {
         message: String,

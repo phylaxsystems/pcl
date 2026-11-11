@@ -349,3 +349,26 @@ fn verify_cli_lists_built_sources_for_a_path_without_its_directory() {
         "{envelope}"
     );
 }
+
+#[cfg(feature = "credible")]
+#[test]
+fn verify_cli_names_the_argument_in_a_parse_error() {
+    let project = fixture_project();
+    let root = project.path().to_str().expect("utf-8 temp path");
+
+    let envelope = pcl_error_envelope(&[
+        "verify",
+        "--root",
+        root,
+        "assertions/src/NoArgsAssertion.a.sol:Ignored:NoArgsAssertion",
+        "--json",
+    ]);
+
+    assert_eq!(envelope["error"]["code"], "verify.invalid_config");
+    assert_eq!(
+        envelope["error"]["message"],
+        "Invalid `pcl verify` argument: assertion \
+         `assertions/src/NoArgsAssertion.a.sol:Ignored:NoArgsAssertion` must be \
+         `path/to/File.a.sol:Contract` with one contract name"
+    );
+}

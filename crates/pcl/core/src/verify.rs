@@ -163,7 +163,7 @@ impl VerifyArgs {
     }
 
     fn build_single(&self, assertion: &str, root: &Path) -> Result<Vec<VerifyInput>, VerifyError> {
-        let identity = AssertionIdentity::parse(assertion)?;
+        let identity = AssertionIdentity::parse(assertion).map_err(VerifyError::InvalidArgument)?;
         let contract_name = identity.contract_name.clone();
         let output = BuildAndFlattenArgs {
             root: Some(root.to_path_buf()),
