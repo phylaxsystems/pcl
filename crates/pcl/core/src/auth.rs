@@ -1097,22 +1097,42 @@ impl AuthCommand {
     }
 
     /// Removes every pending device login in the config dir; returns a
-    /// warning for each file that could not be removed.
+    /// warning for each file that could not be removed, and for a dir or
+    /// entry that could not be listed (a missing dir is not a failure).
     fn clear_all_pending_device_secrets(cli_args: &CliArgs) -> Vec<Value> {
-        let Ok(entries) = std::fs::read_dir(Self::config_dir_for(cli_args)) else {
-            return Vec::new();
+        let dir = Self::config_dir_for(cli_args);
+        let listing_failed = |error: &io::Error| {
+            json!({
+                "code": "auth.pending_device_login_cleanup_failed",
+                "message": format!(
+                    "Could not list {} to remove pending device logins: {error}",
+                    dir.display()
+                ),
+            })
+        };
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Vec::new(),
+            Err(error) => return vec![listing_failed(&error)],
         };
         entries
-            .filter_map(Result::ok)
-            .filter(|entry| {
+            .filter_map(|entry| {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => return Some(listing_failed(&error)),
+                };
                 // Only the exact names pending_device_secret_path creates.
-                entry
+                let owned = entry
                     .file_name()
                     .to_str()
                     .and_then(|name| name.strip_prefix("device-login-"))
-                    .is_some_and(|id| Uuid::parse_str(id).is_ok_and(|uuid| uuid.to_string() == id))
+                    .is_some_and(|id| Uuid::parse_str(id).is_ok_and(|uuid| uuid.to_string() == id));
+                if owned {
+                    Self::remove_pending_device_secret(&entry.path())
+                } else {
+                    None
+                }
             })
-            .filter_map(|entry| Self::remove_pending_device_secret(&entry.path()))
             .collect()
     }
 

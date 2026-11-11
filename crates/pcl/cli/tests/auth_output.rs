@@ -2559,3 +2559,34 @@ fn auth_logout_keeps_files_that_only_look_like_pending_logins() {
         );
     }
 }
+
+/// When logout cannot list the config dir it must say the pending secrets may
+/// still be there instead of reporting a clean logout.
+#[cfg(unix)]
+#[test]
+fn auth_logout_warns_when_the_config_dir_cannot_be_listed() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    fs::write(
+        temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE),
+        "test_secret",
+    )
+    .expect("write pending secret");
+    fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o300)).expect("chmod");
+    let output = run_logout_local(temp_dir.path());
+    fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o700)).expect("restore");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json envelope");
+    let warnings = envelope["warnings"].as_array().cloned().unwrap_or_default();
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning["code"] == "auth.pending_device_login_cleanup_failed"),
+        "logout hid that it could not list pending logins: {envelope}"
+    );
+}
