@@ -147,11 +147,15 @@ pub fn append_request_record_at(path: &Path, record: &Value) -> std::io::Result<
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
-        let create_parent = !parent.exists();
-        fs::create_dir_all(parent)?;
-        if create_parent {
-            restrict_owner_mode(parent, 0o700)?;
+        // Only missing directories are created, each owner-only from the start.
+        let mut dirs = fs::DirBuilder::new();
+        dirs.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            dirs.mode(0o700);
         }
+        dirs.create(parent)?;
     }
 
     let record = redact_record_path(record);
@@ -465,6 +469,29 @@ mod tests {
                 elapsed < std::time::Duration::from_secs(1),
                 "redaction took {elapsed:?}"
             );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn every_directory_created_for_a_new_log_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let outer = temp_dir.path().join("a");
+        let inner = outer.join("b");
+        append_request_record_at(
+            &inner.join("requests.jsonl"),
+            &json!({"path": "/health", "status": 200}),
+        )
+        .expect("append nested log");
+        for dir in [&outer, &inner] {
+            let mode = fs::metadata(dir)
+                .expect("dir metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o700, "{} mode was {mode:o}", dir.display());
         }
     }
 
