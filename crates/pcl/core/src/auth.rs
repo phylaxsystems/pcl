@@ -612,8 +612,10 @@ impl AuthCommand {
             ))?;
             self.wait_for_verification(config, &client, &auth_response, true)
                 .await?;
-            Self::clear_pending_device_secret(cli_args, &auth_response.session_id);
+            let cleanup_warning =
+                Self::clear_pending_device_secret(cli_args, &auth_response.session_id);
             let mut output = self.with_v2_spec_warning(self.status_envelope(config));
+            push_warning(&mut output, cleanup_warning);
             if let Some(object) = output.as_object_mut() {
                 object.insert("event".to_string(), json!("auth.login_complete"));
                 object.insert("terminal".to_string(), json!(true));
@@ -626,7 +628,15 @@ impl AuthCommand {
         self.display_login_instructions(&auth_response);
         self.wait_for_verification(config, &client, &auth_response, json_output)
             .await?;
-        Self::clear_pending_device_secret(cli_args, &auth_response.session_id);
+        if let Some(warning) =
+            Self::clear_pending_device_secret(cli_args, &auth_response.session_id)
+        {
+            eprintln!(
+                "{} {}",
+                "Warning:".yellow().bold(),
+                warning["message"].as_str().unwrap_or_default()
+            );
+        }
         self.print_v2_spec_notice(json_output);
         Ok(())
     }
@@ -963,9 +973,10 @@ impl AuthCommand {
                 expires_at.unwrap_or_else(default_poll_fallback_expires_at),
                 &self.effective_auth_url(),
             )?;
-            Self::clear_pending_device_secret(cli_args, session_id);
+            let cleanup_warning = Self::clear_pending_device_secret(cli_args, session_id);
             self.remember_platform_url(config);
             let mut output = self.with_v2_spec_warning(self.status_envelope(config));
+            push_warning(&mut output, cleanup_warning);
             if let Some(object) = output.as_object_mut() {
                 object.insert("event".to_string(), json!("auth.login_complete"));
                 object.insert("terminal".to_string(), json!(true));
@@ -1045,11 +1056,15 @@ impl AuthCommand {
         session_id: &Uuid,
     ) -> Result<String, AuthError> {
         let path = Self::pending_device_secret_path(&Self::config_dir_for(cli_args), session_id);
-        let secret = std::fs::read_to_string(&path).map_err(|_| {
-            AuthError::InvalidAuthData(
-                "No pending device login is stored for this session. Run pcl auth ensure again."
-                    .to_string(),
-            )
+        let secret = std::fs::read_to_string(&path).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                AuthError::InvalidAuthData(
+                    "No pending device login is stored for this session. Run pcl auth ensure again."
+                        .to_string(),
+                )
+            } else {
+                AuthError::ConfigError(ConfigError::ReadError(error))
+            }
         })?;
         let secret = secret.trim().to_string();
         if secret.is_empty() {
@@ -1060,9 +1075,22 @@ impl AuthCommand {
         Ok(secret)
     }
 
-    fn clear_pending_device_secret(cli_args: &CliArgs, session_id: &Uuid) {
+    /// Removes the pending secret; returns a warning when a file that may
+    /// still hold it could not be removed.
+    fn clear_pending_device_secret(cli_args: &CliArgs, session_id: &Uuid) -> Option<Value> {
         let path = Self::pending_device_secret_path(&Self::config_dir_for(cli_args), session_id);
-        let _ = std::fs::remove_file(path);
+        match std::fs::remove_file(&path) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                Some(json!({
+                    "code": "auth.pending_device_login_cleanup_failed",
+                    "message": format!(
+                        "Could not remove the pending device login file {}: {error}",
+                        path.display()
+                    ),
+                }))
+            }
+            _ => None,
+        }
     }
 
     async fn check_auth_status(
@@ -1793,6 +1821,17 @@ fn update_config_from_verified_status(
         issuer_platform_url: Some(crate::platform::trim_platform_url(issuer)),
     });
     Ok(())
+}
+
+/// Appends a warning to an envelope's top-level `warnings` array.
+fn push_warning(envelope: &mut Value, warning: Option<Value>) {
+    let (Some(warning), Some(object)) = (warning, envelope.as_object_mut()) else {
+        return;
+    };
+    match object.entry("warnings").or_insert_with(|| json!([])) {
+        Value::Array(warnings) => warnings.push(warning),
+        other => *other = json!([warning]),
+    }
 }
 
 fn shell_quote(value: &str) -> String {

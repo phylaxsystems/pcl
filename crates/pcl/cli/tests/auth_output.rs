@@ -1933,3 +1933,90 @@ fn auth_ensure_creates_a_missing_config_dir_owner_only() {
         & 0o777;
     assert_eq!(mode, 0o755, "an existing config dir must not be chmodded");
 }
+
+fn run_poll(config_dir: &std::path::Path, auth_url: &str, extra: &[&str]) -> std::process::Output {
+    let mut args = vec![
+        "--config-dir",
+        config_dir.to_str().expect("utf-8 temp path"),
+        "--json",
+        "auth",
+        "--auth-url",
+        auth_url,
+        "poll",
+        "--session-id",
+        "550e8400-e29b-41d4-a716-446655440000",
+        "--expires-at",
+        "2099-12-31T00:00:00Z",
+    ];
+    args.extend(extra);
+    Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args(args)
+        .output()
+        .expect("run pcl auth poll")
+}
+
+fn verified_status_mock(server: &mut mockito::ServerGuard) -> mockito::Mock {
+    server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"verified":true,"user_id":"550e8400-e29b-41d4-a716-446655440000","token":"opaque-token","refresh_token":"new-refresh-token","email":"agent@example.com"}"#,
+        )
+        .create()
+}
+
+/// An unreadable pending file is not "no pending login": the real I/O error
+/// must reach the caller.
+#[test]
+fn auth_poll_reports_why_the_pending_secret_could_not_be_read() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    fs::create_dir(temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE)).expect("plant dir");
+    let server = mockito::Server::new();
+
+    let output = run_poll(temp_dir.path(), &server.url(), &[]);
+    assert!(!output.status.success());
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !rendered.contains("No pending device login"),
+        "a read failure was reported as a missing login: {rendered}"
+    );
+    assert!(rendered.contains("directory"), "{rendered}");
+}
+
+/// A pending secret that could not be removed after a successful claim is
+/// reported, not silently left on disk.
+#[test]
+fn auth_poll_warns_when_the_pending_secret_cannot_be_removed() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let stuck = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
+    fs::create_dir(&stuck).expect("plant dir");
+    fs::write(stuck.join("keep"), "").expect("make dir non-empty");
+    let mut server = mockito::Server::new();
+    let _status = verified_status_mock(&mut server);
+
+    let output = run_poll(
+        temp_dir.path(),
+        &server.url(),
+        &["--device-secret", "test_secret"],
+    );
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json envelope");
+    assert_eq!(envelope["status"], "ok");
+    let warnings = envelope["warnings"].as_array().cloned().unwrap_or_default();
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning["code"] == "auth.pending_device_login_cleanup_failed"),
+        "missing cleanup warning: {envelope}"
+    );
+}
