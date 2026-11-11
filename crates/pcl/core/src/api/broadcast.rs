@@ -189,6 +189,16 @@ async fn resolve_signer(
 
 /// Interactive guard before spending gas. Machine mode treats `--broadcast`
 /// itself as consent; human mode prompts unless `--yes`.
+fn release_deploy_confirmation(
+    release_id: &str,
+    calldata: &ReleaseDeployCalldataResponse,
+) -> Result<String, ApiCommandError> {
+    Ok(format!(
+        "StateOracle.batch with {} operation(s) for release {release_id}",
+        calldata.operations.len().max(calldata.calldata.len())
+    ))
+}
+
 fn confirm_send(
     cli_args: &CliArgs,
     yes: bool,
@@ -558,16 +568,14 @@ impl ApiArgs {
             ));
         }
 
+        let confirmation = release_deploy_confirmation(release_id, &calldata)?;
         confirm_send(
             cli_args,
             args.broadcast.yes,
             signer.address(),
             calldata.chain_id,
             calldata.state_oracle_address,
-            &format!(
-                "StateOracle.batch with {} operation(s) for release {release_id}",
-                calldata.operations.len().max(calldata.calldata.len())
-            ),
+            &confirmation,
         )?;
 
         progress(cli_args, "Broadcasting StateOracle.batch transaction");
@@ -1300,6 +1308,96 @@ mod tests {
         assert_eq!(result["data"]["mode"], "direct");
         calldata.assert_async().await;
         confirm.assert_async().await;
+    }
+
+    fn sample_deploy_calldata(
+        operations: Vec<Value>,
+        calldata: Vec<Bytes>,
+    ) -> ReleaseDeployCalldataResponse {
+        ReleaseDeployCalldataResponse {
+            chain_id: 1,
+            state_oracle_address: address!("0101010101010101010101010101010101010101"),
+            calldata,
+            is_noop: false,
+            message: None,
+            operations,
+            required_confirmations: None,
+        }
+    }
+
+    #[test]
+    fn release_deploy_confirmation_lists_each_operation() {
+        let adopter = "0x0101010101010101010101010101010101010101";
+        let other = "0x0202020202020202020202020202020202020202";
+        let added = "0x1111111111111111111111111111111111111111111111111111111111111111";
+        let removed = "0x2222222222222222222222222222222222222222222222222222222222222222";
+        let response = sample_deploy_calldata(
+            vec![
+                json!({
+                    "type": "addAssertion",
+                    "adopterAddress": adopter,
+                    "assertionId": added,
+                }),
+                json!({
+                    "type": "removeAssertion",
+                    "adopterAddress": other,
+                    "assertionId": removed,
+                }),
+            ],
+            vec![Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02])],
+        );
+
+        let text = release_deploy_confirmation("rel-1", &response).unwrap();
+        assert!(text.contains("addAssertion"), "{text}");
+        assert!(text.contains("removeAssertion"), "{text}");
+        assert!(text.contains(adopter), "{text}");
+        assert!(text.contains(other), "{text}");
+        assert!(text.contains(added), "{text}");
+        assert!(text.contains(removed), "{text}");
+        assert!(text.contains("rel-1"), "{text}");
+    }
+
+    #[test]
+    fn release_deploy_confirmation_refuses_when_operations_cannot_be_shown() {
+        let hidden = sample_deploy_calldata(Vec::new(), vec![Bytes::from_static(&[0x01])]);
+        assert!(matches!(
+            release_deploy_confirmation("rel-1", &hidden),
+            Err(ApiCommandError::UnexpectedResponse {
+                endpoint: "deploy-calldata",
+                ..
+            })
+        ));
+
+        let missing_id = sample_deploy_calldata(
+            vec![json!({
+                "type": "addAssertion",
+                "adopterAddress": "0x0101010101010101010101010101010101010101",
+            })],
+            vec![Bytes::from_static(&[0x01])],
+        );
+        assert!(matches!(
+            release_deploy_confirmation("rel-1", &missing_id),
+            Err(ApiCommandError::UnexpectedResponse {
+                endpoint: "deploy-calldata",
+                ..
+            })
+        ));
+
+        let unpaired = sample_deploy_calldata(
+            vec![json!({
+                "type": "addAssertion",
+                "adopterAddress": "0x0101010101010101010101010101010101010101",
+                "assertionId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            })],
+            vec![Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02])],
+        );
+        assert!(matches!(
+            release_deploy_confirmation("rel-1", &unpaired),
+            Err(ApiCommandError::UnexpectedResponse {
+                endpoint: "deploy-calldata",
+                ..
+            })
+        ));
     }
 
     #[test]

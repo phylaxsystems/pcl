@@ -808,4 +808,154 @@ mod tests {
         assert!(output.contains("+ B1.sol"));
         assert!(output.contains("+ B2.sol"));
     }
+
+    #[test]
+    fn renders_same_file_constructor_argument_change_with_ids_and_adopter() {
+        disable_colors();
+
+        let new_id = "0x1111111111111111111111111111111111111111111111111111111111111111";
+        let old_id = "0x2222222222222222222222222222222222222222222222222222222222222222";
+        let constructor_arg = "0x9999999999999999999999999999999999999999";
+        let adopter = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+        let preview: PreviewResponse = serde_json::from_value(json!({
+            "hasChanges": true,
+            "configMismatch": false,
+            "driftDetected": false,
+            "diff": {
+                "contracts": {
+                    "vault": {
+                        "address": adopter,
+                        "name": "Vault",
+                        "changeType": "unchanged",
+                        "metadataChanges": null,
+                        "assertions": [{
+                            "file": "src/Guard.sol",
+                            "args": [constructor_arg],
+                            "changeType": "modified",
+                            "assertionId": new_id,
+                            "previousAssertionId": old_id,
+                            "compilerVersionChange": null
+                        }]
+                    }
+                },
+                "summary": {
+                    "contracts": { "added": 0, "removed": 0, "modified": 0, "unchanged": 1 },
+                    "assertions": { "added": 0, "removed": 0, "modified": 1, "unchanged": 0 }
+                }
+            },
+            "diffedAgainstReleaseId": null
+        }))
+        .unwrap();
+
+        let output = preview.render_plan();
+        assert!(output.contains("~ src/Guard.sol"), "{output}");
+        assert!(output.contains(adopter), "{output}");
+        assert!(output.contains(new_id), "{output}");
+        assert!(output.contains(old_id), "{output}");
+        assert!(output.contains(constructor_arg), "{output}");
+        assert!(
+            output.contains("Plan: 0 added, 1 changed, 0 removed."),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn renders_same_file_added_and_removed_argument_change() {
+        disable_colors();
+
+        let new_id = "0x3333333333333333333333333333333333333333333333333333333333333333";
+        let old_id = "0x4444444444444444444444444444444444444444444444444444444444444444";
+        let new_arg = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let old_arg = "0xcccccccccccccccccccccccccccccccccccccccc";
+        let adopter = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+        let preview: PreviewResponse = serde_json::from_value(json!({
+            "hasChanges": true,
+            "configMismatch": false,
+            "driftDetected": false,
+            "diff": {
+                "contracts": {
+                    "vault": {
+                        "address": adopter,
+                        "name": "Vault",
+                        "changeType": "unchanged",
+                        "metadataChanges": null,
+                        "assertions": [
+                            {
+                                "file": "src/Guard.sol",
+                                "args": [new_arg],
+                                "changeType": "added",
+                                "assertionId": new_id,
+                                "previousAssertionId": null,
+                                "compilerVersionChange": null
+                            },
+                            {
+                                "file": "src/Guard.sol",
+                                "args": [old_arg],
+                                "changeType": "removed",
+                                "assertionId": null,
+                                "previousAssertionId": old_id,
+                                "compilerVersionChange": null
+                            }
+                        ]
+                    }
+                },
+                "summary": {
+                    "contracts": { "added": 0, "removed": 0, "modified": 0, "unchanged": 1 },
+                    "assertions": { "added": 1, "removed": 1, "modified": 0, "unchanged": 0 }
+                }
+            },
+            "diffedAgainstReleaseId": null
+        }))
+        .unwrap();
+
+        let output = preview.render_plan();
+        assert!(output.contains(adopter), "{output}");
+        assert!(output.contains(new_id), "{output}");
+        assert!(output.contains(old_id), "{output}");
+        assert!(output.contains(new_arg), "{output}");
+        assert!(output.contains(old_arg), "{output}");
+    }
+
+    #[test]
+    fn renders_long_constructor_args_in_full() {
+        disable_colors();
+
+        let constructor_arg = format!("0x{}", "ab".repeat(256));
+        let preview: PreviewResponse = serde_json::from_value(json!({
+            "hasChanges": true,
+            "configMismatch": false,
+            "driftDetected": false,
+            "diff": {
+                "contracts": {
+                    "vault": {
+                        "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "name": "Vault",
+                        "changeType": "modified",
+                        "metadataChanges": null,
+                        "assertions": [{
+                            "file": "src/Guard.sol",
+                            "args": [constructor_arg],
+                            "changeType": "added",
+                            "assertionId": "0x5555555555555555555555555555555555555555555555555555555555555555",
+                            "previousAssertionId": null,
+                            "compilerVersionChange": null
+                        }]
+                    }
+                },
+                "summary": {
+                    "contracts": { "added": 0, "removed": 0, "modified": 1, "unchanged": 0 },
+                    "assertions": { "added": 1, "removed": 0, "modified": 0, "unchanged": 0 }
+                }
+            },
+            "diffedAgainstReleaseId": null
+        }))
+        .unwrap();
+
+        let output = preview.render_plan();
+        assert!(output.contains(&constructor_arg), "{output}");
+        assert!(!output.contains('…'), "{output}");
+        assert!(!output.contains("..."), "{output}");
+    }
 }
