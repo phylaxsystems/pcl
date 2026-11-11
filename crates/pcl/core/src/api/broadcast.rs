@@ -201,10 +201,22 @@ fn release_deploy_confirmation(
     for operation in &calldata.operations {
         let kind = operation_field(operation, &["type"])?;
         let adopter = operation_field(operation, &["adopterAddress", "contractAddress"])?;
-        let assertion_id = operation_field(operation, &["assertionId"])?;
-        lines.push(format!(
-            "  {kind} adopter {adopter} assertion {assertion_id}"
-        ));
+        let target = match kind {
+            "registerAssertionAdopter" => {
+                format!(
+                    "verifier {}",
+                    operation_field(operation, &["verifierAddress"])?
+                )
+            }
+            "addAssertion" | "removeAssertion" => {
+                format!(
+                    "assertion {}",
+                    operation_field(operation, &["assertionId"])?
+                )
+            }
+            _ => return Err(unshowable_operations("an operation has an unknown type")),
+        };
+        lines.push(format!("  {kind} adopter {adopter} {target}"));
     }
 
     Ok(format!(
@@ -1400,6 +1412,56 @@ mod tests {
         assert!(text.contains(added), "{text}");
         assert!(text.contains(removed), "{text}");
         assert!(text.contains("rel-1"), "{text}");
+    }
+
+    #[test]
+    fn release_deploy_confirmation_shows_first_adopter_registration() {
+        let adopter = "0x0101010101010101010101010101010101010101";
+        let verifier = "0x0303030303030303030303030303030303030303";
+        let added = "0x1111111111111111111111111111111111111111111111111111111111111111";
+        let removed = "0x2222222222222222222222222222222222222222222222222222222222222222";
+        let response = sample_deploy_calldata(
+            vec![
+                json!({
+                    "type": "registerAssertionAdopter",
+                    "adopterAddress": adopter,
+                    "verifierAddress": verifier,
+                }),
+                json!({
+                    "type": "removeAssertion",
+                    "adopterAddress": adopter,
+                    "assertionId": removed,
+                }),
+                json!({
+                    "type": "addAssertion",
+                    "adopterAddress": adopter,
+                    "assertionId": added,
+                }),
+            ],
+            vec![
+                Bytes::from_static(&[0x01]),
+                Bytes::from_static(&[0x02]),
+                Bytes::from_static(&[0x03]),
+            ],
+        );
+
+        let text = release_deploy_confirmation("rel-1", &response).unwrap();
+        assert!(
+            text.contains(&format!(
+                "registerAssertionAdopter adopter {adopter} verifier {verifier}"
+            )),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!(
+                "removeAssertion adopter {adopter} assertion {removed}"
+            )),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!("addAssertion adopter {adopter} assertion {added}")),
+            "{text}"
+        );
     }
 
     #[test]
