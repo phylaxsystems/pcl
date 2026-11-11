@@ -289,7 +289,7 @@ fn auth_ensure_json_without_auth_outputs_login_challenge() {
         envelope["data"]["poll_command"]
             .as_str()
             .expect("poll command")
-            .contains("pcl auth --auth-url")
+            .contains(" auth --auth-url")
     );
     assert!(
         envelope["data"]["poll_command"]
@@ -1658,6 +1658,29 @@ fn api_call_accepts_inline_query_string_under_json() {
     health.assert();
 }
 
+/// Runs a command the CLI printed exactly as a user would paste it: through
+/// the shell, with `pcl` resolved from PATH and a HOME that holds no config,
+/// so the command only works if it names everything it needs.
+fn run_emitted_command(command: &str) -> std::process::Output {
+    let bin_dir = std::path::Path::new(env!("CARGO_BIN_EXE_pcl"))
+        .parent()
+        .expect("pcl binary directory");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let empty_home = tempfile::tempdir().expect("create empty home");
+    Command::new("sh")
+        .args(["-c", command])
+        .env("PATH", path)
+        .env("HOME", empty_home.path())
+        .env("XDG_CONFIG_HOME", empty_home.path())
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .output()
+        .expect("run emitted command")
+}
+
 fn device_login_challenge_body() -> &'static str {
     r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2099-12-31T00:00:00Z"}"#
 }
@@ -1800,22 +1823,7 @@ fn auth_poll_reads_pending_device_secret_without_cli_flag() {
     assert!(!poll_command.contains("--device-secret"));
     assert!(!poll_command.contains("test_secret"));
 
-    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
-        .args([
-            "--config-dir",
-            temp_dir.path().to_str().expect("utf-8 temp path"),
-            "--json",
-            "auth",
-            "--auth-url",
-            &server.url(),
-            "poll",
-            "--session-id",
-            "550e8400-e29b-41d4-a716-446655440000",
-            "--expires-at",
-            "2099-12-31T00:00:00Z",
-        ])
-        .output()
-        .expect("run pcl auth poll");
+    let output = run_emitted_command(poll_command);
     assert!(
         output.status.success(),
         "poll without --device-secret failed: {}",

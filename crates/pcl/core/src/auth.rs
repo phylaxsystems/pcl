@@ -420,7 +420,12 @@ impl AuthCommand {
         let auth_response = Self::request_auth_code(&self.api_client()).await?;
         Self::store_pending_device_secret(cli_args, &auth_response)?;
         Self::print_output(
-            &self.login_challenge_envelope(&auth_response, reason, json_output),
+            &self.login_challenge_envelope(
+                &auth_response,
+                reason,
+                json_output,
+                cli_args.config_dir.as_deref(),
+            ),
             json_output,
         )
     }
@@ -443,6 +448,7 @@ impl AuthCommand {
                     &auth_response,
                     AuthChallengeReason::PlatformChanged,
                     json_output,
+                    cli_args.config_dir.as_deref(),
                 ),
                 json_output,
             );
@@ -491,7 +497,12 @@ impl AuthCommand {
         Self::store_pending_device_secret(cli_args, &auth_response)?;
         let reason = refresh_challenge_reason.unwrap_or(AuthChallengeReason::Missing);
         Self::print_output(
-            &self.login_challenge_envelope(&auth_response, reason, json_output),
+            &self.login_challenge_envelope(
+                &auth_response,
+                reason,
+                json_output,
+                cli_args.config_dir.as_deref(),
+            ),
             json_output,
         )
     }
@@ -583,6 +594,7 @@ impl AuthCommand {
                         auth_challenge_reason(config, false)
                     },
                     json_output,
+                    cli_args.config_dir.as_deref(),
                 )),
                 json_output,
             )?;
@@ -590,9 +602,11 @@ impl AuthCommand {
             return Ok(());
         }
         if json_output {
-            Self::print_json_event(
-                &self.login_instructions_envelope(&auth_response, expired_auth),
-            )?;
+            Self::print_json_event(&self.login_instructions_envelope(
+                &auth_response,
+                expired_auth,
+                cli_args.config_dir.as_deref(),
+            ))?;
             self.wait_for_verification(config, &client, &auth_response, true)
                 .await?;
             Self::clear_pending_device_secret(cli_args, &auth_response.session_id);
@@ -701,6 +715,7 @@ impl AuthCommand {
         &self,
         auth_response: &CliAuthRequestCodeResponse,
         previous_token_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        config_dir: Option<&Path>,
     ) -> Value {
         let device_url = self.device_url(auth_response);
         with_envelope_metadata(json!({
@@ -717,7 +732,7 @@ impl AuthCommand {
                 "previous_token_expired_at": previous_token_expires_at.map(|expires_at| expires_at.to_rfc3339()),
                 "browser_opened": false,
                 "waiting_for_verification": true,
-                "poll_command": self.poll_command(auth_response, true),
+                "poll_command": self.poll_command(auth_response, true, config_dir),
             },
             "next_actions": [
                 "Open data.device_url and enter data.code",
@@ -731,8 +746,9 @@ impl AuthCommand {
         auth_response: &CliAuthRequestCodeResponse,
         reason: AuthChallengeReason,
         json_output: bool,
+        config_dir: Option<&Path>,
     ) -> Value {
-        let poll_command = self.poll_command(auth_response, json_output);
+        let poll_command = self.poll_command(auth_response, json_output, config_dir);
         let device_url = self.device_url(auth_response);
         with_envelope_metadata(json!({
             "status": "action_required",
@@ -750,7 +766,7 @@ impl AuthCommand {
                 "wait_command": if json_output {
                     "pcl auth login --force --json".to_string()
                 } else {
-                    self.poll_command(auth_response, false)
+                    self.poll_command(auth_response, false, config_dir)
                 },
             },
             "next_actions": [
@@ -805,15 +821,22 @@ impl AuthCommand {
         }))
     }
 
+    /// The pending secret lives in the config dir, so a poll command from a
+    /// non-default `--config-dir` must name it to find the secret.
     fn poll_command(
         &self,
         auth_response: &CliAuthRequestCodeResponse,
         json_output: bool,
+        config_dir: Option<&Path>,
     ) -> String {
         let output_flag = if json_output { " --json" } else { "" };
+        let config_dir_flag = config_dir.map_or_else(String::new, |dir| {
+            format!("--config-dir={} ", shell_quote(&dir.to_string_lossy()))
+        });
         let auth_url = self.effective_auth_url();
         format!(
-            "pcl auth --auth-url={} poll --session-id={} --expires-at={}{}",
+            "pcl {}auth --auth-url={} poll --session-id={} --expires-at={}{}",
+            config_dir_flag,
             shell_quote(auth_url.as_str()),
             auth_response.session_id,
             shell_quote(&auth_response.expires_at.to_rfc3339()),
@@ -1996,6 +2019,7 @@ mod tests {
         let output = cmd.login_instructions_envelope(
             &auth_response,
             Some(Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap()),
+            None,
         );
 
         assert_eq!(output["status"], "pending");
@@ -2037,7 +2061,7 @@ mod tests {
             serde_json::from_str(test_auth_response_json()).unwrap();
 
         let human =
-            cmd.login_challenge_envelope(&auth_response, AuthChallengeReason::Missing, false);
+            cmd.login_challenge_envelope(&auth_response, AuthChallengeReason::Missing, false, None);
         assert!(
             human["data"]["poll_command"]
                 .as_str()
@@ -2045,7 +2069,8 @@ mod tests {
         );
         assert_eq!(human["data"]["wait_command"], human["data"]["poll_command"]);
 
-        let json = cmd.login_challenge_envelope(&auth_response, AuthChallengeReason::Missing, true);
+        let json =
+            cmd.login_challenge_envelope(&auth_response, AuthChallengeReason::Missing, true, None);
         assert!(
             json["data"]["poll_command"]
                 .as_str()
@@ -2070,10 +2095,36 @@ mod tests {
             serde_json::from_str(test_auth_response_json()).unwrap();
         auth_response.device_secret = "-dash_secret".to_string();
 
-        let command = cmd.poll_command(&auth_response, false);
+        let command = cmd.poll_command(&auth_response, false, None);
 
         assert!(!command.contains("dash_secret"));
         assert!(!command.contains("--device-secret"));
+    }
+
+    #[test]
+    fn poll_command_names_a_non_default_config_dir() {
+        let cmd = AuthCommand::try_parse_from(vec![
+            "auth",
+            "--auth-url",
+            "https://app.example.com",
+            "login",
+        ])
+        .unwrap();
+        let auth_response: CliAuthRequestCodeResponse =
+            serde_json::from_str(test_auth_response_json()).unwrap();
+        let command = cmd.poll_command(
+            &auth_response,
+            true,
+            Some(std::path::Path::new("/tmp/it's here")),
+        );
+        assert!(
+            command.starts_with("pcl --config-dir='/tmp/it'\\''s here' auth "),
+            "got {command}"
+        );
+        assert!(
+            !cmd.poll_command(&auth_response, true, None)
+                .contains("--config-dir")
+        );
     }
 
     #[test]
