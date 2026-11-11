@@ -3829,7 +3829,7 @@ mod tests {
                         !rendered.contains(echo),
                         "HTTP {status} echoed {echo:?}: {rendered}"
                     );
-                    assert!(rendered.contains("SOME_CODE"), "{rendered}");
+                    assert!(!rendered.contains("SOME_CODE"), "{rendered}");
                 }
             }
         }
@@ -3883,6 +3883,46 @@ mod tests {
                 .await
                 .expect_err("error response must fail");
             assert!(expected(&error), "HTTP {status} {body}: got {error:?}");
+        }
+    }
+
+    /// A server code can be the secret itself (an uppercase secret, or an
+    /// explicit --device-secret), so no server-supplied code is ever shown.
+    #[tokio::test]
+    async fn auth_status_errors_never_show_a_server_code() {
+        let session = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let body = r#"{"error":"invalid","code":"ABC123"}"#;
+        // (POST status, GET status): GET only runs after a POST 405. A 200
+        // with an error body is the JSON-decoded invalid-payload path.
+        for (post_status, get_status) in [(400, None), (500, None), (200, None), (405, Some(400))] {
+            let mut server = Server::new_async().await;
+            let _post = server
+                .mock("POST", "/api/v1/cli/auth/status")
+                .with_status(post_status)
+                .with_header("content-type", "application/json")
+                .with_body(if get_status.is_some() { "" } else { body })
+                .create_async()
+                .await;
+            let _get = server
+                .mock("GET", "/api/v1/cli/auth/status")
+                .match_query(Matcher::Any)
+                .with_status(get_status.unwrap_or(500))
+                .with_header("content-type", "application/json")
+                .with_body(body)
+                .create_async()
+                .await;
+            let cmd =
+                AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
+                    .unwrap();
+            let error = AuthCommand::check_auth_status(&cmd.api_client(), "ABC123", &session)
+                .await
+                .expect_err("error response must fail");
+            for rendered in [error.to_string(), format!("{error:?}")] {
+                assert!(
+                    !rendered.contains("ABC123"),
+                    "POST {post_status} / GET {get_status:?} showed the secret: {rendered}"
+                );
+            }
         }
     }
 }

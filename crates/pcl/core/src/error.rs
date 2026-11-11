@@ -640,24 +640,6 @@ impl DappErrorCode {
     }
 }
 
-/// Auth status error bodies are server-controlled and can echo the device
-/// secret in any spelling, so only the HTTP status and a well-formed error
-/// code are reported, never the body text.
-fn status_error_detail(status: Option<reqwest::StatusCode>, code: Option<&str>) -> String {
-    let code = code.filter(|code| {
-        (1..=64).contains(&code.len())
-            && code
-                .bytes()
-                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
-    });
-    match (status, code) {
-        (Some(status), Some(code)) => format!("HTTP {status}, code {code}"),
-        (Some(status), None) => format!("HTTP {status}"),
-        (None, Some(code)) => format!("code {code}"),
-        (None, None) => "unexpected error response".to_string(),
-    }
-}
-
 impl From<GeneratedApiError<DappApiError>> for AuthError {
     /// Convert a progenitor API error into a typed `AuthError`.
     fn from(err: GeneratedApiError<DappApiError>) -> Self {
@@ -665,7 +647,9 @@ impl From<GeneratedApiError<DappApiError>> for AuthError {
             GeneratedApiError::ErrorResponse(response) => {
                 let status = response.status();
                 let body = response.into_inner();
-                let detail = status_error_detail(Some(status), body.code.as_deref());
+                // Body text and codes are server-controlled and can echo the
+                // device secret; report the HTTP status only.
+                let detail = format!("HTTP {status}");
                 match DappErrorCode::from_api_code(body.code.as_deref()) {
                     DappErrorCode::SessionExpired => Self::SessionExpired,
                     DappErrorCode::SessionNotFound => Self::SessionNotFound,
@@ -677,7 +661,7 @@ impl From<GeneratedApiError<DappApiError>> for AuthError {
             }
             GeneratedApiError::InvalidResponsePayload(bytes, _) => {
                 if let Ok(body) = serde_json::from_slice::<DappApiError>(&bytes) {
-                    let detail = status_error_detail(None, body.code.as_deref());
+                    let detail = "unexpected error response".to_string();
                     return match DappErrorCode::from_api_code(body.code.as_deref()) {
                         DappErrorCode::SessionExpired => Self::SessionExpired,
                         DappErrorCode::SessionNotFound => Self::SessionNotFound,
