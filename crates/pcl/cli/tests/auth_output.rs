@@ -1,5 +1,6 @@
 use std::{
     fs,
+    os::unix::fs::PermissionsExt,
     process::Command,
 };
 
@@ -1656,4 +1657,173 @@ fn api_call_accepts_inline_query_string_under_json() {
         "req-inline-query"
     );
     health.assert();
+}
+
+fn device_login_challenge_body() -> &'static str {
+    r#"{"code":"123456","sessionId":"550e8400-e29b-41d4-a716-446655440000","deviceSecret":"test_secret","expiresAt":"2099-12-31T00:00:00Z"}"#
+}
+
+fn run_ensure(config_dir: &std::path::Path, auth_url: &str, json: bool) -> std::process::Output {
+    let mut args = vec![
+        "--config-dir",
+        config_dir.to_str().expect("utf-8 temp path"),
+    ];
+    if json {
+        args.push("--json");
+    }
+    args.extend(["auth", "--auth-url", auth_url, "ensure"]);
+    Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args(args)
+        .output()
+        .expect("run pcl auth ensure")
+}
+
+#[test]
+fn auth_ensure_login_output_omits_device_secret() {
+    for json in [true, false] {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        let mut server = mockito::Server::new();
+        let auth_code = server
+            .mock("GET", "/api/v1/cli/auth/code")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(device_login_challenge_body())
+            .expect(1)
+            .create();
+
+        let output = run_ensure(temp_dir.path(), &server.url(), json);
+        assert!(
+            output.status.success(),
+            "command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let rendered = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !rendered.contains("test_secret"),
+            "login output leaked the device secret: {rendered}"
+        );
+        assert!(
+            !rendered.contains("--device-secret"),
+            "login output included a secret-bearing poll command: {rendered}"
+        );
+        if json {
+            let envelope: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("json envelope");
+            assert!(envelope["data"].get("device_secret").is_none());
+            assert!(
+                envelope["data"]["poll_command"]
+                    .as_str()
+                    .is_some_and(|command| !command.contains("--device-secret"))
+            );
+        }
+        auth_code.assert();
+    }
+}
+
+#[test]
+fn auth_ensure_stores_pending_device_secret_owner_only() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let mut server = mockito::Server::new();
+    let auth_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(device_login_challenge_body())
+        .expect(1)
+        .create();
+
+    let output = run_ensure(temp_dir.path(), &server.url(), true);
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mut pending = Vec::new();
+    for entry in fs::read_dir(temp_dir.path()).expect("read config dir") {
+        let path = entry.expect("config dir entry").path();
+        if fs::read_to_string(&path).ok().as_deref() == Some("test_secret") {
+            pending.push(path);
+        }
+    }
+    assert_eq!(
+        pending.len(),
+        1,
+        "expected one owner-only file holding the pending device secret"
+    );
+    let mode = fs::metadata(&pending[0])
+        .expect("pending secret metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "pending device secret file must be mode 0600");
+    auth_code.assert();
+}
+
+#[test]
+fn auth_poll_reads_pending_device_secret_without_cli_flag() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let mut server = mockito::Server::new();
+    let auth_code = server
+        .mock("GET", "/api/v1/cli/auth/code")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(device_login_challenge_body())
+        .expect(1)
+        .create();
+    let auth_status = server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .match_body(mockito::Matcher::Json(serde_json::json!({
+            "session_id": "550e8400-e29b-41d4-a716-446655440000",
+            "device_secret": "test_secret",
+        })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"verified":false}"#)
+        .expect(1)
+        .create();
+
+    let ensured = run_ensure(temp_dir.path(), &server.url(), true);
+    assert!(
+        ensured.status.success(),
+        "ensure failed: {}",
+        String::from_utf8_lossy(&ensured.stderr)
+    );
+    let challenge: serde_json::Value =
+        serde_json::from_slice(&ensured.stdout).expect("ensure envelope");
+    let poll_command = challenge["data"]["poll_command"]
+        .as_str()
+        .expect("poll command");
+    assert!(!poll_command.contains("--device-secret"));
+    assert!(!poll_command.contains("test_secret"));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+            "--json",
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "poll",
+            "--session-id",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "--expires-at",
+            "2099-12-31T00:00:00Z",
+        ])
+        .output()
+        .expect("run pcl auth poll");
+    assert!(
+        output.status.success(),
+        "poll without --device-secret failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rendered = String::from_utf8_lossy(&output.stdout);
+    assert!(!rendered.contains("test_secret"));
+    auth_code.assert();
+    auth_status.assert();
 }

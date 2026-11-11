@@ -1696,6 +1696,10 @@ mod tests {
         Server,
     };
     use std::collections::BTreeMap;
+    use tokio::io::{
+        AsyncReadExt,
+        AsyncWriteExt,
+    };
     use uuid::Uuid;
 
     fn create_test_config() -> CliConfig {
@@ -3071,5 +3075,132 @@ mod tests {
         );
         assert!(config.auth.is_none());
         mock.assert();
+    }
+
+    #[tokio::test]
+    async fn check_auth_status_request_target_omits_device_secret() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let body = r#"{"verified":false}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let captured = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut raw = Vec::new();
+            let mut buf = [0_u8; 2048];
+            loop {
+                let read = tokio::time::timeout(Duration::from_secs(2), socket.read(&mut buf))
+                    .await
+                    .expect("status request arrives")
+                    .unwrap();
+                if read == 0 {
+                    break;
+                }
+                raw.extend_from_slice(&buf[..read]);
+                let header_end = raw.windows(4).position(|window| window == b"\r\n\r\n");
+                let Some(header_end) = header_end else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&raw[..header_end]);
+                let length = headers.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.eq_ignore_ascii_case("content-length") {
+                        value.trim().parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                });
+                if raw.len() >= header_end + 4 + length.unwrap_or(0) {
+                    break;
+                }
+            }
+            socket.write_all(response.as_bytes()).await.unwrap();
+            String::from_utf8(raw).unwrap()
+        });
+
+        let cmd = AuthCommand::try_parse_from(vec![
+            "auth",
+            "--auth-url",
+            &format!("http://{address}"),
+            "login",
+        ])
+        .unwrap();
+        let client = cmd.api_client();
+        let auth_response: CliAuthRequestCodeResponse =
+            serde_json::from_str(test_auth_response_json()).unwrap();
+        let _ = AuthCommand::check_auth_status(
+            &client,
+            &auth_response.device_secret,
+            &auth_response.session_id,
+        )
+        .await;
+
+        let raw = captured.await.unwrap();
+        let request_line = raw.lines().next().expect("request line");
+        assert!(
+            request_line.starts_with("POST "),
+            "status poll must POST the device secret, got {request_line}"
+        );
+        assert!(
+            !request_line.contains('?') && !request_line.contains("device_secret"),
+            "status URL must not carry the device secret, got {request_line}"
+        );
+    }
+
+    #[tokio::test]
+    async fn check_auth_status_falls_back_to_get_when_post_is_unavailable() {
+        for status in [404_u16, 405] {
+            let mut server = Server::new_async().await;
+            let post = server
+                .mock("POST", "/api/v1/cli/auth/status")
+                .match_query(Matcher::Regex("^$".to_string()))
+                .match_body(Matcher::Json(json!({
+                    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "device_secret": "test_secret",
+                })))
+                .with_status(status.into())
+                .with_header("content-type", "application/json")
+                .with_body(r#"{"error":"method not available"}"#)
+                .expect(1)
+                .create_async()
+                .await;
+            let get = server
+                .mock("GET", "/api/v1/cli/auth/status")
+                .match_query(Matcher::AllOf(vec![
+                    Matcher::UrlEncoded(
+                        "session_id".into(),
+                        "550e8400-e29b-41d4-a716-446655440000".into(),
+                    ),
+                    Matcher::UrlEncoded("device_secret".into(), "test_secret".into()),
+                ]))
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(r#"{"verified":false}"#)
+                .expect(1)
+                .create_async()
+                .await;
+
+            let cmd =
+                AuthCommand::try_parse_from(vec!["auth", "--auth-url", &server.url(), "login"])
+                    .unwrap();
+            let client = cmd.api_client();
+            let auth_response: CliAuthRequestCodeResponse =
+                serde_json::from_str(test_auth_response_json()).unwrap();
+            let result = AuthCommand::check_auth_status(
+                &client,
+                &auth_response.device_secret,
+                &auth_response.session_id,
+            )
+            .await;
+
+            assert!(
+                result.as_ref().is_ok_and(|status| !status.verified),
+                "HTTP {status} from POST should fall back to GET once, got {result:?}"
+            );
+            post.assert_async().await;
+            get.assert_async().await;
+        }
     }
 }
