@@ -118,9 +118,7 @@ fn render_added(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     )
     .unwrap();
     for a in &entry.assertions {
-        if let Some(file) = &a.file {
-            writeln!(out, "      {} {file}", "+".green()).unwrap();
-        }
+        render_assertion_diff(out, entry.address.as_str(), a);
     }
     writeln!(out).unwrap();
 }
@@ -135,9 +133,7 @@ fn render_removed(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     )
     .unwrap();
     for a in &entry.assertions {
-        if let Some(file) = &a.file {
-            writeln!(out, "      {} {file}", "-".red()).unwrap();
-        }
+        render_assertion_diff(out, entry.address.as_str(), a);
     }
     writeln!(out).unwrap();
 }
@@ -169,28 +165,50 @@ fn render_modified(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     }
 
     for a in &entry.assertions {
-        render_assertion_diff(out, a);
+        render_assertion_diff(out, entry.address.as_str(), a);
     }
     writeln!(out).unwrap();
 }
 
-fn render_assertion_diff(out: &mut String, a: &AssertionDiffEntry) {
+fn render_assertion_diff(out: &mut String, adopter: &str, a: &AssertionDiffEntry) {
     let file = a.file.as_deref().unwrap_or("(unknown)");
-    match a.change_type {
-        AssertionChangeType::Added => {
-            writeln!(out, "      {} {file}", "+".green()).unwrap();
+    let marker = match a.change_type {
+        AssertionChangeType::Added => "+".green(),
+        AssertionChangeType::Removed => "-".red(),
+        AssertionChangeType::Modified => "~".yellow(),
+        AssertionChangeType::Unchanged => return,
+    };
+    writeln!(out, "      {marker} {file}").unwrap();
+    writeln!(out, "          adopter: {adopter}").unwrap();
+    writeln!(
+        out,
+        "          assertion: {}",
+        shown_id(a.assertion_id.as_deref().map(String::as_str))
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "          previous: {}",
+        shown_id(a.previous_assertion_id.as_deref().map(String::as_str))
+    )
+    .unwrap();
+    if a.args.is_empty() {
+        writeln!(out, "          args: (none)").unwrap();
+    } else {
+        writeln!(out, "          args:").unwrap();
+        for arg in &a.args {
+            writeln!(out, "            {arg}").unwrap();
         }
-        AssertionChangeType::Removed => {
-            writeln!(out, "      {} {file}", "-".red()).unwrap();
-        }
-        AssertionChangeType::Modified => {
-            writeln!(out, "      {} {file}", "~".yellow()).unwrap();
-            if let Some(vc) = &a.compiler_version_change {
-                writeln!(out, "          compiler: {} \u{2192} {}", vc.from, vc.to).unwrap();
-            }
-        }
-        AssertionChangeType::Unchanged => {}
     }
+    if a.change_type == AssertionChangeType::Modified
+        && let Some(vc) = &a.compiler_version_change
+    {
+        writeln!(out, "          compiler: {} \u{2192} {}", vc.from, vc.to).unwrap();
+    }
+}
+
+fn shown_id(id: Option<&str>) -> &str {
+    id.unwrap_or("(none)")
 }
 
 fn render_unchanged(out: &mut String, label: &str, entry: &ContractDiffEntry) {
@@ -204,7 +222,7 @@ fn render_unchanged(out: &mut String, label: &str, entry: &ContractDiffEntry) {
     // A contract is "unchanged" when its metadata (name/address) is untouched,
     // but its assertions may still have changed — render those like the dApp does.
     for a in &entry.assertions {
-        render_assertion_diff(out, a);
+        render_assertion_diff(out, entry.address.as_str(), a);
     }
     writeln!(out).unwrap();
 }

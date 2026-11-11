@@ -187,18 +187,60 @@ async fn resolve_signer(
     Ok(wallet.signer(cli_args.human_output()).await?)
 }
 
-/// Interactive guard before spending gas. Machine mode treats `--broadcast`
-/// itself as consent; human mode prompts unless `--yes`.
 fn release_deploy_confirmation(
     release_id: &str,
     calldata: &ReleaseDeployCalldataResponse,
 ) -> Result<String, ApiCommandError> {
+    if calldata.operations.is_empty() || calldata.operations.len() != calldata.calldata.len() {
+        return Err(unshowable_operations(
+            "the operation list does not cover every calldata entry",
+        ));
+    }
+
+    let mut lines = Vec::with_capacity(calldata.operations.len());
+    for operation in &calldata.operations {
+        let kind = operation_field(operation, &["type"])?;
+        let adopter = operation_field(operation, &["adopterAddress", "contractAddress"])?;
+        let assertion_id = operation_field(operation, &["assertionId"])?;
+        lines.push(format!(
+            "  {kind} adopter {adopter} assertion {assertion_id}"
+        ));
+    }
+
     Ok(format!(
-        "StateOracle.batch with {} operation(s) for release {release_id}",
-        calldata.operations.len().max(calldata.calldata.len())
+        "StateOracle.batch with {} operation(s) for release {release_id}\n{}",
+        lines.len(),
+        lines.join("\n")
     ))
 }
 
+fn operation_field<'a>(operation: &'a Value, keys: &[&str]) -> Result<&'a str, ApiCommandError> {
+    let Some(object) = operation.as_object() else {
+        return Err(unshowable_operations("an operation is not an object"));
+    };
+    for key in keys {
+        if let Some(value) = object.get(*key).and_then(Value::as_str)
+            && !value.is_empty()
+        {
+            return Ok(value);
+        }
+    }
+    Err(unshowable_operations(
+        "an operation is missing its type, adopter, or assertion id",
+    ))
+}
+
+fn unshowable_operations(reason: &str) -> ApiCommandError {
+    ApiCommandError::UnexpectedResponse {
+        endpoint: "deploy-calldata",
+        reason: format!(
+            "refusing to broadcast because the operation list cannot be shown: {reason}"
+        ),
+    }
+}
+
+/// Interactive guard before spending gas. Machine mode treats `--broadcast`
+/// itself as consent; human mode prompts unless `--yes`.
 fn confirm_send(
     cli_args: &CliArgs,
     yes: bool,
@@ -569,6 +611,9 @@ impl ApiArgs {
         }
 
         let confirmation = release_deploy_confirmation(release_id, &calldata)?;
+        if cli_args.human_output() && args.broadcast.yes {
+            eprintln!("{confirmation}");
+        }
         confirm_send(
             cli_args,
             args.broadcast.yes,
