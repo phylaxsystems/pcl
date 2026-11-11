@@ -110,17 +110,50 @@ fn value_to_string(value: Value) -> String {
     }
 }
 
-/// Extracts the contract name from a file path or qualified `file:contract` name.
-///
-/// Supports:
-/// - `file.sol:ContractName` -> `ContractName`
-/// - `ContractName.a.sol` -> `ContractName`
-/// - `ContractName.sol` -> `ContractName`
-pub fn assertion_contract_name(file: &str) -> Result<String, CredibleConfigError> {
-    if let Some((_, contract_name)) = file.rsplit_once(':') {
-        return Ok(contract_name.to_string());
+/// An assertion's source file and contract name, parsed once from a
+/// `credible.toml` `file` entry or a `pcl verify` argument so that artifact
+/// selection and the release payload use the same name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssertionIdentity {
+    /// Source path relative to the project root; `None` for a bare name.
+    pub source: Option<String>,
+    pub contract_name: String,
+}
+
+impl AssertionIdentity {
+    /// Parses `path:Contract`, `path/Contract.a.sol` (contract inferred from the
+    /// file name) or a bare `Contract`.
+    pub fn parse(file: &str) -> Result<Self, CredibleConfigError> {
+        let file = file.trim().replace('\\', "/");
+        let (source, contract_name) = match file.split_once(':') {
+            Some((source, name)) => (Some(source.trim().to_string()), name.trim().to_string()),
+            None if file.contains('/') || has_sol_extension(&file) => {
+                let name = infer_contract_name(&file)?;
+                (Some(file.clone()), name)
+            }
+            None => (None, file.clone()),
+        };
+        if !is_contract_name(&contract_name) {
+            return Err(CredibleConfigError::Invalid(format!(
+                "assertion `{file}` must be `path/to/File.a.sol:Contract` with one contract name"
+            )));
+        }
+        Ok(Self {
+            source,
+            contract_name,
+        })
     }
 
+    /// The `path:Contract` (or bare name) key that selects the Foundry artifact.
+    pub fn lookup_key(&self) -> String {
+        match &self.source {
+            Some(source) => format!("{source}:{}", self.contract_name),
+            None => self.contract_name.clone(),
+        }
+    }
+}
+
+fn infer_contract_name(file: &str) -> Result<String, CredibleConfigError> {
     let file_name = Path::new(file)
         .file_name()
         .and_then(|name| name.to_str())
@@ -139,45 +172,17 @@ pub fn assertion_contract_name(file: &str) -> Result<String, CredibleConfigError
     )))
 }
 
-pub fn assertion_lookup_key(file: &str) -> Result<String, CredibleConfigError> {
-    let file = file.replace('\\', "/");
-    if is_bare_contract_name(&file) {
-        if file.is_empty() {
-            return Err(CredibleConfigError::Invalid(
-                "assertion contract name is empty".to_string(),
-            ));
-        }
-        return Ok(file);
-    }
-
-    let contract_name = assertion_contract_name(&file)?;
-    let source = match file.split_once(':') {
-        Some((path, _)) => path.to_string(),
-        None => file,
-    };
-    if source.is_empty() {
-        return Ok(contract_name);
-    }
-    Ok(format!(
-        "{}:{contract_name}",
-        normalize_assertion_path(&source)
-    ))
+fn has_sol_extension(file: &str) -> bool {
+    Path::new(file)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("sol"))
 }
 
-pub fn contract_name_from_lookup(lookup: &str) -> &str {
-    lookup.rsplit_once(':').map_or(lookup, |(_, name)| name)
-}
-
-fn is_bare_contract_name(file: &str) -> bool {
-    !file.contains(':')
-        && !file.contains('/')
-        && !Path::new(file)
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("sol"))
-}
-
-fn normalize_assertion_path(path: &str) -> String {
-    path.replace('\\', "/").trim_start_matches("./").to_string()
+fn is_contract_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }
 
 #[cfg(test)]
@@ -197,36 +202,40 @@ mod tests {
     "#;
 
     #[test]
-    fn lookup_key_preserves_a_qualified_source_path() {
-        assert_eq!(
-            assertion_lookup_key("assertions/src/ZStrong.a.sol:Guard").unwrap(),
-            "assertions/src/ZStrong.a.sol:Guard"
-        );
-        assert_eq!(
-            assertion_lookup_key("./assertions/src/ZStrong.a.sol:Guard").unwrap(),
-            "assertions/src/ZStrong.a.sol:Guard"
-        );
-        assert_eq!(
-            assertion_lookup_key("assertions/src/Guard.a.sol").unwrap(),
-            "assertions/src/Guard.a.sol:Guard"
-        );
-        assert_eq!(
-            assertion_lookup_key("assertions\\src\\Guard.a.sol").unwrap(),
-            "assertions/src/Guard.a.sol:Guard"
-        );
-        assert_eq!(assertion_lookup_key("Guard").unwrap(), "Guard");
-    }
-
-    #[test]
-    fn infers_assertion_contract_name_from_solidity_path() {
-        assert_eq!(
-            assertion_contract_name("assertions/src/MockAssertion.a.sol").unwrap(),
-            "MockAssertion"
-        );
-        assert_eq!(
-            assertion_contract_name("assertions/src/Other.sol:NamedAssertion").unwrap(),
-            "NamedAssertion"
-        );
+    fn identity_keeps_the_source_path_and_one_contract_name() {
+        let parse = |file: &str| AssertionIdentity::parse(file).map(|id| id.lookup_key());
+        for (file, key) in [
+            (
+                "assertions/src/ZStrong.a.sol:Guard",
+                "assertions/src/ZStrong.a.sol:Guard",
+            ),
+            (
+                " assertions/src/ZStrong.a.sol : Guard ",
+                "assertions/src/ZStrong.a.sol:Guard",
+            ),
+            (
+                "assertions/src/MockAssertion.a.sol",
+                "assertions/src/MockAssertion.a.sol:MockAssertion",
+            ),
+            (
+                "assertions\\src\\Guard.a.sol",
+                "assertions/src/Guard.a.sol:Guard",
+            ),
+            ("Guard.a.sol", "Guard.a.sol:Guard"),
+            ("Guard", "Guard"),
+        ] {
+            assert_eq!(parse(file).unwrap(), key, "{file}");
+        }
+        for file in [
+            "a.sol:Ignored:Guard",
+            "a.sol:",
+            "a.sol: ",
+            "",
+            "Guard.t",
+            "assertions/src/Guard",
+        ] {
+            assert!(parse(file).is_err(), "{file} should be rejected");
+        }
     }
 
     #[test]

@@ -16,9 +16,8 @@ use crate::{
     },
     config::CliConfig,
     credible_config::{
+        AssertionIdentity,
         CredibleToml,
-        assertion_lookup_key,
-        contract_name_from_lookup,
     },
     diff::PreviewResponse,
     error::ApplyError,
@@ -398,14 +397,14 @@ impl ApplyArgs {
             let mut assertions = Vec::with_capacity(contract.assertions.len());
 
             for assertion in &contract.assertions {
-                let lookup = assertion_lookup_key(&assertion.file)?;
-                let contract_name = contract_name_from_lookup(&lookup).to_string();
+                let identity = AssertionIdentity::parse(&assertion.file)?;
+                let contract_name = identity.contract_name.clone();
                 let build_key = assertion.file.clone();
                 if !built_assertions.contains_key(&build_key) {
                     let output = BuildAndFlattenArgs {
                         root: Some(root.to_path_buf()),
-                        assertion_contract: lookup,
-                        contracts: assertion_contracts_dir(&assertion.file),
+                        assertion_contract: identity.lookup_key(),
+                        contracts: assertion_contracts_dir(&identity),
                     }
                     .run()
                     .map_err(ApplyError::BuildFailed)?;
@@ -597,9 +596,8 @@ where
         .map_err(|e| ApplyError::InvalidConfig(format!("Invalid {field}: {e}")))
 }
 
-fn assertion_contracts_dir(file: &str) -> PathBuf {
-    let source_path = file.split_once(':').map_or(file, |(path, _)| path);
-    Path::new(source_path)
+fn assertion_contracts_dir(identity: &AssertionIdentity) -> PathBuf {
+    Path::new(identity.source.as_deref().unwrap_or_default())
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .map_or_else(
@@ -910,6 +908,42 @@ mod tests {
         configure_assertion(&project, "assertions/src/AWeak.a.sol:Guard");
         let (_, flattened) = released_source(&project).expect("AWeak builds");
         assert!(flattened.contains("return 1;"), "{flattened}");
+    }
+
+    #[test]
+    fn padded_identity_releases_the_trimmed_contract_name() {
+        let project = duplicate_guard_project();
+        for file in [
+            " assertions/src/ZStrong.a.sol:Guard ",
+            "assertions/src/ZStrong.a.sol : Guard",
+        ] {
+            configure_assertion(&project, file);
+            let credible =
+                CredibleToml::from_path(&project.path().join("assertions/credible.toml"))
+                    .expect("credible.toml parses");
+            let (payload, _) = ApplyArgs::build_payload(&credible, project.path())
+                .unwrap_or_else(|err| panic!("{file}: {err}"));
+            let assertion = &payload.contracts.get("target").expect("target").assertions[0];
+            assert_eq!(assertion.contract_name.as_str(), "Guard", "{file}");
+            assert!(
+                assertion.flattened_source.as_str().contains("return 999"),
+                "{file}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_identity_is_rejected_before_building() {
+        let project = duplicate_guard_project();
+        for file in [
+            "assertions/src/AWeak.a.sol:Ignored:Guard",
+            "assertions/src/ZStrong.a.sol:",
+            "assertions/src/ZStrong.a.sol: ",
+        ] {
+            configure_assertion(&project, file);
+            let err = released_source(&project).expect_err(file);
+            assert!(matches!(err, ApplyError::InvalidConfig(_)), "{file}: {err}");
+        }
     }
 
     /// Copies the two-`Guard` fixture (`AWeak` returns 1, `ZStrong` returns 999)
