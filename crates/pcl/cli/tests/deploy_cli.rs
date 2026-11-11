@@ -110,3 +110,73 @@ fn deploy_dry_run_needs_no_platform() {
     );
     assert_eq!(envelope["error"]["code"], "apply.failed", "{envelope}");
 }
+
+/// The circuit-breaker check reads each `credible.toml` source before the
+/// build. An entry the scan cannot read the same way the build does (a bare
+/// contract name, padding, backslashes) must not skip that check.
+#[test]
+fn deploy_dry_run_rejects_every_spelling_of_a_circuit_breaker() {
+    let config_dir = tempfile::tempdir().expect("temp config dir");
+    let project = tempfile::tempdir().expect("temp project");
+    let root = project.path();
+    std::fs::create_dir_all(root.join("assertions/src")).expect("assertions dir");
+    std::fs::write(
+        root.join("foundry.toml"),
+        "[profile.default]\nsrc = \"assertions/src\"\nsolc = \"0.8.28\"\n",
+    )
+    .expect("foundry.toml");
+    std::fs::write(
+        root.join("assertions/src/Breaker.a.sol"),
+        r"// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+contract Breaker {
+    function watchCumulativeOutflow(address, uint256) internal {}
+
+    function triggers() external {
+        watchCumulativeOutflow(address(0), 1);
+    }
+}
+",
+    )
+    .expect("breaker source");
+
+    for (file, code) in [
+        ("Breaker", "config.invalid_credible_toml"),
+        (":Breaker", "config.invalid_credible_toml"),
+        (
+            "assertions/src/Breaker.a.sol:Breaker",
+            "deploy.circuit_breaker_unsupported",
+        ),
+        (
+            " assertions/src/Breaker.a.sol:Breaker ",
+            "deploy.circuit_breaker_unsupported",
+        ),
+        (
+            r"assertions\src\Breaker.a.sol:Breaker",
+            "deploy.circuit_breaker_unsupported",
+        ),
+    ] {
+        std::fs::write(
+            root.join("assertions/credible.toml"),
+            format!(
+                "environment = \"staging\"\nproject_name = \"breaker\"\n\n[contracts.target]\naddress = \"0x0101010101010101010101010101010101010101\"\nname = \"Target\"\n\n[[contracts.target.assertions]]\nfile = '{file}'\n"
+            ),
+        )
+        .expect("credible.toml");
+
+        let output = run_deploy(
+            config_dir.path(),
+            &[
+                "--dry-run",
+                "--chain-id",
+                "59144",
+                "--root",
+                root.to_str().expect("utf-8"),
+            ],
+        );
+
+        let envelope = error_envelope(&output);
+        assert_eq!(envelope["error"]["code"], code, "{file}: {envelope}");
+    }
+}

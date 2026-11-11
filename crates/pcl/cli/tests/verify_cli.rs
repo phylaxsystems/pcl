@@ -300,3 +300,22 @@ fn verify_cli_rejects_a_bare_name_shared_by_two_contracts() {
         "{message}"
     );
 }
+
+#[cfg(feature = "credible")]
+#[test]
+fn verify_cli_accepts_a_unique_bare_name() {
+    let project = fixture_project();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "verify",
+            "--root",
+            project.path().to_str().expect("utf-8 temp path"),
+            "NoArgsAssertion",
+            "--json",
+        ])
+        .output()
+        .expect("run pcl verify");
+
+    assert_verify_success(output);
+}

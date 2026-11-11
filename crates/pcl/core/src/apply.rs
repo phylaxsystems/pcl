@@ -397,7 +397,7 @@ impl ApplyArgs {
             let mut assertions = Vec::with_capacity(contract.assertions.len());
 
             for assertion in &contract.assertions {
-                let identity = AssertionIdentity::parse(&assertion.file)?;
+                let identity = AssertionIdentity::from_config(&assertion.file)?;
                 let contract_name = identity.contract_name.clone();
                 let build_key = assertion.file.clone();
                 if !built_assertions.contains_key(&build_key) {
@@ -943,6 +943,19 @@ mod tests {
             configure_assertion(&project, file);
             let err = released_source(&project).expect_err(file);
             assert!(matches!(err, ApplyError::InvalidConfig(_)), "{file}: {err}");
+        }
+    }
+
+    #[test]
+    fn config_entry_must_name_its_source_file() {
+        let project = duplicate_guard_project();
+        for file in ["Guard", " Guard ", ":Guard", " : Guard"] {
+            configure_assertion(&project, file);
+            let err = released_source(&project).expect_err(file);
+            assert!(
+                matches!(&err, ApplyError::InvalidConfig(message) if message.contains("source")),
+                "{file}: {err}"
+            );
         }
     }
 

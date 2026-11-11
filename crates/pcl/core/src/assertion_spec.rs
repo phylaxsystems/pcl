@@ -21,7 +21,10 @@
 //! There is no V1 equivalent to fall back to, and the failure is silent, so the
 //! protocol would believe it has a breaker that can never trip.
 
-use crate::credible_config::CredibleToml;
+use crate::credible_config::{
+    AssertionIdentity,
+    CredibleToml,
+};
 use serde_json::{
     Value,
     json,
@@ -258,13 +261,13 @@ pub fn scan_assertion_sources(root: &Path, credible: &CredibleToml) -> Vec<V2Spe
     let mut findings: Vec<V2SpecFinding> = Vec::new();
 
     for relative in unique_assertion_paths(credible) {
-        let Ok(source) = std::fs::read_to_string(root.join(relative)) else {
+        let Ok(source) = std::fs::read_to_string(root.join(&relative)) else {
             continue;
         };
         let markers = detect_v2_markers(&source);
         if !markers.is_empty() {
             findings.push(V2SpecFinding {
-                file: relative.to_string(),
+                file: relative,
                 markers,
             });
         }
@@ -274,22 +277,18 @@ pub fn scan_assertion_sources(root: &Path, credible: &CredibleToml) -> Vec<V2Spe
 }
 
 /// Distinct assertion source paths declared in `credible.toml`, in declaration
-/// order. A `file` entry may carry a `path:Contract` suffix, and one source is
-/// commonly referenced by several contracts; deduplicating before reading keeps
-/// deploy startup scaling with unique files rather than with references.
-fn unique_assertion_paths(credible: &CredibleToml) -> Vec<&str> {
-    let mut seen: HashSet<&str> = HashSet::new();
+/// order, parsed the same way the build parses them so the scan reads the file
+/// that is released. One source is commonly referenced by several contracts;
+/// deduplicating before reading keeps deploy startup scaling with unique files
+/// rather than with references.
+fn unique_assertion_paths(credible: &CredibleToml) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
     credible
         .contracts
         .values()
         .flat_map(|contract| &contract.assertions)
-        .map(|assertion| {
-            assertion
-                .file
-                .split_once(':')
-                .map_or(assertion.file.as_str(), |(path, _)| path)
-        })
-        .filter(|relative| seen.insert(relative))
+        .filter_map(|assertion| AssertionIdentity::from_config(&assertion.file).ok()?.source)
+        .filter(|relative| seen.insert(relative.clone()))
         .collect()
 }
 

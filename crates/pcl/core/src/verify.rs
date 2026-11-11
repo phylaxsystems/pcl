@@ -188,7 +188,7 @@ impl VerifyArgs {
         let mut inputs = Vec::new();
         for contract in credible.contracts.values() {
             for assertion in &contract.assertions {
-                let identity = AssertionIdentity::parse(&assertion.file)?;
+                let identity = AssertionIdentity::from_config(&assertion.file)?;
                 let contract_name = identity.contract_name.clone();
                 let output = BuildAndFlattenArgs {
                     root: Some(root.to_path_buf()),

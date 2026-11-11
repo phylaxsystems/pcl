@@ -56,7 +56,11 @@ impl CredibleToml {
 
     /// Runs all config validations.
     fn validate(&self) -> Result<(), CredibleConfigError> {
-        self.validate_unique_addresses()
+        self.validate_unique_addresses()?;
+        for assertion in self.contracts.values().flat_map(|c| &c.assertions) {
+            AssertionIdentity::from_config(&assertion.file)?;
+        }
+        Ok(())
     }
 
     /// Ensures no two contracts share the same address.
@@ -133,6 +137,11 @@ impl AssertionIdentity {
             }
             None => (None, file.clone()),
         };
+        if source.as_deref().is_some_and(str::is_empty) {
+            return Err(CredibleConfigError::Invalid(format!(
+                "assertion `{file}` has an empty source path"
+            )));
+        }
         if !is_contract_name(&contract_name) {
             return Err(CredibleConfigError::Invalid(format!(
                 "assertion `{file}` must be `path/to/File.a.sol:Contract` with one contract name"
@@ -142,6 +151,19 @@ impl AssertionIdentity {
             source,
             contract_name,
         })
+    }
+
+    /// Parses a `credible.toml` entry, which must name its source file: the
+    /// deploy circuit-breaker scan reads that file, so a bare name would skip it.
+    pub fn from_config(file: &str) -> Result<Self, CredibleConfigError> {
+        let identity = Self::parse(file)?;
+        if identity.source.is_none() {
+            return Err(CredibleConfigError::Invalid(format!(
+                "assertion `{}` must name its source file, such as assertions/src/{0}.a.sol:{0}",
+                identity.contract_name
+            )));
+        }
+        Ok(identity)
     }
 
     /// The `path:Contract` (or bare name) key that selects the Foundry artifact.
@@ -230,6 +252,7 @@ mod tests {
             "a.sol:Ignored:Guard",
             "a.sol:",
             "a.sol: ",
+            ":Guard",
             "",
             "Guard.t",
             "assertions/src/Guard",
