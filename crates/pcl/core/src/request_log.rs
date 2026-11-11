@@ -47,12 +47,13 @@ pub fn append_request_record(record: &Value) -> std::io::Result<()> {
 }
 
 /// Redacts the token in `/invitations/{token}/preview|accept`, matching the
-/// route the runner actually sends: `Url::set_path` resolves `.`/`..` (also
+/// route the runner actually sends: it splits off only `?query`, then
+/// `Url::set_path` treats `#` as a path character, resolves `.`/`..` (also
 /// `%2e`), turns `\` into `/` and drops tabs and newlines. Names match
 /// case-insensitively across empty segments. The percent-decoded form also
 /// covers servers that decode `%2F` or letters before routing.
 pub(crate) fn redact_sensitive_request_path(path: &str) -> String {
-    let split_at = path.find(['?', '#']).unwrap_or(path.len());
+    let split_at = path.find('?').unwrap_or(path.len());
     let (route, suffix) = path.split_at(split_at);
     let Ok(mut canonical) = url::Url::parse("http://pcl.invalid/") else {
         return path.to_string();
@@ -361,7 +362,6 @@ mod tests {
             "/invitations/{t}//accept",
             "/invitations/{t}/preview/",
             "/invitations/{t}/accept?x=1#frag",
-            "/invitations/{t}/preview#frag",
             "/api/v1/invitations/{t}/preview",
             "/x/../invitations/{t}/accept",
             "/invitations/{t}/<redacted>/../preview",
@@ -369,6 +369,11 @@ mod tests {
             "/invitations/{t}%2faccept",
             "/invitations/{t}/pre%76iew",
             "/invitations/{t}%2F..%2Fx/preview",
+            "/x#/../invitations/{t}/preview",
+            "/x#y#/../invitations/{t}/accept",
+            "/x%23/../invitations/{t}/preview",
+            "/x%3F/../invitations/{t}/accept",
+            "/x%3f/..%2F../invitations/{t}/preview",
         ]
         .iter()
         .map(|template| template.replace("{t}", t))
@@ -431,6 +436,7 @@ mod tests {
             "/invitations/item/preview;x",
             "/invitations/item/preview%23x",
             "/invitations;v=1/item/accept.json",
+            "/invitations/item/preview#frag",
             "/health?next=/invitations/x/preview",
             "/notes/<redacted>/preview",
             "/projects/a/../b",

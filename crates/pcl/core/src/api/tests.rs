@@ -1618,6 +1618,8 @@ async fn raw_calls_that_normalize_onto_invitation_routes_redact_every_sink() {
         format!("/invitations/{t}/junk/%2e%2e/accept"),
         format!("/invitations/{t}\\preview"),
         format!("/Invitations/{t}/junk/%2E%2E/accept"),
+        format!("/x#/../invitations/{t}/preview"),
+        format!("/x%3F/../invitations/{t}/preview"),
     ];
     for status in [200, 404] {
         let mut server = mockito::Server::new_async().await;
