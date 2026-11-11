@@ -743,3 +743,146 @@ fn release_deploy_broadcast_next_actions_use_releases_commands() {
     calldata.assert();
     confirm.assert();
 }
+
+const DEPLOY_ADOPTER: &str = "0xabCDeF0123456789AbcdEf0123456789aBCDEF01";
+const DEPLOY_REMOVED_ID: &str =
+    "0x2222222222222222222222222222222222222222222222222222222222222222";
+// viem-encoded removeAssertion(DEPLOY_ADOPTER, DEPLOY_REMOVED_ID).
+const DEPLOY_REMOVE_CALLDATA: &str = "0x81347190000000000000000000000000abcdef0123456789abcdef0123456789abcdef012222222222222222222222222222222222222222222222222222222222222222";
+const ANVIL_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+/// Mocks a non-noop deploy-calldata response and a platform that must not be
+/// asked to confirm a deploy.
+fn mock_deploy_calldata(
+    server: &mut mockito::ServerGuard,
+    project: &str,
+    operations: serde_json::Value,
+) -> (mockito::Mock, mockito::Mock) {
+    let calldata = server
+        .mock(
+            "GET",
+            format!("/api/v1/projects/{project}/releases/release-1/deploy-calldata").as_str(),
+        )
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "chainId": 1,
+                "stateOracleAddress": "0x0101010101010101010101010101010101010101",
+                "operations": operations,
+                "calldata": [DEPLOY_REMOVE_CALLDATA],
+                "isNoop": false,
+                "message": null,
+            })
+            .to_string(),
+        )
+        .expect(1)
+        .create();
+    let deploy = server.mock("POST", Matcher::Any).expect(0).create();
+    (calldata, deploy)
+}
+
+#[test]
+fn release_deploy_broadcast_refuses_an_unshowable_batch_before_any_send() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let mut server = mockito::Server::new();
+    let mut rpc = mockito::Server::new();
+    let rpc_calls = rpc.mock("POST", Matcher::Any).expect(0).create();
+    write_valid_auth_config_for_platform(config_dir.path(), &server.url());
+    let project = "11111111-1111-4111-8111-111111111111";
+    // The operation claims an add; the calldata removes.
+    let (calldata, deploy) = mock_deploy_calldata(
+        &mut server,
+        project,
+        serde_json::json!([{
+            "type": "addAssertion",
+            "adopterAddress": DEPLOY_ADOPTER,
+            "assertionId": DEPLOY_REMOVED_ID,
+        }]),
+    );
+
+    let rpc_url = rpc.url();
+    let output = run_pcl(
+        config_dir.path(),
+        &[
+            "releases",
+            "calldata",
+            "deploy",
+            project,
+            "release-1",
+            "--broadcast",
+            "--private-key",
+            ANVIL_KEY,
+            "--yes",
+            "--rpc-url",
+            &rpc_url,
+        ],
+    );
+    assert!(!output.status.success());
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stderr).expect("json error");
+    assert_eq!(
+        envelope["error"]["code"], "api.unexpected_response",
+        "{envelope}"
+    );
+    calldata.assert();
+    deploy.assert();
+    rpc_calls.assert();
+}
+
+#[test]
+fn release_deploy_broadcast_yes_prints_the_operations_before_sending() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let mut server = mockito::Server::new();
+    let mut rpc = mockito::Server::new();
+    // Fails the first RPC call, so reaching it proves the send started.
+    let rpc_calls = rpc
+        .mock("POST", Matcher::Any)
+        .with_status(500)
+        .expect_at_least(1)
+        .create();
+    write_valid_auth_config_for_platform(config_dir.path(), &server.url());
+    let project = "11111111-1111-4111-8111-111111111111";
+    let (calldata, deploy) = mock_deploy_calldata(
+        &mut server,
+        project,
+        serde_json::json!([{
+            "type": "removeAssertion",
+            "adopterAddress": DEPLOY_ADOPTER,
+            "assertionId": DEPLOY_REMOVED_ID,
+        }]),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .arg("--config-dir")
+        .arg(config_dir.path())
+        .args([
+            "releases",
+            "calldata",
+            "deploy",
+            project,
+            "release-1",
+            "--broadcast",
+            "--private-key",
+            ANVIL_KEY,
+            "--yes",
+            "--rpc-url",
+            &rpc.url(),
+        ])
+        .output()
+        .expect("run pcl");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let listed = stderr
+        .find(&format!(
+            "StateOracle.batch with 1 operation(s) for release release-1\n  removeAssertion adopter {DEPLOY_ADOPTER} assertion {DEPLOY_REMOVED_ID}\n"
+        ))
+        .unwrap_or_else(|| panic!("operation list missing:\n{stderr}"));
+    let sending = stderr
+        .find("Broadcasting StateOracle.batch transaction")
+        .unwrap_or_else(|| panic!("send never started:\n{stderr}"));
+    assert!(listed < sending, "{stderr}");
+    calldata.assert();
+    deploy.assert();
+    rpc_calls.assert();
+}
