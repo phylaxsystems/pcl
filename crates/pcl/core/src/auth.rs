@@ -969,13 +969,17 @@ impl AuthCommand {
         let status =
             match Self::check_auth_status(&self.api_client(), device_secret, session_id).await {
                 Ok(status) => status,
-                // The session can never verify now; keep the secret only for
-                // retryable failures.
+                // The session can never verify with the secret just sent; keep
+                // the stored one for retryable failures, and when an explicit
+                // --device-secret differed from it (the server looks up the
+                // session and secret together).
                 Err(
                     error @ (AuthError::SessionExpired
                     | AuthError::SessionNotFound
                     | AuthError::UserNotFound),
-                ) => {
+                ) if Self::load_pending_device_secret(cli_args, session_id)
+                    .is_ok_and(|stored| stored == device_secret) =>
+                {
                     print_human_warning(
                         Self::clear_pending_device_secret(cli_args, session_id),
                         json_output,

@@ -2590,3 +2590,32 @@ fn auth_logout_warns_when_the_config_dir_cannot_be_listed() {
         "logout hid that it could not list pending logins: {envelope}"
     );
 }
+
+/// A failed poll only proves the secret it sent is dead: a different
+/// --device-secret must not delete the stored one, an equal one may.
+#[test]
+fn auth_poll_override_only_clears_the_stored_secret_it_used() {
+    for (override_secret, stored_removed) in [("other_secret", false), ("test_secret", true)] {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        let pending = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
+        fs::write(&pending, "test_secret").expect("write pending secret");
+        let mut server = mockito::Server::new();
+        let _status = status_error_mock(
+            &mut server,
+            400,
+            r#"{"error":"Session not found","code":"SESSION_NOT_FOUND"}"#,
+        );
+
+        let output = run_poll(
+            temp_dir.path(),
+            &server.url(),
+            &["--device-secret", override_secret],
+        );
+        assert!(!output.status.success());
+        assert_eq!(
+            !pending.exists(),
+            stored_removed,
+            "--device-secret {override_secret}: stored secret removed must be {stored_removed}"
+        );
+    }
+}
