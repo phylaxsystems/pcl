@@ -2453,3 +2453,60 @@ fn commands_create_a_missing_config_dir_owner_only() {
         assert_eq!(mode, 0o700, "{command:?} created the config dir {mode:o}");
     }
 }
+
+/// A legacy GET whose error body echoes its request target must not put the
+/// device secret in the error output, human or --json.
+#[test]
+fn auth_poll_error_output_withholds_an_echoed_device_secret() {
+    for json in [true, false] {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        fs::write(
+            temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE),
+            "test_secret",
+        )
+        .expect("write pending secret");
+        let mut server = mockito::Server::new();
+        let _post = server
+            .mock("POST", "/api/v1/cli/auth/status")
+            .with_status(405)
+            .create();
+        let _get = server
+            .mock("GET", "/api/v1/cli/auth/status")
+            .match_query(mockito::Matcher::Any)
+            .with_status(400)
+            .with_body(
+                "upstream failure at /api/v1/cli/auth/status?device_secret=test_secret&session_id=550e8400-e29b-41d4-a716-446655440000",
+            )
+            .create();
+        let url = server.url();
+        let mut args = vec![
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+        ];
+        if json {
+            args.push("--json");
+        }
+        args.extend([
+            "auth",
+            "--auth-url",
+            &url,
+            "poll",
+            "--session-id",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ]);
+        let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+            .args(&args)
+            .output()
+            .expect("run pcl auth poll");
+        assert!(!output.status.success());
+        let rendered = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !rendered.contains("test_secret"),
+            "poll error output (json: {json}) leaked the device secret: {rendered}"
+        );
+    }
+}

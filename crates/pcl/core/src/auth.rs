@@ -1134,7 +1134,7 @@ impl AuthCommand {
         device_secret: &str,
         session_id: &Uuid,
     ) -> Result<CliAuthStatusResponse, AuthError> {
-        match post_cli_auth_status(client, session_id, device_secret).await {
+        let result = match post_cli_auth_status(client, session_id, device_secret).await {
             Ok(status) => Ok(status),
             Err(CliAuthStatusPostError::RouteMissing) => {
                 client
@@ -1144,7 +1144,8 @@ impl AuthCommand {
                     .map_err(AuthError::from)
             }
             Err(CliAuthStatusPostError::Call(error)) => Err(AuthError::from(*error)),
-        }
+        };
+        result.map_err(|error| withhold_echoed_secret(error, device_secret))
     }
 
     async fn remote_logout(&self, config: &CliConfig, local_only: bool) -> Value {
@@ -1857,6 +1858,61 @@ fn update_config_from_verified_status(
         issuer_platform_url: Some(crate::platform::trim_platform_url(issuer)),
     });
     Ok(())
+}
+
+/// Error text from the auth status endpoint is server-controlled and can echo
+/// the request (the legacy GET puts the secret in its URL). Withhold any
+/// message that carries the secret raw, percent/form-encoded (to two levels,
+/// either hex case) or JSON-escaped.
+fn withhold_echoed_secret(error: AuthError, device_secret: &str) -> AuthError {
+    const WITHHELD: &str = "response withheld because it echoed the device secret";
+    let leaks = |message: &str| {
+        !device_secret.is_empty()
+            && echoed_secret_forms(device_secret)
+                .iter()
+                .any(|form| message.contains(form.as_str()))
+    };
+    match error {
+        AuthError::StatusRequestFailed(message) if leaks(&message) => {
+            AuthError::StatusRequestFailed(WITHHELD.to_string())
+        }
+        AuthError::ServerError(message) if leaks(&message) => {
+            AuthError::ServerError(WITHHELD.to_string())
+        }
+        AuthError::InvalidSession(message) if leaks(&message) => {
+            AuthError::InvalidSession(WITHHELD.to_string())
+        }
+        other => other,
+    }
+}
+
+fn echoed_secret_forms(secret: &str) -> Vec<String> {
+    let percent = |text: &str, lower: bool| -> String {
+        text.bytes()
+            .map(|byte| {
+                match (byte.is_ascii_alphanumeric(), lower) {
+                    (true, _) => char::from(byte).to_string(),
+                    (false, false) => format!("%{byte:02X}"),
+                    (false, true) => format!("%{byte:02x}"),
+                }
+            })
+            .collect()
+    };
+    let form =
+        |text: &str| -> String { url::form_urlencoded::byte_serialize(text.as_bytes()).collect() };
+    let json = serde_json::to_string(secret).map_or_else(
+        |_| secret.to_string(),
+        |quoted| quoted.trim_matches('"').to_string(),
+    );
+    let mut forms = vec![secret.to_string(), json];
+    for _ in 0..2 {
+        let encoded: Vec<String> = forms
+            .iter()
+            .flat_map(|text| [percent(text, false), percent(text, true), form(text)])
+            .collect();
+        forms.extend(encoded);
+    }
+    forms
 }
 
 /// Prints a warning for people; machine callers get warnings in envelopes,
@@ -3577,6 +3633,116 @@ mod tests {
                     !rendered.contains("test_secret") && !rendered.contains("device_secret"),
                     "auth status error leaked the device secret: {rendered}"
                 );
+            }
+        }
+    }
+
+    /// The device secret in the forms a server or proxy could echo it in.
+    fn expected_secret_echoes(secret: &str) -> Vec<String> {
+        let percent = |text: &str, lower: bool| {
+            text.bytes()
+                .map(|byte| {
+                    if byte.is_ascii_alphanumeric() {
+                        char::from(byte).to_string()
+                    } else if lower {
+                        format!("%{byte:02x}")
+                    } else {
+                        format!("%{byte:02X}")
+                    }
+                })
+                .collect::<String>()
+        };
+        let json = serde_json::to_string(secret).unwrap();
+        let json = json.trim_matches('"').to_string();
+        let form = url::form_urlencoded::byte_serialize(secret.as_bytes()).collect::<String>();
+        vec![
+            secret.to_string(),
+            percent(secret, false),
+            percent(secret, true),
+            form.clone(),
+            json,
+            percent(&form, false),
+        ]
+    }
+
+    /// Auth status errors never carry the device secret, whatever the server
+    /// echoes back, on the POST or the legacy GET leg.
+    #[tokio::test]
+    async fn auth_status_errors_never_echo_the_device_secret() {
+        let secret = r#"tok/en+ "x"&y"#;
+        let session = "550e8400-e29b-41d4-a716-446655440000";
+        let forms = expected_secret_echoes(secret);
+        for form in &forms {
+            let json_safe = serde_json::to_string(form).unwrap();
+            let bodies: [(u16, String); 6] = [
+                (
+                    400,
+                    format!(
+                        r#"{{"error":"bad request {}"}}"#,
+                        json_safe.trim_matches('"')
+                    ),
+                ),
+                (
+                    400,
+                    format!(
+                        "upstream failure at /api/v1/cli/auth/status?device_secret={form}&session_id={session}"
+                    ),
+                ),
+                (400, format!(r#"{{"message":"echo","echo":{json_safe}}}"#)),
+                (
+                    500,
+                    format!(
+                        r#"{{"error":"boom {}","code":"INTERNAL_ERROR"}}"#,
+                        json_safe.trim_matches('"')
+                    ),
+                ),
+                (500, format!("<html>{form}</html>")),
+                (418, format!("teapot {form}")),
+            ];
+            for (status, body) in bodies {
+                for via_get in [false, true] {
+                    let mut server = Server::new_async().await;
+                    let post = server
+                        .mock("POST", "/api/v1/cli/auth/status")
+                        .with_status(if via_get { 405 } else { status.into() })
+                        .with_header("content-type", "application/json")
+                        .with_body(if via_get { String::new() } else { body.clone() })
+                        .create_async()
+                        .await;
+                    let get = server
+                        .mock("GET", "/api/v1/cli/auth/status")
+                        .match_query(Matcher::Any)
+                        .with_status(status.into())
+                        .with_header("content-type", "application/json")
+                        .with_body(&body)
+                        .expect(usize::from(via_get))
+                        .create_async()
+                        .await;
+                    let cmd = AuthCommand::try_parse_from(vec![
+                        "auth",
+                        "--auth-url",
+                        &server.url(),
+                        "login",
+                    ])
+                    .unwrap();
+                    let error = AuthCommand::check_auth_status(
+                        &cmd.api_client(),
+                        secret,
+                        &Uuid::parse_str(session).unwrap(),
+                    )
+                    .await
+                    .expect_err("error response must fail");
+                    for rendered in [error.to_string(), format!("{error:?}")] {
+                        for leaked in &forms {
+                            assert!(
+                                !rendered.contains(leaked.as_str()),
+                                "HTTP {status} (via GET: {via_get}) {body:?} leaked {leaked:?}: {rendered}"
+                            );
+                        }
+                    }
+                    post.assert_async().await;
+                    get.assert_async().await;
+                }
             }
         }
     }
