@@ -173,38 +173,10 @@ impl ProductSurfaceError {
         }
     }
 
-    fn diagnostic_message(&self) -> String {
-        match self {
-            Self::HttpStatus {
-                status,
-                method,
-                path,
-                ..
-            } => {
-                format!(
-                    "Request failed with status {status} for {method} {}",
-                    crate::request_log::redact_sensitive_request_path(path)
-                )
-            }
-            Self::ExportRequest {
-                path,
-                page,
-                attempts,
-                source,
-            } => {
-                format!(
-                    "Request failed after {attempts} attempts for GET {} page {page}: {source}",
-                    crate::request_log::redact_sensitive_request_path(path)
-                )
-            }
-            _ => self.to_string(),
-        }
-    }
-
     pub fn json_envelope(&self) -> Value {
         let mut error = Map::new();
         error.insert("code".to_string(), json!(self.code()));
-        error.insert("message".to_string(), json!(self.diagnostic_message()));
+        error.insert("message".to_string(), json!(self.to_string()));
         error.insert("recoverable".to_string(), json!(self.recoverable()));
         if let Self::ExportRequest {
             path,
@@ -216,7 +188,7 @@ impl ProductSurfaceError {
             error.insert(
                 "export".to_string(),
                 json!({
-                    "path": crate::request_log::redact_sensitive_request_path(path),
+                    "path": path,
                     "page": page,
                     "attempts": attempts,
                 }),
@@ -231,7 +203,6 @@ impl ProductSurfaceError {
             body,
         } = self
         {
-            let path = crate::request_log::redact_sensitive_request_path(path);
             error.insert("request_id".to_string(), json!(request_id));
             error.insert(
                 "http".to_string(),
