@@ -625,6 +625,11 @@ fn auth_login_json_fresh_flow_outputs_pending_and_terminal_events() {
     assert_eq!(terminal["data"]["email"], "agent@example.com");
     let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("read config");
     assert!(config.contains("access_token = \"test-token\""));
+    assert_secret_free(&stdout, "JSONL login events");
+    assert!(
+        pending_device_login_files(temp_dir.path()).is_empty(),
+        "a verified waiting login left the pending secret on disk"
+    );
     auth_code.assert();
     auth_status.assert();
 }
@@ -2266,4 +2271,87 @@ fn auth_poll_help_does_not_advertise_device_secret() {
     let help = String::from_utf8_lossy(&output.stdout);
     assert!(help.contains("--session-id"), "{help}");
     assert!(!help.contains("--device-secret"), "{help}");
+}
+
+fn assert_secret_free(rendered: &str, what: &str) {
+    assert!(
+        !rendered.contains("test_secret"),
+        "{what} leaked the device secret: {rendered}"
+    );
+    assert!(
+        !rendered.contains("--device-secret"),
+        "{what} printed a secret-bearing poll command: {rendered}"
+    );
+}
+
+/// Every login challenge output, human and --json, keeps the device secret
+/// out: login --no-wait, ensure and the refresh challenge.
+#[test]
+fn login_challenge_outputs_never_include_the_device_secret() {
+    for subcommand in [&["login", "--no-wait"][..], &["ensure"], &["refresh"]] {
+        for json in [false, true] {
+            let temp_dir = tempfile::tempdir().expect("create temp config dir");
+            let (server, _auth_code) = device_login_code_server();
+            let url = server.url();
+            let mut args = vec![
+                "--config-dir",
+                temp_dir.path().to_str().expect("utf-8 temp path"),
+            ];
+            if json {
+                args.push("--json");
+            }
+            args.extend(["auth", "--auth-url", &url]);
+            args.extend(subcommand);
+            let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+                .env("PCL_AUTH_NO_BROWSER", "1")
+                .args(&args)
+                .output()
+                .expect("run pcl auth");
+            assert!(
+                output.status.success(),
+                "{args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let rendered = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(rendered.contains("poll"), "{args:?}: {rendered}");
+            assert_secret_free(&rendered, &format!("{args:?}"));
+        }
+    }
+}
+
+/// A verified poll from the emitted command claims the login and removes the
+/// pending secret.
+#[cfg(unix)]
+#[test]
+fn auth_poll_verified_removes_the_pending_secret() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let (mut server, _auth_code) = device_login_code_server();
+    let _status = verified_status_mock(&mut server);
+
+    let ensured = run_ensure(temp_dir.path(), &server.url(), true);
+    assert!(ensured.status.success());
+    assert_eq!(pending_device_login_files(temp_dir.path()).len(), 1);
+    let challenge: serde_json::Value =
+        serde_json::from_slice(&ensured.stdout).expect("ensure envelope");
+    let output = run_emitted_command(
+        challenge["data"]["poll_command"]
+            .as_str()
+            .expect("poll command"),
+    );
+    assert!(
+        output.status.success(),
+        "poll failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("poll envelope");
+    assert_eq!(envelope["event"], "auth.login_complete");
+    assert!(
+        pending_device_login_files(temp_dir.path()).is_empty(),
+        "a verified poll left the pending secret on disk"
+    );
 }
