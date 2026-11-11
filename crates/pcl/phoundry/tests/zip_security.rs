@@ -10,23 +10,66 @@ use zip::{
 #[tokio::test]
 async fn dependency_zip_preserves_flat_layout_and_strips_single_root()
 -> Result<(), Box<dyn std::error::Error>> {
-    for name in ["contract.sol", "dependency/contract.sol"] {
-        let temp = tempfile::tempdir()?;
-        let archive = temp.path().join("dependency.zip");
-        let output = temp.path().join("output");
-        let mut writer = ZipWriter::new(fs::File::create(&archive)?);
-        writer.start_file(name, SimpleFileOptions::default())?;
-        writer.write_all(b"contract Safe {}")?;
-        writer.finish()?;
+    let temp = tempfile::tempdir()?;
+    let archive = temp.path().join("flat.zip");
+    let output = temp.path().join("flat-out");
+    let mut writer = ZipWriter::new(fs::File::create(&archive)?);
+    writer.start_file("contract.sol", SimpleFileOptions::default())?;
+    writer.write_all(b"contract Safe {}")?;
+    writer.finish()?;
 
-        soldeer_core::download::unzip_file(&archive, &output).await?;
+    soldeer_core::download::unzip_file(&archive, &output).await?;
 
-        assert_eq!(fs::read(output.join("contract.sol"))?, b"contract Safe {}");
-        assert!(
-            !archive.exists(),
-            "successful extraction removes the archive"
-        );
-    }
+    assert_eq!(fs::read(output.join("contract.sol"))?, b"contract Safe {}");
+    assert!(
+        !archive.exists(),
+        "successful extraction removes the archive"
+    );
+
+    let archive = temp.path().join("rooted.zip");
+    let output = temp.path().join("rooted-out");
+    let mut writer = ZipWriter::new(fs::File::create(&archive)?);
+    let options = SimpleFileOptions::default();
+    writer.start_file("dependency/contract.sol", options)?;
+    writer.write_all(b"contract Safe {}")?;
+    writer.start_file("dependency/src/Helper.sol", options)?;
+    writer.write_all(b"contract Helper {}")?;
+    writer.finish()?;
+
+    soldeer_core::download::unzip_file(&archive, &output).await?;
+
+    assert_eq!(fs::read(output.join("contract.sol"))?, b"contract Safe {}");
+    assert_eq!(
+        fs::read(output.join("src/Helper.sol"))?,
+        b"contract Helper {}"
+    );
+    assert!(!output.join("dependency").exists());
+    assert!(
+        !archive.exists(),
+        "successful extraction removes the archive"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn dependency_zip_keeps_the_path_of_a_single_nested_file()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let archive = temp.path().join("dependency.zip");
+    let output = temp.path().join("output");
+    let mut writer = ZipWriter::new(fs::File::create(&archive)?);
+    writer.start_file("src/Only.sol", SimpleFileOptions::default())?;
+    writer.write_all(b"contract Only {}")?;
+    writer.finish()?;
+
+    soldeer_core::download::unzip_file(&archive, &output).await?;
+
+    assert_eq!(fs::read(output.join("src/Only.sol"))?, b"contract Only {}");
+    assert!(!output.join("Only.sol").exists());
+    assert!(
+        !archive.exists(),
+        "successful extraction removes the archive"
+    );
     Ok(())
 }
 

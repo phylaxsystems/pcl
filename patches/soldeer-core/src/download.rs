@@ -56,10 +56,15 @@ pub async fn unzip_file(path: impl AsRef<Path>, into: impl AsRef<Path>) -> Resul
         let out_dir = into.as_ref().to_path_buf();
         move || -> Result<()> {
             let mut archive = ZipArchive::new(Cursor::new(zip_contents))?;
-            // zip-extract(..., strip_toplevel = true) is ZipArchive::extract_unwrapped_root_dir.
-            // The zip 9 extractor rejects paths that escape the destination, including
-            // symlink targets (GHSA-hjqx-j4rw-g7xv).
-            archive.extract_unwrapped_root_dir(&out_dir, root_dir_common_filter)?;
+            // zip-extract 0.4.1 only stripped a shared root when archive.len() >= 2.
+            // A lone nested file such as src/Only.sol must keep that prefix.
+            // Both branches use ZIP 9's checked extractor, which rejects paths that
+            // escape the destination, including symlink targets (GHSA-hjqx-j4rw-g7xv).
+            if archive.len() < 2 {
+                archive.extract(&out_dir)?;
+            } else {
+                archive.extract_unwrapped_root_dir(&out_dir, root_dir_common_filter)?;
+            }
             Ok(())
         }
     })
