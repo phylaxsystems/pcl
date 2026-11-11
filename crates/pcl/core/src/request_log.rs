@@ -77,10 +77,10 @@ fn redact_invitation_tokens(path: &str) -> Option<String> {
     let tokens = filled
         .windows(3)
         .filter(|window| {
-            is_route_name(segments[window[0]], "invitations")
+            segments[window[0]].eq_ignore_ascii_case("invitations")
                 && ["preview", "accept"]
                     .iter()
-                    .any(|name| is_route_name(segments[window[2]], name))
+                    .any(|name| segments[window[2]].eq_ignore_ascii_case(name))
         })
         .map(|window| window[1])
         .collect::<Vec<_>>();
@@ -91,14 +91,6 @@ fn redact_invitation_tokens(path: &str) -> Option<String> {
         segments[index] = REDACTED_SEGMENT;
     }
     Some(segments.join("/"))
-}
-
-// Also matches `preview;params` or `preview.json`: some servers strip those before routing.
-fn is_route_name(segment: &str, name: &str) -> bool {
-    segment
-        .get(..name.len())
-        .is_some_and(|head| head.eq_ignore_ascii_case(name))
-        && !segment[name.len()..].starts_with(|c: char| c.is_ascii_alphanumeric())
 }
 
 fn redact_record_path(record: &Value) -> Value {
@@ -377,9 +369,6 @@ mod tests {
             "/invitations/{t}%2faccept",
             "/invitations/{t}/pre%76iew",
             "/invitations/{t}%2F..%2Fx/preview",
-            "/invitations/{t}/preview;x",
-            "/invitations/{t}/preview%23x",
-            "/invitations;v=1/{t}/accept.json",
         ]
         .iter()
         .map(|template| template.replace("{t}", t))
@@ -435,6 +424,13 @@ mod tests {
             "/invitations/token/other",
             "/invitations/token/previews",
             "/invitationsx/token/accept",
+            "/invitations-archive/item/preview",
+            "/invitations/item/preview-backup",
+            "/invitations/item/accepted",
+            "/my-invitations/T/preview",
+            "/invitations/item/preview;x",
+            "/invitations/item/preview%23x",
+            "/invitations;v=1/item/accept.json",
             "/health?next=/invitations/x/preview",
             "/notes/<redacted>/preview",
             "/projects/a/../b",
