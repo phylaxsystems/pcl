@@ -80,13 +80,24 @@ pub struct ConfigLock {
     path: PathBuf,
 }
 
+/// Creates `dir` and any missing parents. Directories created here are 0700
+/// on unix (they hold credentials and pending login secrets); an existing
+/// directory keeps its mode.
+pub(crate) fn create_private_dir_all(dir: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(dir)
+}
+
 impl ConfigLock {
     /// Acquires the lock, waiting up to 30 seconds for another process to
     /// release it before returning [`ConfigError::LockTimeout`].
     pub async fn acquire(cli_args: &CliArgs) -> Result<Self, ConfigError> {
         let path = CliConfig::config_file_path(cli_args).with_extension("toml.lock");
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(ConfigError::WriteError)?;
+            create_private_dir_all(parent).map_err(ConfigError::WriteError)?;
         }
         let deadline = Instant::now() + CONFIG_LOCK_TIMEOUT;
         loop {
@@ -432,7 +443,7 @@ impl CliConfig {
     ///
     /// # Returns
     /// * `Result<(), ConfigError>` - Success or error
-    fn write_to_file_at_dir(&self, config_dir: &PathBuf) -> Result<(), ConfigError> {
+    fn write_to_file_at_dir(&self, config_dir: &Path) -> Result<(), ConfigError> {
         // Ensure directory exists and is writable
         Self::ensure_writable_directory(config_dir)?;
 
@@ -479,9 +490,9 @@ impl CliConfig {
     ///
     /// # Returns
     /// * `Result<(), ConfigError>` - Success or error
-    fn ensure_writable_directory(dir: &PathBuf) -> Result<(), ConfigError> {
+    fn ensure_writable_directory(dir: &Path) -> Result<(), ConfigError> {
         if !dir.exists() {
-            std::fs::create_dir_all(dir).map_err(|e| {
+            create_private_dir_all(dir).map_err(|e| {
                 ConfigError::WriteError(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
                     format!("Failed to create config directory: {e}"),
@@ -1662,7 +1673,7 @@ expires_at = 1672502400
         std::fs::set_permissions(&temp_dir, perms).unwrap();
 
         let config = CliConfig::default();
-        let result = config.write_to_file_at_dir(&temp_dir.path().to_path_buf());
+        let result = config.write_to_file_at_dir(temp_dir.path());
 
         assert!(result.is_err());
         assert!(
@@ -1798,5 +1809,32 @@ expires_at = 1672502400
         let (config_dir, _temp_dir) = setup_config_dir();
         let config = CliConfig::default();
         assert!(config.write_to_file_at_dir(&config_dir).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_creates_a_missing_config_dir_owner_only() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_dir = temp_dir.path().join("new").join("pcl");
+        CliConfig::default()
+            .write_to_file_at_dir(&config_dir)
+            .unwrap();
+        assert_eq!(
+            fs::metadata(&config_dir).unwrap().permissions().mode() & 0o777,
+            0o700,
+            "a config dir created for credentials must be 0700"
+        );
+
+        // An existing user dir keeps its mode.
+        let existing = TempDir::new().unwrap();
+        fs::set_permissions(existing.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        CliConfig::default()
+            .write_to_file_at_dir(existing.path())
+            .unwrap();
+        assert_eq!(
+            fs::metadata(existing.path()).unwrap().permissions().mode() & 0o777,
+            0o755,
+            "an existing config dir must not be chmodded"
+        );
     }
 }

@@ -60,10 +60,7 @@ use serde_json::{
     json,
 };
 #[cfg(unix)]
-use std::os::unix::fs::{
-    DirBuilderExt,
-    OpenOptionsExt,
-};
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     io::{
         self,
@@ -1042,13 +1039,7 @@ impl AuthCommand {
         auth_response: &CliAuthRequestCodeResponse,
     ) -> Result<(), AuthError> {
         let dir = Self::config_dir_for(cli_args);
-        let mut dir_builder = std::fs::DirBuilder::new();
-        dir_builder.recursive(true);
-        // Only directories created here get 0700; an existing dir keeps its mode.
-        #[cfg(unix)]
-        dir_builder.mode(0o700);
-        dir_builder
-            .create(&dir)
+        crate::config::create_private_dir_all(&dir)
             .map_err(|error| AuthError::ConfigError(ConfigError::WriteError(error)))?;
         let path = Self::pending_device_secret_path(&dir, &auth_response.session_id);
         // create_new refuses an existing path (never follows a planted symlink

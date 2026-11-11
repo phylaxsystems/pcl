@@ -2398,3 +2398,58 @@ fn auth_ensure_json_wait_command_targets_the_originating_dir_and_platform() {
         "wait_command did not log in to the originating config dir:\n{config}"
     );
 }
+
+/// Whatever command first creates the config dir (a config write, a logged
+/// API request) creates it owner-only.
+#[cfg(unix)]
+#[test]
+fn commands_create_a_missing_config_dir_owner_only() {
+    let mut server = mockito::Server::new();
+    let _health = server
+        .mock("GET", "/api/v1/health")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body("{}")
+        .create();
+    let url = server.url();
+    let cases: [&[&str]; 2] = [
+        // Records the platform before the (failing) login runs.
+        &["auth", "--auth-url", "http://127.0.0.1:9", "login"],
+        &[
+            "api",
+            "call",
+            "get",
+            "/health",
+            "--allow-unauthenticated",
+            "--api-url",
+            &url,
+        ],
+    ];
+    for command in cases {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let config_dir = temp_dir.path().join("new").join("pcl");
+        let mut args = vec![
+            "--config-dir",
+            config_dir.to_str().expect("utf-8 temp path"),
+            "--json",
+        ];
+        args.extend(command);
+        let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+            .env_remove("PCL_REQUEST_LOG")
+            .args(&args)
+            .output()
+            .expect("run pcl");
+        assert!(
+            config_dir.exists(),
+            "{command:?} did not create the config dir: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mode = fs::metadata(&config_dir)
+            .expect("config dir metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700, "{command:?} created the config dir {mode:o}");
+    }
+}
