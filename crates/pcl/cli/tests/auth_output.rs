@@ -2846,3 +2846,124 @@ fn json_error_envelopes_carry_pending_cleanup_failures() {
         "login dropped it: {envelope}"
     );
 }
+
+/// A claimed login is saved once. A refresh that rotates the pair after that
+/// save (here while poll is still blocked writing its output) must survive
+/// the end of the poll command.
+#[test]
+fn claims_do_not_overwrite_a_pair_rotated_after_their_save() {
+    for command in [
+        &[
+            "poll",
+            "--session-id",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "--device-secret",
+            "test_secret",
+        ][..],
+        &["login"],
+    ] {
+        assert_claim_keeps_a_later_rotation(command);
+    }
+}
+
+fn assert_claim_keeps_a_later_rotation(command: &[&str]) {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let config_path = temp_dir.path().join("config.toml");
+    let (mut server, _auth_code) = device_login_code_server();
+    // An envelope larger than the pipe buffer blocks poll on stdout after it
+    // saved the claim and before it returns to main.
+    let _status = server
+        .mock("POST", "/api/v1/cli/auth/status")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "verified": true,
+                "user_id": "550e8400-e29b-41d4-a716-446655440000",
+                "token": "claimed-access",
+                "refresh_token": "claimed-refresh",
+                "email": format!("{}@example.com", "a".repeat(200_000)),
+            })
+            .to_string(),
+        )
+        .create();
+    let refresh = server
+        .mock("POST", "/api/v1/auth/refresh")
+        .match_body(mockito::Matcher::Json(
+            serde_json::json!({ "refresh_token": "claimed-refresh" }),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"token":"rotated-access","refresh_token":"rotated-refresh","expires_at":"2099-01-01T00:00:00Z","refresh_expires_at":"2099-02-01T00:00:00Z"}"#,
+        )
+        .expect(1)
+        .create();
+    let url = server.url();
+    let config_dir = temp_dir.path().to_str().expect("utf-8 temp path");
+
+    let mut poll = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .env("PCL_AUTH_NO_BROWSER", "1")
+        .args([
+            "--config-dir",
+            config_dir,
+            "--json",
+            "auth",
+            "--auth-url",
+            &url,
+        ])
+        .args(command)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn pcl auth poll");
+    let started = std::time::Instant::now();
+    while !fs::read_to_string(&config_path).is_ok_and(|config| config.contains("claimed-refresh")) {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(20),
+            "{command:?} never saved the claim"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        poll.try_wait().expect("poll status").is_none(),
+        "{command:?} must still be blocked on its output"
+    );
+
+    let refreshed = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args([
+            "--config-dir",
+            config_dir,
+            "--json",
+            "auth",
+            "--auth-url",
+            &url,
+            "refresh",
+            "--force",
+        ])
+        .output()
+        .expect("run pcl auth refresh");
+    assert!(
+        refreshed.status.success(),
+        "refresh failed: {}",
+        String::from_utf8_lossy(&refreshed.stderr)
+    );
+
+    let polled = poll.wait_with_output().expect("finish poll");
+    assert!(
+        polled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&polled.stderr)
+    );
+    let config = fs::read_to_string(&config_path).expect("read config");
+    assert!(
+        config.contains("rotated-refresh") && !config.contains("claimed-refresh"),
+        "{command:?} overwrote the rotated pair with the spent one:\n{}",
+        config
+            .lines()
+            .filter(|line| line.contains("token"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    refresh.assert();
+}

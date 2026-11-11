@@ -229,6 +229,16 @@ impl AuthCommand {
         )
     }
 
+    /// Login and poll only change the config by claiming a login, which they
+    /// save themselves before reporting success; main.rs must not write that
+    /// config again, or it could replace a pair refreshed in the meantime.
+    pub fn saves_claimed_credentials(&self) -> bool {
+        matches!(
+            self.command,
+            AuthSubcommands::Login { .. } | AuthSubcommands::Poll { .. }
+        )
+    }
+
     /// Only a login records the platform it targeted. `ensure`, `refresh`, and
     /// `status` must not move the remembered platform, and `logout` clears it.
     pub fn persists_platform_url(&self) -> bool {
@@ -935,16 +945,18 @@ impl AuthCommand {
             };
 
             if status.verified {
-                let saved = update_config_from_verified_status(
+                let saved = match update_config_from_verified_status(
                     config,
                     status,
                     auth_response.expires_at,
                     &self.effective_auth_url(),
-                )
-                .and_then(|()| {
-                    self.remember_platform_url(config);
-                    persist_claimed_auth(config, cli_args)
-                });
+                ) {
+                    Ok(()) => {
+                        self.remember_platform_url(config);
+                        persist_claimed_auth(config, cli_args).await
+                    }
+                    Err(error) => Err(error),
+                };
                 if let Err(error) = saved {
                     if json_output {
                         spinner.finish_and_clear();
@@ -1013,7 +1025,7 @@ impl AuthCommand {
             self.remember_platform_url(config);
             // The claim is single-use, so the secret is spent even if saving
             // fails; success is only reported once the credentials are saved.
-            let saved = persist_claimed_auth(config, cli_args);
+            let saved = persist_claimed_auth(config, cli_args).await;
             let cleanup_warning = Self::clear_pending_device_secret(cli_args, session_id);
             if let Err(error) = saved {
                 return Err(with_cleanup_warning(error, cleanup_warning));
@@ -1900,13 +1912,15 @@ fn update_config_from_verified_status(
     Ok(())
 }
 
-/// Saves claimed credentials before success is reported, with the writer
-/// main.rs uses for login and poll: an unconditional write, backing up a
-/// config file that does not parse first.
-fn persist_claimed_auth(config: &CliConfig, cli_args: &CliArgs) -> Result<(), AuthError> {
-    if CliConfig::read_from_file(cli_args).is_err() {
-        CliConfig::back_up_unreadable(cli_args).map_err(AuthError::ConfigError)?;
-    }
+/// Saves claimed credentials, once, before success is reported: an
+/// unconditional write that first backs up a config file that does not parse,
+/// under the lock refresh holds while it rotates the pair. main.rs does not
+/// write again (see [`AuthCommand::saves_claimed_credentials`]).
+async fn persist_claimed_auth(config: &CliConfig, cli_args: &CliArgs) -> Result<(), AuthError> {
+    let _lock = ConfigLock::acquire(cli_args)
+        .await
+        .map_err(AuthError::ConfigError)?;
+    CliConfig::back_up_unreadable(cli_args).map_err(AuthError::ConfigError)?;
     config
         .write_to_file(cli_args)
         .map_err(AuthError::ConfigError)

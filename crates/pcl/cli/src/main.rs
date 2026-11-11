@@ -156,12 +156,17 @@ async fn main() -> Result<()> {
         }
 
         let baseline_config = config.clone();
+        let saves_own_changes = cli.command.saves_its_own_config_changes();
         run_command(cli.command, &cli.args, &mut config, cli.args.json_output()).await?;
         let command_changed_config = config != baseline_config;
         let passive_config_changed = baseline_config != original_config;
-        let should_persist_config = command_changed_config
-            || passive_config_changed
-            || (!read_valid_config && should_write_after_invalid_config);
+        // A claimed login is already saved, passive changes included; writing
+        // it again could replace a pair another process refreshed since.
+        let command_saved_config = command_changed_config && saves_own_changes;
+        let should_persist_config = !command_saved_config
+            && (command_changed_config
+                || passive_config_changed
+                || (!read_valid_config && should_write_after_invalid_config));
         let force_config_write =
             should_force_config_write && (command_changed_config || !read_valid_config);
         if (read_valid_config || should_write_after_invalid_config) && should_persist_config {
