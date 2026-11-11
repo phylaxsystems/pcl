@@ -450,8 +450,13 @@ fn apply_error_envelope(err: &ApplyError) -> Value {
                 &["pcl apply --help"],
             )
         }
-        ApplyError::BuildFailed(err) => {
-            phoundry_failure_code(err, "build.failed", &["pcl build", "pcl apply --dry-run"])
+        ApplyError::BuildFailed(build_err) => {
+            phoundry_failure_code(
+                build_err,
+                err.to_string(),
+                "build.failed",
+                &["pcl build", "pcl apply --dry-run"],
+            )
         }
         ApplyError::NoProjectsFound => {
             (
@@ -594,9 +599,10 @@ fn verify_error_envelope(err: &VerifyError) -> Value {
                 &["pcl verify --help", "pcl apply --dry-run"],
             )
         }
-        VerifyError::BuildFailed(err) => {
+        VerifyError::BuildFailed(build_err) => {
             phoundry_failure_code(
-                err,
+                build_err,
+                err.to_string(),
                 "verify.build_failed",
                 &["pcl build --help", "pcl verify --help"],
             )
@@ -668,30 +674,27 @@ fn verification_failed_message(summary: &VerificationSummary) -> String {
 const SOURCE_PATH_HINT: &[&str] =
     &["Pass a project-root-relative path such as assertions/src/Contract.a.sol:Contract"];
 
+/// Code and next actions for a build error; `message` is the caller's own
+/// rendering so wrapped errors keep their "Build failed: " prefix.
 fn phoundry_failure_code<'a>(
-    err: &'a PhoundryError,
+    err: &PhoundryError,
+    message: String,
     fallback_code: &'static str,
     fallback_actions: &'a [&'static str],
 ) -> (&'static str, String, &'a [&'static str]) {
     match err {
         PhoundryError::AmbiguousContract { .. } => {
-            (
-                "build.ambiguous_contract",
-                err.to_string(),
-                SOURCE_PATH_HINT,
-            )
+            ("build.ambiguous_contract", message, SOURCE_PATH_HINT)
         }
-        PhoundryError::ContractNotAtPath { .. } => {
-            (fallback_code, err.to_string(), SOURCE_PATH_HINT)
-        }
+        PhoundryError::ContractNotAtPath { .. } => (fallback_code, message, SOURCE_PATH_HINT),
         PhoundryError::ArtifactTargetMismatch { .. } => {
             (
                 "build.artifact_target_mismatch",
-                err.to_string(),
+                message,
                 &["pcl verify --help", "pcl apply --dry-run"],
             )
         }
-        _ => (fallback_code, err.to_string(), fallback_actions),
+        _ => (fallback_code, message, fallback_actions),
     }
 }
 
@@ -712,7 +715,12 @@ fn phoundry_error_envelope(err: &PhoundryError) -> Value {
             )
         }
         PhoundryError::AmbiguousContract { .. } | PhoundryError::ArtifactTargetMismatch { .. } => {
-            phoundry_failure_code(err, "build.failed", &["pcl build --help", "pcl doctor"])
+            phoundry_failure_code(
+                err,
+                err.to_string(),
+                "build.failed",
+                &["pcl build --help", "pcl doctor"],
+            )
         }
         _ => {
             (
@@ -1464,6 +1472,50 @@ mod tests {
     use super::*;
     use clap::CommandFactory;
     use pcl_core::api::envelope_output_string;
+
+    #[cfg(feature = "credible")]
+    #[test]
+    fn source_selection_errors_keep_their_code_and_build_failed_prefix() {
+        let ambiguous = || {
+            Box::new(PhoundryError::AmbiguousContract {
+                name: "Guard".to_string(),
+                paths: "assertions/src/A.a.sol, assertions/src/B.a.sol".to_string(),
+            })
+        };
+        let mismatch = || {
+            Box::new(PhoundryError::ArtifactTargetMismatch {
+                requested: "assertions/src/A.a.sol:Guard".to_string(),
+                actual: "assertions/src/B.a.sol:Guard".to_string(),
+            })
+        };
+
+        for (envelope, code) in [
+            (
+                apply_error_envelope(&ApplyError::BuildFailed(ambiguous())),
+                "build.ambiguous_contract",
+            ),
+            (
+                verify_error_envelope(&VerifyError::BuildFailed(ambiguous())),
+                "build.ambiguous_contract",
+            ),
+            (
+                apply_error_envelope(&ApplyError::BuildFailed(mismatch())),
+                "build.artifact_target_mismatch",
+            ),
+            (
+                verify_error_envelope(&VerifyError::BuildFailed(mismatch())),
+                "build.artifact_target_mismatch",
+            ),
+        ] {
+            assert_eq!(envelope["error"]["code"], code, "{envelope}");
+            assert!(
+                envelope["error"]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.starts_with("Build failed: ")),
+                "{envelope}"
+            );
+        }
+    }
 
     #[test]
     fn detects_output_mode_before_successful_parse() {
