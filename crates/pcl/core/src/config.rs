@@ -428,7 +428,9 @@ impl CliConfig {
     /// file parses and this is not called again.
     pub fn back_up_unreadable(cli_args: &CliArgs) -> Result<Option<PathBuf>, ConfigError> {
         let source = Self::config_file_path(cli_args);
-        if !source.exists() {
+        // A file that parses again (a login already saved over it) is not
+        // the unreadable original; copying it would replace that backup.
+        if !source.exists() || Self::read_from_file(cli_args).is_ok() {
             return Ok(None);
         }
         let backup = source.with_extension("toml.invalid");

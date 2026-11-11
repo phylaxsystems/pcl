@@ -2662,3 +2662,107 @@ fn auth_ensure_poll_command_resolves_a_relative_config_dir() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+const VERIFIED_STATUS_BODY: &str = r#"{"verified":true,"user_id":"550e8400-e29b-41d4-a716-446655440000","token":"opaque-token","refresh_token":"new-refresh-token","email":"agent@example.com"}"#;
+
+fn assert_no_false_success(output: &std::process::Output, what: &str) {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{what} succeeded: {stdout}");
+    assert!(
+        !stdout.contains("auth.login_complete")
+            && !stdout.contains("Authentication successful")
+            && !stdout.contains("\"status\":\"ok\"")
+            && !stdout.contains("\"status\": \"ok\""),
+        "{what} reported success before the credentials were saved: {stdout}"
+    );
+    assert!(
+        stderr.contains("Failed to write config file"),
+        "{what} did not report the write failure: {stderr}"
+    );
+}
+
+/// A verified claim is only reported once the credentials are on disk; if
+/// they cannot be saved, only the error is printed.
+#[cfg(unix)]
+#[test]
+fn auth_poll_reports_success_only_after_saving_credentials() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    let config_path = temp_dir.path().join("config.toml");
+    fs::write(&config_path, "").expect("write config");
+    fs::set_permissions(&config_path, fs::Permissions::from_mode(0o400)).expect("chmod");
+    let mut server = mockito::Server::new();
+    let _status = verified_status_mock(&mut server);
+
+    let output = run_poll(
+        temp_dir.path(),
+        &server.url(),
+        &["--device-secret", "test_secret"],
+    );
+    assert_no_false_success(&output, "poll");
+}
+
+#[cfg(unix)]
+#[test]
+fn auth_login_reports_success_only_after_saving_credentials() {
+    for json in [true, false] {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        let config_path = temp_dir.path().join("config.toml");
+        let (mut server, _auth_code) = device_login_code_server();
+        let lock_config = config_path.clone();
+        // Make the config read-only once the login is under way (the platform
+        // is recorded before the command runs).
+        let _status = server
+            .mock("POST", "/api/v1/cli/auth/status")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body_from_request(move |_| {
+                let _ = fs::set_permissions(&lock_config, fs::Permissions::from_mode(0o400));
+                VERIFIED_STATUS_BODY.as_bytes().to_vec()
+            })
+            .create();
+        let url = server.url();
+        let mut args = vec![
+            "--config-dir",
+            temp_dir.path().to_str().expect("utf-8 temp path"),
+        ];
+        if json {
+            args.push("--json");
+        }
+        args.extend(["auth", "--auth-url", &url, "login"]);
+        let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+            .env("PCL_AUTH_NO_BROWSER", "1")
+            .stdin(std::process::Stdio::null())
+            .args(&args)
+            .output()
+            .expect("run pcl auth login");
+        assert_no_false_success(&output, &format!("login (json: {json})"));
+    }
+}
+
+/// Saving claimed credentials over an unparseable config keeps the original
+/// bytes in config.toml.invalid, as the post-command write always did.
+#[test]
+fn auth_poll_over_an_unreadable_config_keeps_its_backup() {
+    let temp_dir = tempfile::tempdir().expect("create temp config dir");
+    fs::write(temp_dir.path().join("config.toml"), "not = [valid toml").expect("write config");
+    let mut server = mockito::Server::new();
+    let _status = verified_status_mock(&mut server);
+
+    let output = run_poll(
+        temp_dir.path(),
+        &server.url(),
+        &["--device-secret", "test_secret"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(temp_dir.path().join("config.toml.invalid")).expect("backup"),
+        "not = [valid toml"
+    );
+    let config = fs::read_to_string(temp_dir.path().join("config.toml")).expect("config");
+    assert!(config.contains("opaque-token"), "{config}");
+}

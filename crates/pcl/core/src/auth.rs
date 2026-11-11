@@ -613,7 +613,7 @@ impl AuthCommand {
             // Every wait failure is terminal (transient errors retry until the
             // deadline), so the secret is spent either way.
             let waited = self
-                .wait_for_verification(config, &client, &auth_response, true)
+                .wait_for_verification(config, cli_args, &client, &auth_response, true)
                 .await;
             let cleanup_warning =
                 Self::clear_pending_device_secret(cli_args, &auth_response.session_id);
@@ -630,7 +630,7 @@ impl AuthCommand {
         }
 
         self.display_login_instructions(&auth_response);
-        self.wait_for_verification(config, &client, &auth_response, json_output)
+        self.wait_for_verification(config, cli_args, &client, &auth_response, json_output)
             .await?;
         self.print_v2_spec_notice(json_output);
         Ok(())
@@ -868,6 +868,7 @@ impl AuthCommand {
     async fn wait_for_verification(
         &self,
         config: &mut CliConfig,
+        cli_args: &CliArgs,
         client: &GeneratedClient,
         auth_response: &CliAuthRequestCodeResponse,
         json_output: bool,
@@ -932,18 +933,29 @@ impl AuthCommand {
             };
 
             if status.verified {
+                let saved = update_config_from_verified_status(
+                    config,
+                    status,
+                    auth_response.expires_at,
+                    &self.effective_auth_url(),
+                )
+                .and_then(|()| {
+                    self.remember_platform_url(config);
+                    persist_claimed_auth(config, cli_args)
+                });
+                if let Err(error) = saved {
+                    if json_output {
+                        spinner.finish_and_clear();
+                    } else {
+                        spinner.finish_with_message(format!("❌ {error}"));
+                    }
+                    return Err(error);
+                }
                 if json_output {
                     spinner.finish_and_clear();
                 } else {
                     spinner.finish_with_message("✅ Authentication successful!");
                 }
-                update_config_from_verified_status(
-                    config,
-                    status,
-                    auth_response.expires_at,
-                    &self.effective_auth_url(),
-                )?;
-                self.remember_platform_url(config);
                 if !json_output {
                     Self::display_success_message(config)?;
                 }
@@ -997,8 +1009,12 @@ impl AuthCommand {
                 expires_at.unwrap_or_else(default_poll_fallback_expires_at),
                 &self.effective_auth_url(),
             )?;
-            let cleanup_warning = Self::clear_pending_device_secret(cli_args, session_id);
             self.remember_platform_url(config);
+            // The claim is single-use, so the secret is spent even if saving
+            // fails; success is only reported once the credentials are saved.
+            let saved = persist_claimed_auth(config, cli_args);
+            let cleanup_warning = Self::clear_pending_device_secret(cli_args, session_id);
+            saved?;
             let mut output = self.with_v2_spec_warning(self.status_envelope(config));
             push_warning(&mut output, cleanup_warning);
             if let Some(object) = output.as_object_mut() {
@@ -1941,6 +1957,18 @@ fn echoed_secret_forms(secret: &str) -> Vec<String> {
         forms.extend(encoded);
     }
     forms
+}
+
+/// Saves claimed credentials before success is reported, with the writer
+/// main.rs uses for login and poll: an unconditional write, backing up a
+/// config file that does not parse first.
+fn persist_claimed_auth(config: &CliConfig, cli_args: &CliArgs) -> Result<(), AuthError> {
+    if CliConfig::read_from_file(cli_args).is_err() {
+        CliConfig::back_up_unreadable(cli_args).map_err(AuthError::ConfigError)?;
+    }
+    config
+        .write_to_file(cli_args)
+        .map_err(AuthError::ConfigError)
 }
 
 /// Prints a warning for people; machine callers get warnings in envelopes,
@@ -3046,6 +3074,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_wait_for_verification_stops_when_session_expired() {
+        let config_dir = tempfile::tempdir().unwrap();
         let server = Server::new_async().await;
 
         // No mocks — the server should never be called because the session
@@ -3063,7 +3092,13 @@ mod tests {
         .unwrap();
 
         let result = cmd
-            .wait_for_verification(&mut config, &client, &expired_response, false)
+            .wait_for_verification(
+                &mut config,
+                &test_cli_args(config_dir.path()),
+                &client,
+                &expired_response,
+                false,
+            )
             .await;
 
         assert!(result.is_err());
@@ -3219,6 +3254,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_polling_stops_on_session_expired() {
+        let config_dir = tempfile::tempdir().unwrap();
         let mut server = Server::new_async().await;
 
         // First poll: pending. Second poll: session expired.
@@ -3258,7 +3294,13 @@ mod tests {
         .unwrap();
 
         let result = cmd
-            .wait_for_verification(&mut config, &client, &auth_response, false)
+            .wait_for_verification(
+                &mut config,
+                &test_cli_args(config_dir.path()),
+                &client,
+                &auth_response,
+                false,
+            )
             .await;
 
         assert!(
@@ -3272,6 +3314,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_polling_retries_on_server_error() {
+        let config_dir = tempfile::tempdir().unwrap();
         let mut server = Server::new_async().await;
 
         // First poll: 500 (transient). Second poll: success.
@@ -3310,7 +3353,13 @@ mod tests {
         .unwrap();
 
         let result = cmd
-            .wait_for_verification(&mut config, &client, &auth_response, false)
+            .wait_for_verification(
+                &mut config,
+                &test_cli_args(config_dir.path()),
+                &client,
+                &auth_response,
+                false,
+            )
             .await;
 
         assert!(
@@ -3355,6 +3404,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_polling_stops_on_verified_missing_tokens() {
+        let config_dir = tempfile::tempdir().unwrap();
         let mut server = Server::new_async().await;
 
         // Server returns verified:true but without tokens — wait_for_verification
@@ -3382,7 +3432,13 @@ mod tests {
         .unwrap();
 
         let result = cmd
-            .wait_for_verification(&mut config, &client, &auth_response, false)
+            .wait_for_verification(
+                &mut config,
+                &test_cli_args(config_dir.path()),
+                &client,
+                &auth_response,
+                false,
+            )
             .await;
 
         assert!(
