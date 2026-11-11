@@ -1657,6 +1657,84 @@ async fn raw_calls_that_normalize_onto_invitation_routes_redact_every_sink() {
 }
 
 #[tokio::test]
+async fn invitation_transport_errors_omit_the_bearer_token() {
+    let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let api_url = format!("http://127.0.0.1:{closed_port}");
+    let api = test_api(&api_url, true);
+    let temp_dir = tempfile::tempdir().unwrap();
+    let log_path = temp_dir.path().join("requests.jsonl");
+    let cli_args = CliArgs {
+        config_dir: Some(temp_dir.path().to_path_buf()),
+        ..Default::default()
+    };
+    let mut config = valid_auth_config("access", "refresh");
+    config.set_test_platform(&api_url);
+    config.write_to_file(&cli_args).unwrap();
+
+    let mut errors = Vec::new();
+    for (method, operation_id, require_auth) in [
+        (HttpMethod::Get, "previewInvitation", false),
+        (HttpMethod::Post, "acceptInvitation", true),
+    ] {
+        let request = test_workflow_request_for_operation(
+            WorkflowOperation::new(method, operation_id).path_param("token", INVITATION_TOKEN),
+            require_auth,
+            Vec::<String>::new(),
+        );
+        errors.push(
+            api.call_workflow_result(&mut config, &cli_args, &request, &log_path)
+                .await
+                .unwrap_err(),
+        );
+    }
+    let raw_path = format!("/invitations/{INVITATION_TOKEN}/preview");
+    errors.push(
+        api.call_api(&mut config, &cli_args, raw_get(&raw_path), &log_path)
+            .await
+            .unwrap_err(),
+    );
+
+    for error in errors {
+        assert!(matches!(error, ApiCommandError::Request(_)), "{error:?}");
+        assert_eq!(error.code(), "network.request_failed");
+        let display = error.to_string();
+        let envelope = error.json_envelope().to_string();
+        assert!(
+            !display.contains(INVITATION_TOKEN),
+            "transport error Display kept the token: {display}"
+        );
+        assert!(
+            !envelope.contains(INVITATION_TOKEN),
+            "transport error envelope kept the token: {envelope}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn non_invitation_transport_errors_keep_the_request_url() {
+    let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let api = test_api(format!("http://127.0.0.1:{closed_port}"), true);
+    let error = api
+        .call_api(
+            &mut CliConfig::default(),
+            &CliArgs::default(),
+            raw_get("/health"),
+            test_request_log_path(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("/api/v1/health"), "{error}");
+}
+
+#[tokio::test]
 async fn raw_401_preserves_original_error_when_refresh_endpoint_is_missing() {
     let mut server = mockito::Server::new_async().await;
     let original = server

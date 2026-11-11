@@ -159,7 +159,7 @@ where
                 .to_string();
             let bytes = match response.bytes().await {
                 Ok(bytes) => bytes,
-                Err(error) => return ApiCommandError::Request(error),
+                Err(error) => return error.into(),
             };
             ApiCommandError::HttpStatus {
                 method,
@@ -169,9 +169,9 @@ where
                 body: Box::new(response_body_value(&content_type, &bytes)),
             }
         }
-        GeneratedError::CommunicationError(error) => ApiCommandError::Request(error),
-        GeneratedError::InvalidUpgrade(error) => ApiCommandError::Request(error),
-        GeneratedError::ResponseBodyError(error) => ApiCommandError::Request(error),
+        GeneratedError::CommunicationError(error) => error.into(),
+        GeneratedError::InvalidUpgrade(error) => error.into(),
+        GeneratedError::ResponseBodyError(error) => error.into(),
         GeneratedError::InvalidResponsePayload(bytes, error) => {
             let body = response_body_value("application/json", &bytes);
             ApiCommandError::InvalidWorkflow {
@@ -1601,7 +1601,7 @@ impl ApiArgs {
         reqwest::Client::builder()
             .default_headers(headers)
             .build()
-            .map_err(ApiCommandError::Request)
+            .map_err(ApiCommandError::from)
     }
 
     pub(in crate::api) fn generated_client(
