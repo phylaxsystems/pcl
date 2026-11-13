@@ -2331,6 +2331,92 @@ mod tests {
     }
 
     #[test]
+    fn release_identity_decision_table() {
+        const PROJECT: &str = "aaaaaaaa-1111-4111-8111-111111111111";
+        const RELEASE: &str = "bbbbbbbb-2222-4222-8222-222222222222";
+        let honest = json!({ "id": RELEASE, "projectId": PROJECT, "environment": "staging" });
+        let cases: [(&str, &str, Value, bool); 11] = [
+            ("honest", "", Value::Null, true),
+            ("id absent", "id", Value::Null, true),
+            ("projectId absent", "projectId", Value::Null, true),
+            (
+                "other id",
+                "id",
+                json!("cccccccc-2222-4222-8222-222222222222"),
+                false,
+            ),
+            ("id case", "id", json!(RELEASE.to_ascii_uppercase()), false),
+            ("id not a string", "id", json!(7), false),
+            (
+                "other project",
+                "projectId",
+                json!("dddddddd-1111-4111-8111-111111111111"),
+                false,
+            ),
+            (
+                "project case",
+                "projectId",
+                json!(PROJECT.to_ascii_uppercase()),
+                false,
+            ),
+            ("environment absent", "environment", Value::Null, false),
+            (
+                "other environment",
+                "environment",
+                json!("production"),
+                false,
+            ),
+            ("environment case", "environment", json!("Staging"), false),
+        ];
+        for (name, field, value, accepted) in cases {
+            let mut detail = honest.clone();
+            if value.is_null() {
+                detail.as_object_mut().unwrap().remove(field);
+            } else {
+                detail[field] = value;
+            }
+            assert_eq!(
+                release_identity_mismatch(&detail, PROJECT, "staging", RELEASE).is_none(),
+                accepted,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn confirmed_release_decision_table() {
+        const RELEASE: &str = "bbbbbbbb-2222-4222-8222-222222222222";
+        let cases = [
+            (
+                "same release",
+                json!({ "confirm": { "releaseId": RELEASE } }),
+                true,
+            ),
+            (
+                "same release, other case",
+                json!({ "confirm": { "releaseId": RELEASE.to_ascii_uppercase() } }),
+                true,
+            ),
+            ("no confirm body", Value::Null, true),
+            (
+                "other release",
+                json!({ "confirm": { "releaseId": "cccccccc-2222-4222-8222-222222222222" } }),
+                false,
+            ),
+        ];
+        for (name, data, accepted) in cases {
+            let result = confirmed_release_matches(data.clone(), Uuid::nil(), RELEASE);
+            match result {
+                Ok(kept) => assert!(accepted && kept == data, "{name}"),
+                Err(DeployError::ConfirmedReleaseMismatch { deploy, .. }) => {
+                    assert!(!accepted && deploy == data, "{name}");
+                }
+                Err(other) => panic!("{name}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn snapshot_matching_fails_closed_on_malformed_data() {
         assert!(!snapshot_matches_preview(
             &json!({ "configSnapshot": null }),
@@ -3247,5 +3333,50 @@ mod tests {
         };
         assert_eq!(deploy["noop"], true);
         assert_eq!(deploy["confirm"]["releaseId"], SUBSTITUTED_RELEASE);
+    }
+
+    #[tokio::test]
+    async fn deploy_does_not_activate_a_created_release_with_another_baseline_or_diff() {
+        let mut other_baseline = create_release_body(REVIEWED_RELEASE, &json!({}));
+        other_baseline["diffedAgainstReleaseId"] = json!(SUBSTITUTED_RELEASE);
+        let other_diff = create_release_body(REVIEWED_RELEASE, &legacy_contracts());
+        for (name, created) in [("baseline", other_baseline), ("diff", other_diff)] {
+            let mut harness = IntentHarness::start().await;
+            harness.mock_releases(json!([])).await;
+            harness.mock_preview(true, &json!({})).await;
+            harness
+                .mock_json(
+                    "POST",
+                    &format!("/api/v1/projects/{INTENT_PROJECT}/releases"),
+                    201,
+                    created,
+                )
+                .await;
+            let detail = harness
+                .mock_json(
+                    "GET",
+                    &release_path(REVIEWED_RELEASE),
+                    200,
+                    intent_detail(REVIEWED_RELEASE, json!({})),
+                )
+                .await;
+            let (calldata, confirm) = harness
+                .mock_deploy(REVIEWED_RELEASE, REVIEWED_RELEASE)
+                .await;
+
+            let result = harness.run().await;
+
+            assert!(
+                matches!(
+                    result,
+                    Err(DeployError::ReleaseIntentMismatch { ref release_id, .. })
+                        if release_id.as_deref() == Some(REVIEWED_RELEASE)
+                ),
+                "{name}: {result:?}"
+            );
+            detail.expect(0).assert_async().await;
+            calldata.expect(0).assert_async().await;
+            confirm.expect(0).assert_async().await;
+        }
     }
 }
