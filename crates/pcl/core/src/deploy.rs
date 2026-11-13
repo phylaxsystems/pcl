@@ -580,17 +580,18 @@ fn confirmed_release_matches(
     project_id: Uuid,
     release_id: &str,
 ) -> Result<Value, DeployError> {
-    match deploy_data
+    let confirmed = deploy_data
         .get("confirm")
         .and_then(|body| body.get("releaseId"))
         .and_then(Value::as_str)
-    {
+        .map(str::to_owned);
+    match confirmed {
         Some(confirmed) if !confirmed.eq_ignore_ascii_case(release_id) => {
             Err(DeployError::ConfirmedReleaseMismatch {
                 project_id,
                 release_id: release_id.to_string(),
-                confirmed_release_id: confirmed.to_string(),
-                deploy: Box::new(deploy_data.clone()),
+                confirmed_release_id: confirmed,
+                deploy: Box::new(deploy_data),
             })
         }
         _ => Ok(deploy_data),
