@@ -275,8 +275,8 @@ fn tx_value(outcome: &TxOutcome) -> Value {
     })
 }
 
-/// Follow-ups after a release deploys, shared with `pcl deploy`.
-pub(crate) fn release_next_actions(
+/// Follow-ups after a release deploys.
+fn release_next_actions(
     project: impl std::fmt::Display,
     release_id: impl std::fmt::Display,
 ) -> Vec<String> {
