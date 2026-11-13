@@ -212,10 +212,12 @@ fn release_summaries(body: &Value) -> Result<Vec<ReleaseSummary>, DeployError> {
         .iter()
         .enumerate()
         .map(|(index, item)| {
+            // The id becomes a URL path segment and a suggested command
+            // argument, so only a hyphenated UUID is accepted.
             let required_string = |field| {
                 item.get(field)
                     .and_then(Value::as_str)
-                    .filter(|value| !value.is_empty())
+                    .filter(|value| !value.is_empty() && (field != "id" || is_release_uuid(value)))
                     .map(ToString::to_string)
                     .ok_or_else(|| {
                         DeployError::UnexpectedResponse {
@@ -2816,6 +2818,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn release_summaries_accept_only_hyphenated_uuid_ids() {
+        const ID: &str = "aaaaaaaa-1111-4111-8111-111111111111";
+        let summary = |id: &str| json!([{ "id": id, "releaseNumber": 1, "environment": "staging", "status": "inactive" }]);
+        for id in [ID.to_string(), ID.to_ascii_uppercase()] {
+            assert_eq!(release_summaries(&summary(&id)).unwrap()[0].id, id);
+        }
+        for id in [
+            "bad; echo unexpected-command".to_string(),
+            format!("{{{ID}}}"),
+            format!("urn:uuid:{ID}"),
+            ID.replace('-', ""),
+            String::new(),
+            "x".to_string(),
+        ] {
+            assert!(
+                matches!(
+                    release_summaries(&summary(&id)),
+                    Err(DeployError::UnexpectedResponse { ref reason, .. })
+                        if reason == "release at index 0 has no valid \"id\""
+                ),
+                "{id:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn inactive_release_scan_paginates_past_the_first_hundred() {
         let mut server = mockito::Server::new_async().await;
@@ -2824,7 +2852,7 @@ mod tests {
             (0..RELEASE_PAGE_SIZE)
                 .map(|index| {
                     json!({
-                        "id": format!("release-{index}"),
+                        "id": format!("00000000-0000-4000-8000-{index:012}"),
                         "releaseNumber": index,
                         "environment": "staging",
                         "status": "inactive"
@@ -2866,7 +2894,7 @@ mod tests {
             .with_header("content-type", "application/json")
             .with_body(
                 json!([{
-                    "id": "release-100",
+                    "id": "00000000-0000-4000-8000-000000000100",
                     "releaseNumber": 100,
                     "environment": "staging",
                     "status": "inactive"
@@ -2890,7 +2918,10 @@ mod tests {
                 .unwrap();
 
         assert_eq!(summaries.len(), RELEASE_PAGE_SIZE + 1);
-        assert_eq!(summaries.last().unwrap().id, "release-100");
+        assert_eq!(
+            summaries.last().unwrap().id,
+            "00000000-0000-4000-8000-000000000100"
+        );
         first.assert_async().await;
         second.assert_async().await;
     }
