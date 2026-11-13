@@ -366,7 +366,9 @@ fn release_step(has_changes: bool, resume: Option<&ReleaseSummary>) -> ReleaseSt
 }
 
 /// One assertion's canonical identity within a release:
-/// (file, constructor args, assertion id).
+/// (file, constructor args, assertion id). Each contract's assertions are
+/// sorted and exact duplicates dropped: the platform diff lists a repeated
+/// assertion once while the payload and stored snapshot keep every copy.
 type AssertionKey = (String, Vec<String>, String);
 
 /// One contract's canonical identity within a release:
@@ -402,6 +404,7 @@ fn snapshot_contract_set(contracts: &Value) -> Option<Vec<ContractKey>> {
             ));
         }
         assertions.sort();
+        assertions.dedup();
         set.push((label.clone(), address, name, assertions));
     }
     set.sort();
@@ -438,6 +441,7 @@ fn preview_contract_set(preview: &Value) -> Option<Vec<ContractKey>> {
             ));
         }
         assertions.sort();
+        assertions.dedup();
         set.push((label.clone(), address, name, assertions));
     }
     set.sort();
@@ -464,6 +468,7 @@ fn payload_local_identity(payload: &ProjectsCreateReleaseBody) -> Vec<LocalContr
             assertions.push(((*assertion.file).clone(), assertion.args.clone()));
         }
         assertions.sort();
+        assertions.dedup();
         set.push((
             label.clone(),
             (*contract.address).to_ascii_lowercase(),
@@ -2205,6 +2210,118 @@ mod tests {
             &release_detail(snapshot_contracts("0xassertion", &[])),
             &assertion_removal
         ));
+    }
+
+    /// A create-release payload whose contracts hold `(file, args)`
+    /// assertions; build-only fields carry fixed placeholder values.
+    fn local_payload(contracts: &[(&str, &str, &[(&str, &[&str])])]) -> ProjectsCreateReleaseBody {
+        let contracts: serde_json::Map<String, Value> = contracts
+            .iter()
+            .map(|(label, address, assertions)| {
+                let assertions: Vec<Value> = assertions
+                    .iter()
+                    .map(|(file, args)| {
+                        json!({
+                            "file": file,
+                            "args": args,
+                            "bytecode": "0x6080",
+                            "compilerVersion": "0.8.28",
+                            "contractName": "A",
+                            "evmVersion": "paris",
+                            "flattenedSource": "contract A {}",
+                            "optimizerRuns": 200
+                        })
+                    })
+                    .collect();
+                (
+                    (*label).to_string(),
+                    json!({ "address": address, "name": "Mock", "assertions": assertions }),
+                )
+            })
+            .collect();
+        serde_json::from_value(json!({
+            "assertionsDir": "assertions",
+            "environment": "staging",
+            "contracts": contracts
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn preview_gate_accepts_the_payload_it_was_built_from() {
+        const MOCK: &str = "0x0101010101010101010101010101010101010101";
+        const B: &str = "assertions/src/B.a.sol:B";
+        // The checkout lists B before A, repeats A, and uses a checksummed
+        // address; the server preview lowercases, orders and deduplicates.
+        let payload = local_payload(&[(
+            "mock",
+            "0x01010101010101010101010101010101010101AB",
+            &[
+                (B, &["1"]),
+                ("assertions/src/A.a.sol:A", &[]),
+                ("assertions/src/A.a.sol:A", &[]),
+            ],
+        )]);
+        let mut preview = release_preview("0xa", &[]);
+        let contract = &mut preview["diff"]["contracts"]["mock"];
+        contract["address"] = json!("0x01010101010101010101010101010101010101ab");
+        contract["changeType"] = json!("modified");
+        let assertions = contract["assertions"].as_array_mut().unwrap();
+        assertions.insert(
+            0,
+            json!({ "file": B, "args": ["1"], "changeType": "unchanged", "assertionId": "0xb" }),
+        );
+        assertions.push(json!({
+            "file": "assertions/src/Old.a.sol:Old",
+            "args": [],
+            "changeType": "removed",
+            "assertionId": null
+        }));
+        preview["diff"]["contracts"]["old"] = json!({
+            "address": MOCK,
+            "name": "Old",
+            "changeType": "removed",
+            "assertions": []
+        });
+
+        assert!(reviewed_contract_set(&preview, &payload).is_some());
+
+        // A retained entry the checkout did not build is still rejected.
+        let mut extra = preview.clone();
+        extra["diff"]["contracts"]["mock"]["assertions"][2]["changeType"] = json!("unchanged");
+        assert!(reviewed_contract_set(&extra, &payload).is_none());
+    }
+
+    #[test]
+    fn duplicate_assertions_compare_as_one_entry_without_merging_distinct_ones() {
+        const A: &str = "assertions/src/A.a.sol:A";
+        const MOCK: &str = "0x0101010101010101010101010101010101010101";
+        const OTHER: &str = "0x0202020202020202020202020202020202020202";
+        // The stored snapshot keeps both copies; the preview lists the id once.
+        let mut doubled = snapshot_contracts("0xa", &[]);
+        let copy = doubled["mock"]["assertions"][0].clone();
+        doubled["mock"]["assertions"]
+            .as_array_mut()
+            .unwrap()
+            .push(copy);
+        assert!(snapshot_matches_preview(
+            &release_detail(doubled),
+            &release_preview("0xa", &[])
+        ));
+
+        // Same file with different args stays two entries.
+        let two_args = local_payload(&[("mock", MOCK, &[(A, &[]), (A, &["1"])])]);
+        assert!(reviewed_contract_set(&release_preview("0xa", &[]), &two_args).is_none());
+
+        // The same assertion on two contracts stays one entry per contract.
+        let two_contracts =
+            local_payload(&[("mock", MOCK, &[(A, &[])]), ("other", OTHER, &[(A, &[])])]);
+        let mut both = release_preview("0xa", &[]);
+        let mut other = both["diff"]["contracts"]["mock"].clone();
+        other["address"] = json!(OTHER);
+        both["diff"]["contracts"]["other"] = other;
+        assert!(reviewed_contract_set(&both, &two_contracts).is_some());
+        assert!(reviewed_contract_set(&release_preview("0xa", &[]), &two_contracts).is_none());
     }
 
     #[test]
