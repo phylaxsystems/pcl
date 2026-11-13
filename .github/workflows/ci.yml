@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "crates/**"
+      - "patches/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "deny.toml"
@@ -19,6 +20,7 @@ on:
     branches: [main]
     paths:
       - "crates/**"
+      - "patches/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "deny.toml"

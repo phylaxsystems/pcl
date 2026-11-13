@@ -10,11 +10,6 @@ ignore = [
     { id = "RUSTSEC-2026-0173", reason = "Transitive build-time-only proc-macro via alloy-sol-macro; proc-macro-error2 unmaintained, no safe upgrade per advisory. Same ignore as credible-sdk/phoundry." },
     { id = "RUSTSEC-2026-0194", reason = "Transitive through phoundry forge -> quick-junit/inferno; quick-xml DoS-class fix requires >=0.41.0, blocked until upstream dependents bump their semver reqs." },
     { id = "RUSTSEC-2026-0195", reason = "Transitive through phoundry forge -> quick-junit/inferno; quick-xml DoS-class fix requires >=0.41.0, blocked until upstream dependents bump their semver reqs." },
-    { id = "RUSTSEC-2025-0172", reason = "Transitive through phoundry forge/foundry-config -> soldeer-core; zip-extract unmaintained, no safe upgrade per advisory." },
-    { id = "RUSTSEC-2026-0367", reason = "Transitive through Phoundry/Foundry -> soldeer-core, zip-extract and svm-rs; zip fixes require >=9.0.0, outside upstream dependency requirements. Remove when those upstreams upgrade ZIP extraction." },
-    { id = "RUSTSEC-2026-0368", reason = "Transitive through Phoundry/Foundry -> soldeer-core, zip-extract and svm-rs; zip fixes require >=9.0.0, outside upstream dependency requirements. Remove when those upstreams upgrade ZIP extraction." },
-    { id = "RUSTSEC-2026-0369", reason = "Transitive through Phoundry/Foundry -> soldeer-core, zip-extract and svm-rs; zip fixes require >=9.0.0, outside upstream dependency requirements. Remove when those upstreams upgrade ZIP extraction." },
     { id = "RUSTSEC-2026-0387", reason = "Transitive crypto-bigint 0.5.5 through Foundry/Alloy cryptography. The fix is 0.7.6, a major bump those crates have not taken." },
-    { id = "RUSTSEC-2026-0429", reason = "Transitive zip 4.6.1 through Phoundry/Foundry -> soldeer-core and svm-rs. The fix is zip >=9.0.0, outside upstream dependency requirements. Remove with the other zip ignores." },
     { id = "RUSTSEC-2026-0441", reason = "Transitive pin-utils 0.1.0 through Foundry wallets -> alloy-signer-ledger -> coins-ledger 0.13 -> nix 0.26.4. Unmaintained, patched = [], so no version bump clears it. Remove when coins-ledger drops that nix." },
 ]
