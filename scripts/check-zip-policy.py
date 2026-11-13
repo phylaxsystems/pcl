@@ -2,11 +2,9 @@
 
 Run with `uv run --python 3.12 python scripts/check-zip-policy.py`.
 This deliberately does not depend on RustSec coverage or deny.toml ignores.
-The floor is 9.1.0. That release fixes quadratic memory use in
-ZipArchive::new and Windows extraction path escapes. 9.0.5 fixed Zip
-Cloaking (GHSA-m665-v7pm-7grj) and the 2026-11-10 alerts
-(GHSA-8hxf-qr8p-62x4, GHSA-hjqx-j4rw-g7xv, GHSA-9hj8-73fh-9963), and it
-is still below this floor.
+The floor is 9.1.3. GHSA-66qv-gmq4-qcqj, uncontrolled recursion in the
+Shrink decoder, was published on 2026-11-10. Releases through 9.1.2 are
+affected, and 9.1.3 is the fixed release.
 """
 
 import re
@@ -23,8 +21,8 @@ def violations(lockfile):
         version = package["version"]
         # Require a stable release; prereleases do not establish remediation.
         match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:\+[0-9A-Za-z.-]+)?", version)
-        if not match or tuple(map(int, match.groups())) < (9, 1, 0):
-            errors.append(f"zip {version}: require a stable release >=9.1.0")
+        if not match or tuple(map(int, match.groups())) < (9, 1, 3):
+            errors.append(f"zip {version}: require a stable release >=9.1.3")
     return errors
 
 
