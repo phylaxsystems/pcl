@@ -448,16 +448,12 @@ fn preview_contract_set(preview: &Value) -> Option<Vec<ContractKey>> {
 /// contract state produced by the current preview. The preview endpoint diffs
 /// against the *active* release only, so without this check a rerun before
 /// activation would create a duplicate release instead of resuming.
-fn snapshot_matches_preview(release_detail: &Value, preview: &Value) -> bool {
-    let snapshot = release_detail
+fn snapshot_matches(release_detail: &Value, wanted: &[ContractKey]) -> bool {
+    release_detail
         .get("configSnapshot")
         .and_then(|snapshot| snapshot.get("contracts"))
-        .and_then(snapshot_contract_set);
-    let wanted = preview_contract_set(preview);
-    match (snapshot, wanted) {
-        (Some(snapshot), Some(wanted)) => snapshot == wanted,
-        _ => false,
-    }
+        .and_then(snapshot_contract_set)
+        .is_some_and(|snapshot| snapshot == wanted)
 }
 
 fn payload_local_identity(payload: &ProjectsCreateReleaseBody) -> Vec<LocalContractIdentity> {
@@ -495,18 +491,34 @@ fn without_assertion_ids(keys: &[ContractKey]) -> Vec<LocalContractIdentity> {
         .collect()
 }
 
-/// The preview is a server document. It may select a release only when its
-/// retained contracts are the ones this checkout just built.
-fn preview_matches_local_payload(preview: &Value, payload: &ProjectsCreateReleaseBody) -> bool {
+/// The preview is a server document. Its canonical contract set may select a
+/// release only when its retained contracts are the ones this checkout just
+/// built.
+fn reviewed_contract_set(
+    preview: &Value,
+    payload: &ProjectsCreateReleaseBody,
+) -> Option<Vec<ContractKey>> {
     preview_contract_set(preview)
-        .is_some_and(|wanted| without_assertion_ids(&wanted) == payload_local_identity(payload))
+        .filter(|wanted| without_assertion_ids(wanted) == payload_local_identity(payload))
 }
 
-fn same_preview_contract_set(left: &Value, right: &Value) -> bool {
-    matches!(
-        (preview_contract_set(left), preview_contract_set(right)),
-        (Some(left_set), Some(right_set)) if left_set == right_set
-    )
+async fn fetch_release_detail(
+    api: &ApiArgs,
+    config: &mut CliConfig,
+    cli_args: &CliArgs,
+    project_ref: &str,
+    release_id: &str,
+) -> Result<Value, DeployError> {
+    Ok(api
+        .workflow_json(
+            config,
+            cli_args,
+            HttpMethod::Get,
+            "projects.getRelease",
+            &[("project_id", project_ref), ("release_id", release_id)],
+            None,
+        )
+        .await?)
 }
 
 fn release_intent_mismatch(
@@ -521,7 +533,7 @@ fn release_intent_mismatch(
 
 fn created_release_matches_intent(
     detail: &Value,
-    preview: &Value,
+    wanted: &[ContractKey],
     environment: &str,
     release_id: &str,
 ) -> Result<(), DeployError> {
@@ -548,7 +560,7 @@ fn created_release_matches_intent(
             ));
         }
     }
-    if snapshot_matches_preview(detail, preview) {
+    if snapshot_matches(detail, wanted) {
         Ok(())
     } else {
         Err(release_intent_mismatch(
@@ -1289,13 +1301,13 @@ impl DeployArgs {
             let preview = ApplyArgs::call_preview(&client, &project_id, &payload).await?;
 
             let project_ref = project_id.to_string();
-            let preview_value = serde_json::to_value(&preview)?;
-            if !preview_matches_local_payload(&preview_value, &payload) {
+            let Some(wanted) = reviewed_contract_set(&serde_json::to_value(&preview)?, &payload)
+            else {
                 return Err(release_intent_mismatch(
                     "preview",
                     "preview contract set does not match the locally built payload",
                 ));
-            }
+            };
             let summaries = inactive_release_summaries(
                 &api,
                 config,
@@ -1312,20 +1324,10 @@ impl DeployArgs {
             // payload whether or not the preview reports changes.
             let mut matched = Vec::new();
             for candidate in &summaries {
-                let detail = api
-                    .workflow_json(
-                        config,
-                        cli_args,
-                        HttpMethod::Get,
-                        "projects.getRelease",
-                        &[
-                            ("project_id", project_ref.as_str()),
-                            ("release_id", candidate.id.as_str()),
-                        ],
-                        None,
-                    )
-                    .await?;
-                if snapshot_matches_preview(&detail, &preview_value) {
+                let detail =
+                    fetch_release_detail(&api, config, cli_args, &project_ref, &candidate.id)
+                        .await?;
+                if snapshot_matches(&detail, &wanted) {
                     matched.push(candidate.clone());
                 }
             }
@@ -1396,32 +1398,20 @@ impl DeployArgs {
                             "create response baseline does not match the reviewed preview",
                         ));
                     }
-                    let created = serde_json::to_value(&release)?;
-                    let created_preview = json!({
-                        "diff": created.get("diff").cloned().unwrap_or(Value::Null)
-                    });
-                    if !same_preview_contract_set(&created_preview, &preview_value) {
+                    if preview_contract_set(&serde_json::to_value(&release)?).as_ref()
+                        != Some(&wanted)
+                    {
                         return Err(release_intent_mismatch(
                             &release_id,
                             "create response diff does not match the reviewed preview",
                         ));
                     }
-                    let detail = api
-                        .workflow_json(
-                            config,
-                            cli_args,
-                            HttpMethod::Get,
-                            "projects.getRelease",
-                            &[
-                                ("project_id", project_ref.as_str()),
-                                ("release_id", release_id.as_str()),
-                            ],
-                            None,
-                        )
-                        .await?;
+                    let detail =
+                        fetch_release_detail(&api, config, cli_args, &project_ref, &release_id)
+                            .await?;
                     created_release_matches_intent(
                         &detail,
-                        &preview_value,
+                        &wanted,
                         &credible.environment,
                         &release_id,
                     )?;
@@ -1597,16 +1587,8 @@ impl DeployArgs {
         let deadline = std::time::Instant::now() + Duration::from_secs(self.check_timeout_secs);
         let mut delay = CHECK_POLL_INITIAL;
         loop {
-            let detail = api
-                .workflow_json(
-                    config,
-                    cli_args,
-                    HttpMethod::Get,
-                    "projects.getRelease",
-                    &[("project_id", project_ref), ("release_id", release_id)],
-                    None,
-                )
-                .await?;
+            let detail =
+                fetch_release_detail(api, config, cli_args, project_ref, release_id).await?;
             match check_verdict(&detail) {
                 CheckVerdict::Passed => {
                     progress(human, "Deploy-gating checks passed");
@@ -2099,6 +2081,10 @@ mod tests {
                 }],
             }
         })
+    }
+
+    fn snapshot_matches_preview(detail: &Value, preview: &Value) -> bool {
+        preview_contract_set(preview).is_some_and(|wanted| snapshot_matches(detail, &wanted))
     }
 
     fn release_detail(contracts: Value) -> Value {
