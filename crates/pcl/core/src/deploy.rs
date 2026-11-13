@@ -15,7 +15,6 @@ use crate::{
         ApiArgs,
         BroadcastArgs,
         HttpMethod,
-        release_next_actions,
     },
     apply::{
         ApplyArgs,
@@ -549,6 +548,28 @@ fn release_identity_mismatch(
     } else {
         None
     }
+}
+
+/// Whether a platform-supplied release id is a hyphenated UUID, the only
+/// form safe to paste into a suggested shell command. `Uuid::parse_str` alone
+/// also accepts the braced and URN forms.
+#[must_use]
+pub fn is_release_uuid(release_id: &str) -> bool {
+    release_id.len() == 36 && Uuid::parse_str(release_id).is_ok()
+}
+
+/// `pcl releases show` for each release id that [`is_release_uuid`], then
+/// `pcl releases list`. Other ids came from the platform and are left out.
+pub fn release_inspection_actions<'a>(
+    project_id: Uuid,
+    release_ids: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    release_ids
+        .into_iter()
+        .filter(|release_id| is_release_uuid(release_id))
+        .map(|release_id| format!("pcl releases show {project_id} {release_id}"))
+        .chain([format!("pcl releases list {project_id}")])
+        .collect()
 }
 
 /// The confirmation is the platform's report of what it activated. pcl has
@@ -1476,7 +1497,7 @@ impl DeployArgs {
             Self::finish(
                 output_mode,
                 data,
-                release_next_actions(project_id, &release_id),
+                release_inspection_actions(project_id, [release_id.as_str()]),
             )
         }
         .await;

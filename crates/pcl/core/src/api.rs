@@ -41,7 +41,6 @@ pub use crate::output::{
     with_envelope_metadata,
 };
 pub use broadcast::BroadcastArgs;
-pub(crate) use broadcast::release_next_actions;
 pub use error::ApiCommandError;
 pub use manifest::api_manifest;
 pub use render::{
