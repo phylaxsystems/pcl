@@ -886,14 +886,19 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
                         ],
                     )
                 }
-                DeployError::ReleaseIntentMismatch { .. } => {
+                DeployError::ReleaseIntentMismatch {
+                    project_id,
+                    release_id,
+                    ..
+                } => {
                     (
                         "deploy.release_intent_mismatch",
                         true,
-                        vec![
-                            "pcl deploy --dry-run --json".to_string(),
-                            "pcl doctor --json".to_string(),
-                        ],
+                        release_id
+                            .iter()
+                            .map(|release_id| format!("pcl releases show {project_id} {release_id}"))
+                            .chain([format!("pcl releases list {project_id}")])
+                            .collect(),
                     )
                 }
                 DeployError::AmbiguousInactiveRelease { project_id, .. } => {
@@ -934,6 +939,15 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
             {
                 error.insert("project_id".to_string(), json!(project_id));
                 error.insert("path".to_string(), json!(path));
+            }
+            if let DeployError::ReleaseIntentMismatch {
+                project_id,
+                release_id,
+                ..
+            } = err
+            {
+                error.insert("project_id".to_string(), json!(project_id));
+                error.insert("release_id".to_string(), json!(release_id));
             }
             if let DeployError::CircuitBreakerUnsupported {
                 platform_url,
@@ -1619,6 +1633,51 @@ mod tests {
             "assertion_spec.v2_unsupported"
         );
         assert_eq!(envelope["error"]["code"], "apply.failed");
+    }
+
+    #[test]
+    fn deploy_release_intent_mismatch_points_at_the_project_releases() {
+        let project_id = "00000000-0000-0000-0000-000000000000";
+        let created = DeployError::ReleaseIntentMismatch {
+            project_id: Default::default(),
+            release_id: Some("release-7".to_string()),
+            reason: "stored snapshot does not match the reviewed preview",
+        };
+
+        let envelope = deploy_error_envelope(&created);
+
+        assert_eq!(envelope["status"], "error");
+        assert_eq!(envelope["error"]["code"], "deploy.release_intent_mismatch");
+        assert_eq!(envelope["error"]["recoverable"], true);
+        assert_eq!(envelope["error"]["project_id"], project_id);
+        assert_eq!(envelope["error"]["release_id"], "release-7");
+        assert_eq!(
+            envelope["next_actions"],
+            json!([
+                format!("pcl releases show {project_id} release-7"),
+                format!("pcl releases list {project_id}"),
+            ])
+        );
+
+        let preview = DeployError::ReleaseIntentMismatch {
+            project_id: Default::default(),
+            release_id: None,
+            reason: "preview contract set does not match the locally built payload",
+        };
+
+        let envelope = deploy_error_envelope(&preview);
+
+        assert_eq!(envelope["error"]["release_id"], Value::Null);
+        assert_eq!(
+            envelope["next_actions"],
+            json!([format!("pcl releases list {project_id}")])
+        );
+        assert!(
+            envelope["error"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with(&format!("The release preview of project {project_id}"))
+        );
     }
 
     #[test]

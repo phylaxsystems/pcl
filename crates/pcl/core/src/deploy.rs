@@ -526,16 +526,6 @@ async fn fetch_release_detail(
         .await?)
 }
 
-fn release_intent_mismatch(
-    release_id: impl Into<String>,
-    reason: impl Into<String>,
-) -> DeployError {
-    DeployError::ReleaseIntentMismatch {
-        release_id: release_id.into(),
-        reason: reason.into(),
-    }
-}
-
 /// Why a fetched release detail is not release `release_id` of `project_ref`
 /// in `environment`, if it is not. A missing `id` or `projectId` is
 /// tolerated; any value present, and the environment, must match exactly.
@@ -561,24 +551,11 @@ fn release_identity_mismatch(
     }
 }
 
-fn created_release_matches_intent(
-    detail: &Value,
-    wanted: &[ContractKey],
-    project_ref: &str,
-    environment: &str,
+fn confirmed_release_matches(
+    deploy_data: &Value,
+    project_id: Uuid,
     release_id: &str,
 ) -> Result<(), DeployError> {
-    let reason =
-        release_identity_mismatch(detail, project_ref, environment, release_id).or_else(|| {
-            (!snapshot_matches(detail, wanted))
-                .then_some("stored snapshot does not match the reviewed preview")
-        });
-    reason.map_or(Ok(()), |reason| {
-        Err(release_intent_mismatch(release_id, reason))
-    })
-}
-
-fn confirmed_release_matches(deploy_data: &Value, release_id: &str) -> Result<(), DeployError> {
     let Some(confirmed) = deploy_data
         .get("confirm")
         .and_then(|body| body.get("releaseId").or_else(|| body.get("release_id")))
@@ -589,10 +566,11 @@ fn confirmed_release_matches(deploy_data: &Value, release_id: &str) -> Result<()
     if confirmed == release_id {
         Ok(())
     } else {
-        Err(release_intent_mismatch(
-            release_id,
-            format!("confirmation names release {confirmed}"),
-        ))
+        Err(DeployError::ReleaseIntentMismatch {
+            project_id,
+            release_id: Some(release_id.to_string()),
+            reason: "confirmation names another release",
+        })
     }
 }
 
@@ -1311,10 +1289,11 @@ impl DeployArgs {
             let project_ref = project_id.to_string();
             let Some(wanted) = reviewed_contract_set(&serde_json::to_value(&preview)?, &payload)
             else {
-                return Err(release_intent_mismatch(
-                    "preview",
-                    "preview contract set does not match the locally built payload",
-                ));
+                return Err(DeployError::ReleaseIntentMismatch {
+                    project_id,
+                    release_id: None,
+                    reason: "preview contract set does not match the locally built payload",
+                });
             };
             let summaries = inactive_release_summaries(
                 &api,
@@ -1342,7 +1321,11 @@ impl DeployArgs {
                         &credible.environment,
                         &candidate.id,
                     ) {
-                        return Err(release_intent_mismatch(&candidate.id, reason));
+                        return Err(DeployError::ReleaseIntentMismatch {
+                            project_id,
+                            release_id: Some(candidate.id.clone()),
+                            reason,
+                        });
                     }
                     matched.push(candidate.clone());
                 }
@@ -1408,30 +1391,36 @@ impl DeployArgs {
                     let release =
                         ApplyArgs::call_create_release(&client, &project_id, &payload).await?;
                     let release_id = release.id.to_string();
-                    if release.diffed_against_release_id != preview.diffed_against_release_id {
-                        return Err(release_intent_mismatch(
-                            &release_id,
-                            "create response baseline does not match the reviewed preview",
-                        ));
-                    }
-                    if preview_contract_set(&serde_json::to_value(&release)?).as_ref()
+                    let mismatch = if release.diffed_against_release_id
+                        != preview.diffed_against_release_id
+                    {
+                        Some("create response baseline does not match the reviewed preview")
+                    } else if preview_contract_set(&serde_json::to_value(&release)?).as_ref()
                         != Some(&wanted)
                     {
-                        return Err(release_intent_mismatch(
+                        Some("create response diff does not match the reviewed preview")
+                    } else {
+                        let detail =
+                            fetch_release_detail(&api, config, cli_args, &project_ref, &release_id)
+                                .await?;
+                        release_identity_mismatch(
+                            &detail,
+                            &project_ref,
+                            &credible.environment,
                             &release_id,
-                            "create response diff does not match the reviewed preview",
-                        ));
+                        )
+                        .or_else(|| {
+                            (!snapshot_matches(&detail, &wanted))
+                                .then_some("stored snapshot does not match the reviewed preview")
+                        })
+                    };
+                    if let Some(reason) = mismatch {
+                        return Err(DeployError::ReleaseIntentMismatch {
+                            project_id,
+                            release_id: Some(release_id),
+                            reason,
+                        });
                     }
-                    let detail =
-                        fetch_release_detail(&api, config, cli_args, &project_ref, &release_id)
-                            .await?;
-                    created_release_matches_intent(
-                        &detail,
-                        &wanted,
-                        &project_ref,
-                        &credible.environment,
-                        &release_id,
-                    )?;
                     (release_id, Some(u64::from(release.release_number)), false)
                 }
             };
@@ -1457,7 +1446,7 @@ impl DeployArgs {
                 )
                 .await?;
             let deploy_data = deploy_envelope.get("data").cloned().unwrap_or(Value::Null);
-            confirmed_release_matches(&deploy_data, &release_id)?;
+            confirmed_release_matches(&deploy_data, project_id, &release_id)?;
 
             let data = json!({
                 "outcome": if resumed { "resumed_and_deployed" } else { "released_and_deployed" },
@@ -3107,7 +3096,7 @@ mod tests {
             matches!(
                 result,
                 Err(DeployError::ReleaseIntentMismatch { ref release_id, .. })
-                    if release_id == SUBSTITUTED_RELEASE
+                    if release_id.as_deref() == Some(SUBSTITUTED_RELEASE)
             ),
             "create response id {SUBSTITUTED_RELEASE} is not the locally reviewed empty release: {result:?}"
         );
@@ -3134,10 +3123,18 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(DeployError::ReleaseIntentMismatch { ref release_id, .. })
-                    if release_id == "preview"
+                Err(DeployError::ReleaseIntentMismatch {
+                    release_id: None,
+                    ..
+                })
             ),
             "the local checkout has no contracts, so the legacy inactive release must not be resumed: {result:?}"
+        );
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("release preview")
+                && message.contains(&format!("pcl releases list {INTENT_PROJECT}")),
+            "{message}"
         );
         calldata.expect(0).assert_async().await;
         confirm.expect(0).assert_async().await;

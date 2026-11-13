@@ -410,9 +410,16 @@ pub enum DeployError {
     },
 
     #[error(
-        "Platform release {release_id} does not match the release built from this checkout ({reason}). pcl will not check, sign, or confirm it."
+        "{subject} of project {project_id} does not match the release built from this checkout ({reason}). pcl stopped before checking, signing or confirming a release. Inspect the project's releases with `pcl releases list {project_id}`.",
+        subject = .release_id.as_ref().map_or_else(|| "The release preview".to_string(), |id| format!("Platform release {id}"))
     )]
-    ReleaseIntentMismatch { release_id: String, reason: String },
+    ReleaseIntentMismatch {
+        project_id: uuid::Uuid,
+        /// `None` when the preview itself was rejected, before any release
+        /// was selected or created.
+        release_id: Option<String>,
+        reason: &'static str,
+    },
 
     #[error(
         "Project {project_id} has more than one inactive release for environment {environment:?} that matches the current configuration ({release_ids:?}). pcl will not guess which interrupted run to resume. Inspect them with `pcl releases list {project_id}`, then activate or delete the extra releases and re-run `pcl deploy`."
