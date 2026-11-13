@@ -422,6 +422,17 @@ pub enum DeployError {
     },
 
     #[error(
+        "pcl deployed release {release_id} of project {project_id}, but the platform's confirmation names release {confirmed_release_id}. The on-chain deploy and the platform confirmation already happened, and re-running pcl deploy cannot undo them. Check which release is active with `pcl releases list {project_id}`."
+    )]
+    ConfirmedReleaseMismatch {
+        project_id: uuid::Uuid,
+        release_id: String,
+        confirmed_release_id: String,
+        /// The broadcast flow's data (calldata, tx, confirmation).
+        deploy: serde_json::Value,
+    },
+
+    #[error(
         "Project {project_id} has more than one inactive release for environment {environment:?} that matches the current configuration ({release_ids:?}). pcl will not guess which interrupted run to resume. Inspect them with `pcl releases list {project_id}`, then activate or delete the extra releases and re-run `pcl deploy`."
     )]
     AmbiguousInactiveRelease {

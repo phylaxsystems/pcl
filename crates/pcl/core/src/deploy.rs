@@ -551,26 +551,28 @@ fn release_identity_mismatch(
     }
 }
 
+/// The confirmation is the platform's report of what it activated. pcl has
+/// already broadcast and confirmed by now, so a mismatch keeps the deploy
+/// data. Release ids are UUIDs, so case is not significant.
 fn confirmed_release_matches(
-    deploy_data: &Value,
+    deploy_data: Value,
     project_id: Uuid,
     release_id: &str,
-) -> Result<(), DeployError> {
-    let Some(confirmed) = deploy_data
+) -> Result<Value, DeployError> {
+    match deploy_data
         .get("confirm")
-        .and_then(|body| body.get("releaseId").or_else(|| body.get("release_id")))
+        .and_then(|body| body.get("releaseId"))
         .and_then(Value::as_str)
-    else {
-        return Ok(());
-    };
-    if confirmed == release_id {
-        Ok(())
-    } else {
-        Err(DeployError::ReleaseIntentMismatch {
-            project_id,
-            release_id: Some(release_id.to_string()),
-            reason: "confirmation names another release",
-        })
+    {
+        Some(confirmed) if !confirmed.eq_ignore_ascii_case(release_id) => {
+            Err(DeployError::ConfirmedReleaseMismatch {
+                project_id,
+                release_id: release_id.to_string(),
+                confirmed_release_id: confirmed.to_string(),
+                deploy: deploy_data.clone(),
+            })
+        }
+        _ => Ok(deploy_data),
     }
 }
 
@@ -1445,8 +1447,11 @@ impl DeployArgs {
                     self.broadcast_args(&signer),
                 )
                 .await?;
-            let deploy_data = deploy_envelope.get("data").cloned().unwrap_or(Value::Null);
-            confirmed_release_matches(&deploy_data, project_id, &release_id)?;
+            let deploy_data = confirmed_release_matches(
+                deploy_envelope.get("data").cloned().unwrap_or(Value::Null),
+                project_id,
+                &release_id,
+            )?;
 
             let data = json!({
                 "outcome": if resumed { "resumed_and_deployed" } else { "released_and_deployed" },
@@ -3206,5 +3211,41 @@ mod tests {
         );
         calldata.expect(0).assert_async().await;
         confirm.expect(0).assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn deploy_reports_a_confirmation_of_another_release_with_its_deploy_data() {
+        let mut harness = IntentHarness::start().await;
+        harness
+            .mock_releases(inactive_summary(REVIEWED_RELEASE))
+            .await;
+        harness
+            .mock_json(
+                "GET",
+                &release_path(REVIEWED_RELEASE),
+                200,
+                intent_detail(REVIEWED_RELEASE, json!({})),
+            )
+            .await;
+        harness.mock_preview(false, &json!({})).await;
+        let (_calldata, confirm) = harness
+            .mock_deploy(REVIEWED_RELEASE, SUBSTITUTED_RELEASE)
+            .await;
+
+        let err = harness.run().await.unwrap_err();
+
+        confirm.assert_async().await;
+        let message = err.to_string();
+        assert!(
+            message.contains("already")
+                && message.contains(REVIEWED_RELEASE)
+                && message.contains(SUBSTITUTED_RELEASE),
+            "{message}"
+        );
+        let DeployError::ConfirmedReleaseMismatch { deploy, .. } = err else {
+            panic!("expected ConfirmedReleaseMismatch, got {err:?}");
+        };
+        assert_eq!(deploy["noop"], true);
+        assert_eq!(deploy["confirm"]["releaseId"], SUBSTITUTED_RELEASE);
     }
 }

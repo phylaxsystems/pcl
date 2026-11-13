@@ -901,6 +901,22 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
                             .collect(),
                     )
                 }
+                DeployError::ConfirmedReleaseMismatch {
+                    project_id,
+                    release_id,
+                    confirmed_release_id,
+                    ..
+                } => {
+                    (
+                        "deploy.confirmed_release_mismatch",
+                        false,
+                        vec![
+                            format!("pcl releases show {project_id} {release_id}"),
+                            format!("pcl releases show {project_id} {confirmed_release_id}"),
+                            format!("pcl releases list {project_id}"),
+                        ],
+                    )
+                }
                 DeployError::AmbiguousInactiveRelease { project_id, .. } => {
                     (
                         "deploy.inactive_release_ambiguous",
@@ -948,6 +964,22 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
             {
                 error.insert("project_id".to_string(), json!(project_id));
                 error.insert("release_id".to_string(), json!(release_id));
+            }
+            if let DeployError::ConfirmedReleaseMismatch {
+                project_id,
+                release_id,
+                confirmed_release_id,
+                deploy,
+            } = err
+            {
+                error.insert("project_id".to_string(), json!(project_id));
+                error.insert("release_id".to_string(), json!(release_id));
+                error.insert(
+                    "confirmed_release_id".to_string(),
+                    json!(confirmed_release_id),
+                );
+                error.insert("tx_hash".to_string(), deploy["tx"]["tx_hash"].clone());
+                error.insert("deploy".to_string(), deploy.clone());
             }
             if let DeployError::CircuitBreakerUnsupported {
                 platform_url,
@@ -1677,6 +1709,43 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .starts_with(&format!("The release preview of project {project_id}"))
+        );
+    }
+
+    #[test]
+    fn deploy_confirmed_release_mismatch_keeps_the_landed_transaction() {
+        let tx_hash = format!("0x{}", "ab".repeat(32));
+        let err = DeployError::ConfirmedReleaseMismatch {
+            project_id: Default::default(),
+            release_id: "release-7".to_string(),
+            confirmed_release_id: "release-8".to_string(),
+            deploy: json!({
+                "noop": false,
+                "tx": { "tx_hash": tx_hash, "chain_id": 1 },
+                "confirm": { "releaseId": "release-8" },
+            }),
+        };
+
+        let envelope = deploy_error_envelope(&err);
+
+        assert_eq!(
+            envelope["error"]["code"],
+            "deploy.confirmed_release_mismatch"
+        );
+        assert_eq!(envelope["error"]["recoverable"], false);
+        assert_eq!(envelope["error"]["tx_hash"], tx_hash);
+        assert_eq!(envelope["error"]["deploy"]["tx"]["tx_hash"], tx_hash);
+        assert_eq!(envelope["error"]["confirmed_release_id"], "release-8");
+        let message = envelope["error"]["message"].as_str().unwrap();
+        assert!(message.contains("already happened"), "{message}");
+        let project = "00000000-0000-0000-0000-000000000000";
+        assert_eq!(
+            envelope["next_actions"],
+            json!([
+                format!("pcl releases show {project} release-7"),
+                format!("pcl releases show {project} release-8"),
+                format!("pcl releases list {project}"),
+            ])
         );
     }
 
