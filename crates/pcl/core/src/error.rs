@@ -422,7 +422,12 @@ pub enum DeployError {
     },
 
     #[error(
-        "pcl deployed release {release_id} of project {project_id}, but the platform's confirmation names release {confirmed_release_id}. The on-chain deploy and the platform confirmation already happened, and re-running pcl deploy cannot undo them. Check which release is active with `pcl releases list {project_id}`."
+        "pcl deployed release {release_id} of project {project_id}, but the platform's confirmation names release {confirmed_release_id}. The platform already confirmed it ({sent}), and re-running pcl deploy cannot undo that. Check which release is active with `pcl releases list {project_id}`.",
+        sent = .deploy
+            .get("tx")
+            .and_then(|tx| tx.get("tx_hash"))
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(|| "no transaction was sent".to_string(), |hash| format!("deploy transaction {hash}"))
     )]
     ConfirmedReleaseMismatch {
         project_id: uuid::Uuid,

@@ -1743,7 +1743,7 @@ mod tests {
         assert_eq!(envelope["error"]["deploy"]["tx"]["tx_hash"], tx_hash);
         assert_eq!(envelope["error"]["confirmed_release_id"], RELEASE_8);
         let message = envelope["error"]["message"].as_str().unwrap();
-        assert!(message.contains("already happened"), "{message}");
+        assert!(message.contains(&tx_hash), "{message}");
         let project = "00000000-0000-0000-0000-000000000000";
         assert_eq!(
             envelope["next_actions"],
@@ -1815,6 +1815,34 @@ mod tests {
         assert_eq!(
             envelope["next_actions"][0],
             format!("pcl releases show {PROJECT} {upper}")
+        );
+    }
+
+    #[test]
+    fn deploy_confirmed_release_mismatch_says_what_already_happened() {
+        let mismatch = |deploy: Value| {
+            let err = DeployError::ConfirmedReleaseMismatch {
+                project_id: "00000000-0000-0000-0000-000000000000".parse().unwrap(),
+                release_id: "3333abcd-3333-4333-8333-333333333333".to_string(),
+                confirmed_release_id: "2222abcd-2222-4222-8222-222222222222".to_string(),
+                deploy: Box::new(deploy),
+            };
+            pcl_core::output::human_string(&deploy_error_envelope(&err))
+        };
+        let tx_hash = format!("0x{}", "ab".repeat(32));
+
+        let sent = mismatch(json!({ "noop": false, "tx": { "tx_hash": tx_hash } }));
+        assert!(
+            sent.contains(&tx_hash) && sent.contains("already confirmed"),
+            "{sent}"
+        );
+
+        let noop = mismatch(json!({ "noop": true, "tx": null }));
+        assert!(
+            noop.contains("no transaction was sent")
+                && noop.contains("already confirmed")
+                && !noop.contains("on-chain deploy"),
+            "{noop}"
         );
     }
 
