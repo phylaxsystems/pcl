@@ -536,43 +536,46 @@ fn release_intent_mismatch(
     }
 }
 
+/// Why a fetched release detail is not release `release_id` of `project_ref`
+/// in `environment`, if it is not. A missing `id` or `projectId` is
+/// tolerated; any value present, and the environment, must match exactly.
+fn release_identity_mismatch(
+    detail: &Value,
+    project_ref: &str,
+    environment: &str,
+    release_id: &str,
+) -> Option<&'static str> {
+    let absent_or = |field: &str, expected: &str| {
+        detail
+            .get(field)
+            .is_none_or(|value| value.as_str() == Some(expected))
+    };
+    if !absent_or("id", release_id) {
+        Some("release detail names another release id")
+    } else if !absent_or("projectId", project_ref) {
+        Some("release detail names another project")
+    } else if detail.get("environment").and_then(Value::as_str) != Some(environment) {
+        Some("release environment is missing or does not match credible.toml")
+    } else {
+        None
+    }
+}
+
 fn created_release_matches_intent(
     detail: &Value,
     wanted: &[ContractKey],
+    project_ref: &str,
     environment: &str,
     release_id: &str,
 ) -> Result<(), DeployError> {
-    if let Some(id) = detail.get("id").and_then(Value::as_str)
-        && id != release_id
-    {
-        return Err(release_intent_mismatch(
-            release_id,
-            "fetched release id does not match the create response",
-        ));
-    }
-    match detail.get("environment").and_then(Value::as_str) {
-        Some(actual) if actual == environment => {}
-        Some(_) => {
-            return Err(release_intent_mismatch(
-                release_id,
-                "release environment does not match credible.toml",
-            ));
-        }
-        None => {
-            return Err(release_intent_mismatch(
-                release_id,
-                "release detail omitted environment",
-            ));
-        }
-    }
-    if snapshot_matches(detail, wanted) {
-        Ok(())
-    } else {
-        Err(release_intent_mismatch(
-            release_id,
-            "stored snapshot does not match the reviewed preview",
-        ))
-    }
+    let reason =
+        release_identity_mismatch(detail, project_ref, environment, release_id).or_else(|| {
+            (!snapshot_matches(detail, wanted))
+                .then_some("stored snapshot does not match the reviewed preview")
+        });
+    reason.map_or(Ok(()), |reason| {
+        Err(release_intent_mismatch(release_id, reason))
+    })
 }
 
 fn confirmed_release_matches(deploy_data: &Value, release_id: &str) -> Result<(), DeployError> {
@@ -1333,6 +1336,14 @@ impl DeployArgs {
                     fetch_release_detail(&api, config, cli_args, &project_ref, &candidate.id)
                         .await?;
                 if snapshot_matches(&detail, &wanted) {
+                    if let Some(reason) = release_identity_mismatch(
+                        &detail,
+                        &project_ref,
+                        &credible.environment,
+                        &candidate.id,
+                    ) {
+                        return Err(release_intent_mismatch(&candidate.id, reason));
+                    }
                     matched.push(candidate.clone());
                 }
             }
@@ -1417,6 +1428,7 @@ impl DeployArgs {
                     created_release_matches_intent(
                         &detail,
                         &wanted,
+                        &project_ref,
                         &credible.environment,
                         &release_id,
                     )?;
@@ -2780,7 +2792,8 @@ mod tests {
 
     const INTENT_PROJECT: &str = "11111111-1111-4111-8111-111111111111";
     const SUBSTITUTED_RELEASE: &str = "22222222-2222-4222-8222-222222222222";
-    const REVIEWED_RELEASE: &str = "33333333-3333-4333-8333-333333333333";
+    const REVIEWED_RELEASE: &str = "3333abcd-3333-4333-8333-333333333333";
+    const OTHER_PROJECT: &str = "44444444-4444-4444-8444-444444444444";
     const LEGACY_ASSERTION: &str =
         "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -3125,6 +3138,74 @@ mod tests {
                     if release_id == "preview"
             ),
             "the local checkout has no contracts, so the legacy inactive release must not be resumed: {result:?}"
+        );
+        calldata.expect(0).assert_async().await;
+        confirm.expect(0).assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn deploy_does_not_resume_a_matching_snapshot_whose_detail_names_another_release() {
+        for (field, value) in [
+            ("environment", json!("production")),
+            ("environment", json!("Staging")),
+            ("environment", Value::Null),
+            ("id", json!(SUBSTITUTED_RELEASE)),
+            ("id", json!(REVIEWED_RELEASE.to_ascii_uppercase())),
+            ("projectId", json!(OTHER_PROJECT)),
+        ] {
+            let mut harness = IntentHarness::start().await;
+            // The list labels the release staging; only its detail disagrees.
+            harness
+                .mock_releases(inactive_summary(REVIEWED_RELEASE))
+                .await;
+            let mut detail = intent_detail(REVIEWED_RELEASE, json!({}));
+            detail[field] = value.clone();
+            harness
+                .mock_json("GET", &release_path(REVIEWED_RELEASE), 200, detail)
+                .await;
+            harness.mock_preview(false, &json!({})).await;
+            let (calldata, confirm) = harness
+                .mock_deploy(REVIEWED_RELEASE, REVIEWED_RELEASE)
+                .await;
+
+            let result = harness.run().await;
+
+            assert!(
+                matches!(result, Err(DeployError::ReleaseIntentMismatch { .. })),
+                "{field} = {value}: {result:?}"
+            );
+            calldata.expect(0).assert_async().await;
+            confirm.expect(0).assert_async().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn deploy_does_not_activate_a_created_release_of_another_project() {
+        let mut harness = IntentHarness::start().await;
+        harness.mock_releases(json!([])).await;
+        harness.mock_preview(true, &json!({})).await;
+        harness
+            .mock_json(
+                "POST",
+                &format!("/api/v1/projects/{INTENT_PROJECT}/releases"),
+                201,
+                create_release_body(REVIEWED_RELEASE, &json!({})),
+            )
+            .await;
+        let mut detail = intent_detail(REVIEWED_RELEASE, json!({}));
+        detail["projectId"] = json!(OTHER_PROJECT);
+        harness
+            .mock_json("GET", &release_path(REVIEWED_RELEASE), 200, detail)
+            .await;
+        let (calldata, confirm) = harness
+            .mock_deploy(REVIEWED_RELEASE, REVIEWED_RELEASE)
+            .await;
+
+        let result = harness.run().await;
+
+        assert!(
+            matches!(result, Err(DeployError::ReleaseIntentMismatch { .. })),
+            "{result:?}"
         );
         calldata.expect(0).assert_async().await;
         confirm.expect(0).assert_async().await;
