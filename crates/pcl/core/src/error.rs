@@ -410,6 +410,11 @@ pub enum DeployError {
     },
 
     #[error(
+        "Platform release {release_id} does not match the release built from this checkout ({reason}). pcl will not check, sign, or confirm it."
+    )]
+    ReleaseIntentMismatch { release_id: String, reason: String },
+
+    #[error(
         "Project {project_id} has more than one inactive release for environment {environment:?} that matches the current configuration ({release_ids:?}). pcl will not guess which interrupted run to resume. Inspect them with `pcl releases list {project_id}`, then activate or delete the extra releases and re-run `pcl deploy`."
     )]
     AmbiguousInactiveRelease {

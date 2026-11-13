@@ -40,6 +40,7 @@ use crate::{
 use alloy_primitives::Address;
 use clap::ValueHint;
 use colored::Colorize;
+use dapp_api_client::generated::client::types::ProjectsCreateReleaseBody;
 use pcl_common::args::{
     CliArgs,
     OutputMode,
@@ -372,6 +373,10 @@ type AssertionKey = (String, Vec<String>, String);
 /// (label, address, display name, assertions).
 type ContractKey = (String, String, String, Vec<AssertionKey>);
 
+/// The same identity without platform-assigned assertion ids.
+/// The local payload can prove these fields. It cannot prove assertion ids.
+type LocalContractIdentity = (String, String, String, Vec<(String, Vec<String>)>);
+
 fn strict_string_array(value: &Value) -> Option<Vec<String>> {
     value
         .as_array()?
@@ -452,6 +457,122 @@ fn snapshot_matches_preview(release_detail: &Value, preview: &Value) -> bool {
     match (snapshot, wanted) {
         (Some(snapshot), Some(wanted)) => snapshot == wanted,
         _ => false,
+    }
+}
+
+fn payload_local_identity(payload: &ProjectsCreateReleaseBody) -> Vec<LocalContractIdentity> {
+    let mut set = Vec::new();
+    for (label, contract) in &payload.contracts {
+        let mut assertions = Vec::new();
+        for assertion in &contract.assertions {
+            assertions.push(((*assertion.file).clone(), assertion.args.clone()));
+        }
+        assertions.sort();
+        set.push((
+            label.clone(),
+            (*contract.address).to_ascii_lowercase(),
+            contract.name.clone().unwrap_or_default(),
+            assertions,
+        ));
+    }
+    set.sort();
+    set
+}
+
+fn without_assertion_ids(keys: &[ContractKey]) -> Vec<LocalContractIdentity> {
+    keys.iter()
+        .map(|(label, address, name, assertions)| {
+            (
+                label.clone(),
+                address.clone(),
+                name.clone(),
+                assertions
+                    .iter()
+                    .map(|(file, args, _assertion_id)| (file.clone(), args.clone()))
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// The preview is a server document. It may select a release only when its
+/// retained contracts are the ones this checkout just built.
+fn preview_matches_local_payload(preview: &Value, payload: &ProjectsCreateReleaseBody) -> bool {
+    preview_contract_set(preview)
+        .is_some_and(|wanted| without_assertion_ids(&wanted) == payload_local_identity(payload))
+}
+
+fn same_preview_contract_set(left: &Value, right: &Value) -> bool {
+    matches!(
+        (preview_contract_set(left), preview_contract_set(right)),
+        (Some(left_set), Some(right_set)) if left_set == right_set
+    )
+}
+
+fn release_intent_mismatch(
+    release_id: impl Into<String>,
+    reason: impl Into<String>,
+) -> DeployError {
+    DeployError::ReleaseIntentMismatch {
+        release_id: release_id.into(),
+        reason: reason.into(),
+    }
+}
+
+fn created_release_matches_intent(
+    detail: &Value,
+    preview: &Value,
+    environment: &str,
+    release_id: &str,
+) -> Result<(), DeployError> {
+    if let Some(id) = detail.get("id").and_then(Value::as_str)
+        && id != release_id
+    {
+        return Err(release_intent_mismatch(
+            release_id,
+            "fetched release id does not match the create response",
+        ));
+    }
+    match detail.get("environment").and_then(Value::as_str) {
+        Some(actual) if actual == environment => {}
+        Some(_) => {
+            return Err(release_intent_mismatch(
+                release_id,
+                "release environment does not match credible.toml",
+            ));
+        }
+        None => {
+            return Err(release_intent_mismatch(
+                release_id,
+                "release detail omitted environment",
+            ));
+        }
+    }
+    if snapshot_matches_preview(detail, preview) {
+        Ok(())
+    } else {
+        Err(release_intent_mismatch(
+            release_id,
+            "stored snapshot does not match the reviewed preview",
+        ))
+    }
+}
+
+fn confirmed_release_matches(deploy_data: &Value, release_id: &str) -> Result<(), DeployError> {
+    let Some(confirmed) = deploy_data
+        .get("confirm")
+        .and_then(|body| body.get("releaseId").or_else(|| body.get("release_id")))
+        .and_then(Value::as_str)
+    else {
+        return Ok(());
+    };
+    if confirmed == release_id {
+        Ok(())
+    } else {
+        Err(release_intent_mismatch(
+            release_id,
+            format!("confirmation names release {confirmed}"),
+        ))
     }
 }
 
@@ -1168,6 +1289,13 @@ impl DeployArgs {
             let preview = ApplyArgs::call_preview(&client, &project_id, &payload).await?;
 
             let project_ref = project_id.to_string();
+            let preview_value = serde_json::to_value(&preview)?;
+            if !preview_matches_local_payload(&preview_value, &payload) {
+                return Err(release_intent_mismatch(
+                    "preview",
+                    "preview contract set does not match the locally built payload",
+                ));
+            }
             let summaries = inactive_release_summaries(
                 &api,
                 config,
@@ -1182,7 +1310,6 @@ impl DeployArgs {
             // preview cannot vouch for any of them (it diffs against the active
             // release), so fetch each detail and compare its stored snapshot to the
             // payload whether or not the preview reports changes.
-            let preview_value = serde_json::to_value(&preview)?;
             let mut matched = Vec::new();
             for candidate in &summaries {
                 let detail = api
@@ -1262,11 +1389,43 @@ impl DeployArgs {
                     progress(human, "Creating release");
                     let release =
                         ApplyArgs::call_create_release(&client, &project_id, &payload).await?;
-                    (
-                        release.id.to_string(),
-                        Some(u64::from(release.release_number)),
-                        false,
-                    )
+                    let release_id = release.id.to_string();
+                    if release.diffed_against_release_id != preview.diffed_against_release_id {
+                        return Err(release_intent_mismatch(
+                            &release_id,
+                            "create response baseline does not match the reviewed preview",
+                        ));
+                    }
+                    let created = serde_json::to_value(&release)?;
+                    let created_preview = json!({
+                        "diff": created.get("diff").cloned().unwrap_or(Value::Null)
+                    });
+                    if !same_preview_contract_set(&created_preview, &preview_value) {
+                        return Err(release_intent_mismatch(
+                            &release_id,
+                            "create response diff does not match the reviewed preview",
+                        ));
+                    }
+                    let detail = api
+                        .workflow_json(
+                            config,
+                            cli_args,
+                            HttpMethod::Get,
+                            "projects.getRelease",
+                            &[
+                                ("project_id", project_ref.as_str()),
+                                ("release_id", release_id.as_str()),
+                            ],
+                            None,
+                        )
+                        .await?;
+                    created_release_matches_intent(
+                        &detail,
+                        &preview_value,
+                        &credible.environment,
+                        &release_id,
+                    )?;
+                    (release_id, Some(u64::from(release.release_number)), false)
                 }
             };
 
@@ -1291,6 +1450,7 @@ impl DeployArgs {
                 )
                 .await?;
             let deploy_data = deploy_envelope.get("data").cloned().unwrap_or(Value::Null);
+            confirmed_release_matches(&deploy_data, &release_id)?;
 
             let data = json!({
                 "outcome": if resumed { "resumed_and_deployed" } else { "released_and_deployed" },
@@ -2907,7 +3067,11 @@ mod tests {
         let result = harness.run().await;
 
         assert!(
-            result.is_err(),
+            matches!(
+                result,
+                Err(DeployError::ReleaseIntentMismatch { ref release_id, .. })
+                    if release_id == SUBSTITUTED_RELEASE
+            ),
             "create response id {SUBSTITUTED_RELEASE} is not the locally reviewed empty release: {result:?}"
         );
         assert!(
@@ -2974,7 +3138,11 @@ mod tests {
         let result = harness.run().await;
 
         assert!(
-            result.is_err(),
+            matches!(
+                result,
+                Err(DeployError::ReleaseIntentMismatch { ref release_id, .. })
+                    if release_id == "preview"
+            ),
             "the local checkout has no contracts, so the legacy inactive release must not be resumed: {result:?}"
         );
         assert!(

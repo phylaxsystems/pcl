@@ -886,6 +886,16 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
                         ],
                     )
                 }
+                DeployError::ReleaseIntentMismatch { .. } => {
+                    (
+                        "deploy.release_intent_mismatch",
+                        true,
+                        vec![
+                            "pcl deploy --dry-run --json".to_string(),
+                            "pcl doctor --json".to_string(),
+                        ],
+                    )
+                }
                 DeployError::AmbiguousInactiveRelease { project_id, .. } => {
                     (
                         "deploy.inactive_release_ambiguous",
