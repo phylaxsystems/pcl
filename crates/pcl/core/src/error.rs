@@ -429,7 +429,7 @@ pub enum DeployError {
         release_id: String,
         confirmed_release_id: String,
         /// The broadcast flow's data (calldata, tx, confirmation).
-        deploy: serde_json::Value,
+        deploy: Box<serde_json::Value>,
     },
 
     #[error(

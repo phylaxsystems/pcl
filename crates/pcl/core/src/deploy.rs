@@ -569,7 +569,7 @@ fn confirmed_release_matches(
                 project_id,
                 release_id: release_id.to_string(),
                 confirmed_release_id: confirmed.to_string(),
-                deploy: deploy_data.clone(),
+                deploy: Box::new(deploy_data.clone()),
             })
         }
         _ => Ok(deploy_data),
@@ -2218,9 +2218,12 @@ mod tests {
         ));
     }
 
-    /// A create-release payload whose contracts hold `(file, args)`
-    /// assertions; build-only fields carry fixed placeholder values.
-    fn local_payload(contracts: &[(&str, &str, &[(&str, &[&str])])]) -> ProjectsCreateReleaseBody {
+    /// (label, address, `(file, args)` assertions) of one payload contract.
+    type PayloadContract<'a> = (&'a str, &'a str, &'a [(&'a str, &'a [&'a str])]);
+
+    /// A create-release payload; build-only fields carry fixed placeholder
+    /// values.
+    fn local_payload(contracts: &[PayloadContract]) -> ProjectsCreateReleaseBody {
         let contracts: serde_json::Map<String, Value> = contracts
             .iter()
             .map(|(label, address, assertions)| {
@@ -2409,7 +2412,7 @@ mod tests {
             match result {
                 Ok(kept) => assert!(accepted && kept == data, "{name}"),
                 Err(DeployError::ConfirmedReleaseMismatch { deploy, .. }) => {
-                    assert!(!accepted && deploy == data, "{name}");
+                    assert!(!accepted && *deploy == data, "{name}");
                 }
                 Err(other) => panic!("{name}: {other:?}"),
             }

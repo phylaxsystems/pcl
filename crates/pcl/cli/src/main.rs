@@ -979,7 +979,7 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
                     json!(confirmed_release_id),
                 );
                 error.insert("tx_hash".to_string(), deploy["tx"]["tx_hash"].clone());
-                error.insert("deploy".to_string(), deploy.clone());
+                error.insert("deploy".to_string(), (**deploy).clone());
             }
             if let DeployError::CircuitBreakerUnsupported {
                 platform_url,
@@ -1671,7 +1671,7 @@ mod tests {
     fn deploy_release_intent_mismatch_points_at_the_project_releases() {
         let project_id = "00000000-0000-0000-0000-000000000000";
         let created = DeployError::ReleaseIntentMismatch {
-            project_id: Default::default(),
+            project_id: "00000000-0000-0000-0000-000000000000".parse().unwrap(),
             release_id: Some("release-7".to_string()),
             reason: "stored snapshot does not match the reviewed preview",
         };
@@ -1692,7 +1692,7 @@ mod tests {
         );
 
         let preview = DeployError::ReleaseIntentMismatch {
-            project_id: Default::default(),
+            project_id: "00000000-0000-0000-0000-000000000000".parse().unwrap(),
             release_id: None,
             reason: "preview contract set does not match the locally built payload",
         };
@@ -1716,14 +1716,14 @@ mod tests {
     fn deploy_confirmed_release_mismatch_keeps_the_landed_transaction() {
         let tx_hash = format!("0x{}", "ab".repeat(32));
         let err = DeployError::ConfirmedReleaseMismatch {
-            project_id: Default::default(),
+            project_id: "00000000-0000-0000-0000-000000000000".parse().unwrap(),
             release_id: "release-7".to_string(),
             confirmed_release_id: "release-8".to_string(),
-            deploy: json!({
+            deploy: Box::new(json!({
                 "noop": false,
                 "tx": { "tx_hash": tx_hash, "chain_id": 1 },
                 "confirm": { "releaseId": "release-8" },
-            }),
+            })),
         };
 
         let envelope = deploy_error_envelope(&err);
