@@ -2657,20 +2657,7 @@ mod tests {
             .create_async()
             .await;
         let api = ApiArgs::headless(server.url().parse().unwrap());
-        let mut config = CliConfig {
-            auth: Some(crate::config::UserAuth {
-                issuer_platform_url: Some(server.url()),
-                access_token: "access-token".to_string(),
-                refresh_token: "refresh-token".to_string(),
-                expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
-                refresh_expires_at: None,
-                user_id: None,
-                wallet_address: None,
-                email: Some("agent@example.com".to_string()),
-            }),
-            platform_url: Some(server.url()),
-            rpc: BTreeMap::new(),
-        };
+        let mut config = test_config(&server.url());
         let config_dir = tempfile::tempdir().unwrap();
         let cli_args = CliArgs {
             config_dir: Some(config_dir.path().to_path_buf()),
@@ -2691,110 +2678,90 @@ mod tests {
     const INTENT_PROJECT: &str = "11111111-1111-4111-8111-111111111111";
     const SUBSTITUTED_RELEASE: &str = "22222222-2222-4222-8222-222222222222";
     const REVIEWED_RELEASE: &str = "33333333-3333-4333-8333-333333333333";
+    const LEGACY_ASSERTION: &str =
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-    fn empty_release_diff() -> Value {
+    fn test_config(api_url: &str) -> CliConfig {
+        CliConfig {
+            auth: Some(crate::config::UserAuth {
+                issuer_platform_url: Some(api_url.to_string()),
+                access_token: "access-token".to_string(),
+                refresh_token: "refresh-token".to_string(),
+                expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: Some("agent@example.com".to_string()),
+            }),
+            platform_url: Some(api_url.to_string()),
+            rpc: BTreeMap::new(),
+        }
+    }
+
+    /// A typed release diff around `contracts`; the summary counts are not
+    /// read by deploy.
+    fn release_diff(contracts: &Value) -> Value {
+        let zero = json!({"added": 0, "removed": 0, "modified": 0, "unchanged": 0});
         json!({
-            "contracts": {},
-            "summary": {
-                "contracts": {"added": 0, "removed": 0, "modified": 0, "unchanged": 0},
-                "assertions": {"added": 0, "removed": 0, "modified": 0, "unchanged": 0}
-            }
+            "contracts": contracts,
+            "summary": { "contracts": zero, "assertions": zero }
         })
     }
 
-    fn legacy_release_diff() -> Value {
-        json!({
-            "contracts": {
-                "legacy": {
-                    "address": "0x3333333333333333333333333333333333333333",
-                    "name": "Legacy",
-                    "changeType": "added",
-                    "metadataChanges": null,
-                    "assertions": [{
-                        "file": "legacy/Legacy.a.sol:Legacy",
-                        "args": [],
-                        "changeType": "added",
-                        "assertionId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                        "previousAssertionId": null,
-                        "compilerVersionChange": null
-                    }]
-                }
-            },
-            "summary": {
-                "contracts": {"added": 1, "removed": 0, "modified": 0, "unchanged": 0},
-                "assertions": {"added": 1, "removed": 0, "modified": 0, "unchanged": 0}
-            }
-        })
+    /// `release_preview`'s contract set with the nullable fields the typed
+    /// preview response requires.
+    fn legacy_contracts() -> Value {
+        let mut contracts = release_preview(LEGACY_ASSERTION, &[])["diff"]["contracts"].clone();
+        contracts["mock"]["metadataChanges"] = Value::Null;
+        contracts["mock"]["assertions"][0]["previousAssertionId"] = Value::Null;
+        contracts["mock"]["assertions"][0]["compilerVersionChange"] = Value::Null;
+        contracts
     }
 
-    fn preview_body(has_changes: bool, diff: &Value) -> Value {
+    fn preview_body(has_changes: bool, contracts: &Value) -> Value {
         json!({
             "hasChanges": has_changes,
             "configMismatch": false,
             "driftDetected": false,
-            "diff": diff,
+            "diff": release_diff(contracts),
             "diffedAgainstReleaseId": null
         })
     }
 
-    fn substituted_release_detail(contracts: &Value) -> Value {
-        json!({
-            "id": SUBSTITUTED_RELEASE,
-            "environment": "staging",
-            "configSnapshot": { "contracts": contracts },
-            "checkSummary": { "deployBlockingStatus": "no_checks" }
-        })
+    /// The detail of an honest, empty staging release of [`INTENT_PROJECT`].
+    fn intent_detail(release_id: &str, contracts: Value) -> Value {
+        let mut detail = release_detail(contracts);
+        detail["id"] = json!(release_id);
+        detail["projectId"] = json!(INTENT_PROJECT);
+        detail["environment"] = json!("staging");
+        detail["checkSummary"] = json!({ "deployBlockingStatus": "no_checks" });
+        detail
     }
 
-    fn legacy_snapshot_contracts() -> Value {
-        json!({
-            "legacy": {
-                "address": "0x3333333333333333333333333333333333333333",
-                "name": "Legacy",
-                "assertions": [{
-                    "file": "legacy/Legacy.a.sol:Legacy",
-                    "args": [],
-                    "assertionId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                }]
-            }
-        })
-    }
-
-    fn create_release_body(release_id: &str, diff: &Value) -> Value {
+    fn create_release_body(release_id: &str, contracts: &Value) -> Value {
         json!({
             "id": release_id,
             "releaseNumber": 7,
             "status": "inactive",
             "previouslyDeployed": false,
-            "diff": diff,
+            "diff": release_diff(contracts),
             "diffedAgainstReleaseId": null,
             "createdAt": "2026-11-02T19:00:00.000Z",
-            "reviewUrl": "http://127.0.0.1/reviews/substituted"
+            "reviewUrl": "http://127.0.0.1/reviews/created"
         })
     }
 
-    fn noop_calldata() -> Value {
-        json!({
-            "activeReleaseId": null,
-            "chainId": 31337,
-            "stateOracleAddress": "0x1111111111111111111111111111111111111111",
-            "operations": [],
-            "calldata": [],
-            "isNoop": true,
-            "message": "honest no-op for the release id in the path"
-        })
+    fn inactive_summary(release_id: &str) -> Value {
+        json!([{
+            "id": release_id,
+            "releaseNumber": 7,
+            "environment": "staging",
+            "status": "inactive"
+        }])
     }
 
-    fn confirm_body(release_id: &str) -> Value {
-        json!({
-            "releaseId": release_id,
-            "status": "active",
-            "previouslyDeployed": true,
-            "deployedAt": "2026-11-02T19:00:01.000Z",
-            "txHashes": null,
-            "removeReleaseTxnHash": null,
-            "chainId": 31337
-        })
+    fn release_path(release_id: &str) -> String {
+        format!("/api/v1/projects/{INTENT_PROJECT}/releases/{release_id}")
     }
 
     struct IntentHarness {
@@ -2813,34 +2780,24 @@ mod tests {
                 ),
             )
             .unwrap();
-            Self {
+            let mut harness = Self {
                 server: mockito::Server::new_async().await,
                 project_root,
                 config_dir: tempfile::tempdir().unwrap(),
-            }
-        }
-
-        fn api_url(&self) -> Url {
-            self.server.url().parse().unwrap()
-        }
-
-        async fn mock_project(&mut self) -> mockito::Mock {
-            self.server
-                .mock("GET", format!("/api/v1/projects/{INTENT_PROJECT}").as_str())
-                .match_header("authorization", "Bearer validator-access-token")
-                .with_status(200)
-                .with_header("content-type", "application/json")
-                .with_body(
+            };
+            harness
+                .mock_json(
+                    "GET",
+                    &format!("/api/v1/projects/{INTENT_PROJECT}"),
+                    200,
                     json!({
                         "id": INTENT_PROJECT,
                         "project_networks": ["31337"],
                         "protocol_manager_address": null
-                    })
-                    .to_string(),
+                    }),
                 )
-                .expect_at_least(1)
-                .create_async()
-                .await
+                .await;
+            harness
         }
 
         async fn mock_releases(&mut self, body: Value) -> mockito::Mock {
@@ -2855,11 +2812,10 @@ mod tests {
                     Matcher::UrlEncoded("limit".into(), "100".into()),
                     Matcher::UrlEncoded("offset".into(), "0".into()),
                 ]))
-                .match_header("authorization", "Bearer validator-access-token")
+                .match_header("authorization", "Bearer access-token")
                 .with_status(200)
                 .with_header("content-type", "application/json")
                 .with_body(body.to_string())
-                .expect_at_least(0)
                 .create_async()
                 .await
         }
@@ -2870,38 +2826,73 @@ mod tests {
             path: &str,
             status: usize,
             body: Value,
-            at_least: Option<usize>,
         ) -> mockito::Mock {
-            let mut mock = self
-                .server
+            self.server
                 .mock(method, path)
                 .match_query(Matcher::Any)
-                .match_header("authorization", "Bearer validator-access-token")
+                .match_header("authorization", "Bearer access-token")
                 .with_status(status)
                 .with_header("content-type", "application/json")
-                .with_body(body.to_string());
-            if let Some(hits) = at_least {
-                mock = mock.expect_at_least(hits);
-            }
-            mock.create_async().await
+                .with_body(body.to_string())
+                .create_async()
+                .await
+        }
+
+        async fn mock_preview(&mut self, has_changes: bool, contracts: &Value) -> mockito::Mock {
+            self.mock_json(
+                "POST",
+                &format!("/api/v1/projects/{INTENT_PROJECT}/releases/preview"),
+                200,
+                preview_body(has_changes, contracts),
+            )
+            .await
+        }
+
+        /// The noop deploy-calldata and confirm mocks for `release_id`; the
+        /// confirm body names `confirmed`.
+        async fn mock_deploy(
+            &mut self,
+            release_id: &str,
+            confirmed: &str,
+        ) -> (mockito::Mock, mockito::Mock) {
+            let calldata = self
+                .mock_json(
+                    "GET",
+                    &format!("{}/deploy-calldata", release_path(release_id)),
+                    200,
+                    json!({
+                        "activeReleaseId": null,
+                        "chainId": 31337,
+                        "stateOracleAddress": "0x1111111111111111111111111111111111111111",
+                        "operations": [],
+                        "calldata": [],
+                        "isNoop": true,
+                        "message": "honest no-op for the release id in the path"
+                    }),
+                )
+                .await;
+            let confirm = self
+                .mock_json(
+                    "POST",
+                    &format!("{}/deploy", release_path(release_id)),
+                    200,
+                    json!({
+                        "releaseId": confirmed,
+                        "status": "active",
+                        "previouslyDeployed": true,
+                        "deployedAt": "2026-11-02T19:00:01.000Z",
+                        "txHashes": null,
+                        "removeReleaseTxnHash": null,
+                        "chainId": 31337
+                    }),
+                )
+                .await;
+            (calldata, confirm)
         }
 
         async fn run(&self) -> Result<(), DeployError> {
-            let api_url = self.api_url();
-            let mut config = CliConfig {
-                auth: Some(crate::config::UserAuth {
-                    issuer_platform_url: Some(api_url.to_string()),
-                    access_token: "validator-access-token".to_string(),
-                    refresh_token: "validator-refresh-token".to_string(),
-                    expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
-                    refresh_expires_at: None,
-                    user_id: None,
-                    wallet_address: None,
-                    email: Some("validator@example.test".to_string()),
-                }),
-                platform_url: Some(api_url.to_string()),
-                rpc: BTreeMap::new(),
-            };
+            let api_url: Url = self.server.url().parse().unwrap();
+            let mut config = test_config(api_url.as_str());
             let args = DeployArgs {
                 root: self.project_root.path().to_path_buf(),
                 config: PathBuf::from("credible.toml"),
@@ -2933,58 +2924,21 @@ mod tests {
     #[tokio::test]
     async fn deploy_resumes_when_the_inactive_snapshot_matches_the_local_payload() {
         let mut harness = IntentHarness::start().await;
-        let project = harness.mock_project().await;
         let releases = harness
-            .mock_releases(json!([{
-                "id": REVIEWED_RELEASE,
-                "releaseNumber": 4,
-                "environment": "staging",
-                "status": "inactive"
-            }]))
+            .mock_releases(inactive_summary(REVIEWED_RELEASE))
             .await;
         let detail = harness
             .mock_json(
                 "GET",
-                &format!("/api/v1/projects/{INTENT_PROJECT}/releases/{REVIEWED_RELEASE}"),
+                &release_path(REVIEWED_RELEASE),
                 200,
-                json!({
-                    "id": REVIEWED_RELEASE,
-                    "environment": "staging",
-                    "configSnapshot": { "contracts": {} },
-                    "checkSummary": { "deployBlockingStatus": "no_checks" }
-                }),
-                Some(1),
+                intent_detail(REVIEWED_RELEASE, json!({})),
             )
             .await;
-        let calldata = harness
-            .mock_json(
-                "GET",
-                &format!(
-                    "/api/v1/projects/{INTENT_PROJECT}/releases/{REVIEWED_RELEASE}/deploy-calldata"
-                ),
-                200,
-                noop_calldata(),
-                None,
-            )
+        let (calldata, confirm) = harness
+            .mock_deploy(REVIEWED_RELEASE, REVIEWED_RELEASE)
             .await;
-        let confirm = harness
-            .mock_json(
-                "POST",
-                &format!("/api/v1/projects/{INTENT_PROJECT}/releases/{REVIEWED_RELEASE}/deploy"),
-                200,
-                confirm_body(REVIEWED_RELEASE),
-                None,
-            )
-            .await;
-        let _preview = harness
-            .mock_json(
-                "POST",
-                &format!("/api/v1/projects/{INTENT_PROJECT}/releases/preview"),
-                200,
-                preview_body(false, &empty_release_diff()),
-                Some(1),
-            )
-            .await;
+        let preview = harness.mock_preview(false, &json!({})).await;
 
         let result = harness.run().await;
 
@@ -2992,76 +2946,43 @@ mod tests {
             result.is_ok(),
             "a snapshot that matches the local payload is the reviewed release: {result:?}"
         );
-        assert!(confirm.matched(), "the matching release is confirmed");
-        assert!(
-            calldata.matched(),
-            "the matching release is the one deployed"
-        );
-        project.assert_async().await;
-        releases.assert_async().await;
-        detail.assert_async().await;
-        calldata.assert_async().await;
-        confirm.assert_async().await;
+        for mock in [releases, preview, calldata, confirm] {
+            mock.assert_async().await;
+        }
+        // Once for the resume scan, once more for the check poll.
+        detail.expect(2).assert_async().await;
     }
 
     #[tokio::test]
     async fn deploy_does_not_activate_a_release_substituted_in_the_create_response() {
         let mut harness = IntentHarness::start().await;
-        let _project = harness.mock_project().await;
-        let _releases = harness
-            .mock_releases(json!([{
-                "id": SUBSTITUTED_RELEASE,
-                "releaseNumber": 7,
-                "environment": "staging",
-                "status": "inactive"
-            }]))
+        harness
+            .mock_releases(inactive_summary(SUBSTITUTED_RELEASE))
             .await;
-        let _detail = harness
+        // The substituted release's stored snapshot is not the empty release
+        // this checkout built.
+        let detail = harness
             .mock_json(
                 "GET",
-                &format!("/api/v1/projects/{INTENT_PROJECT}/releases/{SUBSTITUTED_RELEASE}"),
+                &release_path(SUBSTITUTED_RELEASE),
                 200,
-                substituted_release_detail(&legacy_snapshot_contracts()),
-                Some(1),
+                intent_detail(
+                    SUBSTITUTED_RELEASE,
+                    snapshot_contracts(LEGACY_ASSERTION, &[]),
+                ),
             )
             .await;
-        let _preview = harness
-            .mock_json(
-                "POST",
-                &format!("/api/v1/projects/{INTENT_PROJECT}/releases/preview"),
-                200,
-                preview_body(true, &empty_release_diff()),
-                Some(1),
-            )
-            .await;
-        let _created = harness
+        harness.mock_preview(true, &json!({})).await;
+        harness
             .mock_json(
                 "POST",
                 &format!("/api/v1/projects/{INTENT_PROJECT}/releases"),
                 201,
-                create_release_body(SUBSTITUTED_RELEASE, &empty_release_diff()),
-                Some(0),
+                create_release_body(SUBSTITUTED_RELEASE, &json!({})),
             )
             .await;
-        let calldata = harness
-            .mock_json(
-                "GET",
-                &format!(
-                    "/api/v1/projects/{INTENT_PROJECT}/releases/{SUBSTITUTED_RELEASE}/deploy-calldata"
-                ),
-                200,
-                noop_calldata(),
-                None,
-            )
-            .await;
-        let confirm = harness
-            .mock_json(
-                "POST",
-                &format!("/api/v1/projects/{INTENT_PROJECT}/releases/{SUBSTITUTED_RELEASE}/deploy"),
-                200,
-                confirm_body(SUBSTITUTED_RELEASE),
-                None,
-            )
+        let (calldata, confirm) = harness
+            .mock_deploy(SUBSTITUTED_RELEASE, SUBSTITUTED_RELEASE)
             .await;
 
         let result = harness.run().await;
@@ -3074,65 +2995,22 @@ mod tests {
             ),
             "create response id {SUBSTITUTED_RELEASE} is not the locally reviewed empty release: {result:?}"
         );
-        assert!(
-            !calldata.matched(),
-            "deploy-calldata was requested for the substituted release"
-        );
-        assert!(
-            !confirm.matched(),
-            "the substituted release was confirmed active"
-        );
+        // Once in the resume scan, once to bind the created id; never polled
+        // for checks.
+        detail.expect(2).assert_async().await;
+        calldata.expect(0).assert_async().await;
+        confirm.expect(0).assert_async().await;
     }
 
     #[tokio::test]
     async fn deploy_does_not_resume_an_inactive_release_the_local_payload_does_not_build() {
         let mut harness = IntentHarness::start().await;
-        let _project = harness.mock_project().await;
-        let _releases = harness
-            .mock_releases(json!([{
-                "id": SUBSTITUTED_RELEASE,
-                "releaseNumber": 7,
-                "environment": "staging",
-                "status": "inactive"
-            }]))
+        harness
+            .mock_releases(inactive_summary(SUBSTITUTED_RELEASE))
             .await;
-        let _detail = harness
-            .mock_json(
-                "GET",
-                &format!("/api/v1/projects/{INTENT_PROJECT}/releases/{SUBSTITUTED_RELEASE}"),
-                200,
-                substituted_release_detail(&legacy_snapshot_contracts()),
-                Some(0),
-            )
-            .await;
-        let _preview = harness
-            .mock_json(
-                "POST",
-                &format!("/api/v1/projects/{INTENT_PROJECT}/releases/preview"),
-                200,
-                preview_body(true, &legacy_release_diff()),
-                Some(1),
-            )
-            .await;
-        let calldata = harness
-            .mock_json(
-                "GET",
-                &format!(
-                    "/api/v1/projects/{INTENT_PROJECT}/releases/{SUBSTITUTED_RELEASE}/deploy-calldata"
-                ),
-                200,
-                noop_calldata(),
-                None,
-            )
-            .await;
-        let confirm = harness
-            .mock_json(
-                "POST",
-                &format!("/api/v1/projects/{INTENT_PROJECT}/releases/{SUBSTITUTED_RELEASE}/deploy"),
-                200,
-                confirm_body(SUBSTITUTED_RELEASE),
-                None,
-            )
+        harness.mock_preview(true, &legacy_contracts()).await;
+        let (calldata, confirm) = harness
+            .mock_deploy(SUBSTITUTED_RELEASE, SUBSTITUTED_RELEASE)
             .await;
 
         let result = harness.run().await;
@@ -3145,13 +3023,7 @@ mod tests {
             ),
             "the local checkout has no contracts, so the legacy inactive release must not be resumed: {result:?}"
         );
-        assert!(
-            !calldata.matched(),
-            "deploy-calldata was requested for the server-selected inactive release"
-        );
-        assert!(
-            !confirm.matched(),
-            "the server-selected inactive release was confirmed active"
-        );
+        calldata.expect(0).assert_async().await;
+        confirm.expect(0).assert_async().await;
     }
 }
