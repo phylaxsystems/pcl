@@ -1,6 +1,6 @@
 # Temporary ZIP compatibility patches
 
-These sources carry forward the dependency fix from [PCL #133](https://github.com/phylaxsystems/pcl/pull/133). They keep parent-required crate versions while moving every ZIP dependency to a patched release. `Cargo.lock` resolves ZIP 9.3.0; `make zip-policy` rejects versions below 9.0.5 across the entire lockfile.
+These sources carry forward the dependency fix from [PCL #133](https://github.com/phylaxsystems/pcl/pull/133). They keep parent-required crate versions while moving every ZIP dependency to a patched release. `Cargo.lock` resolves ZIP 9.3.0; `make zip-policy` rejects resolved versions and manifest requirements below 9.1.3, including `[patch]` entries and path replacements.
 
 | Crate | Published source | Runtime changes |
 | --- | --- | --- |
