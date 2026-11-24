@@ -694,6 +694,13 @@ fn phoundry_failure_code<'a>(
                 &["pcl verify --help", "pcl apply --dry-run"],
             )
         }
+        PhoundryError::SourceHashMismatch { .. } => {
+            (
+                "build.source_hash_mismatch",
+                message,
+                &["pcl verify --help", "pcl apply --dry-run"],
+            )
+        }
         _ => (fallback_code, message, fallback_actions),
     }
 }
@@ -1481,6 +1488,11 @@ mod tests {
                 actual: "assertions/src/B.a.sol:Guard".to_string(),
             })
         };
+        let source_hash = || {
+            Box::new(PhoundryError::SourceHashMismatch {
+                path: "assertions/src/A.a.sol".to_string(),
+            })
+        };
 
         for (envelope, code) in [
             (
@@ -1498,6 +1510,14 @@ mod tests {
             (
                 verify_error_envelope(&VerifyError::BuildFailed(mismatch())),
                 "build.artifact_target_mismatch",
+            ),
+            (
+                apply_error_envelope(&ApplyError::BuildFailed(source_hash())),
+                "build.source_hash_mismatch",
+            ),
+            (
+                verify_error_envelope(&VerifyError::BuildFailed(source_hash())),
+                "build.source_hash_mismatch",
             ),
         ] {
             assert_eq!(envelope["error"]["code"], code, "{envelope}");

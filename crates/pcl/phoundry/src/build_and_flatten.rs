@@ -20,9 +20,13 @@ use foundry_compilers::{
 };
 
 use alloy_json_abi::JsonAbi;
+use alloy_primitives::keccak256;
 use serde_json::Value;
 
-use foundry_compilers::artifacts::BytecodeHash;
+use foundry_compilers::artifacts::{
+    BytecodeHash,
+    MetadataSources,
+};
 use foundry_config::find_project_root;
 use std::{
     collections::{
@@ -201,7 +205,7 @@ impl BuildAndFlattenArgs {
             Path::new(rel_source_path),
         )?;
         let path = root.join(rel_source_path);
-        let flattened = self.flatten(&path)?;
+        let flattened = self.flatten_verified(&root, &metadata.sources, &path)?;
         let output = BuildAndFlatOutput::new(
             solc_version,
             flattened,
@@ -271,6 +275,23 @@ impl BuildAndFlattenArgs {
             .map_err(|_| Box::new(PhoundryError::DirectoryNotFound(root)))
     }
 
+    /// Flattens `path` only when every compiled source still matches the artifact.
+    ///
+    /// The flattener reads the target and its imports from disk. The check runs
+    /// before that read and again after it, so a file that changed once
+    /// compilation finished is not uploaded with the bytecode just verified.
+    fn flatten_verified(
+        &self,
+        root: &Path,
+        sources: &MetadataSources,
+        path: &PathBuf,
+    ) -> Result<String, Box<PhoundryError>> {
+        verify_compiled_sources(root, sources)?;
+        let flattened = self.flatten(path)?;
+        verify_compiled_sources(root, sources)?;
+        Ok(flattened)
+    }
+
     /// Flattens the contract source code.
     fn flatten(&self, path: &PathBuf) -> Result<String, Box<PhoundryError>> {
         let build = BuildOpts {
@@ -309,6 +330,46 @@ impl BuildAndFlattenArgs {
 }
 
 fn select_contract_path(
+    build: &ProjectCompileOutput,
+    contract_name: &str,
+    requested_path: Option<&str>,
+    root: &Path,
+) -> Result<PathBuf, Box<PhoundryError>> {
+    // A configured source has a path. Foundry's lookup uses that resolved path
+    // and, when the artifact key is project-relative, the path under the root.
+    // The walk below is for a bare name, a spelling that is not the artifact
+    // key, and a miss that has to name the files that were built.
+    if let Some(requested) = requested_path {
+        let resolved = resolve_source(root, Path::new(requested));
+        if let Some(path) = foundry_source_key(build, contract_name, &resolved, root) {
+            return Ok(path);
+        }
+    }
+    select_contract_path_from_scan(build, contract_name, requested_path, root)
+}
+
+/// Exact artifact keys for `resolved`: the canonical path, then its
+/// project-relative form. `ProjectCompileOutput::find` compares those keys
+/// as stored and does not canonicalize.
+fn foundry_source_key(
+    build: &ProjectCompileOutput,
+    contract_name: &str,
+    resolved: &Path,
+    root: &Path,
+) -> Option<PathBuf> {
+    let mut candidates = Vec::with_capacity(2);
+    candidates.push(resolved.to_path_buf());
+    if let Ok(relative) = resolved.strip_prefix(root)
+        && relative != resolved
+    {
+        candidates.push(relative.to_path_buf());
+    }
+    candidates
+        .into_iter()
+        .find(|candidate| build.find(candidate, contract_name).is_some())
+}
+
+fn select_contract_path_from_scan(
     build: &ProjectCompileOutput,
     contract_name: &str,
     requested_path: Option<&str>,
@@ -402,6 +463,63 @@ fn display_source(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+/// Fails closed unless each metadata source is still the bytes solc hashed.
+///
+/// When the artifact carries the compiler input (`content`), that snapshot is
+/// the source that has to be on disk. The hash covers the import closure, not
+/// only the file named in the config.
+fn verify_compiled_sources(
+    root: &Path,
+    sources: &MetadataSources,
+) -> Result<(), Box<PhoundryError>> {
+    if sources.inner.is_empty() {
+        return Err(Box::new(PhoundryError::InvalidForgeOutput(
+            "artifact metadata has no source hashes",
+        )));
+    }
+    for (path, source) in &sources.inner {
+        let file = resolve_source(root, Path::new(path));
+        let on_disk =
+            std::fs::read_to_string(&file).map_err(|_| source_hash_mismatch(root, &file))?;
+        let on_disk = normalized_source(&on_disk);
+        if let Some(snapshot) = source.content.as_deref() {
+            let snapshot = normalized_source(snapshot);
+            if on_disk != snapshot {
+                return Err(source_hash_mismatch(root, &file));
+            }
+        }
+        if !source_hashes_match(&source_keccak(&on_disk), &source.keccak256) {
+            return Err(source_hash_mismatch(root, &file));
+        }
+    }
+    Ok(())
+}
+
+fn source_hash_mismatch(root: &Path, path: &Path) -> Box<PhoundryError> {
+    Box::new(PhoundryError::SourceHashMismatch {
+        path: display_source(root, path),
+    })
+}
+
+/// Foundry normalizes CRLF before solc, and the metadata hash is of that text.
+fn normalized_source(content: &str) -> String {
+    if content.contains('\r') {
+        content.replace("\r\n", "\n")
+    } else {
+        content.to_string()
+    }
+}
+
+fn source_keccak(content: &str) -> String {
+    format!("{:#x}", keccak256(content.as_bytes()))
+}
+
+fn source_hashes_match(actual: &str, expected: &str) -> bool {
+    let actual = actual.trim().trim_start_matches("0x");
+    let expected = expected.trim().trim_start_matches("0x");
+    !expected.is_empty() && actual.eq_ignore_ascii_case(expected)
+}
+
 fn extract_bytecode<T: serde::Serialize>(bytecode: &T) -> Option<String> {
     let value = serde_json::to_value(bytecode).ok()?;
     value
@@ -438,6 +556,7 @@ fn flatten_libraries(settings: &Value) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_compilers::artifacts::MetadataSource;
 
     #[test]
     fn compilation_target_must_be_the_requested_source() {
@@ -469,6 +588,134 @@ mod tests {
                     if requested == "src/A.a.sol:Guard" && actual == "src/B.a.sol:Guard"
             ),
             "{err}"
+        );
+    }
+
+    fn metadata_source(keccak: &str, snapshot: Option<&str>) -> MetadataSource {
+        MetadataSource {
+            keccak256: keccak.to_string(),
+            urls: Vec::new(),
+            content: snapshot.map(str::to_string),
+            license: None,
+        }
+    }
+
+    fn sources_of(entries: Vec<(&str, MetadataSource)>) -> MetadataSources {
+        MetadataSources {
+            inner: entries
+                .into_iter()
+                .map(|(path, source)| (path.to_string(), source))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn flatten_requires_the_bytes_the_artifact_hashed() {
+        let project = tempfile::tempdir().expect("temp project");
+        let root = project.path().canonicalize().expect("canonical root");
+        let file = root.join("src/Guard.a.sol");
+        std::fs::create_dir_all(file.parent().expect("parent")).expect("src dir");
+        let source =
+            "contract Guard { function f() public pure returns (uint256) { return 999; } }\n";
+        std::fs::write(&file, source).expect("source");
+
+        let matching = sources_of(vec![(
+            "src/Guard.a.sol",
+            metadata_source(&source_keccak(source), None),
+        )]);
+        verify_compiled_sources(&root, &matching).expect("hashed bytes match");
+
+        let crlf = source.replace('\n', "\r\n");
+        std::fs::write(&file, &crlf).expect("crlf source");
+        verify_compiled_sources(&root, &matching).expect("CRLF is the same source solc hashed");
+
+        std::fs::write(&file, source.replace("999", "1")).expect("changed source");
+        let err = verify_compiled_sources(&root, &matching).expect_err("changed source");
+        assert!(
+            matches!(
+                &*err,
+                PhoundryError::SourceHashMismatch { path } if path == "src/Guard.a.sol"
+            ),
+            "{err}"
+        );
+
+        std::fs::write(&file, source).expect("restore source");
+        let snapshot = sources_of(vec![(
+            "src/Guard.a.sol",
+            metadata_source(&source_keccak(source), Some("contract Other {}\n")),
+        )]);
+        let err = verify_compiled_sources(&root, &snapshot).expect_err("disk left the snapshot");
+        assert!(
+            matches!(&*err, PhoundryError::SourceHashMismatch { .. }),
+            "{err}"
+        );
+
+        std::fs::remove_file(&file).expect("remove source");
+        let err = verify_compiled_sources(&root, &matching).expect_err("missing source");
+        assert!(
+            matches!(&*err, PhoundryError::SourceHashMismatch { .. }),
+            "{err}"
+        );
+
+        let empty = MetadataSources {
+            inner: BTreeMap::new(),
+        };
+        let err = verify_compiled_sources(&root, &empty).expect_err("no hashes");
+        assert!(
+            matches!(&*err, PhoundryError::InvalidForgeOutput(_)),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn configured_path_flattens_the_artifact_that_was_compiled() {
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../cli/tests/fixtures/duplicate-guard");
+        let project = tempfile::tempdir().expect("temp project");
+        for file in [
+            "foundry.toml",
+            "assertions/src/AWeak.a.sol",
+            "assertions/src/ZStrong.a.sol",
+        ] {
+            let target = project.path().join(file);
+            std::fs::create_dir_all(target.parent().expect("fixture parent")).expect("fixture dir");
+            std::fs::copy(fixture.join(file), &target).expect("copy fixture");
+        }
+
+        let built = BuildAndFlattenArgs {
+            root: Some(project.path().to_path_buf()),
+            assertion_contract: "./assertions/src//ZStrong.a.sol:Guard".to_string(),
+            contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
+        }
+        .run()
+        .expect("alias path builds the hashed source");
+        assert!(
+            built.flattened_source.contains("return 999"),
+            "{}",
+            built.flattened_source
+        );
+        assert!(
+            !built.flattened_source.contains("return 1;"),
+            "{}",
+            built.flattened_source
+        );
+
+        let missed = BuildAndFlattenArgs {
+            root: Some(project.path().to_path_buf()),
+            assertion_contract: "ZStrong.a.sol:Guard".to_string(),
+            contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
+        }
+        .run()
+        .expect_err("a filename without its directory is not the artifact key");
+        let message = missed.to_string();
+        assert!(
+            matches!(&*missed, PhoundryError::ContractNotAtPath { .. }),
+            "{message}"
+        );
+        assert!(
+            message.contains("assertions/src/AWeak.a.sol")
+                && message.contains("assertions/src/ZStrong.a.sol"),
+            "{message}"
         );
     }
 

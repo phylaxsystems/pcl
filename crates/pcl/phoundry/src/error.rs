@@ -44,6 +44,8 @@ pub enum PhoundryError {
     },
     #[error("compiled artifact target {actual} does not match requested {requested}")]
     ArtifactTargetMismatch { requested: String, actual: String },
+    #[error("compiled source {path} does not match the artifact that was just built")]
+    SourceHashMismatch { path: String },
     #[error("Invalid path: {0:?}")]
     InvalidPath(PathBuf),
     #[error("Directory not found: {0:?}")]
