@@ -28,16 +28,21 @@ class ZipPolicyTest(unittest.TestCase):
             "9.1.0",
             "9.1.1",
             "9.1.2",
-            "9.3.0-rc.1",
+            "9.1.3",
+            "9.2.3",
+            "9.3.0",
+            "9.4.0",
+            "9.4.1",
+            "9.4.2-rc.1",
         ):
             with self.subTest(version=version):
                 self.assertTrue(self.check(version))
 
     def test_accepts_fixed_versions_and_build_metadata(self):
-        self.assertEqual(self.check("9.1.3", "9.3.0", "10.0.0", "9.3.0+build.1"), [])
+        self.assertEqual(self.check("9.4.2", "9.8.2", "10.0.0", "9.4.2+build.1"), [])
 
     def test_fixed_copy_cannot_hide_a_vulnerable_duplicate(self):
-        self.assertEqual(len(self.check("9.3.0", "0.6.6", "7.2.0")), 2)
+        self.assertEqual(len(self.check("9.4.2", "0.6.6", "7.2.0")), 2)
 
     def test_allows_removing_zip_entirely(self):
         self.assertEqual(policy.violations({"package": [{"name": "other", "version": "1.0.0"}]}), [])
@@ -50,20 +55,6 @@ class ZipPolicyTest(unittest.TestCase):
             "9.1.0",
             "9.1.1",
             "9.1.2",
-            "~9.1.2",
-            ">=9.0.5",
-            ">9.0.5",
-            "*",
-            "9.1.*",
-            "=9.1.2",
-            "9.1.3-rc.1",
-            ">=9.1.3, <9.1.3",
-        ):
-            with self.subTest(requirement=requirement):
-                self.assertIsNotNone(policy.requirement_violation(requirement))
-
-    def test_requirement_accepts_ranges_whose_only_matches_are_fixed_releases(self):
-        for requirement in (
             "9.1.3",
             "^9.1.3",
             "=9.1.3",
@@ -71,8 +62,37 @@ class ZipPolicyTest(unittest.TestCase):
             ">=9.1.3",
             ">9.1.2",
             ">=9.1.3, <10",
-            "9.3.0",
             "9.2.*",
+            "9.3.0",
+            "~9.1.2",
+            ">=9.0.5",
+            ">9.0.5",
+            "*",
+            "9.1.*",
+            "9.4.*",
+            "=9.1.2",
+            "=9.4.1",
+            "^9.4.1",
+            "~9.4.1",
+            "9.1.3-rc.1",
+            "9.4.2-rc.1",
+            ">=9.1.3, <9.1.3",
+            ">=9.4.2, <9.4.2",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIsNotNone(policy.requirement_violation(requirement))
+
+    def test_requirement_accepts_ranges_whose_only_matches_are_fixed_releases(self):
+        for requirement in (
+            "9.4.2",
+            "^9.4.2",
+            "=9.4.2",
+            "~9.4.2",
+            ">=9.4.2",
+            ">9.4.1",
+            ">=9.4.2, <10",
+            "9.8.2",
+            "9.5.*",
             ">9",
         ):
             with self.subTest(requirement=requirement):
@@ -128,7 +148,7 @@ zip = { version = "9.0.5", path = "vendor/zip" }
                 "vendor/zip/Cargo.toml": """
 [package]
 name = "zip"
-version = "9.3.0"
+version = "9.4.2"
 """,
             }
         )
@@ -145,25 +165,51 @@ soldeer-core = { path = "patches/soldeer-core" }
 candle-core = { path = "patches/soldeer-core", version = "0.10.2" }
 
 [dependencies.zip]
-version = "9.1.3"
+version = "9.4.2"
 default-features = false
 """,
                 "vendor/zip/Cargo.toml": """
 [package]
 name = "zip"
-version = "9.1.3"
+version = "9.4.2"
 """,
                 "patches/soldeer-core/Cargo.toml": """
 [dependencies]
-zip = { version = "9.3.0", default-features = false, features = ["deflate"] }
+zip = { version = "9.4.2", default-features = false, features = ["deflate"] }
 """,
                 "member/Cargo.toml": """
 [target.'cfg(unix)'.build-dependencies]
-zip = { version = ">=9.1.3", package = "zip" }
+zip = { version = ">=9.4.2", package = "zip" }
 """,
             }
         )
         self.assertEqual(policy.scan(root), [])
+
+    def test_scan_prunes_build_and_git_directories(self):
+        root = self.workspace(
+            {
+                "target/debug/Cargo.toml": """
+[dependencies]
+zip = "0.6.6"
+""",
+                "crates/pkg/target/Cargo.lock": """
+[[package]]
+name = "zip"
+version = "0.6.6"
+""",
+                ".git/modules/Cargo.toml": """
+[dependencies]
+zip = "9.0.5"
+""",
+                "kept/Cargo.toml": """
+[dependencies]
+zip = "9.4.1"
+""",
+            }
+        )
+        errors = policy.scan(root)
+        self.assertTrue(any("kept/Cargo.toml" in error and "9.4.1" in error for error in errors))
+        self.assertFalse(any("target/" in error or ".git/" in error for error in errors))
 
     def test_this_workspace_admits_no_zip_below_the_floor(self):
         repo = Path(__file__).resolve().parents[1]
@@ -174,7 +220,7 @@ zip = { version = ">=9.1.3", package = "zip" }
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
         (root / "Cargo.lock").write_text(
-            '[[package]]\nname = "zip"\nversion = "9.3.0"\n', encoding="utf-8"
+            '[[package]]\nname = "zip"\nversion = "9.4.2"\n', encoding="utf-8"
         )
         for name, text in files.items():
             path = root / name

@@ -97,7 +97,7 @@ version = "0.22.0"
 
 # Patched in-tree: tch 0.22 through 0.26 still require zip ^0.6.
 [dependencies.zip]
-version = "9.1.3"
+version = "9.4.2"
 default-features = false
 # Preserve the compression/encryption features enabled by zip 0.6 defaults.
 features = ["aes-crypto", "bzip2", "deflate", "time", "zstd"]

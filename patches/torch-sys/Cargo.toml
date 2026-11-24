@@ -77,7 +77,7 @@ optional = true
 
 # Patched in-tree: torch-sys still extracts libtorch with zip ^0.6.
 [build-dependencies.zip]
-version = "9.1.3"
+version = "9.4.2"
 default-features = false
 # Preserve the compression/encryption features enabled by zip 0.6 defaults.
 features = ["aes-crypto", "bzip2", "deflate", "time", "zstd"]

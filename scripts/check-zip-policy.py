@@ -1,11 +1,11 @@
 """Reject vulnerable zip copies in the lockfile and in every manifest.
 
 Run with `uv run --python 3.12 python scripts/check-zip-policy.py`.
-The floor is 9.1.3. GHSA-66qv-gmq4-qcqj, uncontrolled recursion in the
-Shrink decoder, was published on 2026-11-10. Releases through 9.1.2 are
-affected, and 9.1.3 is the fixed release.
+The floor is 9.4.2. GHSA-9gvv-6cg2-w8vv (path traversal in extraction),
+GHSA-96h7-q4w5-j25w, and GHSA-rjqv-f2vc-frxh affect releases through
+9.4.1. 9.4.2 is the fixed release.
 
-Cargo.lock records one resolution. A caret requirement such as 9.0.5, a
+Cargo.lock records one resolution. A caret requirement such as 9.4.1, a
 `[patch]` entry, or `zip = { path = "..." }` can still select an older
 release when Cargo resolves without that lockfile.
 """
@@ -15,7 +15,8 @@ import sys
 import tomllib
 from pathlib import Path
 
-FLOOR = (9, 1, 3)
+FLOOR = (9, 4, 2)
+FLOOR_TEXT = ".".join(map(str, FLOOR))
 _DEP_KEYS = {"dependencies", "dev-dependencies", "build-dependencies"}
 _SKIP_DIRS = {"target", ".git"}
 _STABLE = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:\+[0-9A-Za-z.-]+)?")
@@ -48,20 +49,20 @@ def requirement_violation(requirement):
     if parsed is None:
         return f"zip requirement {requirement!r} is not a Cargo version requirement"
     if parsed == "star":
-        return f"zip requirement {requirement!r} allows a release below 9.1.3"
+        return f"zip requirement {requirement!r} allows a release below {FLOOR_TEXT}"
     if any(item.pre for item in parsed):
         return f"zip requirement {requirement!r} includes a prerelease"
     if _exists(parsed, below=True):
-        return f"zip requirement {requirement!r} allows a release below 9.1.3"
+        return f"zip requirement {requirement!r} allows a release below {FLOOR_TEXT}"
     if not _exists(parsed, below=False):
-        return f"zip requirement {requirement!r} matches no stable release >=9.1.3"
+        return f"zip requirement {requirement!r} matches no stable release >={FLOOR_TEXT}"
     return None
 
 
 def scan(root):
     root = Path(root)
     errors = []
-    lockfiles = sorted(_tracked(root, "Cargo.lock"))
+    lockfiles, manifests = _collect(root)
     if not lockfiles:
         errors.append(f"{_display(root / 'Cargo.lock', root)}: missing lockfile")
     for lockfile in lockfiles:
@@ -73,7 +74,7 @@ def scan(root):
             continue
         origin = _display(lockfile, root)
         errors.extend(f"{origin}: {item}" for item in found)
-    for manifest in sorted(_tracked(root, "Cargo.toml")):
+    for manifest in manifests:
         errors.extend(_manifest_violations(manifest, root))
     return errors
 
@@ -81,7 +82,7 @@ def scan(root):
 def _release_violation(version):
     match = _STABLE.fullmatch(version) if isinstance(version, str) else None
     if not match or tuple(map(int, match.groups())) < FLOOR:
-        return f"zip {version}: require a stable release >=9.1.3"
+        return f"zip {version}: require a stable release >={FLOOR_TEXT}"
     return None
 
 
@@ -141,9 +142,9 @@ def _zip_spec(value, prefix, manifest):
     elif value.get("workspace") is True:
         pass
     elif "git" in value:
-        errors.append(prefix + "zip git source has no version requirement >=9.1.3")
+        errors.append(prefix + f"zip git source has no version requirement >={FLOOR_TEXT}")
     elif "path" not in value:
-        errors.append(prefix + "zip dependency has no version requirement >=9.1.3")
+        errors.append(prefix + f"zip dependency has no version requirement >={FLOOR_TEXT}")
     if "path" in value:
         errors.extend(_path_violations(value["path"], prefix, manifest))
     return errors
@@ -374,10 +375,18 @@ def _caret(item, major, minor, patch):
     return minor == item.minor and patch == item.patch
 
 
-def _tracked(root, name):
-    for path in root.rglob(name):
-        if not (_SKIP_DIRS & set(path.relative_to(root).parts)):
-            yield path
+def _collect(root):
+    lockfiles = []
+    manifests = []
+    for directory, dirnames, filenames in root.walk():
+        dirnames[:] = [name for name in dirnames if name not in _SKIP_DIRS]
+        if "Cargo.lock" in filenames:
+            lockfiles.append(directory / "Cargo.lock")
+        if "Cargo.toml" in filenames:
+            manifests.append(directory / "Cargo.toml")
+    lockfiles.sort()
+    manifests.sort()
+    return lockfiles, manifests
 
 
 def _display(path, root):
