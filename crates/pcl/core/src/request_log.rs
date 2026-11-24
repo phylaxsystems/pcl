@@ -2,6 +2,7 @@ use crate::config::CliConfig;
 use pcl_common::args::CliArgs;
 use serde_json::Value;
 use std::{
+    collections::VecDeque,
     env,
     fs::{
         self,
@@ -16,6 +17,13 @@ use std::{
         Path,
         PathBuf,
     },
+};
+
+#[cfg(unix)]
+use std::os::unix::fs::{
+    DirBuilderExt,
+    OpenOptionsExt,
+    PermissionsExt,
 };
 
 const REQUEST_LOG_ENV: &str = "PCL_REQUEST_LOG";
@@ -104,33 +112,50 @@ fn redact_invitation_tokens(path: &str) -> Option<String> {
 }
 
 fn redact_record_path(record: &Value) -> Value {
-    let Some(path) = record.get("path").and_then(Value::as_str) else {
-        return record.clone();
-    };
-    let redacted = redact_sensitive_request_path(path);
-    if redacted == path {
-        return record.clone();
-    }
     let mut record = record.clone();
-    if let Some(object) = record.as_object_mut() {
-        object.insert("path".to_string(), Value::String(redacted));
-    }
+    redact_record_path_in_place(&mut record);
     record
 }
 
+fn redact_record_path_in_place(record: &mut Value) {
+    let Some(path) = record.get("path").and_then(Value::as_str) else {
+        return;
+    };
+    let redacted = redact_sensitive_request_path(path);
+    if redacted == path {
+        return;
+    }
+    let Some(object) = record.as_object_mut() else {
+        return;
+    };
+    object.insert("path".to_string(), Value::String(redacted));
+}
+
+/// `/dev/stderr` and `/dev/stdout` are symlinks. They are opened as devices
+/// and never created or chmodded. Every other path uses `O_NOFOLLOW`.
+#[cfg(unix)]
+fn is_supported_log_device(path: &Path) -> bool {
+    path == Path::new("/dev/stderr") || path == Path::new("/dev/stdout")
+}
+
 fn open_request_log(path: &Path) -> std::io::Result<fs::File> {
+    #[cfg(unix)]
+    if is_supported_log_device(path) {
+        return OpenOptions::new().append(true).open(path);
+    }
+
     let mut options = OpenOptions::new();
     options.create(true).append(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{
-            OpenOptionsExt,
-            PermissionsExt,
-        };
         options.mode(0o600);
-        let file = options.open(path)?;
-        // fchmod the opened file, never a device such as /dev/stderr. A failure
-        // fails closed: no record goes to a log we could not restrict.
+        // Refuse a symlink. `fchmod` applies to the opened inode, so following
+        // a symlink would change and append to some other file.
+        options.custom_flags(libc::O_NOFOLLOW);
+        let file = options
+            .open(path)
+            .map_err(|error| refuse_request_log_symlink(path, error))?;
+        // A failure fails closed: no record goes to a log we could not restrict.
         if file.metadata()?.is_file() {
             file.set_permissions(fs::Permissions::from_mode(0o600))?;
         }
@@ -142,6 +167,28 @@ fn open_request_log(path: &Path) -> std::io::Result<fs::File> {
     }
 }
 
+#[cfg(unix)]
+fn refuse_request_log_symlink(path: &Path, error: std::io::Error) -> std::io::Error {
+    // `O_NOFOLLOW` reports a symlink as `ELOOP`. Compare the raw code: this
+    // nightly still keeps `ErrorKind::FilesystemLoop` unstable.
+    if error.raw_os_error() != Some(libc::ELOOP) {
+        return error;
+    }
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return error;
+    };
+    if !metadata.file_type().is_symlink() {
+        return error;
+    }
+    std::io::Error::new(
+        error.kind(),
+        format!(
+            "refusing to follow symlink at {}; a request log must be a regular file",
+            path.display()
+        ),
+    )
+}
+
 pub fn append_request_record_at(path: &Path, record: &Value) -> std::io::Result<()> {
     if let Some(parent) = path
         .parent()
@@ -151,10 +198,7 @@ pub fn append_request_record_at(path: &Path, record: &Value) -> std::io::Result<
         let mut dirs = fs::DirBuilder::new();
         dirs.recursive(true);
         #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            dirs.mode(0o700);
-        }
+        dirs.mode(0o700);
         dirs.create(parent)?;
     }
 
@@ -179,18 +223,28 @@ pub fn read_request_records_at(path: &Path, limit: usize) -> std::io::Result<Vec
     }
 
     let file = fs::File::open(path)?;
-    let reader = BufReader::new(file);
-    let mut records = reader
-        .lines()
-        .map_while(Result::ok)
-        .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
-        .map(|record| redact_record_path(&record))
-        .collect::<Vec<_>>();
-
-    if records.len() > limit {
-        records = records.split_off(records.len() - limit);
+    if limit == 0 {
+        return Ok(Vec::new());
     }
-    Ok(records)
+
+    let reader = BufReader::new(file);
+    let mut records = VecDeque::new();
+    for line in reader.lines() {
+        let Ok(line) = line else {
+            break;
+        };
+        let Ok(record) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if records.len() == limit {
+            records.pop_front();
+        }
+        records.push_back(record);
+    }
+    for record in &mut records {
+        redact_record_path_in_place(record);
+    }
+    Ok(Vec::from(records))
 }
 
 pub fn clear_request_log() -> std::io::Result<bool> {
@@ -347,6 +401,45 @@ mod tests {
         assert_eq!(
             records[0]["path"],
             "/invitations/<redacted>/preview?unused=1"
+        );
+    }
+
+    #[test]
+    fn read_request_records_at_keeps_only_the_last_limit_then_redacts() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("requests.jsonl");
+        let dropped = format!("/invitations/{INVITATION_TOKEN}/preview");
+        let kept = format!("/invitations/{INVITATION_TOKEN}/accept");
+        let mut lines = Vec::new();
+        for request_id in ["one", "two"] {
+            lines.push(json!({"path": dropped, "request_id": request_id}).to_string());
+        }
+        lines.push("not json".to_string());
+        lines.push(json!({"path": "/health/3", "request_id": "three"}).to_string());
+        lines.push(json!({"path": kept, "request_id": "four"}).to_string());
+        let mut body = lines.join("\n");
+        body.push('\n');
+        fs::write(&path, body).expect("seed request log");
+
+        let records = read_request_records_at(&path, 2).expect("read records");
+        let rendered = format!("{records:?}");
+        assert!(
+            !rendered.contains(INVITATION_TOKEN),
+            "the kept window still contains the invitation token: {rendered}"
+        );
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record["request_id"].as_str().unwrap_or_default())
+                .collect::<Vec<_>>(),
+            vec!["three", "four"]
+        );
+        assert_eq!(records[0]["path"], "/health/3");
+        assert_eq!(records[1]["path"], "/invitations/<redacted>/accept");
+        assert!(
+            read_request_records_at(&path, 0)
+                .expect("read none")
+                .is_empty()
         );
     }
 
@@ -520,6 +613,76 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(before, after);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stderr_and_stdout_are_not_refused_as_symlinks() {
+        use std::os::unix::fs::PermissionsExt;
+
+        for device in ["/dev/stderr", "/dev/stdout"] {
+            let path = Path::new(device);
+            let before = fs::metadata(path)
+                .expect("device metadata")
+                .permissions()
+                .mode();
+            // These paths are symlinks. `O_NOFOLLOW` would fail with `ELOOP`.
+            // Reopening stderr can fail in a sandbox; that is not a symlink refusal.
+            match open_request_log(path) {
+                Ok(_) => {
+                    let after = fs::metadata(path)
+                        .expect("device metadata")
+                        .permissions()
+                        .mode();
+                    assert_eq!(before, after, "{device} mode changed");
+                }
+                Err(error) => {
+                    assert_ne!(
+                        error.raw_os_error(),
+                        Some(libc::ELOOP),
+                        "{device} was refused as a symlink: {error}"
+                    );
+                    assert!(
+                        !error.to_string().contains("refusing to follow symlink"),
+                        "{device} was refused as a symlink: {error}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn request_log_refuses_to_follow_a_symlink() {
+        use std::os::unix::fs::{
+            PermissionsExt,
+            symlink,
+        };
+
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let target = temp_dir.path().join("unrelated.jsonl");
+        fs::write(&target, "keep\n").expect("seed target");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).expect("widen target");
+        let link = temp_dir.path().join("requests.jsonl");
+        symlink(&target, &link).expect("symlink log");
+
+        let error = append_request_record_at(&link, &json!({"path": "/health", "status": 200}))
+            .expect_err("symlink log should be refused");
+        let message = error.to_string();
+        assert!(message.contains("refusing to follow symlink"), "{message}");
+        assert_eq!(fs::read_to_string(&target).expect("read target"), "keep\n");
+        let mode = fs::metadata(&target)
+            .expect("target metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o644, "symlink target mode changed to {mode:o}");
+        assert!(
+            fs::symlink_metadata(&link)
+                .expect("link metadata")
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[cfg(unix)]
