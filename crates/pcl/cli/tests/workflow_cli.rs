@@ -744,6 +744,70 @@ fn release_deploy_broadcast_next_actions_use_releases_commands() {
     confirm.assert();
 }
 
+#[test]
+fn release_deploy_broadcast_refuses_a_noop_that_lists_operations() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let mut server = mockito::Server::new();
+    write_valid_auth_config_for_platform(config_dir.path(), &server.url());
+    let project = "11111111-1111-4111-8111-111111111111";
+    let calldata = server
+        .mock(
+            "GET",
+            format!("/api/v1/projects/{project}/releases/release-1/deploy-calldata").as_str(),
+        )
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "chainId": 1,
+                "stateOracleAddress": "0x0101010101010101010101010101010101010101",
+                "operations": [{
+                    "type": "removeAssertion",
+                    "adopterAddress": "0xabCDeF0123456789AbcdEf0123456789aBCDEF01",
+                    "assertionId": "0x2222222222222222222222222222222222222222222222222222222222222222",
+                }],
+                "calldata": [],
+                "isNoop": true,
+                "message": "Everything already deployed",
+            })
+            .to_string(),
+        )
+        .expect(1)
+        .create();
+    let confirm = server.mock("POST", Matcher::Any).expect(0).create();
+
+    let output = run_pcl(
+        config_dir.path(),
+        &[
+            "releases",
+            "calldata",
+            "deploy",
+            project,
+            "release-1",
+            "--broadcast",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--yes",
+        ],
+    );
+    assert!(!output.status.success());
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stderr).expect("json error");
+    assert_eq!(
+        envelope["error"]["code"], "api.unexpected_response",
+        "{envelope}"
+    );
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unexpectedly included operations"),
+        "{envelope}"
+    );
+    calldata.assert();
+    confirm.assert();
+}
+
 const DEPLOY_ADOPTER: &str = "0xabCDeF0123456789AbcdEf0123456789aBCDEF01";
 const DEPLOY_REMOVED_ID: &str =
     "0x2222222222222222222222222222222222222222222222222222222222222222";

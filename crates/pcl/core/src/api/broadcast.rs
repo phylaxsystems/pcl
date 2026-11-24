@@ -194,19 +194,33 @@ fn parse_response<T: serde::de::DeserializeOwned>(
 }
 
 /// Rejects internally inconsistent deploy-calldata responses before either
-/// skipping required chain work or spending gas on an empty batch.
+/// confirming a noop or spending gas on an empty batch.
+///
+/// The platform's real noop has both lists empty. A noop that still lists
+/// operations is refused here, before the caller tells the user there is
+/// nothing to send and posts the deploy confirmation.
 fn validate_release_deploy_calldata(
     calldata: &ReleaseDeployCalldataResponse,
 ) -> Result<(), ApiCommandError> {
-    match (calldata.is_noop, calldata.calldata.is_empty()) {
-        (true, true) | (false, false) => Ok(()),
-        (true, false) => {
+    match (
+        calldata.is_noop,
+        calldata.calldata.is_empty(),
+        calldata.operations.is_empty(),
+    ) {
+        (true, true, true) | (false, false, _) => Ok(()),
+        (true, false, _) => {
             Err(ApiCommandError::UnexpectedResponse {
                 endpoint: "deploy-calldata",
                 reason: "noop response unexpectedly included transaction calldata".to_string(),
             })
         }
-        (false, true) => {
+        (true, true, false) => {
+            Err(ApiCommandError::UnexpectedResponse {
+                endpoint: "deploy-calldata",
+                reason: "noop response unexpectedly included operations".to_string(),
+            })
+        }
+        (false, true, _) => {
             Err(ApiCommandError::UnexpectedResponse {
                 endpoint: "deploy-calldata",
                 reason: "non-noop response did not include transaction calldata".to_string(),
@@ -226,29 +240,25 @@ async fn resolve_signer(
     Ok(wallet.signer(cli_args.human_output()).await?)
 }
 
-/// The prompt lists what the signed calldata does, decoded from the bytes
-/// themselves, and refuses unless each entry matches its listed operation.
+/// Checks each signed calldata entry against its listed operation.
+///
+/// Machine mode uses this directly. Human mode goes through
+/// [`release_deploy_confirmation`], which formats the summary only when that
+/// text will be shown.
+fn ensure_deploy_operations_match(
+    calldata: &ReleaseDeployCalldataResponse,
+) -> Result<(), ApiCommandError> {
+    review_deploy_operations(calldata, None)
+}
+
+/// The human summary of what the signed calldata does. Refuses unless each
+/// entry matches its listed operation.
 fn release_deploy_confirmation(
     release_id: &str,
     calldata: &ReleaseDeployCalldataResponse,
 ) -> Result<String, ApiCommandError> {
-    if calldata.operations.is_empty() || calldata.operations.len() != calldata.calldata.len() {
-        return Err(unshowable_operations(
-            "the operation list does not cover every calldata entry",
-        ));
-    }
-
-    let mut lines = Vec::with_capacity(calldata.operations.len());
-    for (operation, data) in calldata.operations.iter().zip(&calldata.calldata) {
-        let (decoded, line) = decode_deploy_call(data)?;
-        if decoded != *operation {
-            return Err(unshowable_operations(
-                "an operation does not match its calldata",
-            ));
-        }
-        lines.push(line);
-    }
-
+    let mut lines = Vec::new();
+    review_deploy_operations(calldata, Some(&mut lines))?;
     Ok(format!(
         "StateOracle.batch with {} operation(s) for release {release_id}\n{}",
         lines.len(),
@@ -256,65 +266,99 @@ fn release_deploy_confirmation(
     ))
 }
 
-fn decode_deploy_call(data: &[u8]) -> Result<(DeployOperation, String), ApiCommandError> {
+fn review_deploy_operations(
+    calldata: &ReleaseDeployCalldataResponse,
+    mut lines: Option<&mut Vec<String>>,
+) -> Result<(), ApiCommandError> {
+    if calldata.operations.is_empty() || calldata.operations.len() != calldata.calldata.len() {
+        return Err(unshowable_operations(
+            "the operation list does not cover every calldata entry",
+        ));
+    }
+
+    for (operation, data) in calldata.operations.iter().zip(&calldata.calldata) {
+        let call = decode_deploy_call(data)?;
+        if deploy_operation(&call) != *operation {
+            return Err(unshowable_operations(
+                "an operation does not match its calldata",
+            ));
+        }
+        if let Some(lines) = lines.as_mut() {
+            lines.push(deploy_operation_line(&call));
+        }
+    }
+    Ok(())
+}
+
+fn decode_deploy_call(data: &[u8]) -> Result<DeployCalls::DeployCallsCalls, ApiCommandError> {
     use DeployCalls::DeployCallsCalls as Call;
-    // Re-encoding must give back the exact bytes, so nothing signed is unshown.
-    let call = Call::abi_decode_validate(data)
+    // Require canonical encoding with no trailing or otherwise unparsed bytes.
+    Call::abi_decode_validate(data)
         .ok()
         .filter(|call| call.abi_encode() == data)
         .ok_or_else(|| {
             unshowable_operations("a calldata entry is not a known StateOracle deploy call")
-        })?;
-    Ok(match call {
+        })
+}
+
+fn deploy_operation(call: &DeployCalls::DeployCallsCalls) -> DeployOperation {
+    use DeployCalls::DeployCallsCalls as Call;
+    match call {
         Call::registerAssertionAdopter(c) => {
-            (
-                DeployOperation::RegisterAssertionAdopter {
-                    adopter_address: c.contractAddress,
-                    verifier_address: c.adminVerifier,
-                },
-                format!(
-                    "  registerAssertionAdopter adopter {} verifier {}",
-                    c.contractAddress, c.adminVerifier
-                ),
+            DeployOperation::RegisterAssertionAdopter {
+                adopter_address: c.contractAddress,
+                verifier_address: c.adminVerifier,
+            }
+        }
+        Call::removeAssertion(c) => {
+            DeployOperation::RemoveAssertion {
+                adopter_address: c.contractAddress,
+                assertion_id: c.assertionId,
+            }
+        }
+        Call::addAssertion_0(c) => {
+            DeployOperation::AddAssertion {
+                adopter_address: c.contractAddress,
+                assertion_id: c.assertionId,
+            }
+        }
+        Call::addAssertion_1(c) => {
+            DeployOperation::AddAssertion {
+                adopter_address: c.contractAddress,
+                assertion_id: c.assertionId,
+            }
+        }
+    }
+}
+
+fn deploy_operation_line(call: &DeployCalls::DeployCallsCalls) -> String {
+    use DeployCalls::DeployCallsCalls as Call;
+    match call {
+        Call::registerAssertionAdopter(c) => {
+            format!(
+                "  registerAssertionAdopter adopter {} verifier {}",
+                c.contractAddress, c.adminVerifier
             )
         }
         Call::removeAssertion(c) => {
-            (
-                DeployOperation::RemoveAssertion {
-                    adopter_address: c.contractAddress,
-                    assertion_id: c.assertionId,
-                },
-                format!(
-                    "  removeAssertion adopter {} assertion {}",
-                    c.contractAddress, c.assertionId
-                ),
+            format!(
+                "  removeAssertion adopter {} assertion {}",
+                c.contractAddress, c.assertionId
             )
         }
         Call::addAssertion_0(c) => {
-            (
-                DeployOperation::AddAssertion {
-                    adopter_address: c.contractAddress,
-                    assertion_id: c.assertionId,
-                },
-                format!(
-                    "  addAssertion adopter {} assertion {}",
-                    c.contractAddress, c.assertionId
-                ),
+            format!(
+                "  addAssertion adopter {} assertion {}",
+                c.contractAddress, c.assertionId
             )
         }
         Call::addAssertion_1(c) => {
-            (
-                DeployOperation::AddAssertion {
-                    adopter_address: c.contractAddress,
-                    assertion_id: c.assertionId,
-                },
-                format!(
-                    "  addAssertion adopter {} assertion {} da verifier {}",
-                    c.contractAddress, c.assertionId, c.daVerifier
-                ),
+            format!(
+                "  addAssertion adopter {} assertion {} da verifier {}",
+                c.contractAddress, c.assertionId, c.daVerifier
             )
         }
-    })
+    }
 }
 
 fn unshowable_operations(reason: &str) -> ApiCommandError {
@@ -697,18 +741,22 @@ impl ApiArgs {
             ));
         }
 
-        let confirmation = release_deploy_confirmation(release_id, &calldata)?;
-        if cli_args.human_output() && args.broadcast.yes {
-            eprintln!("{confirmation}");
+        if cli_args.human_output() {
+            let confirmation = release_deploy_confirmation(release_id, &calldata)?;
+            if args.broadcast.yes {
+                eprintln!("{confirmation}");
+            }
+            confirm_send(
+                cli_args,
+                args.broadcast.yes,
+                signer.address(),
+                calldata.chain_id,
+                calldata.state_oracle_address,
+                &confirmation,
+            )?;
+        } else {
+            ensure_deploy_operations_match(&calldata)?;
         }
-        confirm_send(
-            cli_args,
-            args.broadcast.yes,
-            signer.address(),
-            calldata.chain_id,
-            calldata.state_oracle_address,
-            &confirmation,
-        )?;
 
         progress(cli_args, "Broadcasting StateOracle.batch transaction");
         let outcome = send_tx(
@@ -1263,7 +1311,7 @@ mod tests {
         assert!(!parsed.is_noop);
         assert_eq!(parsed.operations.len(), 2);
         assert!(parsed.message.is_none());
-        release_deploy_confirmation("rel-1", &parsed).unwrap();
+        ensure_deploy_operations_match(&parsed).unwrap();
     }
 
     #[test]
@@ -1461,7 +1509,16 @@ mod tests {
         operations: &Value,
         calldata: &[&str],
     ) -> Result<String, ApiCommandError> {
-        let response: ReleaseDeployCalldataResponse = parse_response(
+        let response = parsed_deploy(operations, calldata)?;
+        ensure_deploy_operations_match(&response)?;
+        release_deploy_confirmation("rel-1", &response)
+    }
+
+    fn parsed_deploy(
+        operations: &Value,
+        calldata: &[&str],
+    ) -> Result<ReleaseDeployCalldataResponse, ApiCommandError> {
+        parse_response(
             "deploy-calldata",
             &json!({
                 "chainId": 1,
@@ -1471,8 +1528,7 @@ mod tests {
                 "isNoop": false,
                 "message": null,
             }),
-        )?;
-        release_deploy_confirmation("rel-1", &response)
+        )
     }
 
     fn register_op(adopter: &str, verifier: &str) -> Value {
@@ -1605,18 +1661,33 @@ mod tests {
             ),
         ];
         for (name, operations, calldata) in cases {
-            let result = deploy_confirmation(&operations, &calldata);
-            assert!(
-                matches!(
-                    result,
-                    Err(ApiCommandError::UnexpectedResponse {
-                        endpoint: "deploy-calldata",
-                        ..
-                    })
-                ),
-                "{name}: {result:?}"
-            );
+            match parsed_deploy(&operations, &calldata) {
+                Err(err) => assert_deploy_calldata_rejected(&Err(err), name),
+                Ok(response) => {
+                    assert_deploy_calldata_rejected(
+                        &ensure_deploy_operations_match(&response),
+                        name,
+                    );
+                    assert_deploy_calldata_rejected(
+                        &release_deploy_confirmation("rel-1", &response).map(|_| ()),
+                        name,
+                    );
+                }
+            }
         }
+    }
+
+    fn assert_deploy_calldata_rejected(result: &Result<(), ApiCommandError>, name: &str) {
+        assert!(
+            matches!(
+                result,
+                Err(ApiCommandError::UnexpectedResponse {
+                    endpoint: "deploy-calldata",
+                    ..
+                })
+            ),
+            "{name}: {result:?}"
+        );
     }
 
     #[test]
@@ -1651,6 +1722,27 @@ mod tests {
                 })
             ));
         }
+
+        let mut listed = response(true, Vec::new());
+        listed.operations.push(DeployOperation::RemoveAssertion {
+            adopter_address: address!("0101010101010101010101010101010101010101"),
+            assertion_id: B256::ZERO,
+        });
+        let err = validate_release_deploy_calldata(&listed).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ApiCommandError::UnexpectedResponse {
+                    endpoint: "deploy-calldata",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        assert!(
+            err.to_string().contains("unexpectedly included operations"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -1738,7 +1830,7 @@ mod tests {
         let parsed: ReleaseDeployCalldataResponse =
             parse_response("deploy-calldata", &deploy).unwrap();
         assert_eq!(parsed.required_confirmations, Some(6));
-        release_deploy_confirmation("rel-1", &parsed).unwrap();
+        ensure_deploy_operations_match(&parsed).unwrap();
 
         // Snake-case payloads accept both casings; absence stays None so the
         // fallback table applies.
