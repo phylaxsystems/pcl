@@ -13,11 +13,26 @@ use reqwest::header::{
     CONTENT_TYPE,
     HeaderValue,
 };
+use std::time::Duration;
 use uuid::Uuid;
 
 pub enum CliAuthStatusPostError {
     RouteMissing,
     Call(Box<Error<ApiError>>),
+}
+
+/// HTTP client for the status POST.
+///
+/// Redirects are off. A 307 or 308 would replay the JSON body, including the
+/// device secret, at whatever origin the `Location` header names. The
+/// generated client's shared `reqwest::Client` follows redirects, so this
+/// request does not use it.
+fn status_http_client() -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(15))
+        .build()
 }
 
 /// Send `session_id` and `device_secret` in a JSON body, never in the URL.
@@ -26,9 +41,11 @@ pub async fn post_cli_auth_status(
     session_id: &Uuid,
     device_secret: &str,
 ) -> Result<CliAuthStatusResponse, CliAuthStatusPostError> {
+    let http = status_http_client().map_err(|error| {
+        CliAuthStatusPostError::Call(Box::new(Error::CommunicationError(error)))
+    })?;
     let url = format!("{}/cli/auth/status", client.baseurl);
-    let response = client
-        .client
+    let response = http
         .post(url)
         .header(ACCEPT, HeaderValue::from_static("application/json"))
         .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))

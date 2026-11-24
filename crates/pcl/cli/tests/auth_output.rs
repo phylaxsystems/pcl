@@ -1777,17 +1777,20 @@ fn auth_ensure_stores_pending_device_secret_owner_only() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let mut pending = Vec::new();
-    for entry in fs::read_dir(temp_dir.path()).expect("read config dir") {
-        let path = entry.expect("config dir entry").path();
-        if fs::read_to_string(&path).ok().as_deref() == Some("test_secret") {
-            pending.push(path);
-        }
-    }
+    let pending = pending_device_login_files(temp_dir.path());
     assert_eq!(
         pending.len(),
         1,
         "expected one owner-only file holding the pending device secret"
+    );
+    let stored: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&pending[0]).expect("read pending device login"))
+            .expect("pending device login is json");
+    assert_eq!(stored["device_secret"], "test_secret");
+    assert_eq!(
+        stored["origin"],
+        server.url().trim_end_matches('/'),
+        "the pending file must record the platform that issued the secret"
     );
     let mode = fs::metadata(&pending[0])
         .expect("pending secret metadata")
@@ -2030,6 +2033,18 @@ fn auth_poll_warns_when_the_pending_secret_cannot_be_removed() {
     );
 }
 
+fn write_pending_device_login(config_dir: &std::path::Path, origin: &str) {
+    fs::write(
+        config_dir.join(PENDING_DEVICE_LOGIN_FILE),
+        serde_json::json!({
+            "device_secret": "test_secret",
+            "origin": origin.trim_end_matches('/'),
+        })
+        .to_string(),
+    )
+    .expect("write pending device login");
+}
+
 fn pending_device_login_files(config_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     fs::read_dir(config_dir)
         .map(|entries| {
@@ -2118,8 +2133,8 @@ fn auth_poll_clears_the_pending_secret_only_on_terminal_failures() {
     for (status, body, terminal) in cases {
         let temp_dir = tempfile::tempdir().expect("create temp config dir");
         let pending = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
-        fs::write(&pending, "test_secret").expect("write pending secret");
         let mut server = mockito::Server::new();
+        write_pending_device_login(temp_dir.path(), &server.url());
         let _status = status_error_mock(&mut server, status, body);
 
         let output = run_poll(temp_dir.path(), &server.url(), &[]);
@@ -2134,10 +2149,10 @@ fn auth_poll_clears_the_pending_secret_only_on_terminal_failures() {
     // A network failure is transient too.
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
     let pending = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
-    fs::write(&pending, "test_secret").expect("write pending secret");
     let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
     let url = format!("http://{}", closed.local_addr().expect("addr"));
     drop(closed);
+    write_pending_device_login(temp_dir.path(), &url);
     let output = run_poll(temp_dir.path(), &url, &[]);
     assert!(!output.status.success());
     assert!(
@@ -2460,12 +2475,8 @@ fn commands_create_a_missing_config_dir_owner_only() {
 fn auth_poll_error_output_withholds_an_echoed_device_secret() {
     for json in [true, false] {
         let temp_dir = tempfile::tempdir().expect("create temp config dir");
-        fs::write(
-            temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE),
-            "test_secret",
-        )
-        .expect("write pending secret");
         let mut server = mockito::Server::new();
+        write_pending_device_login(temp_dir.path(), &server.url());
         let _post = server
             .mock("POST", "/api/v1/cli/auth/status")
             .with_status(405)
@@ -2598,8 +2609,8 @@ fn auth_poll_override_only_clears_the_stored_secret_it_used() {
     for (override_secret, stored_removed) in [("other_secret", false), ("test_secret", true)] {
         let temp_dir = tempfile::tempdir().expect("create temp config dir");
         let pending = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
-        fs::write(&pending, "test_secret").expect("write pending secret");
         let mut server = mockito::Server::new();
+        write_pending_device_login(temp_dir.path(), &server.url());
         let _status = status_error_mock(
             &mut server,
             400,
@@ -2617,6 +2628,45 @@ fn auth_poll_override_only_clears_the_stored_secret_it_used() {
             stored_removed,
             "--device-secret {override_secret}: stored secret removed must be {stored_removed}"
         );
+    }
+}
+
+/// Polling a different platform must not send the stored secret there, and
+/// must not delete the login when that platform says the session is unknown.
+#[test]
+fn auth_poll_does_not_send_or_clear_a_login_issued_by_another_platform() {
+    for extra in [Vec::<&str>::new(), vec!["--device-secret", "test_secret"]] {
+        let temp_dir = tempfile::tempdir().expect("create temp config dir");
+        let pending = temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE);
+        write_pending_device_login(temp_dir.path(), "https://linea.phylax.systems");
+        let mut server = mockito::Server::new();
+        let post = server
+            .mock("POST", mockito::Matcher::Any)
+            .expect(0)
+            .create();
+        let get = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+
+        let output = run_poll(temp_dir.path(), &server.url(), &extra);
+        assert!(!output.status.success(), "{extra:?}");
+        assert!(
+            pending.exists(),
+            "a foreign poll removed the pending login ({extra:?})"
+        );
+        let rendered = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !rendered.contains("test_secret"),
+            "foreign poll leaked the device secret: {rendered}"
+        );
+        assert!(
+            rendered.contains("linea.phylax.systems"),
+            "foreign poll did not name the issuing platform: {rendered}"
+        );
+        post.assert();
+        get.assert();
     }
 }
 
@@ -2792,12 +2842,8 @@ fn has_cleanup_warning(envelope: &serde_json::Value) -> bool {
 fn json_error_envelopes_carry_pending_cleanup_failures() {
     // pcl auth poll: terminal failure, pending file cannot be removed.
     let temp_dir = tempfile::tempdir().expect("create temp config dir");
-    fs::write(
-        temp_dir.path().join(PENDING_DEVICE_LOGIN_FILE),
-        "test_secret",
-    )
-    .expect("write pending secret");
     let mut server = mockito::Server::new();
+    write_pending_device_login(temp_dir.path(), &server.url());
     let _status = status_error_mock(
         &mut server,
         400,

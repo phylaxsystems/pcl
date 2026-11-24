@@ -31,7 +31,11 @@ use std::{
     collections::BTreeMap,
     fmt,
     fs::OpenOptions,
-    io::Write,
+    io::{
+        Seek,
+        SeekFrom,
+        Write,
+    },
     path::{
         Path,
         PathBuf,
@@ -72,12 +76,19 @@ const CONFIG_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// are different operations on the same file, and a lock that only refresh
 /// honoured would not serialize them against each other.
 ///
-/// Released on drop, including on panic. A stale file left by a killed process
-/// does not wedge the CLI forever: waiting gives up after 30 seconds and
-/// surfaces [`ConfigError::LockTimeout`] instead.
+/// Released when this value is dropped, including on panic, because the lock
+/// is the open file descriptor rather than the file's presence. The kernel
+/// closes that descriptor when the process exits, including when it is killed,
+/// so a later run does not wait on a lockfile nobody holds. A live holder
+/// still yields [`ConfigError::LockTimeout`] after 30 seconds.
+///
+/// The file itself stays. Unlinking it on drop would let a waiter, still
+/// holding the old inode, and a new process, creating a new inode, both
+/// believe they own the lock.
 #[derive(Debug)]
 pub struct ConfigLock {
-    path: PathBuf,
+    // Held so the descriptor stays open. The kernel owns the lock; nothing reads the handle.
+    _file: std::fs::File,
 }
 
 /// Creates `dir` and any missing parents. Directories created here are 0700
@@ -99,10 +110,19 @@ impl ConfigLock {
         if let Some(parent) = path.parent() {
             create_private_dir_all(parent).map_err(ConfigError::WriteError)?;
         }
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(ConfigError::WriteError)?;
         let deadline = Instant::now() + CONFIG_LOCK_TIMEOUT;
         loop {
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(mut file) => {
+            match try_lock_exclusive(&file) {
+                Ok(()) => {
+                    let _ = file.set_len(0);
+                    let _ = file.seek(SeekFrom::Start(0));
                     let _ = writeln!(
                         file,
                         "pid={} acquired_at={}",
@@ -110,9 +130,9 @@ impl ConfigLock {
                         Utc::now().to_rfc3339()
                     );
                     let _ = file.sync_all();
-                    return Ok(Self { path });
+                    return Ok(Self { _file: file });
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                Err(error) if lock_is_held_elsewhere(&error) => {
                     if Instant::now() >= deadline {
                         return Err(ConfigError::LockTimeout);
                     }
@@ -124,10 +144,89 @@ impl ConfigLock {
     }
 }
 
-impl Drop for ConfigLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+/// `flock` / `LockFileEx` report a live holder with these errors when asked
+/// not to wait. Both locks die with the holding process.
+fn lock_is_held_elsewhere(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::WouldBlock
+        || matches!(error.raw_os_error(), Some(11 | 35 | 33))
+}
+
+#[cfg(unix)]
+fn try_lock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
+    use std::os::unix::io::AsRawFd;
+    // BSD `flock` operation bits. Linux and macOS share these values.
+    const LOCK_EX: i32 = 2;
+    const LOCK_NB: i32 = 4;
+    unsafe extern "C" {
+        fn flock(fd: std::os::unix::io::RawFd, operation: i32) -> i32;
     }
+    // SAFETY: `fd` belongs to `file` and outlives this call. `LOCK_EX|LOCK_NB`
+    // does not close it. The kernel drops the lock when the descriptor closes,
+    // including when the process is killed.
+    let rc = unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(windows)]
+fn try_lock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    #[repr(C)]
+    struct Overlapped {
+        internal: usize,
+        internal_high: usize,
+        offset: u32,
+        offset_high: u32,
+        event: *mut core::ffi::c_void,
+    }
+    unsafe extern "system" {
+        fn LockFileEx(
+            file: *mut core::ffi::c_void,
+            flags: u32,
+            reserved: u32,
+            bytes_low: u32,
+            bytes_high: u32,
+            overlapped: *mut Overlapped,
+        ) -> i32;
+    }
+    const LOCKFILE_FAIL_IMMEDIATELY: u32 = 1;
+    const LOCKFILE_EXCLUSIVE_LOCK: u32 = 2;
+    let mut overlapped = Overlapped {
+        internal: 0,
+        internal_high: 0,
+        offset: 0,
+        offset_high: 0,
+        event: std::ptr::null_mut(),
+    };
+    // SAFETY: the handle belongs to `file`. A zero byte count locks from
+    // offset 0 through the end of the file. The overlapped record is live for
+    // the call. The kernel drops the lock when the handle closes.
+    let locked = unsafe {
+        LockFileEx(
+            file.as_raw_handle(),
+            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            0,
+            0,
+            0,
+            &mut overlapped,
+        )
+    };
+    if locked == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn try_lock_exclusive(_file: &std::fs::File) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "the config lock requires unix or windows",
+    ))
 }
 
 /// Main configuration structure for PCL
@@ -1264,7 +1363,7 @@ expires_at = 1672502400
         assert_eq!(merged, on_disk);
     }
 
-    /// A lock left behind by a killed process must not wedge the CLI forever.
+    /// A lock another live process still holds must not wait forever.
     ///
     /// Runs on a paused clock, which tokio auto-advances whenever every task is
     /// parked on a timer, so the whole `CONFIG_LOCK_TIMEOUT` budget elapses
@@ -1285,6 +1384,84 @@ expires_at = 1672502400
             matches!(error, ConfigError::LockTimeout),
             "expected a lock timeout, got {error:?}"
         );
+    }
+
+    /// The previous holder is gone when its lock file is still on disk and no
+    /// process has the OS lock. That is what a killed process leaves behind.
+    #[tokio::test]
+    async fn a_lock_file_with_no_live_holder_is_free() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let path = CliConfig::config_file_path(&cli_args).with_extension("toml.lock");
+        std::fs::write(&path, "pid=1 acquired_at=gone\n").expect("leave a lock file");
+
+        let acquired = tokio::time::timeout(Duration::from_secs(2), ConfigLock::acquire(&cli_args))
+            .await
+            .expect("a leftover lock file is not a live lock");
+        acquired.expect("acquire");
+    }
+
+    /// Killing the holder must free the lock without waiting out the timeout.
+    /// The child takes the same OS lock and is then killed, so `Drop` never runs.
+    #[tokio::test]
+    async fn a_killed_holder_releases_the_config_lock() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let ready = config_dir.path().join("ready");
+        let mut child =
+            std::process::Command::new(std::env::current_exe().expect("test executable"))
+                .arg("--exact")
+                .arg("config::tests::a_config_lock_holder_process")
+                .env("PCL_HOLD_CONFIG_LOCK", config_dir.path())
+                .env("PCL_HOLD_CONFIG_LOCK_READY", &ready)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("spawn holder");
+        let started = std::time::Instant::now();
+        while !ready.exists() {
+            if started.elapsed() > std::time::Duration::from_secs(15) {
+                let _ = child.kill();
+                panic!("holder never acquired the lock");
+            }
+            if let Some(status) = child.try_wait().expect("holder status") {
+                panic!("holder exited before acquiring the lock: {status}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        child.kill().expect("kill holder");
+        child.wait().expect("wait for holder");
+
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let acquired = tokio::time::timeout(Duration::from_secs(2), ConfigLock::acquire(&cli_args))
+            .await
+            .expect("a killed holder must not keep the lock");
+        acquired.expect("acquire after the holder is gone");
+    }
+
+    /// Child process for [`a_killed_holder_releases_the_config_lock`].
+    /// Without `PCL_HOLD_CONFIG_LOCK` it returns immediately.
+    #[tokio::test]
+    async fn a_config_lock_holder_process() {
+        let Ok(dir) = std::env::var("PCL_HOLD_CONFIG_LOCK") else {
+            return;
+        };
+        let ready = std::env::var("PCL_HOLD_CONFIG_LOCK_READY").expect("ready path");
+        let cli_args = CliArgs {
+            config_dir: Some(PathBuf::from(dir)),
+            ..CliArgs::default()
+        };
+        let _lock = ConfigLock::acquire(&cli_args)
+            .await
+            .expect("hold the config lock");
+        std::fs::write(ready, "held").expect("signal that the lock is held");
+        std::future::pending::<()>().await;
     }
 
     #[test]

@@ -428,7 +428,7 @@ impl AuthCommand {
             refresh_challenge_reason.unwrap_or_else(|| auth_challenge_reason(config, force))
         };
         let auth_response = Self::request_auth_code(&self.api_client()).await?;
-        Self::store_pending_device_secret(cli_args, &auth_response)?;
+        Self::store_pending_device_secret(cli_args, &auth_response, &self.effective_auth_url())?;
         Self::print_output(
             &self.login_challenge_envelope(
                 &auth_response,
@@ -452,7 +452,11 @@ impl AuthCommand {
         // resolved URL applies — only a fresh login challenge.
         if self.switching_platform(config) {
             let auth_response = Self::request_auth_code(&self.api_client()).await?;
-            Self::store_pending_device_secret(cli_args, &auth_response)?;
+            Self::store_pending_device_secret(
+                cli_args,
+                &auth_response,
+                &self.effective_auth_url(),
+            )?;
             return Self::print_output(
                 &self.login_challenge_envelope(
                     &auth_response,
@@ -504,7 +508,7 @@ impl AuthCommand {
         }
 
         let auth_response = Self::request_auth_code(&self.api_client()).await?;
-        Self::store_pending_device_secret(cli_args, &auth_response)?;
+        Self::store_pending_device_secret(cli_args, &auth_response, &self.effective_auth_url())?;
         let reason = refresh_challenge_reason.unwrap_or(AuthChallengeReason::Missing);
         Self::print_output(
             &self.login_challenge_envelope(
@@ -595,7 +599,11 @@ impl AuthCommand {
         let auth_response = Self::request_auth_code(&client).await?;
         // Only outputs that print a poll_command need the secret on disk.
         if no_wait || json_output {
-            Self::store_pending_device_secret(cli_args, &auth_response)?;
+            Self::store_pending_device_secret(
+                cli_args,
+                &auth_response,
+                &self.effective_auth_url(),
+            )?;
         }
         if no_wait {
             Self::print_output(
@@ -994,20 +1002,24 @@ impl AuthCommand {
         device_secret: &str,
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AuthError> {
+        let target = self.effective_auth_url();
+        // A platform change must not present this session's secret to the new
+        // host, and must not let that host's "no such session" delete the
+        // login that still belongs to the issuing platform.
+        Self::refuse_foreign_pending_login(cli_args, session_id, device_secret, &target)?;
         let status =
             match Self::check_auth_status(&self.api_client(), device_secret, session_id).await {
                 Ok(status) => status,
                 // The session can never verify with the secret just sent; keep
                 // the stored one for retryable failures, and when an explicit
                 // --device-secret differed from it (the server looks up the
-                // session and secret together).
+                // session and secret together). A stored login is cleared only
+                // when this poll talked to the platform that issued it.
                 Err(
                     error @ (AuthError::SessionExpired
                     | AuthError::SessionNotFound
                     | AuthError::UserNotFound),
-                ) if Self::load_pending_device_secret(cli_args, session_id)
-                    .is_ok_and(|stored| stored == device_secret) =>
-                {
+                ) if Self::pending_claim_matches(cli_args, session_id, device_secret, &target) => {
                     return Err(with_cleanup_warning(
                         error,
                         Self::clear_pending_device_secret(cli_args, session_id),
@@ -1074,6 +1086,7 @@ impl AuthCommand {
     fn store_pending_device_secret(
         cli_args: &CliArgs,
         auth_response: &CliAuthRequestCodeResponse,
+        origin: &url::Url,
     ) -> Result<(), AuthError> {
         let dir = Self::config_dir_for(cli_args);
         crate::config::create_private_dir_all(&dir)
@@ -1095,7 +1108,13 @@ impl AuthCommand {
                 AuthError::ConfigError(ConfigError::WriteError(error))
             }
         })?;
-        file.write_all(auth_response.device_secret.as_bytes())
+        let pending = PendingDeviceLogin {
+            device_secret: auth_response.device_secret.clone(),
+            origin: crate::platform::trim_platform_url(origin),
+        };
+        let bytes = serde_json::to_vec(&pending)
+            .map_err(|error| AuthError::InvalidAuthData(error.to_string()))?;
+        file.write_all(&bytes)
             .map_err(|error| AuthError::ConfigError(ConfigError::WriteError(error)))?;
         Ok(())
     }
@@ -1104,24 +1123,92 @@ impl AuthCommand {
         cli_args: &CliArgs,
         session_id: &Uuid,
     ) -> Result<String, AuthError> {
-        let path = Self::pending_device_secret_path(&Self::config_dir_for(cli_args), session_id);
-        let secret = std::fs::read_to_string(&path).map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
+        Self::read_pending_device_login(cli_args, session_id)?
+            .map(|pending| pending.device_secret)
+            .ok_or_else(|| {
                 AuthError::InvalidAuthData(
                     "No pending device login is stored for this session. Run pcl auth ensure again."
                         .to_string(),
                 )
-            } else {
-                AuthError::ConfigError(ConfigError::ReadError(error))
-            }
+            })
+    }
+
+    /// The pending file for this session, when one exists.
+    ///
+    /// `Ok(None)` is a missing file. A file that is not the JSON claim written
+    /// by [`Self::store_pending_device_secret`] is an error: it has no issuing
+    /// platform to check.
+    fn read_pending_device_login(
+        cli_args: &CliArgs,
+        session_id: &Uuid,
+    ) -> Result<Option<PendingDeviceLogin>, AuthError> {
+        let path = Self::pending_device_secret_path(&Self::config_dir_for(cli_args), session_id);
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(AuthError::ConfigError(ConfigError::ReadError(error))),
+        };
+        let pending: PendingDeviceLogin = serde_json::from_str(raw.trim()).map_err(|_| {
+            AuthError::InvalidAuthData(
+                "The stored device login has no issuing platform. Remove the file and run pcl auth ensure again."
+                    .to_string(),
+            )
         })?;
-        let secret = secret.trim().to_string();
-        if secret.is_empty() {
+        if pending.device_secret.is_empty() || pending.origin.is_empty() {
             return Err(AuthError::InvalidAuthData(
-                "The stored device login secret is empty. Run pcl auth ensure again.".to_string(),
+                "The stored device login has no issuing platform. Remove the file and run pcl auth ensure again."
+                    .to_string(),
             ));
         }
-        Ok(secret)
+        Ok(Some(pending))
+    }
+
+    /// Errors, without sending or deleting, when `device_secret` is the stored
+    /// claim and `target` is not the platform that issued it.
+    fn refuse_foreign_pending_login(
+        cli_args: &CliArgs,
+        session_id: &Uuid,
+        device_secret: &str,
+        target: &url::Url,
+    ) -> Result<(), AuthError> {
+        // A path that cannot be read is not a claim we can check. An explicit
+        // secret still goes out; a secret loaded from this file never reaches
+        // here, because that read already failed. Removal after a claim still
+        // reports the I/O error.
+        let pending = match Self::read_pending_device_login(cli_args, session_id) {
+            Ok(pending) => pending,
+            Err(AuthError::ConfigError(_)) => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let Some(pending) = pending else {
+            return Ok(());
+        };
+        if pending.device_secret != device_secret || pending_origin_matches(&pending.origin, target)
+        {
+            return Ok(());
+        }
+        let issuing = crate::platform::redact_stored_platform_url(&pending.origin);
+        let requested = crate::platform::redact_platform_url(target);
+        Err(AuthError::InvalidAuthData(format!(
+            "This pending device login was issued by {issuing}. It was not sent to {requested}, and the stored login was left in place. Poll with the platform that issued it, or run pcl auth ensure again."
+        )))
+    }
+
+    /// Whether the stored claim is the secret just sent, and this poll talked
+    /// to the platform that issued it. Only then may a terminal session error
+    /// delete the file.
+    fn pending_claim_matches(
+        cli_args: &CliArgs,
+        session_id: &Uuid,
+        device_secret: &str,
+        target: &url::Url,
+    ) -> bool {
+        Self::read_pending_device_login(cli_args, session_id).is_ok_and(|pending| {
+            pending.is_some_and(|pending| {
+                pending.device_secret == device_secret
+                    && pending_origin_matches(&pending.origin, target)
+            })
+        })
     }
 
     /// Removes the pending secret; returns a warning when a file that may
@@ -1912,18 +1999,47 @@ fn update_config_from_verified_status(
     Ok(())
 }
 
-/// Saves claimed credentials, once, before success is reported: an
-/// unconditional write that first backs up a config file that does not parse,
-/// under the lock refresh holds while it rotates the pair. main.rs does not
-/// write again (see [`AuthCommand::saves_claimed_credentials`]).
+/// Saves claimed credentials, once, before success is reported.
+///
+/// Under the lock refresh holds while it rotates the pair, reloads the config
+/// another command may have saved during the wait and writes only this login's
+/// credentials and platform onto it. An unreadable file is backed up, then
+/// replaced with the in-memory config, because there is nothing to merge.
+/// main.rs does not write again (see [`AuthCommand::saves_claimed_credentials`]).
 async fn persist_claimed_auth(config: &CliConfig, cli_args: &CliArgs) -> Result<(), AuthError> {
     let _lock = ConfigLock::acquire(cli_args)
         .await
         .map_err(AuthError::ConfigError)?;
-    CliConfig::back_up_unreadable(cli_args).map_err(AuthError::ConfigError)?;
-    config
-        .write_to_file(cli_args)
-        .map_err(AuthError::ConfigError)
+    let path = CliConfig::config_file_path(cli_args);
+    if !path.exists() {
+        return config
+            .write_to_file(cli_args)
+            .map_err(AuthError::ConfigError);
+    }
+    if let Ok(mut latest) = CliConfig::read_from_file(cli_args) {
+        latest.auth.clone_from(&config.auth);
+        latest.platform_url.clone_from(&config.platform_url);
+        latest
+            .write_to_file(cli_args)
+            .map_err(AuthError::ConfigError)
+    } else {
+        CliConfig::back_up_unreadable(cli_args).map_err(AuthError::ConfigError)?;
+        config
+            .write_to_file(cli_args)
+            .map_err(AuthError::ConfigError)
+    }
+}
+
+/// Pending device login stored beside the config: the secret and the platform
+/// that issued it. Poll refuses to send or delete the claim for any other host.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PendingDeviceLogin {
+    device_secret: String,
+    origin: String,
+}
+
+fn pending_origin_matches(origin: &str, target: &url::Url) -> bool {
+    origin.trim_end_matches('/') == crate::platform::trim_platform_url(target)
 }
 
 /// A pending-login cleanup failure. Machine output carries it in the
@@ -3485,6 +3601,118 @@ mod tests {
         assert!(
             !request_line.contains('?') && !request_line.contains("device_secret"),
             "status URL must not carry the device secret, got {request_line}"
+        );
+    }
+
+    /// A 307 or 308 must not replay the status body, secret included, on
+    /// another origin.
+    #[tokio::test]
+    async fn status_post_does_not_follow_redirects_to_another_origin() {
+        for status in [307_u16, 308] {
+            let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let other = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin_addr = origin.local_addr().unwrap();
+            let other_addr = other.local_addr().unwrap();
+            let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let other_hits = std::sync::Arc::clone(&hits);
+            let other_task = tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = other.accept().await else {
+                        break;
+                    };
+                    other_hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let _ = socket
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                        )
+                        .await;
+                }
+            });
+            let location = format!("http://{other_addr}/api/v1/cli/auth/status");
+            let origin_task = tokio::spawn(async move {
+                let (mut socket, _) = origin.accept().await.unwrap();
+                let mut buf = vec![0_u8; 4096];
+                let _ = tokio::time::timeout(Duration::from_secs(2), socket.read(&mut buf)).await;
+                let response = format!(
+                    "HTTP/1.1 {status} Redirect\r\nlocation: {location}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            });
+
+            let client = GeneratedClient::new(&format!("http://{origin_addr}/api/v1"));
+            let session = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+            let result = post_cli_auth_status(&client, &session, "test_secret").await;
+            origin_task.await.unwrap();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let forwarded = hits.load(std::sync::atomic::Ordering::SeqCst);
+            other_task.abort();
+
+            assert_eq!(
+                forwarded, 0,
+                "HTTP {status} forwarded the device secret to {other_addr}"
+            );
+            let rendered = match &result {
+                Ok(body) => format!("{body:?}"),
+                Err(dapp_api_client::cli_auth::CliAuthStatusPostError::RouteMissing) => {
+                    "route missing".to_string()
+                }
+                Err(dapp_api_client::cli_auth::CliAuthStatusPostError::Call(error)) => {
+                    format!("{error:?}")
+                }
+            };
+            assert!(result.is_err(), "{rendered}");
+            assert!(
+                !rendered.contains("test_secret"),
+                "status redirect error exposed the device secret: {rendered}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn persist_claimed_auth_keeps_rpc_written_while_login_waited() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = test_cli_args(config_dir.path());
+        let mut claimed = create_test_config();
+        claimed.rpc.insert(
+            "1".to_string(),
+            crate::config::RpcEndpoint {
+                url: "https://old.example".to_string(),
+                confirmations: None,
+            },
+        );
+        claimed.platform_url = Some("https://linea.phylax.systems".to_string());
+        claimed
+            .write_to_file(&cli_args)
+            .expect("startup snapshot is on disk");
+
+        let mut newer = CliConfig::default();
+        newer.rpc.insert(
+            "1".to_string(),
+            crate::config::RpcEndpoint {
+                url: "https://new.example".to_string(),
+                confirmations: Some(4),
+            },
+        );
+        newer.platform_url = Some("https://ethereum.phylax.systems".to_string());
+        newer
+            .write_to_file(&cli_args)
+            .expect("an rpc change lands while login is waiting");
+
+        persist_claimed_auth(&claimed, &cli_args)
+            .await
+            .expect("save the claim");
+
+        let on_disk = CliConfig::read_from_file(&cli_args).expect("read config");
+        let rpc = on_disk.rpc_endpoint(1).expect("rpc saved during the wait");
+        assert_eq!(rpc.url, "https://new.example");
+        assert_eq!(rpc.confirmations, Some(4));
+        let auth = on_disk.auth.as_ref().expect("claimed credentials");
+        assert_eq!(auth.access_token, "test_token");
+        assert_eq!(auth.refresh_token, "test_refresh");
+        assert_eq!(
+            on_disk.platform_url.as_deref(),
+            Some("https://linea.phylax.systems"),
+            "the claim records the platform it logged into"
         );
     }
 
