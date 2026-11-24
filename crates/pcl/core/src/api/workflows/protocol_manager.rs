@@ -158,7 +158,6 @@ workflow_definition!(
     command: "pcl protocol-manager --project <ref> [--nonce --address <address>|--set|--clear|--transfer-calldata|--accept-calldata|--pending-transfer|--confirm-transfer]",
     description: "Manage protocol manager transfers and calldata.",
     output: "manager state, nonce, calldata, pending transfer, or mutation result",
-    policy: MachineRaw,
     actions: [
         action!("pending_transfer", true, "projects.getPendingTransfer", "pcl protocol-manager --project <project-ref> --pending-transfer", required: ["--project"]),
         action!("nonce", true, "projects.getProtocolManagerNonce", "pcl protocol-manager --project <project-ref> --nonce --address 0x...", required: ["--project", "--address"], optional: ["--chain-id"], query: {"address" => "<address>", "chain_id" => "<chain-id>"}),

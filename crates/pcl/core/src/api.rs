@@ -42,6 +42,7 @@ pub use crate::output::{
     with_envelope_metadata,
 };
 pub use broadcast::BroadcastArgs;
+pub(crate) use broadcast::release_next_actions;
 pub use error::ApiCommandError;
 pub use manifest::api_manifest;
 pub use render::{
@@ -54,9 +55,7 @@ use envelopes::{
     ok_envelope,
     query_pairs_value,
     upsert_query,
-    workflow_data_for_output_mode,
     workflow_success_envelope,
-    workflow_success_envelope_with_data,
 };
 pub(in crate::api) use error::method_side_effecting;
 use input::{
@@ -108,7 +107,6 @@ use runtime_types::{
 use templates::{
     access_body_template,
     body_template,
-    deployment_body_template,
     integration_body_template,
     project_body_template,
     protocol_manager_body_template,
@@ -132,7 +130,6 @@ use workflows::{
     assertions_request,
     contracts_next_actions,
     contracts_request,
-    deployments_request,
     events_request,
     incidents_next_actions,
     incidents_request,
@@ -349,7 +346,6 @@ macro_rules! always_needs_platform {
 body_template_gates_platform!(
     AssertionsArgs,
     AccountArgs,
-    DeploymentsArgs,
     IntegrationsArgs,
     ProtocolManagerArgs,
 );
@@ -407,7 +403,6 @@ enum WorkflowCommand {
     Account(AccountArgs),
     Contracts(ContractsArgs),
     Releases(ReleasesArgs),
-    Deployments(DeploymentsArgs),
     Access(AccessArgs),
     Integrations(IntegrationsArgs),
     ProtocolManager(ProtocolManagerArgs),
@@ -932,7 +927,7 @@ impl WorkflowBodyArgs {
 #[derive(clap::Args, Debug)]
 #[command(group(
     ArgGroup::new("assertions_action")
-        .args(["assertion_id", "adopter_address", "registered", "remove_info", "remove_calldata"])
+        .args(["assertion_id", "adopter_address", "registered"])
         .multiple(false)
 ))]
 struct AssertionsArgs {
@@ -960,10 +955,6 @@ struct AssertionsArgs {
     limit: Option<u64>,
     #[arg(long, help = "Return registered assertions for --project-id")]
     registered: bool,
-    #[arg(long, help = "Return remove assertions info")]
-    remove_info: bool,
-    #[arg(long, help = "Generate remove assertions calldata")]
-    remove_calldata: bool,
     #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
     field: Vec<String>,
     #[arg(long, help = "JSON request body")]
@@ -1036,20 +1027,6 @@ struct ContractsArgs {
     project: Option<String>,
     #[arg(long, help = "Assertion adopter ID for contract detail")]
     adopter_id: Option<String>,
-    #[arg(long, help = "Assertion adopter contract address")]
-    aa_address: Option<String>,
-    #[arg(long, help = "Network/chain ID for adopter calldata requests")]
-    network: Option<String>,
-    #[arg(long, help = "Environment for adopter calldata requests")]
-    environment: Option<String>,
-    #[arg(
-        long = "assertion-id",
-        alias = "assertion-ids",
-        help = "Assertion ID to include in --remove-calldata; repeat for multiple assertions"
-    )]
-    assertion_ids: Vec<String>,
-    #[arg(long, help = "Get remove assertions calldata")]
-    remove_calldata: bool,
 }
 
 #[derive(Debug, Default)]
@@ -1326,31 +1303,6 @@ fn release_ref_args_optional(project: Option<String>, release_id: Option<String>
         release_id,
         ..ReleasesArgs::default()
     }
-}
-
-#[derive(clap::Args, Debug)]
-#[command(group(
-    ArgGroup::new("deployments_action")
-        .args(["confirm"])
-        .multiple(false)
-))]
-struct DeploymentsArgs {
-    #[arg(long, visible_alias = "project-id", help = "Project UUID or slug")]
-    project: Option<String>,
-    #[arg(long, help = "Confirm deployment")]
-    confirm: bool,
-    #[arg(long, help = "JSON request body")]
-    body: Option<String>,
-    #[arg(long = "field", help = "Extra JSON body field as KEY=VALUE")]
-    field: Vec<String>,
-    #[arg(
-        long = "body-file",
-        conflicts_with = "body",
-        help = "Path to JSON body, or - for stdin"
-    )]
-    body_file: Option<PathBuf>,
-    #[arg(long, help = "Print a JSON body template")]
-    body_template: bool,
 }
 
 #[derive(Debug, Default)]
@@ -1770,8 +1722,8 @@ top_level_workflow_command!(
     AssertionsCommand,
     AssertionsArgs,
     Assertions,
-    "List, inspect, and manage assertions",
-    "Examples:\n  pcl assertions --project-id <project-ref>\n  pcl assertions --adopter-address 0x... --network 1\n  pcl assertions --project-id <project-ref> --registered\n  pcl assertions --project-id <project-ref> --remove-info"
+    "List and inspect assertions",
+    "Examples:\n  pcl assertions --project-id <project-ref>\n  pcl assertions --adopter-address 0x... --network 1\n  pcl assertions --project-id <project-ref> --registered\n  pcl releases calldata remove <project-ref> <release-id>"
 );
 
 top_level_workflow_command!(
@@ -1794,16 +1746,8 @@ top_level_workflow_command!(
     ContractsCommand,
     ContractsArgs,
     Contracts,
-    "Inspect release-based project contracts and assertion-removal calldata",
-    "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl releases list <project-ref>"
-);
-
-top_level_workflow_command!(
-    DeploymentsCommand,
-    DeploymentsArgs,
-    Deployments,
-    "Inspect deployments and confirm deployed assertions",
-    "Examples:\n  pcl deployments --project <project-ref>\n  pcl deployments --project <project-ref> --confirm --body-template"
+    "Inspect release-based project contracts",
+    "Examples:\n  pcl contracts --project <project-ref>\n  pcl contracts --project <project-ref> --adopter-id <adopter-id>\n  pcl releases list <project-ref>\n  pcl releases calldata remove <project-ref> <release-id>"
 );
 
 top_level_workflow_command!(

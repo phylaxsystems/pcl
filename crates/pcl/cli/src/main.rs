@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
             let output_mode = wants_output_mode(env::args_os());
             set_current_output_mode(output_mode);
             let raw_args = env::args_os().collect::<Vec<_>>();
-            if output_mode == OutputMode::Human {
+            if output_mode == OutputMode::Human && !is_retired_command(&err, &raw_args) {
                 if should_show_root_help(&err, &raw_args) {
                     let mut command = Cli::command();
                     command.print_help()?;
@@ -214,7 +214,6 @@ async fn run_command(
         Commands::Account(command) => command.run(config, cli_args, json_output).await?,
         Commands::Contracts(command) => command.run(config, cli_args, json_output).await?,
         Commands::Releases(command) => command.run(config, cli_args, json_output).await?,
-        Commands::Deployments(command) => command.run(config, cli_args, json_output).await?,
         Commands::Access(command) => command.run(config, cli_args, json_output).await?,
         Commands::Integrations(command) => command.run(config, cli_args, json_output).await?,
         Commands::ProtocolManager(command) => command.run(config, cli_args, json_output).await?,
@@ -1249,10 +1248,29 @@ fn should_show_root_help(err: &clap::Error, args: &[OsString]) -> bool {
     ) && parsed_command_name(args).is_none()
 }
 
+/// Removed in `OpenAPI` 24.0.0; clap would otherwise suggest the mutating `deploy`.
+fn is_retired_command(err: &clap::Error, args: &[OsString]) -> bool {
+    err.kind() == ErrorKind::InvalidSubcommand
+        && parsed_command_name(args).as_deref() == Some("deployments")
+}
+
 fn clap_error_envelope(err: &clap::Error, args: &[OsString]) -> Value {
     let command = parsed_command_name(args);
-    let message = clap_error_message(err, command.as_deref());
-    let next_actions = clap_error_next_actions(err.kind(), command.as_deref());
+    let (message, next_actions) = if is_retired_command(err, args) {
+        (
+            "`pcl deployments` was removed; use `pcl releases list` or `pcl releases show`."
+                .to_string(),
+            vec![
+                "pcl releases list <project-ref>".to_string(),
+                "pcl releases show <project-ref> <release-id>".to_string(),
+            ],
+        )
+    } else {
+        (
+            clap_error_message(err, command.as_deref()),
+            clap_error_next_actions(err.kind(), command.as_deref()),
+        )
+    };
     if matches!(
         err.kind(),
         ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
@@ -1356,7 +1374,6 @@ fn is_known_top_level_command(command: &str) -> bool {
             | "account"
             | "contracts"
             | "releases"
-            | "deployments"
             | "access"
             | "integrations"
             | "protocol-manager"

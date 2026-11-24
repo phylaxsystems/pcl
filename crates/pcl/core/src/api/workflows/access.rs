@@ -134,7 +134,6 @@ workflow_definition!(
     command: "pcl access <members|invitations|pending|preview|accept|invite|resend|revoke|role|member|my-role>",
     description: "Manage project members, roles, and invitations.",
     output: "member lists, invitation lists, role data, or mutation results",
-    policy: MachineRaw,
     actions: [
         action!("members", true, "getProjectMembers", "pcl access members <project-ref>", required: ["<project-ref>"]),
         action!("my_role", true, "getMyProjectRole", "pcl access my-role <project-ref>", required: ["<project-ref>"]),

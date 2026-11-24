@@ -1,13 +1,5 @@
-use super::{
-    WorkflowCallResult,
-    definitions::{
-        WorkflowOutputPolicy,
-        workflow_output_policy,
-    },
-    workflows::compact_deployment_data,
-};
+use super::WorkflowCallResult;
 use crate::output::with_envelope_metadata;
-use pcl_common::args::OutputMode;
 use serde_json::{
     Value,
     json,
@@ -36,33 +28,6 @@ pub(in crate::api) fn workflow_success_envelope(
         "response": result.response,
         "next_actions": next_actions,
     }))
-}
-
-pub(in crate::api) fn workflow_success_envelope_with_data(
-    result: WorkflowCallResult,
-    data: Value,
-    next_actions: Vec<String>,
-) -> Value {
-    with_envelope_metadata(json!({
-        "status": "ok",
-        "data": data,
-        "request": result.request,
-        "response": result.response,
-        "next_actions": next_actions,
-    }))
-}
-
-pub(in crate::api) fn workflow_data_for_output_mode(
-    workflow: &str,
-    data: &Value,
-    output_mode: OutputMode,
-) -> Value {
-    match (workflow_output_policy(workflow), output_mode) {
-        (WorkflowOutputPolicy::MachineRawHumanCompactArtifacts, OutputMode::Human) => {
-            compact_deployment_data(data)
-        }
-        _ => data.clone(),
-    }
 }
 
 pub(in crate::api) fn query_pairs_value(query: &[(String, String)]) -> Value {

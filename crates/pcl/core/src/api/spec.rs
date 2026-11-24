@@ -77,11 +77,6 @@ pub(super) const WORKFLOW_SPECS: &[WorkflowSpec] = &[
         ],
     },
     WorkflowSpec {
-        name: "deployments",
-        layer: WorkflowLayer::Workflow,
-        preferred_subcommands: &[],
-    },
-    WorkflowSpec {
         name: "access",
         layer: WorkflowLayer::Workflow,
         preferred_subcommands: &[

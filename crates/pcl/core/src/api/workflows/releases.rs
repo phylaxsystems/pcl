@@ -181,7 +181,6 @@ workflow_definition!(
     command: "pcl releases <list|show|create|preview|deploy|remove|calldata|backtest-progress|retry-check>",
     description: "List, inspect, create, preview, deploy, check progress, retry failed checks, and remove releases.",
     output: "release data, diffs, check progress, deployment confirmations, or calldata",
-    policy: MachineRaw,
     actions: [
         action!("list", true, "projects.listReleases", "pcl releases list <project-ref>", required: ["<project-ref>"]),
         action!("detail", true, "projects.getRelease", "pcl releases show <project-ref> <release-id>", required: ["<project-ref>", "<release-id>"]),

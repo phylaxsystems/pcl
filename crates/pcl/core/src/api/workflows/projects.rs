@@ -165,7 +165,6 @@ workflow_definition!(
     command: "pcl projects <list|mine|show|saved|create|update|delete|save|unsave|resolve|widget>",
     description: "List, inspect, create, update, save, unsave, resolve, widget, and delete projects.",
     output: "project explorer, your projects, project detail, saved projects, widget, or mutation result",
-    policy: MachineRaw,
     actions: [
         action!("explorer", false, "views.projectsExplorer.getProjectsExplorer",
             "pcl projects list --limit 10"

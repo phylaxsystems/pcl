@@ -4025,6 +4025,9 @@ pub mod types {
     ///    "has_releases": {
     ///      "type": "boolean"
     ///    },
+    ///    "is_featured": {
+    ///      "type": "boolean"
+    ///    },
     ///    "is_private": {
     ///      "type": "boolean"
     ///    },
@@ -4136,6 +4139,8 @@ pub mod types {
         >,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub has_releases: ::std::option::Option<bool>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub is_featured: ::std::option::Option<bool>,
         pub is_private: bool,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub profile_image_url: ::std::option::Option<::std::string::String>,
@@ -5021,6 +5026,9 @@ pub mod types {
     ///    "has_releases": {
     ///      "type": "boolean"
     ///    },
+    ///    "is_featured": {
+    ///      "type": "boolean"
+    ///    },
     ///    "is_private": {
     ///      "type": "boolean"
     ///    },
@@ -5117,6 +5125,8 @@ pub mod types {
         pub github_url: ::std::option::Option<ProjectsGetProjectsResponseItemGithubUrl>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub has_releases: ::std::option::Option<bool>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub is_featured: ::std::option::Option<bool>,
         pub is_private: bool,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub profile_image_url: ::std::option::Option<::std::string::String>,
@@ -6185,6 +6195,9 @@ pub mod types {
     ///    "has_releases": {
     ///      "type": "boolean"
     ///    },
+    ///    "is_featured": {
+    ///      "type": "boolean"
+    ///    },
     ///    "is_private": {
     ///      "type": "boolean"
     ///    },
@@ -6285,6 +6298,8 @@ pub mod types {
         >,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub has_releases: ::std::option::Option<bool>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub is_featured: ::std::option::Option<bool>,
         pub is_private: bool,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub profile_image_url: ::std::option::Option<::std::string::String>,
@@ -15359,7 +15374,7 @@ No Authorization header is needed when using cookie authentication.
 - Required Authorization headers indicate CLI-only endpoints
 - The authentication middleware automatically detects and validates the appropriate method
 
-Version: 22.0.0*/
+Version: 24.0.0*/
 pub struct Client {
     pub(crate) baseurl: String,
     pub(crate) client: reqwest::Client,
@@ -15395,7 +15410,7 @@ impl Client {
 }
 impl ClientInfo<()> for Client {
     fn api_version() -> &'static str {
-        "22.0.0"
+        "24.0.0"
     }
     fn baseurl(&self) -> &str {
         self.baseurl.as_str()

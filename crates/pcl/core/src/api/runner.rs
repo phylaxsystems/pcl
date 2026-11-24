@@ -5,7 +5,6 @@ use super::{
     ApiRequestInput,
     AssertionsArgs,
     ContractsArgs,
-    DeploymentsArgs,
     HttpMethod,
     IncidentsArgs,
     PreparedApiRequest,
@@ -30,8 +29,6 @@ use super::{
     command_next_actions,
     contracts_next_actions,
     contracts_request,
-    deployment_body_template,
-    deployments_request,
     events_request,
     extract_paginated_items,
     incidents_next_actions,
@@ -66,9 +63,7 @@ use super::{
     split_path_and_inline_query,
     template_envelope,
     upsert_query,
-    workflow_data_for_output_mode,
     workflow_success_envelope,
-    workflow_success_envelope_with_data,
     write_api_coverage_markdown,
     write_json_output_file,
     write_jsonl_items_output_file,
@@ -239,14 +234,8 @@ impl ApiArgs {
                     );
                 }
                 print_api_value(
-                    self.run_workflow(
-                        config,
-                        cli_args,
-                        "account",
-                        account_request(args)?,
-                        &request_log_path,
-                    )
-                    .await?,
+                    self.run_workflow(config, cli_args, account_request(args)?, &request_log_path)
+                        .await?,
                     json_output,
                 )?;
             }
@@ -277,19 +266,6 @@ impl ApiArgs {
                     json_output,
                 )?;
             }
-            WorkflowCommand::Deployments(args) => {
-                if args.body_template {
-                    return print_api_value(
-                        template_envelope(deployment_body_template(args)),
-                        json_output,
-                    );
-                }
-                print_api_value(
-                    self.run_deployments(config, cli_args, args, &request_log_path)
-                        .await?,
-                    json_output,
-                )?;
-            }
             WorkflowCommand::Access(args) => {
                 if args.body_template {
                     return print_api_value(
@@ -298,14 +274,8 @@ impl ApiArgs {
                     );
                 }
                 print_api_value(
-                    self.run_workflow(
-                        config,
-                        cli_args,
-                        "access",
-                        access_request(args)?,
-                        &request_log_path,
-                    )
-                    .await?,
+                    self.run_workflow(config, cli_args, access_request(args)?, &request_log_path)
+                        .await?,
                     json_output,
                 )?;
             }
@@ -320,7 +290,6 @@ impl ApiArgs {
                     self.run_workflow(
                         config,
                         cli_args,
-                        "integrations",
                         integrations_request(args)?,
                         &request_log_path,
                     )
@@ -350,14 +319,8 @@ impl ApiArgs {
             }
             WorkflowCommand::Events(args) => {
                 print_api_value(
-                    self.run_workflow(
-                        config,
-                        cli_args,
-                        "events",
-                        events_request(args)?,
-                        &request_log_path,
-                    )
-                    .await?,
+                    self.run_workflow(config, cli_args, events_request(args)?, &request_log_path)
+                        .await?,
                     json_output,
                 )?;
             }
@@ -730,7 +693,6 @@ impl ApiArgs {
         self.run_prepared_workflow(
             config,
             cli_args,
-            "projects",
             request,
             request_log_path,
             projects_next_actions,
@@ -912,7 +874,6 @@ impl ApiArgs {
         self.run_prepared_workflow(
             config,
             cli_args,
-            "assertions",
             request,
             request_log_path,
             |data, fallback| assertions_next_actions(data, args, fallback),
@@ -931,7 +892,6 @@ impl ApiArgs {
         self.run_prepared_workflow(
             config,
             cli_args,
-            "search",
             request,
             request_log_path,
             search_next_actions,
@@ -950,7 +910,6 @@ impl ApiArgs {
         self.run_prepared_workflow(
             config,
             cli_args,
-            "contracts",
             request,
             request_log_path,
             |data, fallback| contracts_next_actions(data, args, fallback),
@@ -969,29 +928,9 @@ impl ApiArgs {
         self.run_prepared_workflow(
             config,
             cli_args,
-            "releases",
             request,
             request_log_path,
             |data, fallback| releases_next_actions(data, args, fallback),
-        )
-        .await
-    }
-
-    pub(in crate::api) async fn run_deployments(
-        &self,
-        config: &mut CliConfig,
-        cli_args: &CliArgs,
-        args: &DeploymentsArgs,
-        request_log_path: &Path,
-    ) -> Result<Value, ApiCommandError> {
-        let request = deployments_request(args)?;
-        self.run_prepared_workflow(
-            config,
-            cli_args,
-            "deployments",
-            request,
-            request_log_path,
-            |_data, fallback| fallback,
         )
         .await
     }
@@ -1007,7 +946,6 @@ impl ApiArgs {
         self.run_prepared_workflow(
             config,
             cli_args,
-            "protocol-manager",
             request,
             request_log_path,
             |data, fallback| protocol_manager_next_actions(data, args, fallback),
@@ -1019,14 +957,12 @@ impl ApiArgs {
         &self,
         config: &mut CliConfig,
         cli_args: &CliArgs,
-        workflow: &'static str,
         request: WorkflowRequest,
         request_log_path: &Path,
     ) -> Result<Value, ApiCommandError> {
         self.run_prepared_workflow(
             config,
             cli_args,
-            workflow,
             request,
             request_log_path,
             |_data, fallback| fallback,
@@ -1038,7 +974,6 @@ impl ApiArgs {
         &self,
         config: &mut CliConfig,
         cli_args: &CliArgs,
-        workflow: &'static str,
         request: WorkflowRequest,
         request_log_path: &Path,
         next_actions_for: F,
@@ -1050,12 +985,7 @@ impl ApiArgs {
             .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
         let next_actions = next_actions_for(&result.body, request.next_actions);
-        let data = workflow_data_for_output_mode(workflow, &result.body, cli_args.output_mode());
-        Ok(workflow_success_envelope_with_data(
-            result,
-            data,
-            next_actions,
-        ))
+        Ok(workflow_success_envelope(result, next_actions))
     }
 
     pub(in crate::api) fn auth_plan(

@@ -178,7 +178,6 @@ fn machine_help_requests_stay_structured() {
 const LOCAL_TEMPLATE_INVOCATIONS: &[&[&str]] = &[
     &["--json", "assertions", "--body-template"],
     &["--json", "account", "--body-template"],
-    &["--json", "deployments", "--confirm", "--body-template"],
     &["--json", "integrations", "--body-template"],
     &["--json", "protocol-manager", "--set", "--body-template"],
     &["--json", "projects", "create", "--body-template"],
@@ -453,25 +452,26 @@ fn schema_list_exposes_output_contract_summary() {
     let schemas = envelope["data"]["schemas"]
         .as_array()
         .expect("schemas array");
-    assert_eq!(schemas.len(), 12);
+    assert_eq!(schemas.len(), 11);
     assert!(
         schemas.iter().all(|schema| schema["workflow"] != "api"),
         "{schemas:?}"
     );
-    let deployments = schemas
-        .iter()
-        .find(|schema| schema["workflow"] == "deployments")
-        .expect("deployments schema");
-
-    assert_eq!(
-        deployments["output_policy"],
-        "machine_raw_human_compact_artifacts"
-    );
     assert!(
-        deployments["output"]
+        schemas
+            .iter()
+            .all(|schema| schema["workflow"] != "deployments"),
+        "{schemas:?}"
+    );
+    let releases = schemas
+        .iter()
+        .find(|schema| schema["workflow"] == "releases")
+        .expect("releases schema");
+    assert!(
+        releases["output"]
             .as_str()
-            .is_some_and(|output| output.contains("deployment")),
-        "{deployments:?}"
+            .is_some_and(|output| output.contains("deployment confirmation")),
+        "{releases:?}"
     );
 }
 

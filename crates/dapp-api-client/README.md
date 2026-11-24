@@ -82,7 +82,12 @@ Regenerate the client when:
 The easiest way is using the Makefile from the repository root:
 
 ```bash
-# Regenerate from production API
+# Reproduce the committed client from the pinned dapp revision
+# (DAPP_SPEC_REV / DAPP_SPEC_SHA256 in the Makefile; needs `gh` auth)
+make regenerate-pinned
+
+# Regenerate from whatever production serves now. This is not pinned: if
+# production lags the pinned revision, it reverts the client to the older spec.
 make regenerate
 
 # Regenerate from development API (localhost:3000)
