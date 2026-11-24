@@ -45,6 +45,7 @@ use serde_json::{
     json,
 };
 use std::path::Path;
+use uuid::Uuid;
 
 /// Shared flags for commands that can sign and submit transactions.
 #[derive(clap::Args, Clone, Debug, Default)]
@@ -407,6 +408,22 @@ impl ApiArgs {
         })
     }
 
+    /// UUID the release record's `projectId` must equal. A slug is resolved
+    /// the same way the confirmation path is, so the comparison is not against
+    /// the display name.
+    async fn canonical_project_id(
+        &self,
+        config: &CliConfig,
+        project: &str,
+        request_log_path: &Path,
+    ) -> Result<String, ApiCommandError> {
+        if project.parse::<Uuid>().is_ok() {
+            return Ok(project.to_string());
+        }
+        self.resolve_project_id(config, project, true, true, request_log_path)
+            .await
+    }
+
     /// POSTs the platform confirmation for a transaction that already landed.
     ///
     /// The platform rejects receipts with fewer confirmations than its chain
@@ -702,6 +719,15 @@ impl ApiArgs {
         let release = self
             .call_workflow_result(config, cli_args, &release_request, request_log_path)
             .await?;
+        let project_id = self
+            .canonical_project_id(config, project, request_log_path)
+            .await?;
+        super::signed_batch::require_requested_active_release(
+            &release.body,
+            &project_id,
+            release_id,
+        )
+        .map_err(&refused)?;
         let environment = super::signed_batch::release_environment(&release.body)?;
         let release_targets =
             super::signed_batch::release_targets(&release.body).map_err(&refused)?;
@@ -1742,6 +1768,9 @@ mod tests {
 
     fn snapshot(assertion_id: &str) -> Value {
         json!({
+            "id": RELEASE,
+            "projectId": PROJECT,
+            "status": "active",
             "environment": "production",
             "configSnapshot": {"contracts": {"a": {
                 "address": "0x0101010101010101010101010101010101010101",
@@ -1798,6 +1827,33 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let err = remove(&mut server, snapshot(AA), removal(59144, AA)).await;
         assert_refused(&err, "59144");
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_refuses_a_release_that_is_not_the_one_requested() {
+        let mut server = mockito::Server::new_async().await;
+        let mut other = snapshot(AA);
+        other["id"] = json!("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        let err = remove(&mut server, other, removal(1, AA)).await;
+        assert_refused(&err, "is not the requested release");
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_refuses_another_projects_release() {
+        let mut server = mockito::Server::new_async().await;
+        let mut other = snapshot(AA);
+        other["projectId"] = json!("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        let err = remove(&mut server, other, removal(1, AA)).await;
+        assert_refused(&err, "is not the requested project");
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_refuses_an_inactive_release() {
+        let mut server = mockito::Server::new_async().await;
+        let mut inactive = snapshot(AA);
+        inactive["status"] = json!("inactive");
+        let err = remove(&mut server, inactive, removal(1, AA)).await;
+        assert_refused(&err, "inactive");
     }
 
     #[tokio::test]

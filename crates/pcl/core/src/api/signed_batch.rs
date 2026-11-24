@@ -146,6 +146,41 @@ fn check_target(
     Ok(())
 }
 
+/// The detail pcl fetched must be the release the confirmation will name,
+/// still active, and owned by the project the operator asked to remove.
+pub(crate) fn require_requested_active_release(
+    release: &Value,
+    project_id: &str,
+    release_id: &str,
+) -> Result<(), String> {
+    let id = release_string(release, &["id"])?;
+    if !id.eq_ignore_ascii_case(release_id) {
+        return Err(format!(
+            "release record id {id} is not the requested release {release_id}"
+        ));
+    }
+    let owner = release_string(release, &["projectId", "project_id"])?;
+    if !owner.eq_ignore_ascii_case(project_id) {
+        return Err(format!(
+            "release record projectId {owner} is not the requested project {project_id}"
+        ));
+    }
+    let status = release_string(release, &["status"])?;
+    if status != "active" {
+        return Err(format!(
+            "release record status is {status}; only an active release can be removed"
+        ));
+    }
+    Ok(())
+}
+
+fn release_string(release: &Value, keys: &[&str]) -> Result<String, String> {
+    keys.iter()
+        .find_map(|key| release.get(*key).and_then(Value::as_str))
+        .map(str::to_owned)
+        .ok_or_else(|| format!("the release record is missing {}", keys[0]))
+}
+
 pub(crate) fn validate_removal_batch(
     platform: &Url,
     chain_id: u64,
@@ -158,8 +193,14 @@ pub(crate) fn validate_removal_batch(
     let targets = removal_targets(assertions)?;
     let mut listed = targets.clone();
     listed.sort_unstable();
+    // `buildRemoveCalldata` emits one call per distinct pair and skips a pair
+    // the snapshot stored twice. The calldata must still contain that one call.
+    if listed.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err("the listed assertions repeat a (contract, assertionId) pair".to_string());
+    }
     let mut held = release.to_vec();
     held.sort_unstable();
+    held.dedup();
     if listed != held {
         return Err(
             "the listed assertions do not match the release record's config snapshot".to_string(),
@@ -590,6 +631,94 @@ mod tests {
             )
             .unwrap_err();
             assert!(reason.contains(ETH_URL), "{url}: {reason}");
+        }
+    }
+
+    #[test]
+    fn a_repeated_snapshot_pair_still_matches_one_removal() {
+        let data = encode_batch(vec![remove_entry(ADOPTER)]);
+        validate_removal_batch(
+            &ETH_URL.parse().unwrap(),
+            1,
+            OracleEnvironment::Production,
+            ETH_PRODUCTION,
+            &data,
+            &listed(ADOPTER),
+            &[(ADOPTER, ASSERTION), (ADOPTER, ASSERTION)],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_repeated_listed_pair_is_refused() {
+        let mut assertions = listed(ADOPTER);
+        assertions.extend(listed(ADOPTER));
+        let err = validate_removal_batch(
+            &ETH_URL.parse().unwrap(),
+            1,
+            OracleEnvironment::Production,
+            ETH_PRODUCTION,
+            &encode_batch(vec![remove_entry(ADOPTER), remove_entry(ADOPTER)]),
+            &assertions,
+            &[(ADOPTER, ASSERTION)],
+        )
+        .unwrap_err();
+        assert!(err.contains("repeat"), "{err}");
+    }
+
+    #[test]
+    fn removal_uses_only_the_requested_active_release() {
+        let body = json!({
+            "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            "projectId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "status": "active",
+        });
+        require_requested_active_release(
+            &body,
+            "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+            "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB",
+        )
+        .unwrap();
+
+        let wrong_id = json!({
+            "id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+            "projectId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "status": "active",
+        });
+        let err = require_requested_active_release(
+            &wrong_id,
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        )
+        .unwrap_err();
+        assert!(err.contains("is not the requested release"), "{err}");
+
+        let wrong_project = json!({
+            "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            "project_id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+            "status": "active",
+        });
+        let err = require_requested_active_release(
+            &wrong_project,
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        )
+        .unwrap_err();
+        assert!(err.contains("is not the requested project"), "{err}");
+
+        for status in ["inactive", "removed"] {
+            let stale = json!({
+                "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "projectId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "status": status,
+            });
+            let err = require_requested_active_release(
+                &stale,
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            )
+            .unwrap_err();
+            assert!(err.contains(status), "{err}");
         }
     }
 
