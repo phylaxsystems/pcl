@@ -1235,9 +1235,9 @@ impl ApiArgs {
     where
         F: Fn(String) -> ApiCommandError,
     {
-        // The list has no revision. Read it again after the details, and
-        // reload once if a release appeared or disappeared in between. A
-        // second change is refused rather than signed against a stale set.
+        // The list has no revision and no order. Read it again after the
+        // details, and reload once if the set of ids changed. A second
+        // membership change is refused rather than signed against a stale set.
         let project_id = self
             .canonical_project_id(config, project, request_log_path)
             .await?;
@@ -1268,7 +1268,7 @@ impl ApiArgs {
                 .active_release_page(config, cli_args, project, request_log_path)
                 .await?;
             let again_ids = super::signed_batch::active_release_ids(&again).map_err(refuse)?;
-            if again_ids == ids {
+            if super::signed_batch::same_active_release_ids(&again_ids, &ids) {
                 return super::signed_batch::bind_handover(&releases).map_err(refuse);
             }
             if restarted {
@@ -2474,6 +2474,42 @@ mod tests {
             third.assert_async().await;
             assert_refused(&err, "changed while their snapshots were loading");
             assert!(!err.to_string().contains("127.0.0.1"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_proceeds_when_the_same_releases_return_reversed() {
+        // The list has no order. A permutation is the same set, so transfer
+        // and acceptance continue to the platform check instead of reloading.
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let first =
+                active_release_list_hits(&mut server, &release_list(["rel-1", "rel-2"]), 1).await;
+            let reversed =
+                active_release_list_hits(&mut server, &release_list(["rel-2", "rel-1"]), 1).await;
+            get_json(
+                &mut server,
+                "/releases/rel-1",
+                release_snapshot("rel-1", "production", &[HELD_A]),
+            )
+            .await;
+            get_json(
+                &mut server,
+                "/releases/rel-2",
+                release_snapshot("rel-2", "production", &[HELD_B]),
+            )
+            .await;
+            let err =
+                send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A, HELD_B])
+                    .await
+                    .unwrap_err();
+            first.assert_async().await;
+            reversed.assert_async().await;
+            assert_refused(&err, "127.0.0.1");
+            assert!(
+                !err.to_string().contains("changed while their snapshots"),
+                "{err}"
+            );
         }
     }
 }

@@ -242,6 +242,14 @@ pub(crate) fn active_release_ids(body: &Value) -> Result<Vec<String>, String> {
     Ok(ids)
 }
 
+/// `projects.listReleases` does not order ids, so a later page of the same
+/// releases can arrive permuted. Membership is the set of ids.
+pub(crate) fn same_active_release_ids(left: &[String], right: &[String]) -> bool {
+    let left = left.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    let right = right.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    left == right
+}
+
 /// Environment and contract set of a fetched release detail. The detail must
 /// be the listed release, owned by this project, and still report `active`.
 /// Identity is checked before any address is read, so a detail for another
@@ -891,6 +899,17 @@ mod tests {
         });
         let err = active_snapshot(id, project, &missing_project).unwrap_err();
         assert!(err.contains("missing projectId"), "{err}");
+    }
+
+    #[test]
+    fn the_same_active_release_ids_match_in_any_order() {
+        let forward = vec!["rel-1".to_string(), "rel-2".to_string()];
+        let reverse = vec!["rel-2".to_string(), "rel-1".to_string()];
+        assert!(same_active_release_ids(&forward, &reverse));
+        let added = vec!["rel-1".to_string(), "rel-3".to_string()];
+        assert!(!same_active_release_ids(&forward, &added));
+        let dropped = vec!["rel-1".to_string()];
+        assert!(!same_active_release_ids(&forward, &dropped));
     }
 
     #[test]
