@@ -136,6 +136,23 @@ pub(crate) fn require_requested_active_release(
     project_id: &str,
     release_id: &str,
 ) -> Result<(), String> {
+    require_release_identity(release, project_id, release_id)?;
+    let status = release_string(release, &["status"])?;
+    if status != "active" {
+        return Err(format!(
+            "release record status is {status}; only an active release can be removed"
+        ));
+    }
+    Ok(())
+}
+
+/// The detail must be the release that was requested and belong to the
+/// project whose handover or removal is being signed.
+fn require_release_identity(
+    release: &Value,
+    project_id: &str,
+    release_id: &str,
+) -> Result<(), String> {
     let id = release_string(release, &["id"])?;
     if !id.eq_ignore_ascii_case(release_id) {
         return Err(format!(
@@ -146,12 +163,6 @@ pub(crate) fn require_requested_active_release(
     if !owner.eq_ignore_ascii_case(project_id) {
         return Err(format!(
             "release record projectId {owner} is not the requested project {project_id}"
-        ));
-    }
-    let status = release_string(release, &["status"])?;
-    if status != "active" {
-        return Err(format!(
-            "release record status is {status}; only an active release can be removed"
         ));
     }
     Ok(())
@@ -232,12 +243,15 @@ pub(crate) fn active_release_ids(body: &Value) -> Result<Vec<String>, String> {
 }
 
 /// Environment and contract set of a fetched release detail. The detail must
-/// itself still report `active`: the release may have been replaced between
-/// the list and this fetch.
+/// be the listed release, owned by this project, and still report `active`.
+/// Identity is checked before any address is read, so a detail for another
+/// release or project cannot supply the handover set.
 pub(crate) fn active_snapshot(
     id: &str,
+    project_id: &str,
     release: &Value,
 ) -> Result<(OracleEnvironment, BTreeSet<Address>), String> {
+    require_release_identity(release, project_id, id)?;
     require_active(release, id)?;
     Ok((snapshot_environment(release)?, snapshot_addresses(release)?))
 }
@@ -833,6 +847,50 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("repeat"), "{err}");
+    }
+
+    #[test]
+    fn handover_snapshot_rejects_a_different_release_or_project_before_its_contracts() {
+        let project = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+        let body = json!({
+            "id": id.to_ascii_uppercase(),
+            "project_id": project.to_ascii_uppercase(),
+            "status": "active",
+            "environment": "staging",
+            "configSnapshot": {"contracts": {"a": {"address": ADOPTER.to_string()}}},
+        });
+        let (environment, contracts) = active_snapshot(id, project, &body).unwrap();
+        assert_eq!(environment, OracleEnvironment::Staging);
+        assert_eq!(contracts, BTreeSet::from([ADOPTER]));
+
+        let other_release = json!({
+            "id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+            "projectId": project,
+            "status": "active",
+            "configSnapshot": {"contracts": {"a": {"address": ADOPTER.to_string()}}},
+        });
+        let err = active_snapshot(id, project, &other_release).unwrap_err();
+        assert!(err.contains("is not the requested release"), "{err}");
+        assert!(!err.contains("address"), "{err}");
+
+        let other_project = json!({
+            "id": id,
+            "projectId": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+            "status": "active",
+            "configSnapshot": {"contracts": {"a": {"address": "not-read"}}},
+        });
+        let err = active_snapshot(id, project, &other_project).unwrap_err();
+        assert!(err.contains("is not the requested project"), "{err}");
+        assert!(!err.contains("not-read"), "{err}");
+
+        let missing_project = json!({
+            "id": id,
+            "status": "active",
+            "environment": "production",
+        });
+        let err = active_snapshot(id, project, &missing_project).unwrap_err();
+        assert!(err.contains("missing projectId"), "{err}");
     }
 
     #[test]

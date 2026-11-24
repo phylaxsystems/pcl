@@ -1235,7 +1235,61 @@ impl ApiArgs {
     where
         F: Fn(String) -> ApiCommandError,
     {
+        // The list has no revision. Read it again after the details, and
+        // reload once if a release appeared or disappeared in between. A
+        // second change is refused rather than signed against a stale set.
+        let project_id = self
+            .canonical_project_id(config, project, request_log_path)
+            .await?;
         progress(cli_args, "Fetching active releases");
+        let mut listed = self
+            .active_release_page(config, cli_args, project, request_log_path)
+            .await?;
+        let mut restarted = false;
+        loop {
+            let ids = super::signed_batch::active_release_ids(&listed).map_err(refuse)?;
+            let mut releases = Vec::with_capacity(ids.len());
+            for id in &ids {
+                let request = get_operation(
+                    "projects.getRelease",
+                    project,
+                    Some(id.as_str()),
+                    Vec::new(),
+                )?;
+                let release = self
+                    .call_workflow_result(config, cli_args, &request, request_log_path)
+                    .await?;
+                releases.push(
+                    super::signed_batch::active_snapshot(id, &project_id, &release.body)
+                        .map_err(refuse)?,
+                );
+            }
+            let again = self
+                .active_release_page(config, cli_args, project, request_log_path)
+                .await?;
+            let again_ids = super::signed_batch::active_release_ids(&again).map_err(refuse)?;
+            if again_ids == ids {
+                return super::signed_batch::bind_handover(&releases).map_err(refuse);
+            }
+            if restarted {
+                return Err(refuse(
+                    "active releases changed while their snapshots were loading; retry the handover"
+                        .to_string(),
+                ));
+            }
+            progress(cli_args, "Active releases changed; loading them again");
+            restarted = true;
+            listed = again;
+        }
+    }
+
+    async fn active_release_page(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        project: &str,
+        request_log_path: &Path,
+    ) -> Result<Value, ApiCommandError> {
         let request = get_operation(
             "projects.listReleases",
             project,
@@ -1251,17 +1305,7 @@ impl ApiArgs {
         let listed = self
             .call_workflow_result(config, cli_args, &request, request_log_path)
             .await?;
-        let ids = super::signed_batch::active_release_ids(&listed.body).map_err(refuse)?;
-        let mut releases = Vec::with_capacity(ids.len());
-        for id in ids {
-            let request = get_operation("projects.getRelease", project, Some(&id), Vec::new())?;
-            let release = self
-                .call_workflow_result(config, cli_args, &request, request_log_path)
-                .await?;
-            releases
-                .push(super::signed_batch::active_snapshot(&id, &release.body).map_err(refuse)?);
-        }
-        super::signed_batch::bind_handover(&releases).map_err(refuse)
+        Ok(listed.body)
     }
 }
 
@@ -1776,7 +1820,7 @@ mod tests {
         get_json(
             server,
             "/releases/rel-1",
-            release_snapshot("production", &[HELD_A]),
+            release_snapshot("rel-1", "production", &[HELD_A]),
         )
         .await;
         get_json(server, "/protocol-manager/accept-calldata", body).await;
@@ -1947,7 +1991,7 @@ mod tests {
         get_json(
             &mut server,
             "/releases/rel-1",
-            release_snapshot("production", &[HELD_A]),
+            release_snapshot("rel-1", "production", &[HELD_A]),
         )
         .await;
         // ERC20 transfer(attacker, balance) aimed at a token contract.
@@ -1994,12 +2038,14 @@ mod tests {
             .collect()
     }
 
-    fn release_snapshot(environment: &str, addresses: &[&str]) -> Value {
+    fn release_snapshot(id: &str, environment: &str, addresses: &[&str]) -> Value {
         let mut contracts = serde_json::Map::new();
         for (index, address) in addresses.iter().enumerate() {
             contracts.insert(format!("c{index}"), json!({ "address": address }));
         }
         json!({
+            "id": id,
+            "projectId": PROJECT,
             "status": "active",
             "environment": environment,
             "configSnapshot": { "contracts": contracts },
@@ -2034,7 +2080,7 @@ mod tests {
             get_json(
                 server,
                 &format!("/releases/{id}"),
-                release_snapshot(environment, addresses),
+                release_snapshot(id, environment, addresses),
             )
             .await;
         }
@@ -2042,7 +2088,17 @@ mod tests {
     }
 
     /// Serves the release list only for the one-page active query pcl sends.
+    /// A stable list is read twice: once to choose the details, then again
+    /// before signing.
     async fn active_release_list(server: &mut mockito::Server, body: &Value) -> mockito::Mock {
+        active_release_list_hits(server, body, 2).await
+    }
+
+    async fn active_release_list_hits(
+        server: &mut mockito::Server,
+        body: &Value,
+        hits: usize,
+    ) -> mockito::Mock {
         server
             .mock(
                 "GET",
@@ -2055,6 +2111,7 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(body.to_string())
+            .expect(hits)
             .create_async()
             .await
     }
@@ -2270,7 +2327,7 @@ mod tests {
             for accept in [false, true] {
                 let mut server = mockito::Server::new_async().await;
                 active_release_list(&mut server, &release_list(["rel-1"])).await;
-                let mut detail = release_snapshot("production", &[HELD_A]);
+                let mut detail = release_snapshot("rel-1", "production", &[HELD_A]);
                 match &status {
                     Some(status) => detail["status"] = status.clone(),
                     None => drop(detail.as_object_mut().unwrap().remove("status")),
@@ -2291,9 +2348,12 @@ mod tests {
             for accept in [false, true] {
                 let mut server = mockito::Server::new_async().await;
                 let ids: Vec<String> = (0..listed).map(|index| format!("rel-{index}")).collect();
-                let list =
-                    active_release_list(&mut server, &release_list(ids.iter().map(String::as_str)))
-                        .await;
+                let list = active_release_list_hits(
+                    &mut server,
+                    &release_list(ids.iter().map(String::as_str)),
+                    if fetched == 0 { 1 } else { 2 },
+                )
+                .await;
                 let details = server
                     .mock(
                         "GET",
@@ -2301,7 +2361,12 @@ mod tests {
                     )
                     .with_status(200)
                     .with_header("content-type", "application/json")
-                    .with_body(release_snapshot("production", &[HELD_A]).to_string())
+                    .with_body_from_request(|request| {
+                        let id = request.path().rsplit('/').next().unwrap_or("rel");
+                        release_snapshot(id, "production", &[HELD_A])
+                            .to_string()
+                            .into_bytes()
+                    })
                     .expect(fetched)
                     .create_async()
                     .await;
@@ -2316,6 +2381,99 @@ mod tests {
                     assert_refused(&err, "127.0.0.1");
                 }
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_detail_for_a_different_release() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            active_release_list(&mut server, &release_list(["rel-1"])).await;
+            let mut detail = release_snapshot("rel-1", "production", &[HELD_A]);
+            detail["id"] = json!("rel-other");
+            get_json(&mut server, "/releases/rel-1", detail).await;
+            let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                .await
+                .unwrap_err();
+            assert_refused(&err, "is not the requested release");
+            assert!(!err.to_string().contains("127.0.0.1"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_another_projects_active_release() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            active_release_list(&mut server, &release_list(["rel-1"])).await;
+            let mut detail = release_snapshot("rel-1", "production", &[HELD_A]);
+            detail["projectId"] = json!("dddddddd-dddd-dddd-dddd-dddddddddddd");
+            get_json(&mut server, "/releases/rel-1", detail).await;
+            let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                .await
+                .unwrap_err();
+            assert_refused(&err, "is not the requested project");
+            assert!(!err.to_string().contains("127.0.0.1"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_reloads_when_another_environment_becomes_active() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let first = active_release_list_hits(&mut server, &release_list(["rel-1"]), 1).await;
+            let rest =
+                active_release_list_hits(&mut server, &release_list(["rel-1", "rel-2"]), 2).await;
+            get_json(
+                &mut server,
+                "/releases/rel-1",
+                release_snapshot("rel-1", "production", &[HELD_A]),
+            )
+            .await;
+            get_json(
+                &mut server,
+                "/releases/rel-2",
+                release_snapshot("rel-2", "staging", &[HELD_B]),
+            )
+            .await;
+            let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                .await
+                .unwrap_err();
+            first.assert_async().await;
+            rest.assert_async().await;
+            assert_refused(&err, "production");
+            assert!(err.to_string().contains("staging"), "{err}");
+            assert!(!err.to_string().contains("127.0.0.1"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_when_active_releases_keep_changing() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let first = active_release_list_hits(&mut server, &release_list(["rel-1"]), 1).await;
+            let second =
+                active_release_list_hits(&mut server, &release_list(["rel-1", "rel-2"]), 1).await;
+            let third = active_release_list_hits(&mut server, &release_list(["rel-1"]), 1).await;
+            get_json(
+                &mut server,
+                "/releases/rel-1",
+                release_snapshot("rel-1", "production", &[HELD_A]),
+            )
+            .await;
+            get_json(
+                &mut server,
+                "/releases/rel-2",
+                release_snapshot("rel-2", "staging", &[HELD_B]),
+            )
+            .await;
+            let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                .await
+                .unwrap_err();
+            first.assert_async().await;
+            second.assert_async().await;
+            third.assert_async().await;
+            assert_refused(&err, "changed while their snapshots were loading");
+            assert!(!err.to_string().contains("127.0.0.1"), "{err}");
         }
     }
 }
