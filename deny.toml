@@ -17,4 +17,7 @@ ignore = [
     { id = "RUSTSEC-2026-0387", reason = "Transitive crypto-bigint 0.5.5 through Foundry/Alloy cryptography. The fix is 0.7.6, a major bump those crates have not taken." },
     { id = "RUSTSEC-2026-0429", reason = "Transitive zip 4.6.1 through Phoundry/Foundry -> soldeer-core and svm-rs. The fix is zip >=9.0.0, outside upstream dependency requirements. Remove with the other zip ignores." },
     { id = "RUSTSEC-2026-0441", reason = "Transitive pin-utils 0.1.0 through Foundry wallets -> alloy-signer-ledger -> coins-ledger 0.13 -> nix 0.26.4. Unmaintained, patched = [], so no version bump clears it. Remove when coins-ledger drops that nix." },
+    { id = "RUSTSEC-2026-0543", reason = "Maintenance notice with no patched release. PCL uses chrono for timestamps and serialization, and pinned Phoundry and its dependencies also use it. Remove after those consumers migrate." },
+    { id = "RUSTSEC-2026-0545", reason = "Phoundry's soldeer-core/zip-extract and svm-rs pin zip 4.6.1 and open entries without passwords. The advisory applies to AES password-based reads. Remove when those upstreams upgrade zip." },
+    { id = "RUSTSEC-2026-0548", reason = "Phoundry's soldeer-core/zip-extract and svm-rs pin zip 4.6.1 and extract via ZipArchive. The advisory applies to streaming extraction using local-header names. Remove when those upstreams upgrade zip." },
 ]
