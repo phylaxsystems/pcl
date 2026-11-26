@@ -38,6 +38,12 @@ pub async fn ensure_fresh_auth(
     auth_url: &url::Url,
     cli_args: &CliArgs,
 ) -> Result<(), ClientBuildError> {
+    if crate::api_token::header(auth_url)
+        .map_err(ClientBuildError::PlatformMismatch)?
+        .is_some()
+    {
+        return Ok(());
+    }
     let auth = config.auth.as_ref().ok_or(ClientBuildError::NoAuthToken)?;
     // Never post the stored refresh token to a platform that did not issue it.
     crate::auth::ensure_credential_platform(config, auth_url)
@@ -68,25 +74,32 @@ pub fn authenticated_client(
     config: &CliConfig,
     api_url: &url::Url,
 ) -> Result<GeneratedClient, ClientBuildError> {
-    // Never attach the stored bearer token to a platform that did not issue it.
-    crate::auth::ensure_credential_platform(config, api_url)
-        .map_err(ClientBuildError::PlatformMismatch)?;
-    let base_url = api_base_url(api_url);
-
+    let injected = crate::api_token::header(api_url).map_err(ClientBuildError::PlatformMismatch)?;
+    let (header, redirect) = if let Some(header) = injected {
+        (header, reqwest::redirect::Policy::none())
+    } else {
+        crate::auth::ensure_credential_platform(config, api_url)
+            .map_err(ClientBuildError::PlatformMismatch)?;
+        (
+            authorization_header(config)?,
+            reqwest::redirect::Policy::default(),
+        )
+    };
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(
-        reqwest::header::AUTHORIZATION,
-        authorization_header(config)?,
-    );
+    headers.insert(reqwest::header::AUTHORIZATION, header);
 
     let http_client = reqwest::Client::builder()
+        .redirect(redirect)
         .default_headers(headers)
         .build()
         .map_err(|e| {
             ClientBuildError::InvalidConfig(format!("Failed to build HTTP client: {e}"))
         })?;
 
-    Ok(GeneratedClient::new_with_client(&base_url, http_client))
+    Ok(GeneratedClient::new_with_client(
+        &api_base_url(api_url),
+        http_client,
+    ))
 }
 
 pub fn authorization_header(

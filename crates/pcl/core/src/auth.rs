@@ -262,6 +262,9 @@ impl AuthCommand {
     /// resolved before it runs. `status` reads only local config, and
     /// `logout --local` deliberately skips the remote call.
     pub fn needs_platform_url(&self) -> bool {
+        if crate::api_token::configured() && matches!(self.command, AuthSubcommands::Status) {
+            return true;
+        }
         !matches!(
             self.command,
             AuthSubcommands::Status | AuthSubcommands::Logout { local: true }
@@ -297,6 +300,20 @@ impl AuthCommand {
         cli_args: &CliArgs,
         json_output: bool,
     ) -> Result<(), AuthError> {
+        if crate::api_token::configured() {
+            if matches!(
+                self.command,
+                AuthSubcommands::Logout { .. } | AuthSubcommands::Poll { .. }
+            ) {
+                return Err(AuthError::ApiToken("Revoke injected tokens through the platform API; unset PCL_API_TOKEN_FILE for session commands".into()));
+            }
+            let data = crate::api_token::status(&self.effective_auth_url()).await?;
+            Self::print_output(
+                &json!({ "status": "ok", "data": data, "next_actions": [] }),
+                json_output,
+            )?;
+            return Ok(());
+        }
         match &self.command {
             AuthSubcommands::Ensure { force } => {
                 self.ensure(config, cli_args, json_output, *force).await

@@ -962,6 +962,14 @@ fn auth_error_envelope(err: &AuthError) -> Value {
     }
 
     match err {
+        AuthError::ApiToken(_) => {
+            with_envelope_metadata(simple_error_value(
+                "auth.api_token_invalid",
+                &err.to_string(),
+                false,
+                &[],
+            ))
+        }
         AuthError::StoredTokenExpired {
             user,
             expires_at,
