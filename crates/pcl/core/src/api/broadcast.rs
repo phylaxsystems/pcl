@@ -130,8 +130,6 @@ struct TransferCalldataResponse {
     calldata: Option<Bytes>,
     #[serde(default)]
     contracts: Vec<BoundContractCall>,
-    #[serde(default)]
-    total_contracts: Option<u64>,
     #[serde(default, alias = "requiredConfirmations")]
     required_confirmations: Option<u64>,
 }
@@ -209,6 +207,13 @@ async fn resolve_signer(
     cli_args: &CliArgs,
 ) -> Result<PrivateKeySigner, ApiCommandError> {
     Ok(wallet.signer(cli_args.human_output()).await?)
+}
+
+/// The transfer prompt counts the contracts just checked against the active
+/// release. The server's optional `total_contracts` defaults to zero and is
+/// not the count the operator confirms.
+fn transfer_prompt(new_manager: &str, verified_contracts: usize) -> String {
+    format!("transfer protocol manager to {new_manager} ({verified_contracts} contract(s))")
 }
 
 /// Interactive guard before spending gas. Machine mode treats `--broadcast`
@@ -1054,10 +1059,7 @@ impl ApiArgs {
             signer.address(),
             chain_id,
             to,
-            &format!(
-                "transfer protocol manager to {new_manager} ({} contract(s))",
-                calldata.total_contracts.unwrap_or_default()
-            ),
+            &transfer_prompt(&new_manager, contracts.len()),
         )?;
 
         progress(cli_args, "Broadcasting manager transfer transaction");
@@ -1440,6 +1442,42 @@ mod tests {
         assert_eq!(parsed.mode, TransferMode::Direct);
         assert!(parsed.to.is_none());
         assert!(parsed.calldata.is_none());
+    }
+
+    #[test]
+    fn transfer_prompt_counts_the_verified_list_when_the_server_total_is_zero() {
+        let body = json!({
+            "mode": "onchain",
+            "chain_id": 84532,
+            "to": "0x0101010101010101010101010101010101010101",
+            "calldata": "0xdeadbeef",
+            "contracts": [
+                { "address": "0x0101010101010101010101010101010101010101", "calldata": "0x01" },
+                { "address": "0x0202020202020202020202020202020202020202", "calldata": "0x02" }
+            ],
+            "total_contracts": 0
+        });
+        let parsed: TransferCalldataResponse = parse_response("transfer-calldata", &body).unwrap();
+        assert_eq!(
+            transfer_prompt(
+                "0x1111111111111111111111111111111111111111",
+                parsed.contracts.len()
+            ),
+            "transfer protocol manager to 0x1111111111111111111111111111111111111111 (2 contract(s))"
+        );
+
+        let omitted = json!({
+            "mode": "onchain",
+            "contracts": [
+                { "address": "0x0101010101010101010101010101010101010101", "calldata": "0x01" }
+            ]
+        });
+        let parsed: TransferCalldataResponse =
+            parse_response("transfer-calldata", &omitted).unwrap();
+        assert_eq!(
+            transfer_prompt("0xabc", parsed.contracts.len()),
+            "transfer protocol manager to 0xabc (1 contract(s))"
+        );
     }
 
     #[test]
