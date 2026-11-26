@@ -26,6 +26,10 @@ use serde_json::Value;
 use foundry_compilers::artifacts::{
     BytecodeHash,
     MetadataSources,
+    remappings::{
+        RelativeRemapping,
+        Remapping,
+    },
 };
 use foundry_config::find_project_root;
 use std::{
@@ -37,6 +41,7 @@ use std::{
         Path,
         PathBuf,
     },
+    str::FromStr,
 };
 
 use crate::{
@@ -205,7 +210,7 @@ impl BuildAndFlattenArgs {
             Path::new(rel_source_path),
         )?;
         let path = root.join(rel_source_path);
-        let flattened = self.flatten_verified(&root, &metadata.sources, &path)?;
+        let flattened = self.flatten_verified(&root, &metadata.sources, &path, &settings)?;
         let output = BuildAndFlatOutput::new(
             solc_version,
             flattened,
@@ -280,20 +285,23 @@ impl BuildAndFlattenArgs {
     /// The flattener reads the target and its imports from disk. The check runs
     /// before that read and again after it, so a file that changed once
     /// compilation finished is not uploaded with the bytecode just verified.
+    /// Imports are resolved with the remappings captured in the artifact, so a
+    /// later `foundry.toml` remapping cannot select a different file.
     fn flatten_verified(
         &self,
         root: &Path,
         sources: &MetadataSources,
         path: &PathBuf,
+        settings: &Value,
     ) -> Result<String, Box<PhoundryError>> {
         verify_compiled_sources(root, sources)?;
-        let flattened = self.flatten(path)?;
+        let flattened = self.flatten(path, settings)?;
         verify_compiled_sources(root, sources)?;
         Ok(flattened)
     }
 
-    /// Flattens the contract source code.
-    fn flatten(&self, path: &PathBuf) -> Result<String, Box<PhoundryError>> {
+    /// Flattens the contract source code with the artifact's remappings.
+    fn flatten(&self, path: &PathBuf, settings: &Value) -> Result<String, Box<PhoundryError>> {
         let build = BuildOpts {
             project_paths: ProjectPathOpts {
                 root: self.root.clone(),
@@ -302,7 +310,9 @@ impl BuildAndFlattenArgs {
             ..Default::default()
         };
 
-        let config = build.load_config()?;
+        let mut config = build.load_config()?;
+        config.remappings = compiler_remappings(settings, &config.root)?;
+        config.auto_detect_remappings = false;
         let project = config
             .ephemeral_project()
             .map_err(|e| Box::new(PhoundryError::SolcError(e)))?;
@@ -327,6 +337,40 @@ impl BuildAndFlattenArgs {
 
         Ok(flattened_source)
     }
+}
+
+/// Remappings solc used for this artifact, resolved against the project root.
+///
+/// An empty list means solc was given no remappings. A missing or unreadable
+/// list fails closed, so flattening does not reload `foundry.toml`.
+fn compiler_remappings(
+    settings: &Value,
+    root: &Path,
+) -> Result<Vec<RelativeRemapping>, Box<PhoundryError>> {
+    let values = settings
+        .get("remappings")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            Box::new(PhoundryError::InvalidForgeOutput(
+                "artifact metadata has no remappings",
+            ))
+        })?;
+    values
+        .iter()
+        .map(|value| {
+            let raw = value.as_str().ok_or_else(|| {
+                Box::new(PhoundryError::InvalidForgeOutput(
+                    "artifact metadata remapping is not a string",
+                ))
+            })?;
+            let parsed = Remapping::from_str(raw).map_err(|_| {
+                Box::new(PhoundryError::InvalidForgeOutput(
+                    "artifact metadata remapping is invalid",
+                ))
+            })?;
+            Ok(RelativeRemapping::new(parsed, root))
+        })
+        .collect()
 }
 
 fn select_contract_path(
@@ -716,6 +760,80 @@ mod tests {
             message.contains("assertions/src/AWeak.a.sol")
                 && message.contains("assertions/src/ZStrong.a.sol"),
             "{message}"
+        );
+    }
+
+    #[test]
+    fn changed_remapping_flattens_the_compiled_import() {
+        let project = tempfile::tempdir().expect("temp project");
+        let root = project.path();
+        let original_lib = root.join("lib/original/Lib.sol");
+        let swapped_lib = root.join("lib/swapped/Lib.sol");
+        for path in ["src", "lib/original", "lib/swapped"] {
+            std::fs::create_dir_all(root.join(path)).expect("project dir");
+        }
+        std::fs::write(
+            root.join("foundry.toml"),
+            "[profile.default]\nsrc = \"src\"\nout = \"out\"\nlibs = [\"lib\"]\nsolc = \"0.8.28\"\nevm_version = \"cancun\"\noptimizer = false\nauto_detect_remappings = false\nremappings = [\"dep/=lib/original/\"]\n",
+        )
+        .expect("foundry.toml");
+        std::fs::write(
+            root.join("src/Guard.sol"),
+            "pragma solidity 0.8.28; import \"dep/Lib.sol\"; contract Guard { function policy() external pure returns (uint256) { return Lib.value(); } }\n",
+        )
+        .expect("guard");
+        let lib_source = |marker: &str| {
+            format!(
+                "pragma solidity 0.8.28; library Lib {{ function value() internal pure returns (uint256) {{ return {marker}; }} }}\n"
+            )
+        };
+        std::fs::write(&original_lib, lib_source("999")).expect("original lib");
+        std::fs::write(&swapped_lib, lib_source("1")).expect("swapped lib");
+        let original_bytes = std::fs::read(&original_lib).expect("read original");
+        let swapped_bytes = std::fs::read(&swapped_lib).expect("read swapped");
+
+        let args = BuildAndFlattenArgs {
+            root: Some(root.to_path_buf()),
+            assertion_contract: "src/Guard.sol:Guard".to_string(),
+            contracts: PathBuf::from("src"),
+        };
+        let build = args.build().expect("compile");
+        let project_root = args.project_root().expect("root");
+        let info = ContractInfo::new(&args.assertion_contract);
+        let contract_path =
+            select_contract_path(&build, &info.name, info.path.as_deref(), &project_root)
+                .expect("artifact path");
+        let artifact = build
+            .find(contract_path.as_path(), &info.name)
+            .expect("artifact");
+        let metadata = artifact.metadata.clone().expect("metadata");
+        let settings = serde_json::to_value(&metadata.settings).expect("settings");
+        let rel_source_path = metadata
+            .settings
+            .compilation_target
+            .iter()
+            .find_map(|(path, name)| (name == &info.name).then_some(path.clone()))
+            .expect("compilation target");
+        let source_path = project_root.join(&rel_source_path);
+
+        let toml_path = root.join("foundry.toml");
+        let toml = std::fs::read_to_string(&toml_path).expect("read toml");
+        let swapped_toml = toml.replace("dep/=lib/original/", "dep/=lib/swapped/");
+        assert_ne!(toml, swapped_toml);
+        std::fs::write(&toml_path, swapped_toml).expect("rewrite remapping");
+
+        let flattened = args
+            .flatten_verified(&project_root, &metadata.sources, &source_path, &settings)
+            .expect("flatten the compiled import");
+        assert!(flattened.contains("return 999"), "{flattened}");
+        assert!(!flattened.contains("return 1;"), "{flattened}");
+        assert_eq!(
+            std::fs::read(&original_lib).expect("original intact"),
+            original_bytes
+        );
+        assert_eq!(
+            std::fs::read(&swapped_lib).expect("swapped intact"),
+            swapped_bytes
         );
     }
 
