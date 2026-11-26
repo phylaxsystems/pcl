@@ -389,7 +389,9 @@ fn index_reviewed_release(diff: &ReleaseDiff) -> ReviewedRelease<'_> {
                     .map(String::as_str),
             };
             match assertion.change_type {
-                AssertionChangeType::Added => {
+                // Unchanged rows stay in the desired target. The chain can
+                // still be missing one, and deploy-calldata then adds it back.
+                AssertionChangeType::Added | AssertionChangeType::Unchanged => {
                     if let Some(id) = identity.assertion_id {
                         reviewed
                             .adds
@@ -423,7 +425,6 @@ fn index_reviewed_release(diff: &ReleaseDiff) -> ReviewedRelease<'_> {
                             .push(identity);
                     }
                 }
-                AssertionChangeType::Unchanged => {}
             }
         }
     }
@@ -2098,21 +2099,112 @@ mod tests {
                 vec![REMOVE],
             ),
         ];
+        // The decoded calls are members of this fixture. A field mismatch
+        // has to fail the operation check, not release membership.
+        let diff = fixture_reviewed_diff();
         for (name, operations, calldata) in cases {
             match parsed_deploy(&operations, &calldata) {
                 Err(err) => assert_deploy_calldata_rejected(&Err(err), name),
                 Ok(response) => {
-                    let diff = empty_reviewed_diff();
-                    assert_deploy_calldata_rejected(
+                    let expected = match name {
+                        "kind" | "adopter" | "assertion id" | "verifier" | "add as remove" => {
+                            "does not match its calldata"
+                        }
+                        "unknown selector" | "truncated" | "trailing byte"
+                        | "dirty address word" => "not a known StateOracle deploy call",
+                        "no operations" | "length" => "does not cover every calldata entry",
+                        other => panic!("unexpected decoded case {other}"),
+                    };
+                    assert_unshowable_reason(
                         &ensure_deploy_operations_match(&response, &diff),
                         name,
+                        expected,
                     );
-                    assert_deploy_calldata_rejected(
-                        &release_deploy_confirmation("rel-1", &response, &diff).map(|_| ()),
+                    assert_unshowable_reason(
+                        &release_deploy_confirmation("rel-1", &response, &diff).map(|_summary| ()),
                         name,
+                        expected,
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn release_deploy_confirmation_rejects_a_call_missing_from_the_reviewed_diff() {
+        let operations = json!([assertion_op("removeAssertion", ADOPTER, REMOVED_ID)]);
+        let calldata = [REMOVE];
+        // The same decoded call is accepted when the fixture names it.
+        deploy_confirmation(&operations, &calldata, &fixture_reviewed_diff())
+            .expect("reviewed remove");
+        assert_unshowable(
+            &deploy_confirmation(&operations, &calldata, &empty_reviewed_diff()),
+            "not in the reviewed release",
+        );
+    }
+
+    #[test]
+    fn release_deploy_restores_an_unchanged_assertion_missing_on_chain() {
+        // The release keeps A and only renames the contract, so the diff
+        // labels A unchanged. The chain is missing A, so deploy-calldata
+        // adds it back.
+        let diff: crate::diff::ReleaseDiff = serde_json::from_value(json!({
+            "contracts": {
+                "guard": {
+                    "address": ADOPTER,
+                    "name": "Guard Protocol",
+                    "changeType": "modified",
+                    "metadataChanges": {
+                        "name": { "from": "Guard", "to": "Guard Protocol" }
+                    },
+                    "assertions": [{
+                        "file": "Guard.sol",
+                        "args": ["100"],
+                        "changeType": "unchanged",
+                        "assertionId": ADDED_ID,
+                        "previousAssertionId": null,
+                        "compilerVersionChange": null
+                    }]
+                }
+            },
+            "summary": {
+                "contracts": { "added": 0, "removed": 0, "modified": 1, "unchanged": 0 },
+                "assertions": { "added": 0, "removed": 0, "modified": 0, "unchanged": 1 }
+            }
+        }))
+        .unwrap();
+        let text = deploy_confirmation(
+            &json!([assertion_op("addAssertion", ADOPTER, ADDED_ID)]),
+            &[ADD_0_2_0],
+            &diff,
+        )
+        .unwrap();
+        assert!(
+            text.contains(&format!("    assertion: {ADDED_ID}\n")),
+            "{text}"
+        );
+        assert!(text.contains("\n      100"), "{text}");
+
+        let outside = deploy_confirmation(
+            &json!([assertion_op("removeAssertion", ADOPTER, REMOVED_ID)]),
+            &[REMOVE],
+            &diff,
+        );
+        assert_unshowable(&outside, "not in the reviewed release");
+    }
+
+    fn assert_unshowable_reason(result: &Result<(), ApiCommandError>, name: &str, reason: &str) {
+        match result {
+            Err(ApiCommandError::UnexpectedResponse {
+                endpoint: "deploy-calldata",
+                reason: actual,
+            }) => {
+                assert!(
+                    actual.contains(reason),
+                    "{name}: expected {reason:?} in {actual}"
+                );
+            }
+            other => panic!("{name}: {other:?}"),
         }
     }
 
