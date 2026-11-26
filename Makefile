@@ -1,6 +1,10 @@
-.PHONY: ci fmt-check clippy full-check release-check test doc diff-check agent-smoke audit regenerate regenerate-pinned regenerate-dev
+.PHONY: ci zip-policy fmt-check clippy full-check release-check test doc diff-check agent-smoke audit regenerate regenerate-pinned regenerate-dev
 
-ci: fmt-check clippy full-check release-check test doc agent-smoke diff-check
+ci: zip-policy audit fmt-check clippy full-check release-check test doc agent-smoke diff-check
+
+zip-policy:
+	uv run --python 3.12 python -m unittest discover -s scripts -p 'test_zip_policy.py'
+	uv run --python 3.12 python scripts/check-zip-policy.py
 
 fmt-check:
 	cargo fmt --all -- --check
@@ -28,7 +32,7 @@ agent-smoke:
 	PCL_AUTH_NO_BROWSER=1 scripts/agent-smoke.sh
 
 audit:
-	cargo deny --all-features check advisories
+	cargo deny --locked --all-features check advisories
 
 # Spec the committed client was generated from: credible-layer-dapp
 # packages/dapp-api/openapi.json (OpenAPI 24.0.0). Bump both together.

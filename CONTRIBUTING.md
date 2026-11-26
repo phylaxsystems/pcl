@@ -4,13 +4,15 @@ This repository is a Rust workspace for the PCL CLI, its core library, the Phoun
 
 ## Local Checks
 
+Install `uv` and `cargo-deny` alongside the pinned Rust toolchain (`cargo install cargo-deny --locked`). The ZIP policy uses Python 3.12 through `uv`, which installs that interpreter when needed.
+
 Run the full local gate before opening or updating a PR:
 
 ```bash
 make ci
 ```
 
-That runs formatting, strict clippy, all workspace tests with browser auth disabled, docs, and whitespace checks. Use the narrower targets while iterating:
+That runs the ZIP lockfile policy, locked advisory audit, formatting, strict clippy, full-feature and release checks, all workspace tests with browser auth disabled, docs, the agent smoke test, and whitespace checks. Use the narrower targets while iterating:
 
 ```bash
 make fmt-check
@@ -18,6 +20,7 @@ make clippy
 make test
 make doc
 make audit
+make zip-policy
 ```
 
 Auth-related tests should run with `PCL_AUTH_NO_BROWSER=1`; `make test` already sets it.
