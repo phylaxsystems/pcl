@@ -208,8 +208,8 @@ impl BuildAndFlattenArgs {
         Ok(output)
     }
 
-    /// Selects the artifact declaring the contract in `source`; a bare file name lives in the
-    /// contracts directory.
+    /// Selects the artifact declaring the contract in `source`. A bare file name is tried at
+    /// the root, then in the contracts directory.
     fn select<'a>(
         &self,
         build: &'a ProjectCompileOutput,
@@ -217,13 +217,10 @@ impl BuildAndFlattenArgs {
         let name = &self.assertion_contract;
         let source = self.source.as_deref().unwrap_or_else(|| Path::new(name));
         let root = self.project_root()?;
-        let mut candidates = vec![
-            if source.parent().is_some_and(|p| p.as_os_str().is_empty()) {
-                root.join(&self.contracts).join(source)
-            } else {
-                root.join(source)
-            },
-        ];
+        let mut candidates = vec![root.join(source)];
+        if source.parent().is_some_and(|p| p.as_os_str().is_empty()) {
+            candidates.push(root.join(&self.contracts).join(source));
+        }
         let mut matches: Vec<_> = build
             .artifact_ids()
             .filter(|(id, _)| &id.name == name)
@@ -842,6 +839,23 @@ contract Vault is TestContract {}"#,
         assert!(missing.to_string().contains("src/Typo.sol"), "{missing}");
         // Without a file, lookup stays by name.
         assert!(release_args(&root, "TestContract", None).run().is_ok());
+
+        // A bare file name at the root wins over the contracts directory, as it did before.
+        write(
+            &root,
+            "B.sol",
+            "pragma solidity 0.8.28; contract Dup { function root() external {} }",
+        );
+        write(
+            &root,
+            "src/UsesRoot.sol",
+            "pragma solidity 0.8.28; import {Dup as RootDup} from \"B.sol\"; contract UsesRoot {}",
+        );
+        assert_eq!(release("Dup", "B.sol").unwrap().compilation_target, "B.sol");
+        assert_eq!(
+            release("Dup", "src/B.sol").unwrap().compilation_target,
+            "src/B.sol"
+        );
     }
 
     /// Releases `source` and returns its `compilerInput`, which must recompile alone to the

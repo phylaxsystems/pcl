@@ -401,6 +401,43 @@ fn release_accepts_crlf_sources_cold_and_cached() {
 
 #[cfg(feature = "credible")]
 #[test]
+fn release_prefers_a_root_relative_bare_file_over_the_default_directory() {
+    let project = fixture_project();
+    let default = project.path().join("assertions/src/NoArgsAssertion.a.sol");
+    let content = fs::read_to_string(&default).expect("read assertion");
+    fs::write(
+        project.path().join("NoArgsAssertion.a.sol"),
+        format!("{content}\n// ROOT VARIANT\n"),
+    )
+    .expect("write root variant");
+    fs::write(
+        project.path().join("assertions/src/UsesRoot.sol"),
+        "pragma solidity ^0.8.28;\nimport {NoArgsAssertion as RootVariant} from \"NoArgsAssertion.a.sol\";\ncontract UsesRoot {}\n",
+    )
+    .expect("write importer");
+    set_assertion_file(project.path(), "NoArgsAssertion.a.sol:NoArgsAssertion");
+    let (ok, envelope) = pcl_json(project.path(), &["apply", "--dry-run"]);
+    assert!(ok, "{envelope}");
+    let item = release_item(&envelope);
+    assert_eq!(item["compilerSourcePath"], "NoArgsAssertion.a.sol");
+    assert!(
+        item["flattenedSource"]
+            .as_str()
+            .is_some_and(|source| source.contains("ROOT VARIANT"))
+    );
+
+    fs::remove_file(project.path().join("assertions/src/UsesRoot.sol")).expect("remove importer");
+    fs::remove_file(project.path().join("NoArgsAssertion.a.sol")).expect("remove root variant");
+    let (ok, envelope) = pcl_json(project.path(), &["apply", "--dry-run"]);
+    assert!(ok, "{envelope}");
+    assert_eq!(
+        release_item(&envelope)["compilerSourcePath"],
+        "assertions/src/NoArgsAssertion.a.sol"
+    );
+}
+
+#[cfg(feature = "credible")]
+#[test]
 fn release_sends_the_original_job_settings() {
     let project = fixture_project();
     let config = project.path().join("foundry.toml");
