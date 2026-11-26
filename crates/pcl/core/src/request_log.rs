@@ -280,10 +280,10 @@ pub fn append_request_record_at(path: &Path, record: &Value) -> std::io::Result<
     bytes.push(b'\n');
 
     let mut file = open_request_log(path)?;
-    // Same exclusive lock as a migrating read, so an append cannot land in
-    // the middle of an in-place rewrite.
+    // Migration renames a new inode over the path. `lock()` can return a
+    // handle for the unlinked file, so reopen until the inode matches.
     if file.metadata()?.is_file() {
-        file.lock()?;
+        file = lock_opened_request_log(path, file, || open_request_log(path))?;
     }
     file.write_all(&bytes)?;
     file.sync_all()?;
@@ -299,14 +299,23 @@ pub fn read_request_records_at(path: &Path, limit: usize) -> std::io::Result<Vec
     if !path.exists() {
         return Ok(Vec::new());
     }
-    if request_log_is_rewritable(path)? {
-        return read_and_migrate_request_log(path, limit);
+    if !request_log_is_rewritable(path)? {
+        return read_request_window(path, limit);
     }
-    read_request_window(path, limit)
+    // A clean log stays a shared read: no write handle and no exclusive lock.
+    let (records, changed) = scan_readable_request_log(path, limit)?;
+    if !changed {
+        return Ok(records);
+    }
+    match migrate_request_log(path, limit) {
+        Ok(migrated) => Ok(migrated),
+        Err(error) if log_is_not_writable(&error) => Ok(records),
+        Err(error) => Err(error),
+    }
 }
 
-/// A regular file can be rewritten in place. Symlinks and devices are left
-/// untouched: rewriting a symlink would either follow it or replace it.
+/// A regular file can be replaced. Symlinks and devices are left untouched:
+/// replacing a symlink would either follow it or remove the link.
 fn request_log_is_rewritable(path: &Path) -> std::io::Result<bool> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() {
@@ -320,38 +329,94 @@ fn request_log_is_rewritable(path: &Path) -> std::io::Result<bool> {
 }
 
 fn read_request_window(path: &Path, limit: usize) -> std::io::Result<Vec<Value>> {
-    let file = fs::File::open(path)?;
     if limit == 0 {
         return Ok(Vec::new());
     }
-    let (records, _) = scan_request_window(BufReader::new(file), limit);
+    let (records, _) = scan_readable_request_log(path, limit)?;
     Ok(records)
 }
 
-/// Removes invitation tokens from the whole log, including lines outside the
-/// returned window. A later append must not keep the old bytes.
-///
-/// A clean log keeps only the last `limit` records. The rewritten file is
-/// streamed to a temporary file and copied back in bounded chunks, so neither
-/// path holds a second copy of the log in memory.
-fn read_and_migrate_request_log(path: &Path, limit: usize) -> std::io::Result<Vec<Value>> {
-    let mut options = OpenOptions::new();
-    options.read(true).write(true);
-    #[cfg(unix)]
-    options.custom_flags(libc::O_NOFOLLOW);
-    let mut file = options
-        .open(path)
-        .map_err(|error| map_request_log_open_error(path, error))?;
-    file.lock()?;
+fn scan_readable_request_log(path: &Path, limit: usize) -> std::io::Result<(Vec<Value>, bool)> {
+    let file = fs::File::open(path)?;
+    Ok(scan_request_window(BufReader::new(file), limit))
+}
 
+/// Rewrites a legacy log by renaming a new file over `path`. Lines outside
+/// the returned window are migrated too.
+fn migrate_request_log(path: &Path, limit: usize) -> std::io::Result<Vec<Value>> {
+    let file = open_request_log_read_write(path)?;
+    let mut file = lock_opened_request_log(path, file, || open_request_log_read_write(path))?;
     let (records, changed) = {
         let reader = BufReader::new(&file);
         scan_request_window(reader, limit)
     };
     if changed {
-        stream_migrated_log(&mut file)?;
+        replace_request_log(path, &mut file)?;
     }
     Ok(records)
+}
+
+fn open_request_log_read_write(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    options
+        .open(path)
+        .map_err(|error| map_request_log_open_error(path, error))
+}
+
+fn log_is_not_writable(error: &std::io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+    ) {
+        return true;
+    }
+    #[cfg(unix)]
+    return error.raw_os_error() == Some(libc::EROFS);
+    #[cfg(not(unix))]
+    {
+        let _ = error;
+        false
+    }
+}
+
+/// `file` is already open. After `lock()`, a migration may have renamed a new
+/// inode onto `path`, so this loops until the handle is the file at `path`.
+fn lock_opened_request_log(
+    path: &Path,
+    mut file: fs::File,
+    mut reopen: impl FnMut() -> std::io::Result<fs::File>,
+) -> std::io::Result<fs::File> {
+    if !file.metadata()?.is_file() {
+        return Ok(file);
+    }
+    loop {
+        file.lock()?;
+        if log_handle_matches_path(path, &file)? {
+            return Ok(file);
+        }
+        file = reopen()?;
+        if !file.metadata()?.is_file() {
+            return Ok(file);
+        }
+    }
+}
+
+fn log_handle_matches_path(path: &Path, file: &fs::File) -> std::io::Result<bool> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = file.metadata()?;
+        let current = fs::symlink_metadata(path)?;
+        Ok(opened.ino() == current.ino() && opened.dev() == current.dev())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, file);
+        Ok(true)
+    }
 }
 
 fn map_request_log_open_error(path: &Path, error: std::io::Error) -> std::io::Error {
@@ -402,24 +467,35 @@ fn request_path_needs_redaction(record: &Value) -> bool {
         .is_some_and(|path| redact_sensitive_request_path(path) != path)
 }
 
-fn stream_migrated_log(file: &mut fs::File) -> std::io::Result<()> {
+fn replace_request_log(path: &Path, file: &mut fs::File) -> std::io::Result<()> {
     file.seek(SeekFrom::Start(0))?;
-    let mut rewritten = tempfile::tempfile()?;
+    let parent = request_log_parent(path);
+    let mut rewritten = named_migration_file(parent)?;
     copy_migrated_lines(file, &mut rewritten)?;
-    rewritten.sync_all()?;
-    // Truncate before the copy so a crash cannot leave the old token tail
-    // behind a shorter redacted line. The temporary file already holds the
-    // migrated log; this copy uses `io::copy`'s fixed buffer.
-    rewritten.seek(SeekFrom::Start(0))?;
-    file.set_len(0)?;
-    file.seek(SeekFrom::Start(0))?;
-    std::io::copy(&mut rewritten, file)?;
-    file.sync_all()?;
+    rewritten.as_file().sync_all()?;
+    // `persist` renames over `path`. The old inode stays intact until the
+    // rename, so a crash cannot leave a 0-byte log. The caller still holds
+    // the old inode's lock and drops it after this returns.
+    rewritten.persist(path).map_err(|error| error.error)?;
+    fsync_dir(parent)
+}
+
+fn named_migration_file(parent: &Path) -> std::io::Result<tempfile::NamedTempFile> {
+    let mut builder = tempfile::Builder::new();
     #[cfg(unix)]
-    if file.metadata()?.is_file() {
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    builder.permissions(fs::Permissions::from_mode(0o600));
+    builder.tempfile_in(parent)
+}
+
+fn request_log_parent(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
     }
-    Ok(())
+}
+
+fn fsync_dir(dir: &Path) -> std::io::Result<()> {
+    fs::File::open(dir)?.sync_all()
 }
 
 fn copy_migrated_lines(file: &mut fs::File, output: &mut impl Write) -> std::io::Result<()> {
@@ -832,6 +908,136 @@ mod tests {
             let mode = fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
             assert_eq!(mode, 0o644);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_only_log_is_listed_and_left_unchanged() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+
+        let clean = temp_dir.path().join("clean.jsonl");
+        let clean_body = "{\"path\":\"/health\"}\n";
+        fs::write(&clean, clean_body).expect("seed clean log");
+        fs::set_permissions(&clean, fs::Permissions::from_mode(0o400)).expect("chmod clean log");
+        let records = read_request_records_at(&clean, 10).expect("read 0400 clean log");
+        assert_eq!(records[0]["path"], "/health");
+        assert_eq!(
+            fs::read(&clean).expect("clean bytes"),
+            clean_body.as_bytes()
+        );
+        assert_eq!(
+            fs::metadata(&clean)
+                .expect("clean metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o400
+        );
+
+        let legacy = temp_dir.path().join("legacy.jsonl");
+        let route = format!("/invitations/{INVITATION_TOKEN}/preview");
+        let legacy_body = format!("{}\n", json!({"path": route, "request_id": "legacy"}));
+        fs::write(&legacy, &legacy_body).expect("seed legacy log");
+        fs::set_permissions(&legacy, fs::Permissions::from_mode(0o400)).expect("chmod legacy log");
+        let records = read_request_records_at(&legacy, 10).expect("read 0400 legacy log");
+        assert_eq!(records[0]["path"], "/invitations/<redacted>/preview");
+        assert!(
+            !records[0].to_string().contains(INVITATION_TOKEN),
+            "0400 list returned the invitation token: {}",
+            records[0]
+        );
+        assert_eq!(
+            fs::read(&legacy).expect("legacy bytes"),
+            legacy_body.as_bytes()
+        );
+        assert_eq!(
+            fs::metadata(&legacy)
+                .expect("legacy metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o400
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migration_renames_a_new_file_over_the_legacy_log() {
+        use std::os::unix::fs::{
+            MetadataExt,
+            PermissionsExt,
+        };
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("requests.jsonl");
+        let route = format!("/invitations/{INVITATION_TOKEN}/preview");
+        fs::write(
+            &path,
+            format!("{}\n", json!({"path": route, "request_id": "legacy"})),
+        )
+        .expect("seed request log");
+        let seeded_inode = fs::metadata(&path).expect("seed metadata").ino();
+
+        let records = read_request_records_at(&path, 10).expect("migrate on read");
+        assert_eq!(records[0]["path"], "/invitations/<redacted>/preview");
+        let migrated_inode = fs::metadata(&path).expect("migrated metadata").ino();
+        assert_ne!(
+            migrated_inode, seeded_inode,
+            "migration rewrote the log in place"
+        );
+        let migrated = fs::read_to_string(&path).expect("read migrated log");
+        assert!(
+            !migrated.contains(INVITATION_TOKEN),
+            "renamed log kept the invitation token: {migrated}"
+        );
+        assert!(migrated.contains("/invitations/<redacted>/preview"));
+        assert!(migrated.contains("\"request_id\":\"legacy\""));
+        let mode = fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+
+        append_request_record_at(&path, &json!({"path": "/health", "request_id": "after"}))
+            .expect("append after rename");
+        assert_eq!(
+            fs::metadata(&path).expect("append metadata").ino(),
+            migrated_inode,
+            "append wrote a different file than the renamed log"
+        );
+        let after = fs::read_to_string(&path).expect("read log after append");
+        assert!(after.contains("\"request_id\":\"legacy\""));
+        assert!(after.contains("\"request_id\":\"after\""));
+        assert!(!after.contains(INVITATION_TOKEN));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn append_reopens_when_the_locked_log_was_replaced() {
+        use std::os::unix::fs::MetadataExt;
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("requests.jsonl");
+        fs::write(&path, "old\n").expect("seed log");
+        let stale = open_request_log(&path).expect("open log");
+        let stale_inode = stale.metadata().expect("stale metadata").ino();
+        let replacement = temp_dir.path().join("replacement.jsonl");
+        fs::write(&replacement, "new\n").expect("write replacement");
+        fs::rename(&replacement, &path).expect("replace log");
+        assert_ne!(
+            fs::metadata(&path).expect("new metadata").ino(),
+            stale_inode
+        );
+
+        let mut current = lock_opened_request_log(&path, stale, || open_request_log(&path))
+            .expect("reopen replaced log");
+        assert_eq!(
+            current.metadata().expect("current metadata").ino(),
+            fs::metadata(&path).expect("path metadata").ino()
+        );
+        current.write_all(b"appended\n").expect("append");
+        current.sync_all().expect("sync");
+        drop(current);
+        assert_eq!(
+            fs::read_to_string(&path).expect("read log"),
+            "new\nappended\n"
+        );
     }
 
     #[test]
