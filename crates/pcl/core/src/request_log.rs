@@ -324,12 +324,16 @@ fn read_request_window(path: &Path, limit: usize) -> std::io::Result<Vec<Value>>
     if limit == 0 {
         return Ok(Vec::new());
     }
-    let MigratedLog { records, .. } = scan_request_log(BufReader::new(file), limit)?;
+    let (records, _) = scan_request_window(BufReader::new(file), limit);
     Ok(records)
 }
 
 /// Removes invitation tokens from the whole log, including lines outside the
 /// returned window. A later append must not keep the old bytes.
+///
+/// A clean log keeps only the last `limit` records. The rewritten file is
+/// streamed to a temporary file and copied back in bounded chunks, so neither
+/// path holds a second copy of the log in memory.
 fn read_and_migrate_request_log(path: &Path, limit: usize) -> std::io::Result<Vec<Value>> {
     let mut options = OpenOptions::new();
     options.read(true).write(true);
@@ -340,23 +344,14 @@ fn read_and_migrate_request_log(path: &Path, limit: usize) -> std::io::Result<Ve
         .map_err(|error| map_request_log_open_error(path, error))?;
     file.lock()?;
 
-    let migrated = {
+    let (records, changed) = {
         let reader = BufReader::new(&file);
-        scan_request_log(reader, limit)?
+        scan_request_window(reader, limit)
     };
-    if let Some(bytes) = migrated.rewritten {
-        // Truncate before writing so a crash cannot leave the old token tail
-        // behind a shorter redacted line.
-        file.set_len(0)?;
-        file.seek(SeekFrom::Start(0))?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        #[cfg(unix)]
-        if file.metadata()?.is_file() {
-            file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        }
+    if changed {
+        stream_migrated_log(&mut file)?;
     }
-    Ok(migrated.records)
+    Ok(records)
 }
 
 fn map_request_log_open_error(path: &Path, error: std::io::Error) -> std::io::Error {
@@ -371,60 +366,92 @@ fn map_request_log_open_error(path: &Path, error: std::io::Error) -> std::io::Er
     }
 }
 
-struct MigratedLog {
-    records: Vec<Value>,
-    rewritten: Option<Vec<u8>>,
-}
-
-fn scan_request_log<R: BufRead>(reader: R, limit: usize) -> std::io::Result<MigratedLog> {
+fn scan_request_window<R: BufRead>(reader: R, limit: usize) -> (Vec<Value>, bool) {
     let mut records = VecDeque::new();
-    let mut rewritten = Vec::new();
     let mut changed = false;
     for line in reader.lines() {
         let Ok(line) = line else {
             // A partial scan must not replace the rest of the file.
-            return Ok(MigratedLog {
-                records: Vec::from(records),
-                rewritten: None,
-            });
+            return (Vec::from(records), false);
         };
-        let (stored, line_changed) = migrated_request_line(&line)?;
-        changed |= line_changed;
-        if limit > 0
-            && let Ok(record) = serde_json::from_str::<Value>(&stored)
-        {
-            if records.len() == limit {
-                records.pop_front();
-            }
-            records.push_back(record);
-        }
-        rewritten.extend_from_slice(stored.as_bytes());
-        rewritten.push(b'\n');
+        changed |= note_request_line(&mut records, &line, limit);
     }
-    Ok(MigratedLog {
-        records: Vec::from(records),
-        rewritten: changed.then_some(rewritten),
-    })
+    (Vec::from(records), changed)
 }
 
-fn migrated_request_line(line: &str) -> std::io::Result<(String, bool)> {
+fn note_request_line(records: &mut VecDeque<Value>, line: &str, limit: usize) -> bool {
     let Ok(mut record) = serde_json::from_str::<Value>(line) else {
-        return Ok((line.to_string(), false));
+        return false;
     };
-    let Some(path) = record.get("path").and_then(Value::as_str) else {
-        return Ok((line.to_string(), false));
-    };
-    let redacted = redact_sensitive_request_path(path);
-    if redacted == path {
-        return Ok((line.to_string(), false));
+    let changed = request_path_needs_redaction(&record);
+    if limit == 0 {
+        return changed;
     }
-    let Some(object) = record.as_object_mut() else {
-        return Ok((line.to_string(), false));
+    redact_record_path_in_place(&mut record);
+    if records.len() == limit {
+        records.pop_front();
+    }
+    records.push_back(record);
+    changed
+}
+
+fn request_path_needs_redaction(record: &Value) -> bool {
+    record
+        .get("path")
+        .and_then(Value::as_str)
+        .is_some_and(|path| redact_sensitive_request_path(path) != path)
+}
+
+fn stream_migrated_log(file: &mut fs::File) -> std::io::Result<()> {
+    file.seek(SeekFrom::Start(0))?;
+    let mut rewritten = tempfile::tempfile()?;
+    copy_migrated_lines(file, &mut rewritten)?;
+    rewritten.sync_all()?;
+    // Truncate before the copy so a crash cannot leave the old token tail
+    // behind a shorter redacted line. The temporary file already holds the
+    // migrated log; this copy uses `io::copy`'s fixed buffer.
+    rewritten.seek(SeekFrom::Start(0))?;
+    file.set_len(0)?;
+    file.seek(SeekFrom::Start(0))?;
+    std::io::copy(&mut rewritten, file)?;
+    file.sync_all()?;
+    #[cfg(unix)]
+    if file.metadata()?.is_file() {
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+fn copy_migrated_lines(file: &mut fs::File, output: &mut impl Write) -> std::io::Result<()> {
+    let reader = BufReader::new(std::io::Read::by_ref(file));
+    for stored in reader.lines() {
+        let stored = stored?;
+        write_migrated_line(&stored, output)?;
+    }
+    Ok(())
+}
+
+fn write_migrated_line(line: &str, output: &mut impl Write) -> std::io::Result<()> {
+    if let Some(redacted) = redacted_request_line(line)? {
+        output.write_all(redacted.as_bytes())?;
+    } else {
+        output.write_all(line.as_bytes())?;
+    }
+    output.write_all(b"\n")?;
+    Ok(())
+}
+
+fn redacted_request_line(line: &str) -> std::io::Result<Option<String>> {
+    let Ok(mut record) = serde_json::from_str::<Value>(line) else {
+        return Ok(None);
     };
-    object.insert("path".to_string(), Value::String(redacted));
-    let stored = serde_json::to_string(&record)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    Ok((stored, true))
+    if !request_path_needs_redaction(&record) {
+        return Ok(None);
+    }
+    redact_record_path_in_place(&mut record);
+    serde_json::to_string(&record)
+        .map(Some)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
 }
 
 pub fn clear_request_log() -> std::io::Result<bool> {
@@ -447,6 +474,83 @@ mod tests {
         Value,
         json,
     };
+    use std::{
+        alloc::{
+            GlobalAlloc,
+            Layout,
+            System,
+        },
+        cell::Cell,
+        io::Write,
+    };
+
+    /// Counts outstanding bytes on this thread while a read is in progress.
+    /// A second full-log buffer shows up as a peak at least as large as the file.
+    struct TrackingAllocator;
+
+    #[global_allocator]
+    static TRACKING_ALLOCATOR: TrackingAllocator = TrackingAllocator;
+
+    thread_local! {
+        static ALLOC_CURRENT: Cell<usize> = const { Cell::new(0) };
+        static ALLOC_PEAK: Cell<usize> = const { Cell::new(0) };
+        static ALLOC_TRACKING: Cell<bool> = const { Cell::new(false) };
+        static ALLOC_IN_HOOK: Cell<bool> = const { Cell::new(false) };
+    }
+
+    unsafe impl GlobalAlloc for TrackingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            // SAFETY: `layout` is the layout the allocator caller asked for.
+            let ptr = unsafe { System.alloc(layout) };
+            if !ptr.is_null() {
+                note_alloc(layout.size(), true);
+            }
+            ptr
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            note_alloc(layout.size(), false);
+            // SAFETY: `ptr` was allocated by `System` with `layout`.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
+
+    fn note_alloc(size: usize, allocate: bool) {
+        let _ = ALLOC_IN_HOOK.try_with(|hook| {
+            if hook.get() {
+                return;
+            }
+            hook.set(true);
+            let _ = ALLOC_TRACKING.try_with(|tracking| {
+                if !tracking.get() {
+                    return;
+                }
+                let _ = ALLOC_CURRENT.try_with(|current| {
+                    let next = if allocate {
+                        current.get().saturating_add(size)
+                    } else {
+                        current.get().saturating_sub(size)
+                    };
+                    current.set(next);
+                    let _ = ALLOC_PEAK.try_with(|peak| {
+                        if next > peak.get() {
+                            peak.set(next);
+                        }
+                    });
+                });
+            });
+            hook.set(false);
+        });
+    }
+
+    fn peak_allocated_bytes(body: impl FnOnce()) -> usize {
+        ALLOC_CURRENT.with(|current| current.set(0));
+        ALLOC_PEAK.with(|peak| peak.set(0));
+        ALLOC_TRACKING.with(|tracking| tracking.set(true));
+        body();
+        ALLOC_TRACKING.with(|tracking| tracking.set(false));
+        ALLOC_PEAK.with(Cell::get)
+    }
 
     #[test]
     fn append_request_record_at_writes_valid_jsonl_under_concurrency() {
@@ -727,6 +831,106 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let mode = fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
             assert_eq!(mode, 0o644);
+        }
+    }
+
+    #[test]
+    fn limited_read_does_not_retain_the_whole_log_and_still_migrates() {
+        const LINES: usize = 3_000;
+        const PADDING: usize = 512;
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let clean = temp_dir.path().join("clean.jsonl");
+        let mut clean_file = fs::File::create(&clean).expect("create clean log");
+        for index in 0..LINES {
+            let padding = "x".repeat(PADDING);
+            writeln!(
+                clean_file,
+                r#"{{"path":"/health/{index}","padding":"{padding}"}}"#
+            )
+            .expect("write clean line");
+        }
+        clean_file.sync_all().expect("sync clean log");
+        drop(clean_file);
+        let clean_bytes = fs::read(&clean).expect("snapshot clean log");
+        let clean_len = clean_bytes.len();
+        assert!(
+            clean_len > 1_000_000,
+            "fixture is too small to prove a bound"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&clean, fs::Permissions::from_mode(0o644)).expect("loosen mode");
+        }
+
+        let peak = peak_allocated_bytes(|| {
+            let records = read_request_records_at(&clean, 10).expect("read clean log");
+            assert_eq!(records.len(), 10);
+            assert_eq!(records[9]["path"], format!("/health/{}", LINES - 1));
+        });
+        assert!(
+            peak < clean_len / 2,
+            "clean limited read retained {peak} bytes of a {clean_len} byte log"
+        );
+        assert_eq!(fs::read(&clean).expect("reread clean log"), clean_bytes);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&clean).expect("metadata").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o644);
+        }
+
+        let legacy = temp_dir.path().join("legacy.jsonl");
+        let mut legacy_file = fs::File::create(&legacy).expect("create legacy log");
+        let token_line = json!({
+            "path": format!("/invitations/{INVITATION_TOKEN}/preview"),
+            "request_id": "legacy-0",
+        })
+        .to_string();
+        writeln!(legacy_file, "{token_line}").expect("write legacy token");
+        for index in 1..LINES {
+            let padding = "x".repeat(PADDING);
+            writeln!(
+                legacy_file,
+                r#"{{"path":"/health/{index}","padding":"{padding}"}}"#
+            )
+            .expect("write legacy line");
+        }
+        legacy_file.sync_all().expect("sync legacy log");
+        drop(legacy_file);
+        let legacy_len = usize::try_from(fs::metadata(&legacy).expect("legacy metadata").len())
+            .expect("legacy log length fits in usize");
+
+        let peak = peak_allocated_bytes(|| {
+            let records = read_request_records_at(&legacy, 10).expect("migrate legacy log");
+            assert_eq!(records.len(), 10);
+            assert!(
+                !records
+                    .iter()
+                    .any(|record| record.to_string().contains(INVITATION_TOKEN))
+            );
+        });
+        assert!(
+            peak < legacy_len / 2,
+            "legacy migration retained {peak} bytes of a {legacy_len} byte log"
+        );
+        let migrated = fs::read_to_string(&legacy).expect("read migrated log");
+        assert!(
+            !migrated.contains(INVITATION_TOKEN),
+            "legacy token stayed on disk"
+        );
+        assert!(migrated.contains("\"request_id\":\"legacy-0\""));
+        assert!(migrated.contains("/invitations/<redacted>/preview"));
+        assert!(migrated.contains(&format!("/health/{}", LINES - 1)));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&legacy)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
         }
     }
 
