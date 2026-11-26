@@ -1671,6 +1671,10 @@ struct ProtocolManagerArgs {
     confirm_transfer: bool,
     #[arg(long, help = "New manager address for transfer calldata")]
     new_manager: Option<String>,
+    /// Private key of `--new-manager`. A direct handover signs a challenge
+    /// with this key and with `--private-key` before the confirmation POST.
+    #[arg(long, env = "PCL_NEW_MANAGER_PRIVATE_KEY", hide_env_values = true)]
+    new_manager_private_key: Option<String>,
     #[arg(long, help = "Address for --nonce")]
     address: Option<String>,
     #[arg(long, help = "Chain ID for --nonce and --set --sign")]

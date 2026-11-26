@@ -140,6 +140,25 @@ struct BoundContractCall {
     calldata: Bytes,
 }
 
+struct DirectHandover<'a> {
+    new_manager: &'a str,
+    new_manager_address: Address,
+    calldata_body: &'a Value,
+    next_actions: Vec<String>,
+}
+
+struct TransferChallenge<'a> {
+    project: &'a str,
+    current_manager: Address,
+    new_manager: &'a str,
+    chain_id: u64,
+}
+
+struct TransferProof {
+    nonce: String,
+    signature: String,
+}
+
 /// `GET /projects/{id}/protocol-manager/accept-calldata`
 #[derive(Debug, Deserialize)]
 struct AcceptCalldataResponse {
@@ -933,6 +952,132 @@ impl ApiArgs {
         }
     }
 
+    /// A handover with no active contracts. Both platforms require a nonce and
+    /// an EIP-191 signature from the current manager and from the new manager
+    /// before the confirmation POST.
+    async fn confirm_direct_handover(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        args: &ProtocolManagerArgs,
+        project: &str,
+        request_log_path: &Path,
+        handover: DirectHandover<'_>,
+    ) -> Result<Value, ApiCommandError> {
+        confirm_mutation(
+            cli_args,
+            args.broadcast.yes,
+            &format!(
+                "transfer the protocol manager to {} (no transaction needed)",
+                handover.new_manager
+            ),
+        )?;
+        let current = resolve_signer(&args.broadcast.wallet, cli_args).await?;
+        let new_manager_key = args.new_manager_private_key.as_deref().ok_or(
+            ApiCommandError::InvalidWorkflow {
+                message: "a direct handover requires --new-manager-private-key so both wallets sign the confirmation".to_string(),
+            },
+        )?;
+        let new_manager_signer =
+            new_manager_key
+                .trim()
+                .parse::<PrivateKeySigner>()
+                .map_err(|_| {
+                    ApiCommandError::InvalidWorkflow {
+                        message: "--new-manager-private-key is not a private key".to_string(),
+                    }
+                })?;
+        if new_manager_signer.address() != handover.new_manager_address {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "--new-manager-private-key signs {} but --new-manager is {}",
+                    new_manager_signer.address(),
+                    handover.new_manager_address
+                ),
+            });
+        }
+        let chain_id = self
+            .project_chain_id(config, cli_args, project, request_log_path)
+            .await?;
+        let challenge = TransferChallenge {
+            project,
+            current_manager: current.address(),
+            new_manager: handover.new_manager,
+            chain_id,
+        };
+        progress(cli_args, "Signing the current manager's transfer challenge");
+        let current_proof = self
+            .sign_transfer_proof(config, cli_args, &challenge, &current, request_log_path)
+            .await?;
+        progress(cli_args, "Signing the new manager's transfer challenge");
+        let new_proof = self
+            .sign_transfer_proof(
+                config,
+                cli_args,
+                &challenge,
+                &new_manager_signer,
+                request_log_path,
+            )
+            .await?;
+        progress(cli_args, "Confirming the direct handover");
+        let confirm_request = post_operation(
+            "projects.confirmTransfer",
+            project,
+            None,
+            &json!({
+                "mode": "direct",
+                "new_manager_address": handover.new_manager,
+                "nonce": current_proof.nonce,
+                "signature": current_proof.signature,
+                "new_manager_nonce": new_proof.nonce,
+                "new_manager_signature": new_proof.signature,
+            }),
+        )?;
+        let confirm = self
+            .call_workflow_result(config, cli_args, &confirm_request, request_log_path)
+            .await?;
+        Ok(broadcast_envelope(
+            "protocol_manager_transfer_broadcast",
+            json!({
+                "mode": "direct",
+                "calldata": handover.calldata_body,
+                "tx": Value::Null,
+                "confirm": confirm.body,
+            }),
+            handover.next_actions,
+        ))
+    }
+
+    async fn sign_transfer_proof(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        challenge: &TransferChallenge<'_>,
+        signer: &PrivateKeySigner,
+        request_log_path: &Path,
+    ) -> Result<TransferProof, ApiCommandError> {
+        let nonce_request = get_operation(
+            "projects.getProtocolManagerNonce",
+            challenge.project,
+            None,
+            vec![
+                ("address".to_string(), challenge.current_manager.to_string()),
+                ("new_manager".to_string(), challenge.new_manager.to_string()),
+                ("chain_id".to_string(), challenge.chain_id.to_string()),
+            ],
+        )?;
+        let nonce_result = self
+            .call_workflow_result(config, cli_args, &nonce_request, request_log_path)
+            .await?;
+        let nonce: ProtocolManagerNonceResponse =
+            parse_response("protocol-manager/nonce", &nonce_result.body)?;
+        let signature = sign_personal(signer, &nonce.message).await?;
+        Ok(TransferProof {
+            nonce: nonce.nonce,
+            signature,
+        })
+    }
+
     async fn protocol_manager_transfer_broadcast(
         &self,
         config: &mut CliConfig,
@@ -971,38 +1116,26 @@ impl ApiArgs {
         )];
 
         if calldata.mode == TransferMode::Direct {
-            // Nothing on-chain to move; confirm directly.
-            confirm_mutation(
-                cli_args,
-                args.broadcast.yes,
-                &format!("transfer the protocol manager to {new_manager} (no transaction needed)"),
-            )?;
-            progress(cli_args, "No on-chain transfer needed; confirming directly");
-            let confirm_request = post_operation(
-                "projects.confirmTransfer",
-                project,
-                None,
-                &json!({ "mode": "direct", "new_manager_address": new_manager }),
-            )?;
-            let confirm = self
-                .call_workflow_result(config, cli_args, &confirm_request, request_log_path)
-                .await?;
-            return Ok(broadcast_envelope(
-                "protocol_manager_transfer_broadcast",
-                json!({
-                    "mode": "direct",
-                    "calldata": calldata_result.body,
-                    "tx": Value::Null,
-                    "confirm": confirm.body,
-                }),
-                next_actions,
-            ));
+            return self
+                .confirm_direct_handover(
+                    config,
+                    cli_args,
+                    args,
+                    project,
+                    request_log_path,
+                    DirectHandover {
+                        new_manager: &new_manager,
+                        new_manager_address,
+                        calldata_body: &calldata_result.body,
+                        next_actions,
+                    },
+                )
+                .await;
         }
 
         debug_assert_eq!(calldata.mode, TransferMode::Onchain);
-        // Direct transfers are platform-only and do not need a signer. Resolve
-        // the wallet only after the backend says an on-chain transaction is
-        // required, so a valid direct transfer works without wallet flags.
+        // A direct handover returns above. Resolve the on-chain signer only
+        // once the backend says a transaction is required.
         let signer = resolve_signer(&args.broadcast.wallet, cli_args).await?;
         let (Some(chain_id), Some(to), Some(data)) =
             (calldata.chain_id, calldata.to, calldata.calldata.clone())
@@ -1501,53 +1634,25 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn direct_manager_transfer_does_not_require_a_wallet() {
-        let mut server = mockito::Server::new_async().await;
-        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-        let new_manager = "0x0101010101010101010101010101010101010101";
-        let calldata = server
-            .mock(
-                "GET",
-                format!("/api/v1/projects/{project_id}/protocol-manager/transfer-calldata")
-                    .as_str(),
-            )
-            .match_query(Matcher::UrlEncoded(
-                "new_manager".into(),
-                new_manager.into(),
-            ))
-            .match_header("authorization", "Bearer access-token")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(
-                json!({
-                    "mode": "direct",
-                    "to": null,
-                    "calldata": null,
-                    "contracts": [],
-                    "total_contracts": 0
-                })
-                .to_string(),
-            )
-            .expect(1)
-            .create_async()
-            .await;
-        let confirm = server
-            .mock(
-                "POST",
-                format!("/api/v1/projects/{project_id}/protocol-manager/confirm-transfer").as_str(),
-            )
-            .match_header("authorization", "Bearer access-token")
-            .match_body(Matcher::Json(json!({
-                "mode": "direct",
-                "new_manager_address": new_manager
-            })))
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"status":"ok"}"#)
-            .expect(1)
-            .create_async()
-            .await;
+    const CURRENT_MANAGER_KEY: &str =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const NEW_MANAGER_KEY: &str =
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+
+    fn direct_calldata_body() -> Value {
+        json!({
+            "mode": "direct",
+            "to": null,
+            "calldata": null,
+            "contracts": [],
+            "total_contracts": 0
+        })
+    }
+
+    async fn direct_handover(
+        server: &mut mockito::Server,
+        args: ProtocolManagerArgs,
+    ) -> Result<Value, ApiCommandError> {
         let api = ApiArgs::headless(server.url().parse().unwrap());
         let mut config = CliConfig {
             auth: Some(crate::config::UserAuth {
@@ -1568,29 +1673,172 @@ mod tests {
             config_dir: Some(config_dir.path().to_path_buf()),
             ..CliArgs::default()
         };
-        let request_log_path = config_dir.path().join("requests.jsonl");
-        let args = ProtocolManagerArgs {
-            new_manager: Some(new_manager.to_string()),
-            broadcast: BroadcastArgs {
-                broadcast: true,
-                yes: true,
-                ..BroadcastArgs::default()
-            },
-            ..ProtocolManagerArgs::default()
-        };
+        api.protocol_manager_transfer_broadcast(
+            &mut config,
+            &cli_args,
+            &args,
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            &config_dir.path().join("requests.jsonl"),
+        )
+        .await
+    }
 
-        let result = api
-            .protocol_manager_transfer_broadcast(
-                &mut config,
-                &cli_args,
-                &args,
-                project_id,
-                &request_log_path,
+    #[tokio::test]
+    async fn direct_manager_transfer_posts_both_wallet_proofs() {
+        let mut server = mockito::Server::new_async().await;
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let current: PrivateKeySigner = CURRENT_MANAGER_KEY.parse().unwrap();
+        let new_manager_signer: PrivateKeySigner = NEW_MANAGER_KEY.parse().unwrap();
+        let new_manager = new_manager_signer.address().to_string();
+        let message = "transfer-challenge";
+        let current_signature = sign_personal(&current, message).await.unwrap();
+        let new_manager_signature = sign_personal(&new_manager_signer, message).await.unwrap();
+        let calldata = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/protocol-manager/transfer-calldata")
+                    .as_str(),
             )
-            .await
-            .unwrap();
+            .match_query(Matcher::UrlEncoded(
+                "new_manager".into(),
+                new_manager.clone(),
+            ))
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(direct_calldata_body().to_string())
+            .expect(1)
+            .create_async()
+            .await;
+        let project = server
+            .mock("GET", format!("/api/v1/projects/{project_id}").as_str())
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"chain_id":1}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let nonce = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/protocol-manager/nonce").as_str(),
+            )
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("address".into(), current.address().to_string()),
+                Matcher::UrlEncoded("new_manager".into(), new_manager.clone()),
+                Matcher::UrlEncoded("chain_id".into(), "1".into()),
+            ]))
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "nonce": "nonce-1",
+                    "message": message
+                })
+                .to_string(),
+            )
+            .expect(2)
+            .create_async()
+            .await;
+        let confirm = server
+            .mock(
+                "POST",
+                format!("/api/v1/projects/{project_id}/protocol-manager/confirm-transfer").as_str(),
+            )
+            .match_header("authorization", "Bearer access-token")
+            .match_body(Matcher::Json(json!({
+                "mode": "direct",
+                "new_manager_address": new_manager,
+                "nonce": "nonce-1",
+                "signature": current_signature,
+                "new_manager_nonce": "nonce-1",
+                "new_manager_signature": new_manager_signature
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status":"ok"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let result = direct_handover(
+            &mut server,
+            ProtocolManagerArgs {
+                new_manager: Some(new_manager),
+                new_manager_private_key: Some(NEW_MANAGER_KEY.to_string()),
+                broadcast: BroadcastArgs {
+                    broadcast: true,
+                    yes: true,
+                    wallet: crate::wallet::WalletArgs {
+                        private_key: Some(CURRENT_MANAGER_KEY.to_string()),
+                        ..crate::wallet::WalletArgs::default()
+                    },
+                    ..BroadcastArgs::default()
+                },
+                ..ProtocolManagerArgs::default()
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result["data"]["mode"], "direct");
+        calldata.assert_async().await;
+        project.assert_async().await;
+        nonce.assert_async().await;
+        confirm.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn direct_manager_transfer_requires_the_new_manager_key() {
+        let mut server = mockito::Server::new_async().await;
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let calldata = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/protocol-manager/transfer-calldata")
+                    .as_str(),
+            )
+            .match_query(Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(direct_calldata_body().to_string())
+            .expect(1)
+            .create_async()
+            .await;
+        let confirm = server
+            .mock(
+                "POST",
+                format!("/api/v1/projects/{project_id}/protocol-manager/confirm-transfer").as_str(),
+            )
+            .expect(0)
+            .create_async()
+            .await;
+
+        let error = direct_handover(
+            &mut server,
+            ProtocolManagerArgs {
+                new_manager: Some("0x70997970C51812dc3A010C7d01b50e0d17dc79C8".to_string()),
+                broadcast: BroadcastArgs {
+                    broadcast: true,
+                    yes: true,
+                    wallet: crate::wallet::WalletArgs {
+                        private_key: Some(CURRENT_MANAGER_KEY.to_string()),
+                        ..crate::wallet::WalletArgs::default()
+                    },
+                    ..BroadcastArgs::default()
+                },
+                ..ProtocolManagerArgs::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("--new-manager-private-key"),
+            "{error}"
+        );
         calldata.assert_async().await;
         confirm.assert_async().await;
     }
