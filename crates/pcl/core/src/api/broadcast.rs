@@ -3,9 +3,8 @@
 //!
 //! Mirrors the dapp's browser-wallet flows (see
 //! `packages/hooks/src/hooks/api/use-release-deploy.ts` and friends in the
-//! credible-layer-dapp repo). The backend remains the only calldata encoder;
-//! pcl only wraps operation calldata in `StateOracle.batch(bytes[])` or sends
-//! raw `{to, data}` transactions.
+//! credible-layer-dapp repo). Removal and manager transactions are signed only
+//! when they equal the `StateOracle.batch` pcl rebuilds (see `signed_batch`).
 
 use super::{
     ApiArgs,
@@ -38,6 +37,10 @@ use alloy_primitives::{
 };
 use alloy_rpc_types_eth::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
+use chrono::{
+    DateTime,
+    SecondsFormat,
+};
 use colored::Colorize;
 use pcl_common::args::CliArgs;
 use serde::Deserialize;
@@ -46,6 +49,7 @@ use serde_json::{
     json,
 };
 use std::path::Path;
+use uuid::Uuid;
 
 /// Shared flags for commands that can sign and submit transactions.
 #[derive(clap::Args, Clone, Debug, Default)]
@@ -94,6 +98,8 @@ struct ReleaseDeployCalldataResponse {
 struct ReleaseRemoveCalldataResponse {
     to: Address,
     data: Bytes,
+    #[serde(default, alias = "chainId")]
+    chain_id: Option<u64>,
     #[serde(default)]
     assertions: Vec<Value>,
     #[serde(default, alias = "requiredConfirmations")]
@@ -127,9 +133,81 @@ struct TransferCalldataResponse {
     #[serde(default)]
     calldata: Option<Bytes>,
     #[serde(default)]
+    contracts: Vec<BoundContractCall>,
+    #[serde(default)]
     total_contracts: Option<u64>,
     #[serde(default, alias = "requiredConfirmations")]
     required_confirmations: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BoundContractCall {
+    address: Address,
+    calldata: Bytes,
+}
+
+struct DirectHandover<'a> {
+    new_manager: &'a str,
+    new_manager_address: Address,
+    calldata_body: &'a Value,
+    next_actions: Vec<String>,
+}
+
+struct TransferChallenge<'a> {
+    project: &'a str,
+    current_manager: Address,
+    new_manager: Address,
+    chain_id: u64,
+}
+
+struct TransferProof {
+    nonce: String,
+    signature: String,
+}
+
+/// The message `buildTransferChallenge` returns for a direct handover.
+///
+/// `packages/dapp-api/src/v1/routers/projects/protocol-manager.ts` joins these
+/// lines with `\n`. Managers are lowercased. Expiry is
+/// `new Date(expiresAt).toISOString()`, which is UTC with milliseconds.
+fn transfer_challenge_message(
+    project_id: &str,
+    current_manager: Address,
+    new_manager: Address,
+    chain_id: u64,
+    nonce: &str,
+    expires_at: &str,
+) -> Result<String, ApiCommandError> {
+    if nonce.is_empty() || nonce.contains(['\n', '\r']) {
+        return Err(ApiCommandError::UnexpectedResponse {
+            endpoint: "protocol-manager/nonce",
+            reason: "nonce is empty or spans more than one line".to_string(),
+        });
+    }
+    let expiry = DateTime::parse_from_rfc3339(expires_at)
+        .map_err(|_| {
+            ApiCommandError::UnexpectedResponse {
+                endpoint: "protocol-manager/nonce",
+                reason: format!("expires_at {expires_at} is not an RFC3339 timestamp"),
+            }
+        })?
+        .to_utc()
+        .to_rfc3339_opts(SecondsFormat::Millis, true);
+    let current_manager = current_manager.to_string().to_ascii_lowercase();
+    let new_manager = new_manager.to_string().to_ascii_lowercase();
+    Ok([
+        "Credible Layer — Transfer Protocol Manager",
+        "",
+        &format!("Project: {project_id}"),
+        &format!("Current Manager: {current_manager}"),
+        &format!("New Manager: {new_manager}"),
+        &format!("Chain ID: {chain_id}"),
+        &format!("Nonce: {nonce}"),
+        &format!("Expiry: {expiry}"),
+        "",
+        "Sign this message to authorize this protocol manager transfer. Both the current and new manager must sign before a direct change takes effect.",
+    ]
+    .join("\n"))
 }
 
 /// `GET /projects/{id}/protocol-manager/accept-calldata`
@@ -138,6 +216,8 @@ struct AcceptCalldataResponse {
     chain_id: u64,
     to: Address,
     calldata: Bytes,
+    #[serde(default)]
+    contracts: Vec<BoundContractCall>,
     #[serde(default, alias = "requiredConfirmations")]
     required_confirmations: Option<u64>,
 }
@@ -179,6 +259,18 @@ fn validate_release_deploy_calldata(
 // ---------------------------------------------------------------------------
 // Shared plumbing
 // ---------------------------------------------------------------------------
+
+/// Builds the refusal for an API transaction pcl will not sign, carrying the
+/// manual route an operator can use instead.
+fn refusal(action: &'static str, manual_route: Vec<String>) -> impl Fn(String) -> ApiCommandError {
+    move |reason| {
+        ApiCommandError::CalldataRefused {
+            action,
+            reason,
+            manual_route: manual_route.clone(),
+        }
+    }
+}
 
 async fn resolve_signer(
     wallet: &WalletArgs,
@@ -382,6 +474,22 @@ impl ApiArgs {
             endpoint: "/projects/{project_id}",
             reason: "missing chain_id/project_networks".to_string(),
         })
+    }
+
+    /// UUID the release record's `projectId` must equal. A slug is resolved
+    /// the same way the confirmation path is, so the comparison is not against
+    /// the display name.
+    async fn canonical_project_id(
+        &self,
+        config: &CliConfig,
+        project: &str,
+        request_log_path: &Path,
+    ) -> Result<String, ApiCommandError> {
+        if project.parse::<Uuid>().is_ok() {
+            return Ok(project.to_string());
+        }
+        self.resolve_project_id(config, project, true, true, request_log_path)
+            .await
     }
 
     /// POSTs the platform confirmation for a transaction that already landed.
@@ -642,10 +750,10 @@ impl ApiArgs {
         let calldata: ReleaseRemoveCalldataResponse =
             parse_response("remove-calldata", &calldata_result.body)?;
 
-        // The remove-calldata response carries no chain id and its `{to,
-        // data}` would look valid on any network, so the project record is
-        // authoritative. An explicit --chain-id may only confirm it, never
-        // rebind the broadcast to another chain.
+        // The project record picks the chain. The release record picks the
+        // environment, and therefore which active StateOracle may be signed,
+        // and holds the assertions the batch may remove.
+        // An explicit --chain-id may only confirm the project chain.
         let chain_id = self
             .project_chain_id(config, cli_args, project, request_log_path)
             .await?;
@@ -658,6 +766,55 @@ impl ApiArgs {
                 ),
             });
         }
+        let refused = refusal(
+            "release removal",
+            vec![
+                format!("pcl releases calldata remove {project} {release_id} --json"),
+                "Check that `to` is the active StateOracle and `data` its batch of removeAssertion calls, then sign {to, data} with an external wallet".to_string(),
+                format!("After it lands, confirm it: pcl releases remove {project} {release_id} --field txHash=<tx-hash> --json"),
+            ],
+        );
+        if let Some(response_chain) = calldata.chain_id
+            && response_chain != chain_id
+        {
+            return Err(refused(format!(
+                "chain_id {response_chain} does not match the project's chain {chain_id}"
+            )));
+        }
+
+        let release_request =
+            get_operation("projects.getRelease", project, Some(release_id), Vec::new())?;
+        let release = self
+            .call_workflow_result(config, cli_args, &release_request, request_log_path)
+            .await?;
+        let project_id = self
+            .canonical_project_id(config, project, request_log_path)
+            .await?;
+        super::signed_batch::require_requested_active_release(
+            &release.body,
+            &project_id,
+            release_id,
+        )
+        .map_err(&refused)?;
+        let environment =
+            super::signed_batch::snapshot_environment(&release.body).map_err(|reason| {
+                ApiCommandError::UnexpectedResponse {
+                    endpoint: "/projects/{project_id}/releases/{release_id}",
+                    reason,
+                }
+            })?;
+        let release_targets =
+            super::signed_batch::release_targets(&release.body).map_err(&refused)?;
+        super::signed_batch::validate_removal_batch(
+            &self.resolved_api_url(),
+            chain_id,
+            environment,
+            calldata.to,
+            &calldata.data,
+            &calldata.assertions,
+            &release_targets,
+        )
+        .map_err(refused)?;
 
         confirm_send(
             cli_args,
@@ -839,6 +996,166 @@ impl ApiArgs {
         }
     }
 
+    /// A handover with no active contracts. Both platforms require a nonce and
+    /// an EIP-191 signature from the current manager and from the new manager
+    /// before the confirmation POST.
+    async fn confirm_direct_handover(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        args: &ProtocolManagerArgs,
+        project: &str,
+        request_log_path: &Path,
+        handover: DirectHandover<'_>,
+    ) -> Result<Value, ApiCommandError> {
+        confirm_mutation(
+            cli_args,
+            args.broadcast.yes,
+            &format!(
+                "transfer the protocol manager to {} (no transaction needed)",
+                handover.new_manager
+            ),
+        )?;
+        let current = resolve_signer(&args.broadcast.wallet, cli_args).await?;
+        let new_manager_key = args.new_manager_private_key.as_deref().ok_or(
+            ApiCommandError::InvalidWorkflow {
+                message: "a direct handover requires --new-manager-private-key so both wallets sign the confirmation".to_string(),
+            },
+        )?;
+        let new_manager_signer =
+            new_manager_key
+                .trim()
+                .parse::<PrivateKeySigner>()
+                .map_err(|_| {
+                    ApiCommandError::InvalidWorkflow {
+                        message: "--new-manager-private-key is not a private key".to_string(),
+                    }
+                })?;
+        if new_manager_signer.address() != handover.new_manager_address {
+            return Err(ApiCommandError::InvalidWorkflow {
+                message: format!(
+                    "--new-manager-private-key signs {} but --new-manager is {}",
+                    new_manager_signer.address(),
+                    handover.new_manager_address
+                ),
+            });
+        }
+        let project_id = self
+            .canonical_project_id(config, project, request_log_path)
+            .await?;
+        let chain_id = self
+            .project_chain_id(config, cli_args, &project_id, request_log_path)
+            .await?;
+        let challenge = TransferChallenge {
+            project: &project_id,
+            current_manager: current.address(),
+            new_manager: handover.new_manager_address,
+            chain_id,
+        };
+        progress(cli_args, "Signing the current manager's transfer challenge");
+        let current_proof = self
+            .sign_transfer_proof(config, cli_args, &challenge, &current, request_log_path)
+            .await?;
+        progress(cli_args, "Signing the new manager's transfer challenge");
+        let new_proof = self
+            .sign_transfer_proof(
+                config,
+                cli_args,
+                &challenge,
+                &new_manager_signer,
+                request_log_path,
+            )
+            .await?;
+        progress(cli_args, "Confirming the direct handover");
+        let confirm_request = post_operation(
+            "projects.confirmTransfer",
+            project,
+            None,
+            &json!({
+                "mode": "direct",
+                "new_manager_address": handover.new_manager,
+                "nonce": current_proof.nonce,
+                "signature": current_proof.signature,
+                "new_manager_nonce": new_proof.nonce,
+                "new_manager_signature": new_proof.signature,
+            }),
+        )?;
+        let confirm = self
+            .call_workflow_result(config, cli_args, &confirm_request, request_log_path)
+            .await?;
+        Ok(broadcast_envelope(
+            "protocol_manager_transfer_broadcast",
+            json!({
+                "mode": "direct",
+                "calldata": handover.calldata_body,
+                "tx": Value::Null,
+                "confirm": confirm.body,
+            }),
+            handover.next_actions,
+        ))
+    }
+
+    async fn sign_transfer_proof(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        challenge: &TransferChallenge<'_>,
+        signer: &PrivateKeySigner,
+        request_log_path: &Path,
+    ) -> Result<TransferProof, ApiCommandError> {
+        let nonce_request = get_operation(
+            "projects.getProtocolManagerNonce",
+            challenge.project,
+            None,
+            vec![
+                ("address".to_string(), challenge.current_manager.to_string()),
+                ("new_manager".to_string(), challenge.new_manager.to_string()),
+                ("chain_id".to_string(), challenge.chain_id.to_string()),
+            ],
+        )?;
+        let nonce_result = self
+            .call_workflow_result(config, cli_args, &nonce_request, request_log_path)
+            .await?;
+        let nonce: ProtocolManagerNonceResponse =
+            parse_response("protocol-manager/nonce", &nonce_result.body)?;
+        let expires_at =
+            nonce
+                .expires_at
+                .as_deref()
+                .ok_or(ApiCommandError::UnexpectedResponse {
+                    endpoint: "protocol-manager/nonce",
+                    reason: "missing expires_at".to_string(),
+                })?;
+        let expected = transfer_challenge_message(
+            challenge.project,
+            challenge.current_manager,
+            challenge.new_manager,
+            challenge.chain_id,
+            &nonce.nonce,
+            expires_at,
+        )?;
+        if nonce.message != expected {
+            return Err(ApiCommandError::CalldataRefused {
+                action: "direct manager handover",
+                reason: format!(
+                    "nonce message is not the transfer challenge for project {}, current manager {}, new manager {}, chain {}",
+                    challenge.project,
+                    challenge.current_manager,
+                    challenge.new_manager,
+                    challenge.chain_id
+                ),
+                manual_route: vec![
+                    "Fetch a new nonce and confirm its message names this project, both managers, and this chain before signing".to_string(),
+                ],
+            });
+        }
+        let signature = sign_personal(signer, &expected).await?;
+        Ok(TransferProof {
+            nonce: nonce.nonce,
+            signature,
+        })
+    }
+
     async fn protocol_manager_transfer_broadcast(
         &self,
         config: &mut CliConfig,
@@ -853,6 +1170,11 @@ impl ApiArgs {
             .ok_or(ApiCommandError::InvalidWorkflow {
                 message: "--transfer-calldata --broadcast requires --new-manager".to_string(),
             })?;
+        let new_manager_address: Address = new_manager.parse().map_err(|_| {
+            ApiCommandError::InvalidWorkflow {
+                message: format!("--new-manager {new_manager} is not a 0x address"),
+            }
+        })?;
 
         progress(cli_args, "Fetching manager transfer calldata");
         let request = get_operation(
@@ -872,38 +1194,26 @@ impl ApiArgs {
         )];
 
         if calldata.mode == TransferMode::Direct {
-            // Nothing on-chain to move; confirm directly.
-            confirm_mutation(
-                cli_args,
-                args.broadcast.yes,
-                &format!("transfer the protocol manager to {new_manager} (no transaction needed)"),
-            )?;
-            progress(cli_args, "No on-chain transfer needed; confirming directly");
-            let confirm_request = post_operation(
-                "projects.confirmTransfer",
-                project,
-                None,
-                &json!({ "mode": "direct", "new_manager_address": new_manager }),
-            )?;
-            let confirm = self
-                .call_workflow_result(config, cli_args, &confirm_request, request_log_path)
-                .await?;
-            return Ok(broadcast_envelope(
-                "protocol_manager_transfer_broadcast",
-                json!({
-                    "mode": "direct",
-                    "calldata": calldata_result.body,
-                    "tx": Value::Null,
-                    "confirm": confirm.body,
-                }),
-                next_actions,
-            ));
+            return self
+                .confirm_direct_handover(
+                    config,
+                    cli_args,
+                    args,
+                    project,
+                    request_log_path,
+                    DirectHandover {
+                        new_manager: &new_manager,
+                        new_manager_address,
+                        calldata_body: &calldata_result.body,
+                        next_actions,
+                    },
+                )
+                .await;
         }
 
         debug_assert_eq!(calldata.mode, TransferMode::Onchain);
-        // Direct transfers are platform-only and do not need a signer. Resolve
-        // the wallet only after the backend says an on-chain transaction is
-        // required, so a valid direct transfer works without wallet flags.
+        // A direct handover returns above. Resolve the on-chain signer only
+        // once the backend says a transaction is required.
         let signer = resolve_signer(&args.broadcast.wallet, cli_args).await?;
         let (Some(chain_id), Some(to), Some(data)) =
             (calldata.chain_id, calldata.to, calldata.calldata.clone())
@@ -913,6 +1223,46 @@ impl ApiArgs {
                 reason: "onchain mode without chain_id/to/calldata".to_string(),
             });
         };
+        let project_chain = self
+            .project_chain_id(config, cli_args, project, request_log_path)
+            .await?;
+        let refused = refusal(
+            "manager transfer",
+            vec![
+                format!(
+                    "pcl protocol-manager --project {project} --transfer-calldata --new-manager {new_manager} --json"
+                ),
+                format!(
+                    "Check that `to` is the active StateOracle and `calldata` its batch of transferManager calls to {new_manager}, then sign {{to, calldata}} with the current manager's external wallet"
+                ),
+                format!(
+                    "The new manager then fetches `pcl protocol-manager --project {project} --accept-calldata --json`, signs it externally and runs --confirm-transfer with the landed hash"
+                ),
+            ],
+        );
+        if chain_id != project_chain {
+            return Err(refused(format!(
+                "chain_id {chain_id} does not match the project's chain {project_chain}"
+            )));
+        }
+        let handover = self
+            .load_handover(config, cli_args, project, request_log_path, &refused)
+            .await?;
+        let contracts = calldata
+            .contracts
+            .iter()
+            .map(|contract| (contract.address, contract.calldata.clone()))
+            .collect::<Vec<_>>();
+        super::signed_batch::validate_manager_batch(
+            &self.resolved_api_url(),
+            chain_id,
+            to,
+            &data,
+            &contracts,
+            Some(new_manager_address),
+            &handover,
+        )
+        .map_err(refused)?;
 
         confirm_send(
             cli_args,
@@ -987,6 +1337,43 @@ impl ApiArgs {
             .await?;
         let calldata: AcceptCalldataResponse =
             parse_response("protocol-manager/accept-calldata", &calldata_result.body)?;
+        let project_chain = self
+            .project_chain_id(config, cli_args, project, request_log_path)
+            .await?;
+        let refused = refusal(
+            "manager acceptance",
+            vec![
+                format!("pcl protocol-manager --project {project} --accept-calldata --json"),
+                "Check that `to` is the active StateOracle and `calldata` its batch of acceptManagerTransfer calls, then sign {to, calldata} with the new manager's external wallet".to_string(),
+                format!(
+                    "pcl protocol-manager --project {project} --confirm-transfer --field mode=onchain --field tx_hash=<tx-hash> --field chain_id=<chain-id> --field new_manager_address=<new-manager> --json"
+                ),
+            ],
+        );
+        if calldata.chain_id != project_chain {
+            return Err(refused(format!(
+                "chain_id {} does not match the project's chain {project_chain}",
+                calldata.chain_id
+            )));
+        }
+        let handover = self
+            .load_handover(config, cli_args, project, request_log_path, &refused)
+            .await?;
+        let contracts = calldata
+            .contracts
+            .iter()
+            .map(|contract| (contract.address, contract.calldata.clone()))
+            .collect::<Vec<_>>();
+        super::signed_batch::validate_manager_batch(
+            &self.resolved_api_url(),
+            calldata.chain_id,
+            calldata.to,
+            &calldata.calldata,
+            &contracts,
+            None,
+            &handover,
+        )
+        .map_err(refused)?;
 
         confirm_send(
             cli_args,
@@ -1051,6 +1438,90 @@ impl ApiArgs {
             }),
             vec![format!("pcl protocol-manager --project {project}")],
         ))
+    }
+
+    async fn load_handover<F>(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        project: &str,
+        request_log_path: &Path,
+        refuse: &F,
+    ) -> Result<super::signed_batch::HandoverBinding, ApiCommandError>
+    where
+        F: Fn(String) -> ApiCommandError,
+    {
+        // The list has no revision and no order. Read it again after the
+        // details, and reload once if the set of ids changed. A second
+        // membership change is refused rather than signed against a stale set.
+        let project_id = self
+            .canonical_project_id(config, project, request_log_path)
+            .await?;
+        progress(cli_args, "Fetching active releases");
+        let mut listed = self
+            .active_release_page(config, cli_args, project, request_log_path)
+            .await?;
+        let mut restarted = false;
+        loop {
+            let ids = super::signed_batch::active_release_ids(&listed).map_err(refuse)?;
+            let mut releases = Vec::with_capacity(ids.len());
+            for id in &ids {
+                let request = get_operation(
+                    "projects.getRelease",
+                    project,
+                    Some(id.as_str()),
+                    Vec::new(),
+                )?;
+                let release = self
+                    .call_workflow_result(config, cli_args, &request, request_log_path)
+                    .await?;
+                releases.push(
+                    super::signed_batch::active_snapshot(id, &project_id, &release.body)
+                        .map_err(refuse)?,
+                );
+            }
+            let again = self
+                .active_release_page(config, cli_args, project, request_log_path)
+                .await?;
+            let again_ids = super::signed_batch::active_release_ids(&again).map_err(refuse)?;
+            if super::signed_batch::same_active_release_ids(&again_ids, &ids) {
+                return super::signed_batch::bind_handover(&releases).map_err(refuse);
+            }
+            if restarted {
+                return Err(refuse(
+                    "active releases changed while their snapshots were loading; retry the handover"
+                        .to_string(),
+                ));
+            }
+            progress(cli_args, "Active releases changed; loading them again");
+            restarted = true;
+            listed = again;
+        }
+    }
+
+    async fn active_release_page(
+        &self,
+        config: &mut CliConfig,
+        cli_args: &CliArgs,
+        project: &str,
+        request_log_path: &Path,
+    ) -> Result<Value, ApiCommandError> {
+        let request = get_operation(
+            "projects.listReleases",
+            project,
+            None,
+            vec![
+                ("status".to_string(), "active".to_string()),
+                (
+                    "limit".to_string(),
+                    super::signed_batch::ACTIVE_RELEASE_PAGE.to_string(),
+                ),
+            ],
+        )?;
+        let listed = self
+            .call_workflow_result(config, cli_args, &request, request_log_path)
+            .await?;
+        Ok(listed.body)
     }
 }
 
@@ -1208,53 +1679,25 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn direct_manager_transfer_does_not_require_a_wallet() {
-        let mut server = mockito::Server::new_async().await;
-        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-        let new_manager = "0x0101010101010101010101010101010101010101";
-        let calldata = server
-            .mock(
-                "GET",
-                format!("/api/v1/projects/{project_id}/protocol-manager/transfer-calldata")
-                    .as_str(),
-            )
-            .match_query(Matcher::UrlEncoded(
-                "new_manager".into(),
-                new_manager.into(),
-            ))
-            .match_header("authorization", "Bearer access-token")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(
-                json!({
-                    "mode": "direct",
-                    "to": null,
-                    "calldata": null,
-                    "contracts": [],
-                    "total_contracts": 0
-                })
-                .to_string(),
-            )
-            .expect(1)
-            .create_async()
-            .await;
-        let confirm = server
-            .mock(
-                "POST",
-                format!("/api/v1/projects/{project_id}/protocol-manager/confirm-transfer").as_str(),
-            )
-            .match_header("authorization", "Bearer access-token")
-            .match_body(Matcher::Json(json!({
-                "mode": "direct",
-                "new_manager_address": new_manager
-            })))
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"status":"ok"}"#)
-            .expect(1)
-            .create_async()
-            .await;
+    const CURRENT_MANAGER_KEY: &str =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const NEW_MANAGER_KEY: &str =
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+
+    fn direct_calldata_body() -> Value {
+        json!({
+            "mode": "direct",
+            "to": null,
+            "calldata": null,
+            "contracts": [],
+            "total_contracts": 0
+        })
+    }
+
+    async fn direct_handover(
+        server: &mut mockito::Server,
+        args: ProtocolManagerArgs,
+    ) -> Result<Value, ApiCommandError> {
         let api = ApiArgs::headless(server.url().parse().unwrap());
         let mut config = CliConfig {
             auth: Some(crate::config::UserAuth {
@@ -1275,29 +1718,420 @@ mod tests {
             config_dir: Some(config_dir.path().to_path_buf()),
             ..CliArgs::default()
         };
-        let request_log_path = config_dir.path().join("requests.jsonl");
-        let args = ProtocolManagerArgs {
+        api.protocol_manager_transfer_broadcast(
+            &mut config,
+            &cli_args,
+            &args,
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            &config_dir.path().join("requests.jsonl"),
+        )
+        .await
+    }
+
+    fn platform_transfer_challenge(
+        project: &str,
+        current_manager: &str,
+        new_manager: &str,
+        chain_id: u64,
+        nonce: &str,
+        expiry: &str,
+    ) -> String {
+        [
+            "Credible Layer — Transfer Protocol Manager",
+            "",
+            &format!("Project: {project}"),
+            &format!("Current Manager: {current_manager}"),
+            &format!("New Manager: {new_manager}"),
+            &format!("Chain ID: {chain_id}"),
+            &format!("Nonce: {nonce}"),
+            &format!("Expiry: {expiry}"),
+            "",
+            "Sign this message to authorize this protocol manager transfer. Both the current and new manager must sign before a direct change takes effect.",
+        ]
+        .join("\n")
+    }
+
+    fn nonce_body(nonce: &str, message: &str, expiry: &str) -> Value {
+        json!({
+            "nonce": nonce,
+            "message": message,
+            "expires_at": expiry
+        })
+    }
+
+    fn direct_manager_args(new_manager: &str) -> ProtocolManagerArgs {
+        ProtocolManagerArgs {
             new_manager: Some(new_manager.to_string()),
+            new_manager_private_key: Some(NEW_MANAGER_KEY.to_string()),
             broadcast: BroadcastArgs {
                 broadcast: true,
                 yes: true,
+                wallet: crate::wallet::WalletArgs {
+                    private_key: Some(CURRENT_MANAGER_KEY.to_string()),
+                    ..crate::wallet::WalletArgs::default()
+                },
                 ..BroadcastArgs::default()
             },
             ..ProtocolManagerArgs::default()
-        };
+        }
+    }
 
-        let result = api
-            .protocol_manager_transfer_broadcast(
-                &mut config,
-                &cli_args,
-                &args,
-                project_id,
-                &request_log_path,
+    async fn exercise_direct_handover(
+        first: Value,
+        second: Option<Value>,
+        confirm_body: Option<Value>,
+    ) -> Result<Value, ApiCommandError> {
+        let mut server = mockito::Server::new_async().await;
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let current: PrivateKeySigner = CURRENT_MANAGER_KEY.parse().unwrap();
+        let new_manager_signer: PrivateKeySigner = NEW_MANAGER_KEY.parse().unwrap();
+        let new_manager = new_manager_signer.address().to_string();
+        let _calldata = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/protocol-manager/transfer-calldata")
+                    .as_str(),
             )
+            .match_query(Matcher::UrlEncoded(
+                "new_manager".into(),
+                new_manager.clone(),
+            ))
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(direct_calldata_body().to_string())
+            .expect(1)
+            .create_async()
+            .await;
+        let _project = server
+            .mock("GET", format!("/api/v1/projects/{project_id}").as_str())
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"chain_id":1}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let nonce_query = Matcher::AllOf(vec![
+            Matcher::UrlEncoded("address".into(), current.address().to_string()),
+            Matcher::UrlEncoded("new_manager".into(), new_manager.clone()),
+            Matcher::UrlEncoded("chain_id".into(), "1".into()),
+        ]);
+        let _first_nonce = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/protocol-manager/nonce").as_str(),
+            )
+            .match_query(nonce_query.clone())
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(first.to_string())
+            .expect(1)
+            .create_async()
+            .await;
+        if let Some(second) = second {
+            let _second_nonce = server
+                .mock(
+                    "GET",
+                    format!("/api/v1/projects/{project_id}/protocol-manager/nonce").as_str(),
+                )
+                .match_query(nonce_query)
+                .match_header("authorization", "Bearer access-token")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(second.to_string())
+                .expect(1)
+                .create_async()
+                .await;
+        }
+        let _confirm = server
+            .mock(
+                "POST",
+                format!("/api/v1/projects/{project_id}/protocol-manager/confirm-transfer").as_str(),
+            )
+            .match_header("authorization", "Bearer access-token")
+            .match_body(match &confirm_body {
+                Some(body) => Matcher::Json(body.clone()),
+                None => Matcher::Any,
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"status":"ok"}"#)
+            .expect(usize::from(confirm_body.is_some()))
+            .create_async()
+            .await;
+        direct_handover(&mut server, direct_manager_args(&new_manager)).await
+    }
+
+    #[tokio::test]
+    async fn direct_manager_transfer_posts_both_wallet_proofs() {
+        let error = exercise_direct_handover(
+            nonce_body("nonce-1", "transfer-challenge", "2030-01-01T00:00:00.000Z"),
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(error, ApiCommandError::CalldataRefused { .. }),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains("not the transfer challenge"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_manager_transfer_signs_the_rebuilt_challenge() {
+        let current: PrivateKeySigner = CURRENT_MANAGER_KEY.parse().unwrap();
+        let new_manager_signer: PrivateKeySigner = NEW_MANAGER_KEY.parse().unwrap();
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let current_manager = current.address().to_string().to_ascii_lowercase();
+        let new_manager = new_manager_signer
+            .address()
+            .to_string()
+            .to_ascii_lowercase();
+        let current_message = platform_transfer_challenge(
+            project_id,
+            &current_manager,
+            &new_manager,
+            1,
+            "nonce-current",
+            "2030-01-01T00:00:00.000Z",
+        );
+        let new_message = platform_transfer_challenge(
+            project_id,
+            &current_manager,
+            &new_manager,
+            1,
+            "nonce-new",
+            "2030-06-01T00:00:00.000Z",
+        );
+        let current_signature = sign_personal(&current, &current_message).await.unwrap();
+        let new_signature = sign_personal(&new_manager_signer, &new_message)
             .await
             .unwrap();
 
+        let result = exercise_direct_handover(
+            nonce_body(
+                "nonce-current",
+                &current_message,
+                "2030-01-01T00:00:00.000Z",
+            ),
+            Some(nonce_body(
+                "nonce-new",
+                &new_message,
+                "2030-06-01T00:00:00.000Z",
+            )),
+            Some(json!({
+                "mode": "direct",
+                "new_manager_address": new_manager_signer.address().to_string(),
+                "nonce": "nonce-current",
+                "signature": current_signature,
+                "new_manager_nonce": "nonce-new",
+                "new_manager_signature": new_signature
+            })),
+        )
+        .await
+        .unwrap();
+
         assert_eq!(result["data"]["mode"], "direct");
+    }
+
+    #[tokio::test]
+    async fn direct_handover_refuses_a_mismatched_challenge_for_either_proof() {
+        let current: PrivateKeySigner = CURRENT_MANAGER_KEY.parse().unwrap();
+        let new_manager_signer: PrivateKeySigner = NEW_MANAGER_KEY.parse().unwrap();
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let current_manager = current.address().to_string().to_ascii_lowercase();
+        let new_manager = new_manager_signer
+            .address()
+            .to_string()
+            .to_ascii_lowercase();
+        let current_message = platform_transfer_challenge(
+            project_id,
+            &current_manager,
+            &new_manager,
+            1,
+            "nonce-current",
+            "2030-01-01T00:00:00.000Z",
+        );
+        let new_message = platform_transfer_challenge(
+            project_id,
+            &current_manager,
+            &new_manager,
+            1,
+            "nonce-new",
+            "2030-06-01T00:00:00.000Z",
+        );
+        let cases = [
+            (
+                "project",
+                current_message.replace(project_id, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                new_message.replace(project_id, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            ),
+            (
+                "recipient",
+                current_message.replace(&new_manager, "0x0000000000000000000000000000000000000001"),
+                new_message.replace(&new_manager, "0x0000000000000000000000000000000000000001"),
+            ),
+            (
+                "chain",
+                current_message.replace("Chain ID: 1", "Chain ID: 8453"),
+                new_message.replace("Chain ID: 1", "Chain ID: 8453"),
+            ),
+            (
+                "unrelated",
+                "transfer-challenge".to_string(),
+                "sign in to continue".to_string(),
+            ),
+        ];
+
+        for (name, tampered_current, tampered_new) in cases {
+            assert_ne!(tampered_current, current_message, "{name}");
+            assert_ne!(tampered_new, new_message, "{name}");
+            let first = exercise_direct_handover(
+                nonce_body(
+                    "nonce-current",
+                    &tampered_current,
+                    "2030-01-01T00:00:00.000Z",
+                ),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                matches!(first, ApiCommandError::CalldataRefused { .. }),
+                "current manager proof {name}: {first}"
+            );
+            let second = exercise_direct_handover(
+                nonce_body(
+                    "nonce-current",
+                    &current_message,
+                    "2030-01-01T00:00:00.000Z",
+                ),
+                Some(nonce_body(
+                    "nonce-new",
+                    &tampered_new,
+                    "2030-06-01T00:00:00.000Z",
+                )),
+                None,
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                matches!(second, ApiCommandError::CalldataRefused { .. }),
+                "new manager proof {name}: {second}"
+            );
+        }
+    }
+
+    #[test]
+    fn transfer_challenge_message_matches_the_platform_text() {
+        let current = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let new_manager = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let message = transfer_challenge_message(
+            project_id,
+            current,
+            new_manager,
+            1,
+            "abc",
+            "2030-01-01T00:00:00.000Z",
+        )
+        .unwrap();
+        assert_eq!(
+            message,
+            platform_transfer_challenge(
+                project_id,
+                "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+                1,
+                "abc",
+                "2030-01-01T00:00:00.000Z",
+            )
+        );
+        assert!(
+            transfer_challenge_message(
+                project_id,
+                current,
+                new_manager,
+                1,
+                "",
+                "2030-01-01T00:00:00.000Z",
+            )
+            .is_err()
+        );
+        assert!(
+            transfer_challenge_message(
+                project_id,
+                current,
+                new_manager,
+                1,
+                "ab\nProject: other",
+                "2030-01-01T00:00:00.000Z",
+            )
+            .is_err()
+        );
+        assert!(
+            transfer_challenge_message(project_id, current, new_manager, 1, "abc", "tomorrow")
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_manager_transfer_requires_the_new_manager_key() {
+        let mut server = mockito::Server::new_async().await;
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let calldata = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/protocol-manager/transfer-calldata")
+                    .as_str(),
+            )
+            .match_query(Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(direct_calldata_body().to_string())
+            .expect(1)
+            .create_async()
+            .await;
+        let confirm = server
+            .mock(
+                "POST",
+                format!("/api/v1/projects/{project_id}/protocol-manager/confirm-transfer").as_str(),
+            )
+            .expect(0)
+            .create_async()
+            .await;
+
+        let error = direct_handover(
+            &mut server,
+            ProtocolManagerArgs {
+                new_manager: Some("0x70997970C51812dc3A010C7d01b50e0d17dc79C8".to_string()),
+                broadcast: BroadcastArgs {
+                    broadcast: true,
+                    yes: true,
+                    wallet: crate::wallet::WalletArgs {
+                        private_key: Some(CURRENT_MANAGER_KEY.to_string()),
+                        ..crate::wallet::WalletArgs::default()
+                    },
+                    ..BroadcastArgs::default()
+                },
+                ..ProtocolManagerArgs::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("--new-manager-private-key"),
+            "{error}"
+        );
         calldata.assert_async().await;
         confirm.assert_async().await;
     }
@@ -1489,5 +2323,772 @@ mod tests {
         };
         assert!(!challenge_expired(&other));
         assert!(!challenge_expired(&ApiCommandError::BroadcastCancelled));
+    }
+
+    const PROJECT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+    const RELEASE: &str = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+    const TEST_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+    struct Harness {
+        api: ApiArgs,
+        config: CliConfig,
+        cli_args: CliArgs,
+        dir: tempfile::TempDir,
+    }
+
+    impl Harness {
+        fn new(url: &str) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            Self {
+                api: ApiArgs::headless(url.parse().unwrap()),
+                config: CliConfig {
+                    auth: Some(crate::config::UserAuth {
+                        issuer_platform_url: Some(url.to_string()),
+                        access_token: "access-token".to_string(),
+                        refresh_token: "refresh-token".to_string(),
+                        expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+                        refresh_expires_at: None,
+                        user_id: None,
+                        wallet_address: None,
+                        email: Some("agent@example.com".to_string()),
+                    }),
+                    platform_url: Some(url.to_string()),
+                    rpc: BTreeMap::new(),
+                },
+                cli_args: CliArgs {
+                    config_dir: Some(dir.path().to_path_buf()),
+                    ..CliArgs::default()
+                },
+                dir,
+            }
+        }
+
+        fn log(&self) -> std::path::PathBuf {
+            self.dir.path().join("requests.jsonl")
+        }
+    }
+
+    fn signing() -> BroadcastArgs {
+        BroadcastArgs {
+            broadcast: true,
+            yes: true,
+            wallet: crate::wallet::WalletArgs {
+                private_key: Some(TEST_KEY.to_string()),
+                ..crate::wallet::WalletArgs::default()
+            },
+            ..BroadcastArgs::default()
+        }
+    }
+
+    async fn get_json(server: &mut mockito::Server, path: &str, body: Value) -> mockito::Mock {
+        server
+            .mock("GET", format!("/api/v1/projects/{PROJECT}{path}").as_str())
+            .match_query(Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body.to_string())
+            .create_async()
+            .await
+    }
+
+    async fn accept(server: &mut mockito::Server, body: Value) -> ApiCommandError {
+        get_json(server, "", json!({"chain_id": 1})).await;
+        active_release_list(server, &release_list(["rel-1"])).await;
+        get_json(
+            server,
+            "/releases/rel-1",
+            release_snapshot("rel-1", "production", &[HELD_A]),
+        )
+        .await;
+        get_json(server, "/protocol-manager/accept-calldata", body).await;
+        let mut h = Harness::new(&server.url());
+        let args = ProtocolManagerArgs {
+            broadcast: signing(),
+            ..ProtocolManagerArgs::default()
+        };
+        let log = h.log();
+        h.api
+            .protocol_manager_accept_broadcast(&mut h.config, &h.cli_args, &args, PROJECT, &log)
+            .await
+            .unwrap_err()
+    }
+
+    async fn remove(server: &mut mockito::Server, release: Value, body: Value) -> ApiCommandError {
+        get_json(server, "", json!({"chain_id": 1})).await;
+        get_json(server, &format!("/releases/{RELEASE}"), release).await;
+        get_json(
+            server,
+            &format!("/releases/{RELEASE}/remove-calldata"),
+            body,
+        )
+        .await;
+        let mut h = Harness::new(&server.url());
+        let args = ReleasesArgs {
+            broadcast: signing(),
+            ..ReleasesArgs::default()
+        };
+        let log = h.log();
+        h.api
+            .broadcast_release_remove(&mut h.config, &h.cli_args, &args, PROJECT, RELEASE, &log)
+            .await
+            .unwrap_err()
+    }
+
+    fn assert_refused(err: &ApiCommandError, needle: &str) {
+        assert_eq!(err.code(), "broadcast.calldata_refused", "{err:?}");
+        assert!(!err.recoverable(), "{err:?}");
+        assert!(err.to_string().contains(needle), "{err}");
+        let actions = err.next_actions();
+        assert!(!actions.is_empty());
+        assert!(
+            actions.iter().all(|action| !action.contains("api inspect")),
+            "{actions:?}"
+        );
+    }
+
+    const ORACLE: &str = "0x8681e3fF0526C785FE82db9153E6E1F54551ebdF";
+
+    fn snapshot(assertion_id: &str) -> Value {
+        json!({
+            "id": RELEASE,
+            "projectId": PROJECT,
+            "status": "active",
+            "environment": "production",
+            "configSnapshot": {"contracts": {"a": {
+                "address": "0x0101010101010101010101010101010101010101",
+                "assertions": [{"assertionId": assertion_id}]
+            }}}
+        })
+    }
+
+    fn removal(chain_id: u64, assertion_id: &str) -> Value {
+        json!({
+            "to": ORACLE,
+            "data": "0x01",
+            "chainId": chain_id,
+            "assertions": [{
+                "contractAddress": "0x0101010101010101010101010101010101010101",
+                "assertionId": assertion_id
+            }]
+        })
+    }
+
+    const AA: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[tokio::test]
+    async fn accept_broadcast_refuses_a_chain_other_than_the_project_chain() {
+        let mut server = mockito::Server::new_async().await;
+        let err = accept(
+            &mut server,
+            json!({"chain_id": 59144, "to": ORACLE, "calldata": "0x01", "contracts": []}),
+        )
+        .await;
+        assert_refused(&err, "59144");
+    }
+
+    #[tokio::test]
+    async fn accept_broadcast_refuses_an_unknown_platform_before_sending() {
+        let mut server = mockito::Server::new_async().await;
+        let err = accept(
+            &mut server,
+            json!({
+                "chain_id": 1,
+                "to": ORACLE,
+                "calldata": "0x01",
+                "contracts": [{"address": HELD_A, "calldata": "0x"}],
+            }),
+        )
+        .await;
+        assert_refused(&err, "127.0.0.1");
+        assert!(
+            err.next_actions()
+                .iter()
+                .any(|action| action.contains("--confirm-transfer")),
+            "{:?}",
+            err.next_actions()
+        );
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_refuses_a_chain_other_than_the_project_chain() {
+        let mut server = mockito::Server::new_async().await;
+        let err = remove(&mut server, snapshot(AA), removal(59144, AA)).await;
+        assert_refused(&err, "59144");
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_refuses_a_release_that_is_not_the_one_requested() {
+        let mut server = mockito::Server::new_async().await;
+        let mut other = snapshot(AA);
+        other["id"] = json!("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        let err = remove(&mut server, other, removal(1, AA)).await;
+        assert_refused(&err, "is not the requested release");
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_refuses_another_projects_release() {
+        let mut server = mockito::Server::new_async().await;
+        let mut other = snapshot(AA);
+        other["projectId"] = json!("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        let err = remove(&mut server, other, removal(1, AA)).await;
+        assert_refused(&err, "is not the requested project");
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_refuses_an_inactive_release() {
+        let mut server = mockito::Server::new_async().await;
+        let mut inactive = snapshot(AA);
+        inactive["status"] = json!("inactive");
+        let err = remove(&mut server, inactive, removal(1, AA)).await;
+        assert_refused(&err, "inactive");
+    }
+
+    #[tokio::test]
+    async fn removal_broadcast_binds_entries_to_the_release_record() {
+        let mut server = mockito::Server::new_async().await;
+        let swapped = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let err = remove(&mut server, snapshot(AA), removal(1, swapped)).await;
+        assert_refused(&err, "release record");
+        assert!(
+            err.next_actions().iter().any(|action| {
+                action.ends_with(&format!(
+                    "pcl releases remove {PROJECT} {RELEASE} --field txHash=<tx-hash> --json"
+                ))
+            }),
+            "{:?}",
+            err.next_actions()
+        );
+    }
+
+    #[tokio::test]
+    async fn transfer_broadcast_refuses_a_token_transfer_before_signing() {
+        let mut server = mockito::Server::new_async().await;
+        get_json(&mut server, "", json!({"chain_id": 1})).await;
+        active_release_list(&mut server, &release_list(["rel-1"])).await;
+        get_json(
+            &mut server,
+            "/releases/rel-1",
+            release_snapshot("rel-1", "production", &[HELD_A]),
+        )
+        .await;
+        // ERC20 transfer(attacker, balance) aimed at a token contract.
+        get_json(
+            &mut server,
+            "/protocol-manager/transfer-calldata",
+            json!({
+                "mode": "onchain",
+                "chain_id": 1,
+                "to": "0x2222222222222222222222222222222222222222",
+                "calldata": "0xa9059cbb000000000000000000000000444444444444444444444444444444444444444400000000000000000000000000000000000000000000000000000000000f4240",
+                "contracts": [{"address": HELD_A, "calldata": "0x"}]
+            }),
+        )
+        .await;
+        let mut h = Harness::new(&server.url());
+        let args = ProtocolManagerArgs {
+            new_manager: Some("0x0303030303030303030303030303030303030303".to_string()),
+            broadcast: signing(),
+            ..ProtocolManagerArgs::default()
+        };
+        let log = h.log();
+        let err = h
+            .api
+            .protocol_manager_transfer_broadcast(&mut h.config, &h.cli_args, &args, PROJECT, &log)
+            .await
+            .unwrap_err();
+        assert_refused(&err, "127.0.0.1");
+    }
+
+    const HELD_A: &str = "0x0101010101010101010101010101010101010101";
+    const HELD_B: &str = "0x0202020202020202020202020202020202020202";
+    const FOREIGN: &str = "0x0404040404040404040404040404040404040404";
+    const NEW_MANAGER: &str = "0x0303030303030303030303030303030303030303";
+    const PRODUCTION_ORACLE: &str = "0x14386aF70E91dFE12aC6243D4B5e087870d7f14D";
+
+    fn checksum(address: &str) -> String {
+        address.parse::<Address>().unwrap().to_string()
+    }
+
+    fn release_list<'a>(ids: impl IntoIterator<Item = &'a str>) -> Value {
+        ids.into_iter()
+            .map(|id| json!({ "id": id, "status": "active" }))
+            .collect()
+    }
+
+    fn release_snapshot(id: &str, environment: &str, addresses: &[&str]) -> Value {
+        let mut contracts = serde_json::Map::new();
+        for (index, address) in addresses.iter().enumerate() {
+            contracts.insert(format!("c{index}"), json!({ "address": address }));
+        }
+        json!({
+            "id": id,
+            "projectId": PROJECT,
+            "status": "active",
+            "environment": environment,
+            "configSnapshot": { "contracts": contracts },
+        })
+    }
+
+    fn manager_calldata(oracle: &str, addresses: &[&str]) -> Value {
+        json!({
+            "mode": "onchain",
+            "chain_id": 1,
+            "to": oracle,
+            "calldata": "0x01",
+            "contracts": addresses.iter().map(|address| json!({
+                "address": address,
+                "calldata": "0x",
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    /// Active releases as `(id, environment, contract addresses)`.
+    type Releases<'a> = &'a [(&'a str, &'a str, &'a [&'a str])];
+
+    async fn run_manager_broadcast(
+        server: &mut mockito::Server,
+        accept: bool,
+        oracle: &str,
+        batch: &[&str],
+        releases: Releases<'_>,
+    ) -> Result<Value, ApiCommandError> {
+        active_release_list(server, &release_list(releases.iter().map(|(id, _, _)| *id))).await;
+        for (id, environment, addresses) in releases {
+            get_json(
+                server,
+                &format!("/releases/{id}"),
+                release_snapshot(id, environment, addresses),
+            )
+            .await;
+        }
+        send_manager_broadcast(server, accept, oracle, batch).await
+    }
+
+    /// Serves the release list only for the one-page active query pcl sends.
+    /// A stable list is read twice: once to choose the details, then again
+    /// before signing.
+    async fn active_release_list(server: &mut mockito::Server, body: &Value) -> mockito::Mock {
+        active_release_list_hits(server, body, 2).await
+    }
+
+    async fn active_release_list_hits(
+        server: &mut mockito::Server,
+        body: &Value,
+        hits: usize,
+    ) -> mockito::Mock {
+        server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{PROJECT}/releases").as_str(),
+            )
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("status".into(), "active".into()),
+                Matcher::UrlEncoded("limit".into(), "100".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body.to_string())
+            .expect(hits)
+            .create_async()
+            .await
+    }
+
+    /// Mocks the project and the manager calldata, then runs the broadcast;
+    /// the caller mocks the release list and details.
+    async fn send_manager_broadcast(
+        server: &mut mockito::Server,
+        accept: bool,
+        oracle: &str,
+        batch: &[&str],
+    ) -> Result<Value, ApiCommandError> {
+        get_json(server, "", json!({"chain_id": 1})).await;
+        let path = if accept {
+            "/protocol-manager/accept-calldata"
+        } else {
+            "/protocol-manager/transfer-calldata"
+        };
+        get_json(server, path, manager_calldata(oracle, batch)).await;
+        let mut h = Harness::new(&server.url());
+        let args = ProtocolManagerArgs {
+            new_manager: (!accept).then(|| NEW_MANAGER.to_string()),
+            broadcast: signing(),
+            ..ProtocolManagerArgs::default()
+        };
+        let log = h.log();
+        if accept {
+            h.api
+                .protocol_manager_accept_broadcast(&mut h.config, &h.cli_args, &args, PROJECT, &log)
+                .await
+        } else {
+            h.api
+                .protocol_manager_transfer_broadcast(
+                    &mut h.config,
+                    &h.cli_args,
+                    &args,
+                    PROJECT,
+                    &log,
+                )
+                .await
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_an_omitted_contract_before_signing() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[HELD_A],
+                &[("rel-1", "production", &[HELD_A, HELD_B])],
+            )
+            .await
+            .unwrap_err();
+            assert_refused(&err, &checksum(HELD_B));
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_substituted_contract_before_signing() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[FOREIGN],
+                &[("rel-1", "production", &[HELD_A])],
+            )
+            .await
+            .unwrap_err();
+            assert_refused(&err, &checksum(HELD_A));
+            assert!(err.to_string().contains(&checksum(FOREIGN)), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_passes_the_complete_contract_set_to_the_platform_check() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[HELD_A, HELD_B],
+                &[("rel-1", "production", &[HELD_A, HELD_B])],
+            )
+            .await
+            .unwrap_err();
+            let message = err.to_string();
+            assert!(
+                !message.contains(&checksum(HELD_A)) && !message.contains("active release"),
+                "complete contract set was refused: {message}"
+            );
+            assert_refused(&err, "127.0.0.1");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_active_releases_on_both_environments() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[HELD_A, HELD_B],
+                &[
+                    ("rel-prod", "production", &[HELD_A]),
+                    ("rel-stage", "staging", &[HELD_B]),
+                ],
+            )
+            .await
+            .unwrap_err();
+            assert_refused(&err, "production");
+            assert!(err.to_string().contains("staging"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_binds_the_only_environment_with_contracts() {
+        let cases: [(&str, Releases<'_>); 2] = [
+            (
+                HELD_A,
+                &[
+                    ("rel-prod", "production", &[HELD_A]),
+                    ("rel-stage", "staging", &[]),
+                ],
+            ),
+            (
+                HELD_B,
+                &[
+                    ("rel-prod", "production", &[]),
+                    ("rel-stage", "staging", &[HELD_B]),
+                ],
+            ),
+        ];
+        for (held, releases) in cases {
+            for accept in [false, true] {
+                let mut server = mockito::Server::new_async().await;
+                let err = run_manager_broadcast(
+                    &mut server,
+                    accept,
+                    PRODUCTION_ORACLE,
+                    &[held],
+                    releases,
+                )
+                .await
+                .unwrap_err();
+                // The harness platform is not a compiled one, so a bound batch
+                // is refused at the platform check, after the binding passed.
+                assert_refused(&err, "127.0.0.1");
+                assert!(!err.to_string().contains("active release"), "{err}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_when_no_active_release_has_contracts() {
+        let cases: [Releases<'_>; 3] = [
+            &[],
+            &[("rel-prod", "production", &[])],
+            &[
+                ("rel-prod", "production", &[]),
+                ("rel-stage", "staging", &[]),
+            ],
+        ];
+        for releases in cases {
+            for accept in [false, true] {
+                let mut server = mockito::Server::new_async().await;
+                let err =
+                    run_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[], releases)
+                        .await
+                        .unwrap_err();
+                assert_refused(&err, "no active release contracts");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_snapshot_with_a_malformed_address() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let err = run_manager_broadcast(
+                &mut server,
+                accept,
+                PRODUCTION_ORACLE,
+                &[HELD_B],
+                &[
+                    ("rel-prod", "production", &["not-an-address"]),
+                    ("rel-stage", "staging", &[HELD_B]),
+                ],
+            )
+            .await
+            .unwrap_err();
+            assert_refused(&err, "no valid address");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_release_detail_that_is_not_active() {
+        // The list named rel-1 active, but the detail fetched after it reports
+        // another status (or none), so its snapshot is not the active set.
+        for status in [
+            Some(json!("inactive")),
+            Some(json!("removed")),
+            Some(json!("Active")),
+            Some(Value::Null),
+            None,
+        ] {
+            for accept in [false, true] {
+                let mut server = mockito::Server::new_async().await;
+                active_release_list(&mut server, &release_list(["rel-1"])).await;
+                let mut detail = release_snapshot("rel-1", "production", &[HELD_A]);
+                match &status {
+                    Some(status) => detail["status"] = status.clone(),
+                    None => drop(detail.as_object_mut().unwrap().remove("status")),
+                }
+                get_json(&mut server, "/releases/rel-1", detail).await;
+                let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                    .await
+                    .unwrap_err();
+                assert_refused(&err, "rel-1");
+                assert!(!err.to_string().contains("127.0.0.1"), "{status:?}: {err}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_full_active_release_page() {
+        for (listed, fetched) in [(99, 99), (100, 0)] {
+            for accept in [false, true] {
+                let mut server = mockito::Server::new_async().await;
+                let ids: Vec<String> = (0..listed).map(|index| format!("rel-{index}")).collect();
+                let list = active_release_list_hits(
+                    &mut server,
+                    &release_list(ids.iter().map(String::as_str)),
+                    if fetched == 0 { 1 } else { 2 },
+                )
+                .await;
+                let details = server
+                    .mock(
+                        "GET",
+                        Matcher::Regex(format!("^/api/v1/projects/{PROJECT}/releases/rel-\\d+$")),
+                    )
+                    .with_status(200)
+                    .with_header("content-type", "application/json")
+                    .with_body_from_request(|request| {
+                        let id = request.path().rsplit('/').next().unwrap_or("rel");
+                        release_snapshot(id, "production", &[HELD_A])
+                            .to_string()
+                            .into_bytes()
+                    })
+                    .expect(fetched)
+                    .create_async()
+                    .await;
+                let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                    .await
+                    .unwrap_err();
+                list.assert_async().await;
+                details.assert_async().await;
+                if fetched == 0 {
+                    assert_refused(&err, "active release page is full");
+                } else {
+                    assert_refused(&err, "127.0.0.1");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_a_detail_for_a_different_release() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            active_release_list(&mut server, &release_list(["rel-1"])).await;
+            let mut detail = release_snapshot("rel-1", "production", &[HELD_A]);
+            detail["id"] = json!("rel-other");
+            get_json(&mut server, "/releases/rel-1", detail).await;
+            let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                .await
+                .unwrap_err();
+            assert_refused(&err, "is not the requested release");
+            assert!(!err.to_string().contains("127.0.0.1"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_another_projects_active_release() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            active_release_list(&mut server, &release_list(["rel-1"])).await;
+            let mut detail = release_snapshot("rel-1", "production", &[HELD_A]);
+            detail["projectId"] = json!("dddddddd-dddd-dddd-dddd-dddddddddddd");
+            get_json(&mut server, "/releases/rel-1", detail).await;
+            let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                .await
+                .unwrap_err();
+            assert_refused(&err, "is not the requested project");
+            assert!(!err.to_string().contains("127.0.0.1"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_reloads_when_another_environment_becomes_active() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let first = active_release_list_hits(&mut server, &release_list(["rel-1"]), 1).await;
+            let rest =
+                active_release_list_hits(&mut server, &release_list(["rel-1", "rel-2"]), 2).await;
+            get_json(
+                &mut server,
+                "/releases/rel-1",
+                release_snapshot("rel-1", "production", &[HELD_A]),
+            )
+            .await;
+            get_json(
+                &mut server,
+                "/releases/rel-2",
+                release_snapshot("rel-2", "staging", &[HELD_B]),
+            )
+            .await;
+            let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                .await
+                .unwrap_err();
+            first.assert_async().await;
+            rest.assert_async().await;
+            assert_refused(&err, "production");
+            assert!(err.to_string().contains("staging"), "{err}");
+            assert!(!err.to_string().contains("127.0.0.1"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_refuses_when_active_releases_keep_changing() {
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let first = active_release_list_hits(&mut server, &release_list(["rel-1"]), 1).await;
+            let second =
+                active_release_list_hits(&mut server, &release_list(["rel-1", "rel-2"]), 1).await;
+            let third = active_release_list_hits(&mut server, &release_list(["rel-1"]), 1).await;
+            get_json(
+                &mut server,
+                "/releases/rel-1",
+                release_snapshot("rel-1", "production", &[HELD_A]),
+            )
+            .await;
+            get_json(
+                &mut server,
+                "/releases/rel-2",
+                release_snapshot("rel-2", "staging", &[HELD_B]),
+            )
+            .await;
+            let err = send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A])
+                .await
+                .unwrap_err();
+            first.assert_async().await;
+            second.assert_async().await;
+            third.assert_async().await;
+            assert_refused(&err, "changed while their snapshots were loading");
+            assert!(!err.to_string().contains("127.0.0.1"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn manager_broadcast_proceeds_when_the_same_releases_return_reversed() {
+        // The list has no order. A permutation is the same set, so transfer
+        // and acceptance continue to the platform check instead of reloading.
+        for accept in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let first =
+                active_release_list_hits(&mut server, &release_list(["rel-1", "rel-2"]), 1).await;
+            let reversed =
+                active_release_list_hits(&mut server, &release_list(["rel-2", "rel-1"]), 1).await;
+            get_json(
+                &mut server,
+                "/releases/rel-1",
+                release_snapshot("rel-1", "production", &[HELD_A]),
+            )
+            .await;
+            get_json(
+                &mut server,
+                "/releases/rel-2",
+                release_snapshot("rel-2", "production", &[HELD_B]),
+            )
+            .await;
+            let err =
+                send_manager_broadcast(&mut server, accept, PRODUCTION_ORACLE, &[HELD_A, HELD_B])
+                    .await
+                    .unwrap_err();
+            first.assert_async().await;
+            reversed.assert_async().await;
+            assert_refused(&err, "127.0.0.1");
+            assert!(
+                !err.to_string().contains("changed while their snapshots"),
+                "{err}"
+            );
+        }
     }
 }

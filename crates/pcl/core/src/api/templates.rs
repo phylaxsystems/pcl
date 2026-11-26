@@ -223,7 +223,11 @@ pub(super) fn body_template(kind: &str) -> Value {
                         "name": "direct",
                         "body": {
                             "mode": "direct",
-                            "new_manager_address": "0x..."
+                            "new_manager_address": "0x...",
+                            "nonce": "<current-manager-nonce>",
+                            "signature": "0x...",
+                            "new_manager_nonce": "<new-manager-nonce>",
+                            "new_manager_signature": "0x..."
                         }
                     },
                     {

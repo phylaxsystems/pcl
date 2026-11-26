@@ -85,6 +85,10 @@ failure (network, gas, interrupted confirmation) picks up where it left off inst
 duplicating work. Individual on-chain steps are also available on the underlying commands
 via `--broadcast` (`pcl releases calldata deploy|remove`, `pcl protocol-manager
 --transfer-calldata|--accept-calldata`) and `--sign` (`pcl protocol-manager --set`).
+Removal and manager-transfer broadcasts sign only on the Ethereum and Linea mainnet
+platforms, against their active StateOracle, with calldata pcl can rebuild exactly.
+Otherwise they stop with `broadcast.calldata_refused` before signing; fetch the calldata
+without `--broadcast`, sign it with an external wallet, and confirm with the landed hash.
 
 For platform work, prefer the natural workflow commands:
 

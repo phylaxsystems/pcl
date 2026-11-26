@@ -77,7 +77,8 @@ type WalletProvider = FillProvider<
 >;
 
 sol! {
-    /// `StateOracle`'s batch entrypoint; the only function pcl encodes locally.
+    /// `StateOracle.batch`. pcl encodes deploy batches with this and rebuilds
+    /// removal and manager batches to compare with the API's bytes.
     function batch(bytes[] calldata data) external;
 }
 
