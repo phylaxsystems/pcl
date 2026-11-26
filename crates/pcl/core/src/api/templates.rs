@@ -163,6 +163,8 @@ pub(super) fn body_template(kind: &str) -> Value {
                                 "args": [],
                                 "bytecode": "0x...",
                                 "flattenedSource": "<source>",
+                                "compilerInput": "<solc standard JSON input as a string; copy with compilerSourcePath from pcl apply --dry-run --json>",
+                                "compilerSourcePath": "<key in compilerInput.sources that declares contractName>",
                                 "compilerVersion": "0.8.28",
                                 "contractName": "<assertion-contract>",
                                 "evmVersion": "paris",

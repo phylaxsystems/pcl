@@ -43,7 +43,8 @@ use std::path::{
 #[derive(clap::Parser, Debug)]
 #[command(name = "verify", about = "Verify assertions locally before deployment")]
 pub struct VerifyArgs {
-    /// Assertion to verify (contract name or `file:contract`).
+    /// Assertion to verify: a contract name (looked up by name) or `file:contract`
+    /// (selected by file, as apply and deploy do).
     /// Verifies all assertions from `credible.toml` when omitted.
     #[arg()]
     pub assertion: Option<String>,
