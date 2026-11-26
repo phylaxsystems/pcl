@@ -4,12 +4,41 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use foundry_common::compile::ProjectCompiler;
-use foundry_compilers::ProjectCompileOutput;
+use foundry_compilers::{
+    Project,
+    ProjectCompileOutput,
+    error::SolcError,
+};
+use foundry_config::Config;
 
 use crate::error::PhoundryError;
 
 /// Compiles the project and returns the compilation output.
 pub fn compile(build_opts: BuildOpts) -> Result<ProjectCompileOutput, Box<PhoundryError>> {
+    compile_project(build_opts, Config::project)
+}
+
+/// Compiles the whole project like [`compile`], keeping each compiler job's full input in its
+/// build info. `cached: false` rebuilds everything in memory without writing to the project.
+pub(crate) fn compile_with_build_info(
+    build_opts: BuildOpts,
+    cached: bool,
+) -> Result<ProjectCompileOutput, Box<PhoundryError>> {
+    compile_project(build_opts, |config| {
+        let mut project = if cached {
+            config.project()?
+        } else {
+            config.ephemeral_project()?
+        };
+        project.build_info = true;
+        Ok(project)
+    })
+}
+
+fn compile_project(
+    build_opts: BuildOpts,
+    project: impl FnOnce(&Config) -> Result<Project, SolcError>,
+) -> Result<ProjectCompileOutput, Box<PhoundryError>> {
     let build_cmd = BuildArgs {
         build: build_opts,
         ..Default::default()
@@ -17,7 +46,7 @@ pub fn compile(build_opts: BuildOpts) -> Result<ProjectCompileOutput, Box<Phound
 
     let config = build_cmd.load_config()?;
 
-    let project = config.project().map_err(PhoundryError::SolcError)?;
+    let project = project(&config).map_err(PhoundryError::SolcError)?;
     let contracts = project.sources_path();
 
     match std::fs::read_dir(contracts) {

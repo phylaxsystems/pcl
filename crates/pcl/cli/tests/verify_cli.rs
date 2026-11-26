@@ -378,3 +378,58 @@ fn release_fails_on_unrelated_invalid_project_sources() {
         assert_eq!(envelope["error"]["code"], "build.failed", "{envelope}");
     }
 }
+
+#[cfg(feature = "credible")]
+fn release_item(envelope: &serde_json::Value) -> &serde_json::Value {
+    &envelope["data"]["payload"]["contracts"]["mock"]["assertions"][0]
+}
+
+#[cfg(feature = "credible")]
+#[test]
+fn release_accepts_crlf_sources_cold_and_cached() {
+    let project = fixture_project();
+    let source = project.path().join("assertions/src/NoArgsAssertion.a.sol");
+    let content = fs::read_to_string(&source).expect("read assertion");
+    fs::write(&source, content.replace('\n', "\r\n")).expect("write CRLF assertion");
+    for state in ["cold", "cached"] {
+        for command in [["apply", "--dry-run"], ["deploy", "--dry-run"]] {
+            let (ok, envelope) = pcl_json(project.path(), &command);
+            assert!(ok, "{state} {command:?}: {envelope}");
+        }
+    }
+}
+
+#[cfg(feature = "credible")]
+#[test]
+fn release_sends_the_original_job_settings() {
+    let project = fixture_project();
+    let config = project.path().join("foundry.toml");
+    let toml = fs::read_to_string(&config).expect("read foundry.toml");
+    fs::write(
+        &config,
+        format!("{toml}\nvia_ir = false\n[profile.default.model_checker]\nengine = \"none\"\n"),
+    )
+    .expect("write foundry.toml");
+    let (ok, envelope) = pcl_json(project.path(), &["apply", "--dry-run"]);
+    assert!(ok, "{envelope}");
+    let input: serde_json::Value = serde_json::from_str(
+        release_item(&envelope)["compilerInput"]
+            .as_str()
+            .expect("compiler input"),
+    )
+    .expect("compiler input json");
+    let job = fs::read_dir(project.path().join("out/build-info"))
+        .expect("build info dir")
+        .map(|entry| {
+            serde_json::from_slice::<serde_json::Value>(
+                &fs::read(entry.expect("entry").path()).expect("read build info"),
+            )
+            .expect("build info json")
+        })
+        .find_map(|info| info.get("input").cloned())
+        .expect("full build info");
+    assert_eq!(input["settings"], job["settings"]);
+    assert_eq!(input["settings"]["viaIR"], false);
+    assert_eq!(input["settings"]["modelChecker"]["engine"], "none");
+    assert!(input.get("basePath").is_none() && input.get("includePaths").is_none());
+}

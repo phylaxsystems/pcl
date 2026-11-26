@@ -10,10 +10,14 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use foundry_compilers::{
+    ArtifactId,
     Graph,
     Project,
     ProjectCompileOutput,
-    artifacts::ConfigurableContractArtifact,
+    artifacts::{
+        ConfigurableContractArtifact,
+        Source,
+    },
     flatten::{
         Flattener,
         FlattenerError,
@@ -179,78 +183,147 @@ impl BuildAndFlattenArgs {
     pub fn run(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
         foundry_cli::utils::load_dotenv();
         let build = crate::compile::compile(self.build_opts())?;
-        self.output(self.select(&build)?)
+        let artifact = match self.source {
+            Some(_) => self.select(&build)?.1,
+            None => {
+                build
+                    .find_contract(ContractInfo::new(&self.assertion_contract))
+                    .ok_or_else(|| {
+                        PhoundryError::ContractNotFound(self.assertion_contract.clone())
+                    })?
+            }
+        };
+        self.output(artifact)
     }
 
-    /// Like [`Self::run`], plus the standard JSON input that reproduces the selected artifact
-    /// from only the sources it was compiled from.
+    /// Like [`Self::run`], plus the original compiler input of the selected artifact's job,
+    /// keeping only the sources the artifact was compiled from.
     pub fn run_for_release(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
         foundry_cli::utils::load_dotenv();
-        let build = crate::compile::compile(self.build_opts())?;
-        let artifact = self.select(&build)?;
+        let build = crate::compile::compile_with_build_info(self.build_opts(), true)?;
+        let (id, artifact) = self.select(&build)?;
         let mut output = self.output(artifact)?;
-        output.compiler_input = Some(self.release_input(artifact, &output)?);
+        let job = self.job_input(&build, &id, &output)?;
+        output.compiler_input = Some(self.release_input(artifact, &output, &job)?);
         Ok(output)
     }
 
-    /// Selects the artifact by file and contract name when `source` is set, else by name.
+    /// Selects the artifact declaring the contract in `source`; a bare file name lives in the
+    /// contracts directory.
     fn select<'a>(
         &self,
         build: &'a ProjectCompileOutput,
-    ) -> Result<&'a ConfigurableContractArtifact, Box<PhoundryError>> {
+    ) -> Result<(ArtifactId, &'a ConfigurableContractArtifact), Box<PhoundryError>> {
         let name = &self.assertion_contract;
-        let Some(source) = &self.source else {
-            return build
-                .find_contract(ContractInfo::new(name))
-                .ok_or_else(|| PhoundryError::ContractNotFound(name.clone()).into());
-        };
-        // A bare file name lives in the contracts directory.
-        let path = if source.parent().is_some_and(|p| !p.as_os_str().is_empty()) {
-            self.project_root()?.join(source)
-        } else {
-            self.project_root()?.join(&self.contracts).join(source)
-        };
-        let exact = foundry_compilers::utils::canonicalize(&path).ok();
+        let source = self.source.as_deref().unwrap_or_else(|| Path::new(name));
+        let root = self.project_root()?;
+        let mut candidates = vec![
+            if source.parent().is_some_and(|p| p.as_os_str().is_empty()) {
+                root.join(&self.contracts).join(source)
+            } else {
+                root.join(source)
+            },
+        ];
         let mut matches: Vec<_> = build
             .artifact_ids()
             .filter(|(id, _)| &id.name == name)
-            .map(|(id, artifact)| (id.source, artifact))
             .collect();
-        if let Some((_, artifact)) = matches
-            .iter()
-            .find(|(file, _)| Some(file) == exact.as_ref())
-        {
-            return Ok(artifact);
+        for path in &candidates {
+            let exact = foundry_compilers::utils::canonicalize(path).ok();
+            if let Some(found) = matches
+                .iter()
+                .position(|(id, _)| Some(&id.source) == exact.as_ref())
+            {
+                return Ok(matches.swap_remove(found));
+            }
         }
         // Entries naming a missing or different file built by contract name before file
         // matching; keep that when exactly one file declares the contract.
-        matches.sort_by(|a, b| a.0.cmp(&b.0));
-        matches.dedup_by(|a, b| a.0 == b.0);
-        match matches.as_slice() {
-            [(_, artifact)] => Ok(artifact),
-            [] => {
+        matches.sort_by(|a, b| a.0.source.cmp(&b.0.source));
+        matches.dedup_by(|a, b| a.0.source == b.0.source);
+        let path = candidates.swap_remove(0);
+        match matches.len() {
+            1 => Ok(matches.swap_remove(0)),
+            0 => {
                 Err(Box::new(PhoundryError::AssertionNotFound {
                     path,
                     contract: name.clone(),
                 }))
             }
-            many => {
+            _ => {
                 Err(Box::new(PhoundryError::AmbiguousAssertion {
                     path,
                     contract: name.clone(),
-                    candidates: many.iter().map(|(file, _)| file.clone()).collect(),
+                    candidates: matches.into_iter().map(|(id, _)| id.source).collect(),
                 }))
             }
         }
     }
 
-    /// Rebuilds the standard JSON input from the artifact's own metadata: its settings and
-    /// exactly the sources it was compiled from. Recompiles that input in isolation and
-    /// requires the same bytecode, so the input never depends on files it does not carry.
+    /// The standard JSON input of the compiler job that produced `id`: from this build, from
+    /// the build info a previous full-info build retained, or else from an uncached rebuild of
+    /// the whole project that must produce the same bytecode.
+    fn job_input(
+        &self,
+        build: &ProjectCompileOutput,
+        id: &ArtifactId,
+        output: &BuildAndFlatOutput,
+    ) -> Result<Value, Box<PhoundryError>> {
+        let input = |build: &ProjectCompileOutput, build_id: &str| {
+            build
+                .output()
+                .build_infos
+                .iter()
+                .find(|info| info.id == build_id)
+                .and_then(|info| info.build_info.get("input").cloned())
+        };
+        if let Some(job) = input(build, &id.build_id) {
+            return Ok(job);
+        }
+        let config = self.build_opts().load_config()?;
+        let retained = config
+            .project()
+            .map_err(PhoundryError::SolcError)?
+            .paths
+            .build_infos
+            .join(&id.build_id)
+            .with_extension("json");
+        if let Some(job) = std::fs::read(retained)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .filter(|info| info["id"] == id.build_id.as_str())
+            .and_then(|mut info| info.get_mut("input").map(Value::take))
+        {
+            return Ok(job);
+        }
+        // Older caches keep build info without the input.
+        let rebuilt = crate::compile::compile_with_build_info(self.build_opts(), false)?;
+        rebuilt
+            .artifact_ids()
+            .filter(|(rebuilt_id, artifact)| {
+                rebuilt_id.source == id.source
+                    && rebuilt_id.name == id.name
+                    && extract_bytecode(&artifact.bytecode).as_ref() == Some(&output.bytecode)
+            })
+            .find_map(|(rebuilt_id, _)| input(&rebuilt, &rebuilt_id.build_id))
+            .ok_or_else(|| {
+                Box::new(PhoundryError::ReleaseInputNotReproducible {
+                    contract: format!("{}:{}", output.compilation_target, id.name),
+                    reason:
+                        "a clean rebuild does not produce the cached artifact; rebuild and retry"
+                            .into(),
+                })
+            })
+    }
+
+    /// The job's original input with only the artifact's sources; the job's settings are kept
+    /// as compiled. A source solc loaded through an include path is read the way Foundry and
+    /// solc read it. The input must recompile alone to the same bytecode.
     fn release_input(
         &self,
         artifact: &ConfigurableContractArtifact,
         output: &BuildAndFlatOutput,
+        job: &Value,
     ) -> Result<String, Box<PhoundryError>> {
         let not_reproducible = |reason: String| {
             Box::new(PhoundryError::ReleaseInputNotReproducible {
@@ -271,54 +344,32 @@ impl BuildAndFlattenArgs {
         let mut sources = serde_json::Map::new();
         let mut include_paths = None;
         for (name, source) in metadata["sources"].as_object().into_iter().flatten() {
-            let content = if let Some(content) = source["content"].as_str() {
-                content.to_string()
-            } else {
-                let hash = source["keccak256"].as_str().unwrap_or_default();
-                // solc names sources by import path; Foundry reads them from the root, then
-                // its include paths. Only resolve the import graph when the root misses.
-                read_source(&project.paths.root, name, hash)
-                    .or_else(|| {
-                        include_paths
-                            .get_or_insert_with(|| solc_include_paths(&project))
-                            .iter()
-                            .find_map(|dir| read_source(dir, name, hash))
-                    })
-                    .ok_or_else(|| {
-                        not_reproducible(format!(
-                            "source {name} no longer matches the build; rebuild and retry"
-                        ))
-                    })?
-            };
+            let hash = source["keccak256"].as_str().unwrap_or_default();
+            let content = job["sources"][name]["content"]
+                .as_str()
+                .filter(|content| keccak_hex(content) == hash)
+                .map(ToString::to_string)
+                .or_else(|| {
+                    std::iter::once(&project.paths.root)
+                        .chain(
+                            include_paths
+                                .get_or_insert_with(|| solc_include_paths(&project))
+                                .iter(),
+                        )
+                        .find_map(|dir| read_source(&dir.join(name), hash))
+                })
+                .ok_or_else(|| {
+                    not_reproducible(format!(
+                        "source {name} no longer matches the build; rebuild and retry"
+                    ))
+                })?;
             sources.insert(name.clone(), serde_json::json!({ "content": content }));
         }
-
-        let mut settings = metadata["settings"]
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
-        settings.remove("compilationTarget");
-        // Metadata keys libraries as `file:Library`; standard JSON nests them by file.
-        if let Some(Value::Object(libraries)) = settings.remove("libraries") {
-            let mut nested = serde_json::Map::new();
-            for (key, address) in libraries {
-                let (file, library) = key.rsplit_once(':').unwrap_or(("", &key));
-                nested
-                    .entry(file)
-                    .or_insert_with(|| Value::Object(serde_json::Map::new()))
-                    .as_object_mut()
-                    .map(|libs| libs.insert(library.to_string(), address));
-            }
-            settings.insert("libraries".into(), Value::Object(nested));
-        }
-        settings.insert(
-            "outputSelection".into(),
-            serde_json::json!({ "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object", "metadata"] } }),
-        );
+        // Drop Foundry's machine-specific CLI paths (basePath, includePaths, allowPaths).
         let input = serde_json::json!({
-            "language": metadata["language"],
+            "language": job["language"],
             "sources": sources,
-            "settings": settings,
+            "settings": job["settings"],
         });
 
         let rebuilt = recompile_isolated(&config, output, &input).map_err(not_reproducible)?;
@@ -476,10 +527,18 @@ impl BuildAndFlattenArgs {
     }
 }
 
-/// Reads `dir/name` when its keccak256 matches the hash the compiler recorded for it.
-fn read_source(dir: &Path, name: &str, keccak256: &str) -> Option<String> {
-    let content = std::fs::read_to_string(dir.join(name)).ok()?;
-    (alloy_primitives::keccak256(content.as_bytes()).to_string() == keccak256).then_some(content)
+fn keccak_hex(content: &str) -> String {
+    alloy_primitives::keccak256(content.as_bytes()).to_string()
+}
+
+/// Reads `path` when its content matches the hash the compiler recorded: as Foundry passes
+/// sources (line endings normalized) or as solc reads an include-path import (raw).
+fn read_source(path: &Path, keccak256: &str) -> Option<String> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let normalized = Source::read(path).ok()?.content.to_string();
+    [normalized, raw]
+        .into_iter()
+        .find(|content| keccak_hex(content) == keccak256)
 }
 
 /// Configured include paths plus the library roots Foundry adds while resolving imports.
@@ -785,6 +844,117 @@ contract Vault is TestContract {}"#,
         assert!(release_args(&root, "TestContract", None).run().is_ok());
     }
 
+    /// Releases `source` and returns its `compilerInput`, which must recompile alone to the
+    /// same bytecode.
+    fn release_input_of(root: &Path, source: &str, name: &str) -> Value {
+        let output = release_args(root, name, Some(source))
+            .run_for_release()
+            .unwrap();
+        assert_eq!(recompile_alone(&output, name), output.bytecode);
+        let input: Value = serde_json::from_str(output.compiler_input.as_deref().unwrap()).unwrap();
+        // Standard JSON fields only, without Foundry's machine-specific paths.
+        assert_eq!(
+            input.as_object().unwrap().keys().collect::<Vec<_>>(),
+            ["language", "sources", "settings"]
+        );
+        input
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn release_input_keeps_the_original_job_settings_on_every_cache_state() {
+        let (_temp_dir, root) = setup_test_project();
+        write(
+            &root,
+            "foundry.toml",
+            r#"
+[profile.default]
+solc = "0.8.28"
+offline = true
+via_ir = false
+optimizer = true
+optimizer_runs = 321
+[profile.default.model_checker]
+engine = "none"
+"#,
+        );
+        write(
+            &root,
+            "src/Vault.sol",
+            "pragma solidity 0.8.28; import {TestContract} from \"./TestContract.sol\"; contract Vault is TestContract {}",
+        );
+        write(
+            &root,
+            "src/Other.sol",
+            "pragma solidity 0.8.28; contract Other {}",
+        );
+
+        // An older warm cache: a regular build retains build info without its input.
+        crate::compile::compile(release_args(&root, "Vault", None).build_opts()).unwrap();
+        let older = release_input_of(&root, "src/Vault.sol", "Vault");
+        // Cold: the release build keeps the full job and retains it as build info.
+        fs::remove_dir_all(root.join("out")).unwrap();
+        fs::remove_dir_all(root.join("assertions/cache")).unwrap();
+        let cold = release_input_of(&root, "src/Vault.sol", "Vault");
+        // Warm with that retained build info.
+        let warm = release_input_of(&root, "src/Vault.sol", "Vault");
+        assert_eq!(older, cold);
+        assert_eq!(warm, cold);
+
+        let retained: Vec<Value> = fs::read_dir(root.join("out/build-info"))
+            .unwrap()
+            .map(|entry| serde_json::from_slice(&fs::read(entry.unwrap().path()).unwrap()).unwrap())
+            .filter(|info: &Value| info.get("input").is_some())
+            .collect();
+        let job = &retained
+            .iter()
+            .find(|info| info["input"]["sources"].get("src/Vault.sol").is_some())
+            .unwrap()["input"];
+        assert_eq!(cold["settings"], job["settings"]);
+        assert_eq!(cold["language"], job["language"]);
+        assert_eq!(cold["settings"]["viaIR"], false);
+        assert_eq!(
+            cold["settings"]["modelChecker"],
+            serde_json::json!({ "engine": "none", "targets": ["assert"] })
+        );
+        // Only the artifact's sources, with the job's contents.
+        let sources = cold["sources"].as_object().unwrap();
+        assert_eq!(
+            sources.keys().collect::<Vec<_>>(),
+            ["src/TestContract.sol", "src/Vault.sol"]
+        );
+        for (name, source) in sources {
+            assert_eq!(source, &job["sources"][name]);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn release_input_accepts_crlf_sources_cold_and_cached() {
+        let (_temp_dir, root) = setup_test_project();
+        write(
+            &root,
+            "foundry.toml",
+            "[profile.default]\nsolc = \"0.8.28\"\noffline = true\n",
+        );
+        write(
+            &root,
+            "src/TestContract.sol",
+            "// SPDX-License-Identifier: MIT\r\npragma solidity 0.8.28;\r\ncontract TestContract {}\r\n",
+        );
+        write(
+            &root,
+            "src/Vault.sol",
+            "pragma solidity 0.8.28;\r\nimport {TestContract} from \"./TestContract.sol\";\r\ncontract Vault is TestContract {}\r\n",
+        );
+        for _ in ["cold", "cached"] {
+            let input = release_input_of(&root, "src/Vault.sol", "Vault");
+            assert!(!input["sources"].to_string().contains("\\r"), "{input}");
+        }
+        // An older warm cache takes the clean-rebuild path.
+        fs::remove_dir_all(root.join("out/build-info")).unwrap();
+        crate::compile::compile(release_args(&root, "Vault", None).build_opts()).unwrap();
+        release_input_of(&root, "src/Vault.sol", "Vault");
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn release_keeps_the_project_build_compiler_and_errors() {
         // Offline auto-detection needs 0.8.28 installed; a newer one makes this a regression test.
@@ -836,25 +1006,35 @@ contract Vault is TestContract {}"#,
             "[profile.default]\nsolc = \"0.8.28\"\noffline = true\n",
         );
         let args = release_args(&root, "TestContract", Some("src/TestContract.sol"));
-        let build = crate::compile::compile(args.build_opts()).unwrap();
-        let artifact = args.select(&build).unwrap();
+        let build = crate::compile::compile_with_build_info(args.build_opts(), true).unwrap();
+        let (id, artifact) = args.select(&build).unwrap();
         let output = args.output(artifact).unwrap();
-        assert!(args.release_input(artifact, &output).is_ok());
+        let job = args.job_input(&build, &id, &output).unwrap();
+        assert!(args.release_input(artifact, &output, &job).is_ok());
 
         let other_bytes = BuildAndFlatOutput {
             bytecode: "0x00".into(),
             ..args.output(artifact).unwrap()
         };
-        let error = args.release_input(artifact, &other_bytes).unwrap_err();
+        let error = args
+            .release_input(artifact, &other_bytes, &job)
+            .unwrap_err();
         assert!(error.to_string().contains("different bytecode"), "{error}");
 
-        // A source edited after the build no longer matches the recorded hash.
+        // Sources come from the compiler job, not from the disk after the build.
         write(
             &root,
             "src/TestContract.sol",
             "pragma solidity 0.8.28; contract TestContract {}",
         );
-        let error = args.release_input(artifact, &output).unwrap_err();
+        let input = args.release_input(artifact, &output, &job).unwrap();
+        assert!(input.contains("function test()"), "{input}");
+        // Without the job's copy, a source whose file changed is refused.
+        let mut without_sources = job.clone();
+        without_sources["sources"] = Value::Object(serde_json::Map::new());
+        let error = args
+            .release_input(artifact, &output, &without_sources)
+            .unwrap_err();
         assert!(
             error
                 .to_string()
