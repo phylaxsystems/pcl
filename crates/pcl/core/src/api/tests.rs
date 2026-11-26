@@ -174,6 +174,7 @@ fn protocol_manager_args() -> ProtocolManagerArgs {
         pending_transfer: false,
         confirm_transfer: false,
         new_manager: None,
+        new_manager_private_key: None,
         address: None,
         chain_id: None,
         sign: false,
@@ -2866,7 +2867,11 @@ fn body_templates_are_action_specific() {
                     "name": "direct",
                     "body": {
                         "mode": "direct",
-                        "new_manager_address": "0x..."
+                        "new_manager_address": "0x...",
+                        "nonce": "<current-manager-nonce>",
+                        "signature": "0x...",
+                        "new_manager_nonce": "<new-manager-nonce>",
+                        "new_manager_signature": "0x..."
                     }
                 },
                 {
