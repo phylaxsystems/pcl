@@ -11,6 +11,8 @@ use std::{
     io::{
         BufRead,
         BufReader,
+        Seek,
+        SeekFrom,
         Write,
     },
     path::{
@@ -96,9 +98,7 @@ fn redact_invitation_tokens(path: &str) -> Option<String> {
         .windows(3)
         .filter(|window| {
             segments[window[0]].eq_ignore_ascii_case("invitations")
-                && ["preview", "accept"]
-                    .iter()
-                    .any(|name| segments[window[2]].eq_ignore_ascii_case(name))
+                && is_invitation_action(segments[window[2]])
         })
         .map(|window| window[1])
         .collect::<Vec<_>>();
@@ -109,6 +109,77 @@ fn redact_invitation_tokens(path: &str) -> Option<String> {
         segments[index] = REDACTED_SEGMENT;
     }
     Some(segments.join("/"))
+}
+
+const fn is_invitation_action(segment: &str) -> bool {
+    segment.eq_ignore_ascii_case("preview") || segment.eq_ignore_ascii_case("accept")
+}
+
+/// Replaces invitation bearer tokens in a proxy error body. `path` is the
+/// route that was requested, before history redaction. Status and request id
+/// stay on the error; only the echoed token is rewritten.
+pub(crate) fn scrub_invitation_tokens_in_value(path: &str, mut body: Value) -> Value {
+    let secrets = invitation_secrets_in_path(path);
+    if !secrets.is_empty() {
+        redact_secrets_in_value(&mut body, &secrets);
+    }
+    body
+}
+
+fn invitation_secrets_in_path(path: &str) -> Vec<String> {
+    let split_at = path.find('?').unwrap_or(path.len());
+    let route = &path[..split_at];
+    let Ok(mut canonical) = url::Url::parse("http://pcl.invalid/") else {
+        return Vec::new();
+    };
+    canonical.set_path(route);
+    let decoded = percent_encoding::percent_decode_str(canonical.path()).decode_utf8_lossy();
+    let mut secrets = Vec::new();
+    collect_invitation_secrets(&mut secrets, route);
+    collect_invitation_secrets(&mut secrets, canonical.path());
+    collect_invitation_secrets(&mut secrets, &decoded);
+    secrets.retain(|secret| !secret.is_empty() && secret != REDACTED_SEGMENT);
+    secrets.sort();
+    secrets.dedup();
+    secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
+    secrets
+}
+
+fn collect_invitation_secrets(secrets: &mut Vec<String>, path: &str) {
+    let segments = path.split('/').collect::<Vec<_>>();
+    let filled = (0..segments.len())
+        .filter(|&index| !segments[index].is_empty())
+        .collect::<Vec<_>>();
+    for window in filled.windows(3) {
+        if segments[window[0]].eq_ignore_ascii_case("invitations")
+            && is_invitation_action(segments[window[2]])
+        {
+            secrets.push(segments[window[1]].to_string());
+        }
+    }
+}
+
+fn redact_secrets_in_value(value: &mut Value, secrets: &[String]) {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+        Value::String(text) => {
+            for secret in secrets {
+                if text.contains(secret) {
+                    *text = text.replace(secret, REDACTED_SEGMENT);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_secrets_in_value(item, secrets);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                redact_secrets_in_value(item, secrets);
+            }
+        }
+    }
 }
 
 fn redact_record_path(record: &Value) -> Value {
@@ -145,7 +216,9 @@ fn open_request_log(path: &Path) -> std::io::Result<fs::File> {
     }
 
     let mut options = OpenOptions::new();
-    options.create(true).append(true);
+    // Read access lets `File::lock` succeed on Windows, which rejects an
+    // append-only handle. Writes stay appends.
+    options.read(true).create(true).append(true);
     #[cfg(unix)]
     {
         options.mode(0o600);
@@ -207,6 +280,11 @@ pub fn append_request_record_at(path: &Path, record: &Value) -> std::io::Result<
     bytes.push(b'\n');
 
     let mut file = open_request_log(path)?;
+    // Same exclusive lock as a migrating read, so an append cannot land in
+    // the middle of an in-place rewrite.
+    if file.metadata()?.is_file() {
+        file.lock()?;
+    }
     file.write_all(&bytes)?;
     file.sync_all()?;
     Ok(())
@@ -221,30 +299,132 @@ pub fn read_request_records_at(path: &Path, limit: usize) -> std::io::Result<Vec
     if !path.exists() {
         return Ok(Vec::new());
     }
+    if request_log_is_rewritable(path)? {
+        return read_and_migrate_request_log(path, limit);
+    }
+    read_request_window(path, limit)
+}
 
+/// A regular file can be rewritten in place. Symlinks and devices are left
+/// untouched: rewriting a symlink would either follow it or replace it.
+fn request_log_is_rewritable(path: &Path) -> std::io::Result<bool> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        return Ok(false);
+    }
+    #[cfg(unix)]
+    if is_supported_log_device(path) {
+        return Ok(false);
+    }
+    Ok(metadata.is_file())
+}
+
+fn read_request_window(path: &Path, limit: usize) -> std::io::Result<Vec<Value>> {
     let file = fs::File::open(path)?;
     if limit == 0 {
         return Ok(Vec::new());
     }
+    let MigratedLog { records, .. } = scan_request_log(BufReader::new(file), limit)?;
+    Ok(records)
+}
 
-    let reader = BufReader::new(file);
+/// Removes invitation tokens from the whole log, including lines outside the
+/// returned window. A later append must not keep the old bytes.
+fn read_and_migrate_request_log(path: &Path, limit: usize) -> std::io::Result<Vec<Value>> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    let mut file = options
+        .open(path)
+        .map_err(|error| map_request_log_open_error(path, error))?;
+    file.lock()?;
+
+    let migrated = {
+        let reader = BufReader::new(&file);
+        scan_request_log(reader, limit)?
+    };
+    if let Some(bytes) = migrated.rewritten {
+        // Truncate before writing so a crash cannot leave the old token tail
+        // behind a shorter redacted line.
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        #[cfg(unix)]
+        if file.metadata()?.is_file() {
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    Ok(migrated.records)
+}
+
+fn map_request_log_open_error(path: &Path, error: std::io::Error) -> std::io::Error {
+    #[cfg(unix)]
+    {
+        refuse_request_log_symlink(path, error)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        error
+    }
+}
+
+struct MigratedLog {
+    records: Vec<Value>,
+    rewritten: Option<Vec<u8>>,
+}
+
+fn scan_request_log<R: BufRead>(reader: R, limit: usize) -> std::io::Result<MigratedLog> {
     let mut records = VecDeque::new();
+    let mut rewritten = Vec::new();
+    let mut changed = false;
     for line in reader.lines() {
         let Ok(line) = line else {
-            break;
+            // A partial scan must not replace the rest of the file.
+            return Ok(MigratedLog {
+                records: Vec::from(records),
+                rewritten: None,
+            });
         };
-        let Ok(record) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        if records.len() == limit {
-            records.pop_front();
+        let (stored, line_changed) = migrated_request_line(&line)?;
+        changed |= line_changed;
+        if limit > 0
+            && let Ok(record) = serde_json::from_str::<Value>(&stored)
+        {
+            if records.len() == limit {
+                records.pop_front();
+            }
+            records.push_back(record);
         }
-        records.push_back(record);
+        rewritten.extend_from_slice(stored.as_bytes());
+        rewritten.push(b'\n');
     }
-    for record in &mut records {
-        redact_record_path_in_place(record);
+    Ok(MigratedLog {
+        records: Vec::from(records),
+        rewritten: changed.then_some(rewritten),
+    })
+}
+
+fn migrated_request_line(line: &str) -> std::io::Result<(String, bool)> {
+    let Ok(mut record) = serde_json::from_str::<Value>(line) else {
+        return Ok((line.to_string(), false));
+    };
+    let Some(path) = record.get("path").and_then(Value::as_str) else {
+        return Ok((line.to_string(), false));
+    };
+    let redacted = redact_sensitive_request_path(path);
+    if redacted == path {
+        return Ok((line.to_string(), false));
     }
-    Ok(Vec::from(records))
+    let Some(object) = record.as_object_mut() else {
+        return Ok((line.to_string(), false));
+    };
+    object.insert("path".to_string(), Value::String(redacted));
+    let stored = serde_json::to_string(&record)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    Ok((stored, true))
 }
 
 pub fn clear_request_log() -> std::io::Result<bool> {
@@ -441,6 +621,173 @@ mod tests {
                 .expect("read none")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn read_request_records_at_removes_legacy_invitation_tokens_from_disk() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("requests.jsonl");
+        let dropped = format!("/invitations/{INVITATION_TOKEN}/preview");
+        let kept = format!("/invitations/{INVITATION_TOKEN}/accept");
+        let health = json!({"path": "/health/3", "request_id": "three"}).to_string();
+        let lines = [
+            json!({"path": dropped, "request_id": "dropped"}).to_string(),
+            "not json".to_string(),
+            health.clone(),
+            json!({"path": kept, "request_id": "four"}).to_string(),
+        ];
+        let mut body = lines.join("\n");
+        body.push('\n');
+        fs::write(&path, &body).expect("seed request log");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("loosen log mode");
+        }
+
+        let records = read_request_records_at(&path, 1).expect("migrate on read");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["request_id"], "four");
+        assert_eq!(records[0]["path"], "/invitations/<redacted>/accept");
+        assert!(
+            !records[0].to_string().contains(INVITATION_TOKEN),
+            "returned record kept the invitation token: {}",
+            records[0]
+        );
+
+        let migrated = fs::read_to_string(&path).expect("read migrated log");
+        assert!(
+            !migrated.contains(INVITATION_TOKEN),
+            "legacy invitation token stayed on disk: {migrated}"
+        );
+        assert!(migrated.contains("\"request_id\":\"dropped\""));
+        assert!(migrated.contains("/invitations/<redacted>/preview"));
+        assert!(migrated.contains("/invitations/<redacted>/accept"));
+        assert!(migrated.contains("not json\n"));
+        assert!(migrated.contains(&health));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+
+        let migrated_bytes = fs::read(&path).expect("snapshot migrated log");
+        read_request_records_at(&path, 10).expect("second read");
+        assert_eq!(
+            fs::read(&path).expect("stable reread"),
+            migrated_bytes,
+            "a second read rewrote a migrated log"
+        );
+
+        append_request_record_at(&path, &json!({"path": "/health", "request_id": "later"}))
+            .expect("append after migration");
+        let after_append = fs::read_to_string(&path).expect("read log after append");
+        assert!(
+            !after_append.contains(INVITATION_TOKEN),
+            "append restored the invitation token: {after_append}"
+        );
+        assert!(after_append.contains("\"request_id\":\"later\""));
+    }
+
+    #[test]
+    fn read_request_records_at_migrates_even_when_the_window_is_empty() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("requests.jsonl");
+        let route = format!("/invitations/{INVITATION_TOKEN}/preview");
+        fs::write(&path, format!("{}\n", json!({"path": route}))).expect("seed request log");
+
+        let records = read_request_records_at(&path, 0).expect("read none");
+        assert!(records.is_empty());
+        let migrated = fs::read_to_string(&path).expect("read migrated log");
+        assert!(
+            !migrated.contains(INVITATION_TOKEN),
+            "limit 0 left the invitation token on disk: {migrated}"
+        );
+        assert!(migrated.contains("/invitations/<redacted>/preview"));
+    }
+
+    #[test]
+    fn read_request_records_at_leaves_a_clean_log_on_disk() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("requests.jsonl");
+        let body = "{\"path\":\"/health\"}\nnot json\n";
+        fs::write(&path, body).expect("seed request log");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("loosen log mode");
+        }
+
+        let records = read_request_records_at(&path, 10).expect("read records");
+        assert_eq!(records[0]["path"], "/health");
+        assert_eq!(fs::read(&path).expect("log bytes"), body.as_bytes());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o644);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_request_records_at_does_not_follow_a_symlink_log() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let target = temp_dir.path().join("target.jsonl");
+        let link = temp_dir.path().join("link.jsonl");
+        let route = format!("/invitations/{INVITATION_TOKEN}/preview");
+        let seeded = format!("{}\n", json!({"path": route}));
+        fs::write(&target, &seeded).expect("seed target");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink log");
+
+        let records = read_request_records_at(&link, 10).expect("read through symlink");
+        assert_eq!(records[0]["path"], "/invitations/<redacted>/preview");
+        assert!(!records[0].to_string().contains(INVITATION_TOKEN));
+        assert_eq!(fs::read_to_string(&target).expect("target bytes"), seeded);
+        assert!(
+            fs::symlink_metadata(&link)
+                .expect("link metadata")
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
+    fn scrub_invitation_tokens_in_value_rewrites_echoed_urls() {
+        let path = format!("/invitations/{INVITATION_TOKEN}/preview?x=1");
+        let body = scrub_invitation_tokens_in_value(
+            &path,
+            json!({
+                "error": "invitation not found",
+                "url": format!("https://api.example/api/v1/invitations/{INVITATION_TOKEN}/preview"),
+                "nested": [{"note": format!("token {INVITATION_TOKEN}")}],
+            }),
+        );
+        let rendered = body.to_string();
+        assert!(
+            !rendered.contains(INVITATION_TOKEN),
+            "echoed invitation token stayed in the body: {rendered}"
+        );
+        assert_eq!(body["error"], "invitation not found");
+        assert!(
+            body["url"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("/invitations/<redacted>/preview")
+        );
+        assert!(
+            body["nested"][0]["note"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("<redacted>")
+        );
+
+        let untouched = scrub_invitation_tokens_in_value(
+            "/health",
+            json!({"url": format!("/invitations/{INVITATION_TOKEN}/preview")}),
+        );
+        assert!(untouched.to_string().contains(INVITATION_TOKEN));
     }
 
     /// Inputs that `Url::set_path` sends to the live preview/accept route.

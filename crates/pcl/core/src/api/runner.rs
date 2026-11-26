@@ -140,13 +140,7 @@ where
                     "body": format!("{response:?}"),
                 })
             });
-            ApiCommandError::HttpStatus {
-                method,
-                path: crate::request_log::redact_sensitive_request_path(path),
-                status,
-                request_id,
-                body: Box::new(body),
-            }
+            ApiCommandError::http_status(method, path, status, request_id, body)
         }
         GeneratedError::UnexpectedResponse(response) => {
             let status = response.status().as_u16();
@@ -161,13 +155,13 @@ where
                 Ok(bytes) => bytes,
                 Err(error) => return error.into(),
             };
-            ApiCommandError::HttpStatus {
+            ApiCommandError::http_status(
                 method,
-                path: crate::request_log::redact_sensitive_request_path(path),
+                path,
                 status,
                 request_id,
-                body: Box::new(response_body_value(&content_type, &bytes)),
-            }
+                response_body_value(&content_type, &bytes),
+            )
         }
         GeneratedError::CommunicationError(error) => error.into(),
         GeneratedError::InvalidUpgrade(error) => error.into(),
@@ -545,13 +539,13 @@ impl ApiArgs {
                 operation_id.as_deref(),
             );
             if !response.status.is_success() {
-                return Err(ApiCommandError::HttpStatus {
-                    method: input.method.as_str(),
-                    path: recorded_path,
-                    status: response.status.as_u16(),
-                    request_id: response.request_id,
-                    body: Box::new(response.body),
-                });
+                return Err(ApiCommandError::http_status(
+                    input.method.as_str(),
+                    path.clone(),
+                    response.status.as_u16(),
+                    response.request_id,
+                    response.body,
+                ));
             }
 
             let page_items =
@@ -841,13 +835,13 @@ impl ApiArgs {
         }
 
         if !payload.status.is_success() {
-            return Err(ApiCommandError::HttpStatus {
-                method: "POST",
-                path: "/storage/upload".to_string(),
-                status: payload.status.as_u16(),
-                request_id: payload.request_id,
-                body: Box::new(payload.body),
-            });
+            return Err(ApiCommandError::http_status(
+                "POST",
+                "/storage/upload",
+                payload.status.as_u16(),
+                payload.request_id,
+                payload.body,
+            ));
         }
         payload
             .body
@@ -1132,13 +1126,13 @@ impl ApiArgs {
                 operation_id.as_deref(),
             );
             if !response.status.is_success() {
-                return Err(ApiCommandError::HttpStatus {
-                    method: input.method.as_str(),
-                    path: recorded_path.clone(),
-                    status: response.status.as_u16(),
-                    request_id: response.request_id,
-                    body: Box::new(response.body),
-                });
+                return Err(ApiCommandError::http_status(
+                    input.method.as_str(),
+                    path.clone(),
+                    response.status.as_u16(),
+                    response.request_id,
+                    response.body,
+                ));
             }
             return Ok(json!({
                 "request": {
@@ -1158,13 +1152,13 @@ impl ApiArgs {
             }));
         }
         if !response.status.is_success() {
-            return Err(ApiCommandError::HttpStatus {
-                method: input.method.as_str(),
-                path: recorded_path.clone(),
-                status: response.status.as_u16(),
-                request_id: response.request_id,
-                body: Box::new(response.body),
-            });
+            return Err(ApiCommandError::http_status(
+                input.method.as_str(),
+                path.clone(),
+                response.status.as_u16(),
+                response.request_id,
+                response.body,
+            ));
         }
 
         Ok(json!({
@@ -1258,13 +1252,13 @@ impl ApiArgs {
             );
         }
         if !response.status.is_success() {
-            return Err(ApiCommandError::HttpStatus {
-                method: request.method.as_str(),
-                path: recorded_path,
-                status: response.status.as_u16(),
-                request_id: response.request_id,
-                body: Box::new(response.body),
-            });
+            return Err(ApiCommandError::http_status(
+                request.method.as_str(),
+                path,
+                response.status.as_u16(),
+                response.request_id,
+                response.body,
+            ));
         }
         let status = response.status;
         let request_id = response.request_id;

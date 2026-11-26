@@ -1479,6 +1479,50 @@ async fn authenticated_workflow_retries_once_after_refresh_on_401() {
 
 const INVITATION_TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+#[test]
+fn invitation_error_envelope_scrubs_an_echoed_token() {
+    let token = INVITATION_TOKEN;
+    let path = format!("/api/v1/invitations/{token}/accept");
+    let error = ApiCommandError::http_status(
+        "POST",
+        path.clone(),
+        404,
+        Some("req-echo".to_string()),
+        json!({
+            "message": "missing",
+            "url": format!("https://api.example{path}"),
+        }),
+    );
+    let http = &error.json_envelope()["error"]["http"];
+    assert_eq!(http["status"], 404);
+    assert_eq!(http["request_id"], "req-echo");
+    assert_eq!(http["path"], "/api/v1/invitations/<redacted>/accept");
+    let body = http["body"].to_string();
+    assert!(!body.contains(token), "{body}");
+    assert!(body.contains("missing"), "{body}");
+    assert!(
+        body.contains("/api/v1/invitations/<redacted>/accept"),
+        "{body}"
+    );
+
+    // A body stored with the original route is still scrubbed at the envelope.
+    let stored = ApiCommandError::HttpStatus {
+        method: "GET",
+        path: format!("/invitations/{token}/preview"),
+        status: 400,
+        request_id: Some("req-stored".to_string()),
+        body: Box::new(json!({"url": format!("/invitations/{token}/preview")})),
+    };
+    let http = &stored.json_envelope()["error"]["http"];
+    assert_eq!(http["status"], 400);
+    assert_eq!(http["request_id"], "req-stored");
+    assert!(
+        !http["body"].to_string().contains(token),
+        "envelope kept the echoed token: {}",
+        http["body"]
+    );
+}
+
 #[tokio::test]
 async fn invitation_workflow_history_omits_the_bearer_token() {
     let mut server = mockito::Server::new_async().await;
@@ -1490,7 +1534,9 @@ async fn invitation_workflow_history_omits_the_bearer_token() {
         .with_status(404)
         .with_header("content-type", "application/json")
         .with_header("x-request-id", "req-preview")
-        .with_body(r#"{"error":"invitation not found"}"#)
+        .with_body(format!(
+            r#"{{"error":"invitation not found","url":"https://api.example/api/v1/invitations/{INVITATION_TOKEN}/preview"}}"#
+        ))
         .expect(1)
         .create_async()
         .await;
@@ -1552,12 +1598,29 @@ async fn invitation_workflow_history_omits_the_bearer_token() {
         .call_workflow_result(&mut config, &cli_args, &preview_request, &log_path)
         .await
         .unwrap_err();
-    let preview_envelope = preview_error.json_envelope().to_string();
+    let preview_value = preview_error.json_envelope();
+    let preview_envelope = preview_value.to_string();
     assert!(
         !preview_envelope.contains(INVITATION_TOKEN),
         "preview error envelope kept the invitation token: {preview_envelope}"
     );
-    assert!(preview_envelope.contains("/invitations/<redacted>/preview"));
+    assert_eq!(preview_value["error"]["http"]["status"], 404);
+    assert_eq!(preview_value["error"]["http"]["request_id"], "req-preview");
+    assert_eq!(
+        preview_value["error"]["http"]["path"],
+        "/invitations/<redacted>/preview"
+    );
+    assert_eq!(
+        preview_value["error"]["http"]["body"]["error"],
+        "invitation not found"
+    );
+    assert!(
+        preview_value["error"]["http"]["body"]["url"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("/invitations/<redacted>/preview"),
+        "echoed proxy url was not scrubbed: {preview_envelope}"
+    );
 
     let accept_request = test_workflow_request_for_operation(
         WorkflowOperation::new(HttpMethod::Post, "acceptInvitation")
@@ -1635,7 +1698,13 @@ async fn raw_calls_that_normalize_onto_invitation_routes_redact_every_sink() {
                     .mock("GET", route.as_str())
                     .with_status(status)
                     .with_header("content-type", "application/json")
-                    .with_body(r#"{"ok":true}"#)
+                    .with_body(if status == 404 {
+                        format!(
+                            r#"{{"error":"nope","url":"https://api.example/api/v1/invitations/{t}/preview"}}"#
+                        )
+                    } else {
+                        r#"{"ok":true}"#.to_string()
+                    })
                     .create_async()
                     .await,
             );
@@ -1667,6 +1736,13 @@ async fn raw_calls_that_normalize_onto_invitation_routes_redact_every_sink() {
                 "{path}: status {status} output kept the token: {rendered}"
             );
             assert!(rendered.contains("<redacted>"), "{path}: {rendered}");
+            if status == 404 {
+                assert!(
+                    rendered.contains("nope"),
+                    "{path}: error body was dropped: {rendered}"
+                );
+                assert!(rendered.contains("404"), "{path}: {rendered}");
+            }
         }
         let history = fs::read_to_string(&log_path).expect("raw request history");
         assert!(
