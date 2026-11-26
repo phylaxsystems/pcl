@@ -5,11 +5,22 @@ use foundry_cli::{
 };
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::ProjectCompileOutput;
+use foundry_config::Config;
 
 use crate::error::PhoundryError;
 
 /// Compiles the project and returns the compilation output.
 pub fn compile(build_opts: BuildOpts) -> Result<ProjectCompileOutput, Box<PhoundryError>> {
+    Ok(compile_with_config(build_opts)?.0)
+}
+
+/// Compiles with the loaded config and returns that config.
+///
+/// Flattening must reuse this config. Loading `foundry.toml` again can pick up
+/// `libs` or `include_paths` that were not part of this compilation.
+pub(crate) fn compile_with_config(
+    build_opts: BuildOpts,
+) -> Result<(ProjectCompileOutput, Config), Box<PhoundryError>> {
     let build_cmd = BuildArgs {
         build: build_opts,
         ..Default::default()
@@ -45,5 +56,5 @@ pub fn compile(build_opts: BuildOpts) -> Result<ProjectCompileOutput, Box<Phound
     let res = compiler
         .compile(&project)
         .map_err(PhoundryError::CompilationError)?;
-    Ok(res)
+    Ok((res, config))
 }

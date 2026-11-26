@@ -2,22 +2,25 @@ use clap::{
     Parser,
     ValueHint,
 };
-use foundry_cli::{
-    opts::{
-        BuildOpts,
-        ProjectPathOpts,
-    },
-    utils::LoadConfig,
+use foundry_cli::opts::{
+    BuildOpts,
+    ProjectPathOpts,
 };
 use foundry_compilers::{
+    Graph,
     ProjectCompileOutput,
+    ProjectPathsConfig,
+    artifacts::sources::Source,
+    error::SolcError,
     flatten::{
         Flattener,
         FlattenerError,
     },
     info::ContractInfo,
+    resolver::parse::SolParser,
     solc::SolcLanguage,
 };
+use foundry_config::Config;
 
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::keccak256;
@@ -35,6 +38,7 @@ use foundry_config::find_project_root;
 use std::{
     collections::{
         BTreeMap,
+        BTreeSet,
         HashMap,
     },
     path::{
@@ -172,7 +176,7 @@ impl BuildAndFlattenArgs {
     pub fn run(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
         foundry_cli::utils::load_dotenv();
 
-        let build = self.build()?;
+        let (build, config) = self.build()?;
         let info = ContractInfo::new(&self.assertion_contract);
         let root = self.project_root()?;
         let contract_path = select_contract_path(&build, &info.name, info.path.as_deref(), &root)?;
@@ -210,7 +214,8 @@ impl BuildAndFlattenArgs {
             Path::new(rel_source_path),
         )?;
         let path = root.join(rel_source_path);
-        let flattened = self.flatten_verified(&root, &metadata.sources, &path, &settings)?;
+        let flattened =
+            Self::flatten_verified(&root, &metadata.sources, &path, &settings, &config)?;
         let output = BuildAndFlatOutput::new(
             solc_version,
             flattened,
@@ -252,8 +257,8 @@ impl BuildAndFlattenArgs {
         Ok(output)
     }
 
-    /// Builds the project and returns the compilation output.
-    fn build(&self) -> Result<ProjectCompileOutput, Box<PhoundryError>> {
+    /// Builds the project and returns the output plus the config that compiled it.
+    fn build(&self) -> Result<(ProjectCompileOutput, Config), Box<PhoundryError>> {
         let build_opts = BuildOpts {
             project_paths: ProjectPathOpts {
                 root: self.root.clone(),
@@ -263,7 +268,7 @@ impl BuildAndFlattenArgs {
             ..Default::default()
         };
 
-        crate::compile::compile(build_opts)
+        crate::compile::compile_with_config(build_opts)
     }
 
     /// The canonical project root: Foundry reports canonical artifact paths
@@ -285,40 +290,48 @@ impl BuildAndFlattenArgs {
     /// The flattener reads the target and its imports from disk. The check runs
     /// before that read and again after it, so a file that changed once
     /// compilation finished is not uploaded with the bytecode just verified.
-    /// Imports are resolved with the remappings captured in the artifact, so a
-    /// later `foundry.toml` remapping cannot select a different file.
+    /// Resolution uses the config captured at compilation, with the artifact's
+    /// remappings, so a later `foundry.toml` cannot select a different import.
     fn flatten_verified(
-        &self,
         root: &Path,
         sources: &MetadataSources,
         path: &PathBuf,
         settings: &Value,
+        config: &Config,
     ) -> Result<String, Box<PhoundryError>> {
-        verify_compiled_sources(root, sources)?;
-        let flattened = self.flatten(path, settings)?;
-        verify_compiled_sources(root, sources)?;
+        verify_compiled_sources(root, sources, &config.include_paths, &config.libs)?;
+        let flattened = Self::flatten(path, settings, sources, root, config)?;
+        verify_compiled_sources(root, sources, &config.include_paths, &config.libs)?;
         Ok(flattened)
     }
 
-    /// Flattens the contract source code with the artifact's remappings.
-    fn flatten(&self, path: &PathBuf, settings: &Value) -> Result<String, Box<PhoundryError>> {
-        let build = BuildOpts {
-            project_paths: ProjectPathOpts {
-                root: self.root.clone(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let mut config = build.load_config()?;
-        config.remappings = compiler_remappings(settings, &config.root)?;
+    /// Flattens the contract with the compiler config captured for this artifact.
+    fn flatten(
+        path: &PathBuf,
+        settings: &Value,
+        sources: &MetadataSources,
+        root: &Path,
+        config: &Config,
+    ) -> Result<String, Box<PhoundryError>> {
+        let mut config = config.clone();
+        let mut remappings =
+            closure_remappings(root, sources, &config.include_paths, &config.libs)?;
+        remappings.extend(compiler_remappings(settings, &config.root)?);
+        config.remappings = remappings;
         config.auto_detect_remappings = false;
         let project = config
             .ephemeral_project()
             .map_err(|e| Box::new(PhoundryError::SolcError(e)))?;
-
         let can_path = std::fs::canonicalize(path)
             .map_err(|e| Box::new(PhoundryError::CanonicalizePathError(e)))?;
+        imports_stay_in_source_closure(
+            &project.paths.clone().with_language::<SolcLanguage>(),
+            &can_path,
+            root,
+            sources,
+            &config.include_paths,
+            &config.libs,
+        )?;
 
         // Try the new flattener first
         let flattener = Flattener::new(project.clone(), &can_path);
@@ -339,10 +352,39 @@ impl BuildAndFlattenArgs {
     }
 }
 
+/// Pins source-unit names that are not files under the project root to the
+/// file the captured include paths and libs compiled.
+fn closure_remappings(
+    root: &Path,
+    sources: &MetadataSources,
+    include_paths: &[PathBuf],
+    libs: &[PathBuf],
+) -> Result<Vec<RelativeRemapping>, Box<PhoundryError>> {
+    let mut pinned = Vec::new();
+    for key in sources.inner.keys() {
+        let direct = resolve_source(root, Path::new(key));
+        if direct.is_file() {
+            continue;
+        }
+        let located = locate_compiled_source(root, Path::new(key), include_paths, libs);
+        if !located.is_file() {
+            return Err(source_hash_mismatch(root, Path::new(key)));
+        }
+        let raw = format!("{key}={}", located.display());
+        let parsed = Remapping::from_str(&raw).map_err(|_| {
+            Box::new(PhoundryError::InvalidForgeOutput(
+                "artifact metadata source cannot be pinned",
+            ))
+        })?;
+        pinned.push(RelativeRemapping::new(parsed, root));
+    }
+    Ok(pinned)
+}
+
 /// Remappings solc used for this artifact, resolved against the project root.
 ///
 /// An empty list means solc was given no remappings. A missing or unreadable
-/// list fails closed, so flattening does not reload `foundry.toml`.
+/// list fails closed.
 fn compiler_remappings(
     settings: &Value,
     root: &Path,
@@ -371,6 +413,56 @@ fn compiler_remappings(
             Ok(RelativeRemapping::new(parsed, root))
         })
         .collect()
+}
+
+/// The flattener resolves imports again. Every file it would read has to be
+/// one of the artifact's compiled sources.
+fn imports_stay_in_source_closure(
+    paths: &ProjectPathsConfig<SolcLanguage>,
+    target: &Path,
+    root: &Path,
+    sources: &MetadataSources,
+    include_paths: &[PathBuf],
+    libs: &[PathBuf],
+) -> Result<(), Box<PhoundryError>> {
+    let closure = sources
+        .inner
+        .keys()
+        .map(|path| locate_compiled_source(root, Path::new(path), include_paths, libs))
+        .collect::<BTreeSet<_>>();
+    let read = Source::read_all([target.to_path_buf()])
+        .map_err(|err| Box::new(PhoundryError::SolcError(SolcError::msg(err.to_string()))))?;
+    let graph = Graph::<SolParser>::resolve_sources(paths, read)
+        .map_err(|err| Box::new(PhoundryError::SolcError(err)))?;
+    for path in graph.files().keys() {
+        let resolved = locate_compiled_source(root, path, include_paths, libs);
+        if !closure.contains(&resolved) {
+            return Err(source_hash_mismatch(root, &resolved));
+        }
+    }
+    Ok(())
+}
+
+/// Metadata names are project paths, or source-unit names found through the
+/// include paths and libs that compiled the artifact.
+fn locate_compiled_source(
+    root: &Path,
+    path: &Path,
+    include_paths: &[PathBuf],
+    libs: &[PathBuf],
+) -> PathBuf {
+    let key = path.strip_prefix(root).unwrap_or(path);
+    let direct = resolve_source(root, key);
+    if direct.is_file() {
+        return direct;
+    }
+    for base in include_paths.iter().chain(libs.iter()) {
+        let candidate = resolve_source(root, &base.join(key));
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    direct
 }
 
 fn select_contract_path(
@@ -515,6 +607,8 @@ fn display_source(root: &Path, path: &Path) -> String {
 fn verify_compiled_sources(
     root: &Path,
     sources: &MetadataSources,
+    include_paths: &[PathBuf],
+    libs: &[PathBuf],
 ) -> Result<(), Box<PhoundryError>> {
     if sources.inner.is_empty() {
         return Err(Box::new(PhoundryError::InvalidForgeOutput(
@@ -522,7 +616,7 @@ fn verify_compiled_sources(
         )));
     }
     for (path, source) in &sources.inner {
-        let file = resolve_source(root, Path::new(path));
+        let file = locate_compiled_source(root, Path::new(path), include_paths, libs);
         let on_disk =
             std::fs::read_to_string(&file).map_err(|_| source_hash_mismatch(root, &file))?;
         let on_disk = normalized_source(&on_disk);
@@ -667,14 +761,15 @@ mod tests {
             "src/Guard.a.sol",
             metadata_source(&source_keccak(source), None),
         )]);
-        verify_compiled_sources(&root, &matching).expect("hashed bytes match");
+        verify_compiled_sources(&root, &matching, &[], &[]).expect("hashed bytes match");
 
         let crlf = source.replace('\n', "\r\n");
         std::fs::write(&file, &crlf).expect("crlf source");
-        verify_compiled_sources(&root, &matching).expect("CRLF is the same source solc hashed");
+        verify_compiled_sources(&root, &matching, &[], &[])
+            .expect("CRLF is the same source solc hashed");
 
         std::fs::write(&file, source.replace("999", "1")).expect("changed source");
-        let err = verify_compiled_sources(&root, &matching).expect_err("changed source");
+        let err = verify_compiled_sources(&root, &matching, &[], &[]).expect_err("changed source");
         assert!(
             matches!(
                 &*err,
@@ -688,14 +783,15 @@ mod tests {
             "src/Guard.a.sol",
             metadata_source(&source_keccak(source), Some("contract Other {}\n")),
         )]);
-        let err = verify_compiled_sources(&root, &snapshot).expect_err("disk left the snapshot");
+        let err = verify_compiled_sources(&root, &snapshot, &[], &[])
+            .expect_err("disk left the snapshot");
         assert!(
             matches!(&*err, PhoundryError::SourceHashMismatch { .. }),
             "{err}"
         );
 
         std::fs::remove_file(&file).expect("remove source");
-        let err = verify_compiled_sources(&root, &matching).expect_err("missing source");
+        let err = verify_compiled_sources(&root, &matching, &[], &[]).expect_err("missing source");
         assert!(
             matches!(&*err, PhoundryError::SourceHashMismatch { .. }),
             "{err}"
@@ -704,7 +800,7 @@ mod tests {
         let empty = MetadataSources {
             inner: BTreeMap::new(),
         };
-        let err = verify_compiled_sources(&root, &empty).expect_err("no hashes");
+        let err = verify_compiled_sources(&root, &empty, &[], &[]).expect_err("no hashes");
         assert!(
             matches!(&*err, PhoundryError::InvalidForgeOutput(_)),
             "{err}"
@@ -797,7 +893,7 @@ mod tests {
             assertion_contract: "src/Guard.sol:Guard".to_string(),
             contracts: PathBuf::from("src"),
         };
-        let build = args.build().expect("compile");
+        let (build, config) = args.build().expect("compile");
         let project_root = args.project_root().expect("root");
         let info = ContractInfo::new(&args.assertion_contract);
         let contract_path =
@@ -822,9 +918,96 @@ mod tests {
         assert_ne!(toml, swapped_toml);
         std::fs::write(&toml_path, swapped_toml).expect("rewrite remapping");
 
-        let flattened = args
-            .flatten_verified(&project_root, &metadata.sources, &source_path, &settings)
-            .expect("flatten the compiled import");
+        let flattened = BuildAndFlattenArgs::flatten_verified(
+            &project_root,
+            &metadata.sources,
+            &source_path,
+            &settings,
+            &config,
+        )
+        .expect("flatten the compiled import");
+        assert!(flattened.contains("return 999"), "{flattened}");
+        assert!(!flattened.contains("return 1;"), "{flattened}");
+        assert_eq!(
+            std::fs::read(&original_lib).expect("original intact"),
+            original_bytes
+        );
+        assert_eq!(
+            std::fs::read(&swapped_lib).expect("swapped intact"),
+            swapped_bytes
+        );
+    }
+
+    #[test]
+    fn changed_include_path_flattens_the_compiled_import() {
+        let project = tempfile::tempdir().expect("temp project");
+        let root = project.path();
+        let original_lib = root.join("lib/original/Lib.sol");
+        let swapped_lib = root.join("lib/swapped/Lib.sol");
+        for path in ["src", "lib/original", "lib/swapped"] {
+            std::fs::create_dir_all(root.join(path)).expect("project dir");
+        }
+        std::fs::write(
+            root.join("foundry.toml"),
+            "[profile.default]\nsrc = \"src\"\nout = \"out\"\nlibs = []\nsolc = \"0.8.28\"\nevm_version = \"cancun\"\noptimizer = false\nauto_detect_remappings = false\ninclude_paths = [\"lib/original\"]\nremappings = []\n",
+        )
+        .expect("foundry.toml");
+        std::fs::write(
+            root.join("src/Guard.sol"),
+            "pragma solidity 0.8.28; import \"Lib.sol\"; contract Guard { function policy() external pure returns (uint256) { return Lib.value(); } }\n",
+        )
+        .expect("guard");
+        let lib_source = |marker: &str| {
+            format!(
+                "pragma solidity 0.8.28; library Lib {{ function value() internal pure returns (uint256) {{ return {marker}; }} }}\n"
+            )
+        };
+        std::fs::write(&original_lib, lib_source("999")).expect("original lib");
+        std::fs::write(&swapped_lib, lib_source("1")).expect("swapped lib");
+        let original_bytes = std::fs::read(&original_lib).expect("read original");
+        let swapped_bytes = std::fs::read(&swapped_lib).expect("read swapped");
+
+        let args = BuildAndFlattenArgs {
+            root: Some(root.to_path_buf()),
+            assertion_contract: "src/Guard.sol:Guard".to_string(),
+            contracts: PathBuf::from("src"),
+        };
+        let (build, config) = args.build().expect("compile");
+        let project_root = args.project_root().expect("root");
+        let info = ContractInfo::new(&args.assertion_contract);
+        let contract_path =
+            select_contract_path(&build, &info.name, info.path.as_deref(), &project_root)
+                .expect("artifact path");
+        let artifact = build
+            .find(contract_path.as_path(), &info.name)
+            .expect("artifact");
+        let metadata = artifact.metadata.clone().expect("metadata");
+        let settings = serde_json::to_value(&metadata.settings).expect("settings");
+        let rel_source_path = metadata
+            .settings
+            .compilation_target
+            .iter()
+            .find_map(|(path, name)| (name == &info.name).then_some(path.clone()))
+            .expect("compilation target");
+        let source_path = project_root.join(&rel_source_path);
+
+        let toml_path = root.join("foundry.toml");
+        let toml = std::fs::read_to_string(&toml_path).expect("read toml");
+        let swapped_toml = toml.replace(
+            "include_paths = [\"lib/original\"]",
+            "include_paths = [\"lib/swapped\"]",
+        );
+        assert_ne!(toml, swapped_toml);
+        std::fs::write(&toml_path, swapped_toml).expect("rewrite include path");
+
+        let flattened = BuildAndFlattenArgs::flatten_verified(
+            &project_root,
+            &metadata.sources,
+            &source_path,
+            &settings,
+            &config,
+        )
+        .expect("flatten the compiled import");
         assert!(flattened.contains("return 999"), "{flattened}");
         assert!(!flattened.contains("return 1;"), "{flattened}");
         assert_eq!(
