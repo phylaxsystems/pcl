@@ -10,6 +10,9 @@ ignore = [
     { id = "RUSTSEC-2026-0173", reason = "Transitive build-time-only proc-macro via alloy-sol-macro; proc-macro-error2 unmaintained, no safe upgrade per advisory. Same ignore as credible-sdk/phoundry." },
     { id = "RUSTSEC-2026-0194", reason = "Transitive through phoundry forge -> quick-junit/inferno; quick-xml DoS-class fix requires >=0.41.0, blocked until upstream dependents bump their semver reqs." },
     { id = "RUSTSEC-2026-0195", reason = "Transitive through phoundry forge -> quick-junit/inferno; quick-xml DoS-class fix requires >=0.41.0, blocked until upstream dependents bump their semver reqs." },
+    # Match Phoundry: alloy-provider 2.2.0 uses u64/B256 cache keys without
+    # Drop, so they cannot trigger the advisory's panicking-key destruction.
+    { id = "RUSTSEC-2026-0253", reason = "Remaining lru 0.16 consumer alloy-provider uses keys without Drop; revisit on alloy upgrade" },
     { id = "RUSTSEC-2026-0387", reason = "Transitive crypto-bigint 0.5.5 through Foundry/Alloy cryptography. The fix is 0.7.6, a major bump those crates have not taken." },
     { id = "RUSTSEC-2026-0441", reason = "Transitive pin-utils 0.1.0 through Foundry wallets -> alloy-signer-ledger -> coins-ledger 0.13 -> nix 0.26.4. Unmaintained, patched = [], so no version bump clears it. Remove when coins-ledger drops that nix." },
     { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained and the advisory lists no patched release (chronotope/chrono#1768). PCL, the generated dapp client, and Foundry all depend on it. Remove when those callers move to time or jiff." },
