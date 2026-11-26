@@ -31,6 +31,16 @@ use std::os::unix::fs::{
 const REQUEST_LOG_ENV: &str = "PCL_REQUEST_LOG";
 const REQUEST_LOG_FILE: &str = "requests.jsonl";
 const REDACTED_SEGMENT: &str = "<redacted>";
+const MIGRATION_TEMP_PREFIX: &str = ".requests.jsonl.migrate-";
+
+#[cfg(test)]
+use std::cell::Cell;
+
+// Tests set this to a raw errno so `persist` fails after the temp file exists.
+#[cfg(test)]
+thread_local! {
+    static FORCE_PERSIST_ERRNO: Cell<i32> = const { Cell::new(0) };
+}
 
 pub fn request_log_path() -> PathBuf {
     request_log_path_for_config_dir(None)
@@ -307,6 +317,11 @@ pub fn read_request_records_at(path: &Path, limit: usize) -> std::io::Result<Vec
     if !changed {
         return Ok(records);
     }
+    // A different user, including root, must not replace the owner's inode
+    // with a file this process owns.
+    if !request_log_owned_by_current_user(path)? {
+        return Ok(records);
+    }
     match migrate_request_log(path, limit) {
         Ok(migrated) => Ok(migrated),
         Err(error) if log_is_not_writable(&error) => Ok(records),
@@ -350,10 +365,26 @@ fn migrate_request_log(path: &Path, limit: usize) -> std::io::Result<Vec<Value>>
         let reader = BufReader::new(&file);
         scan_request_window(reader, limit)
     };
-    if changed {
+    if changed && request_log_owned_by_current_user(path)? {
         replace_request_log(path, &mut file)?;
     }
     Ok(records)
+}
+
+fn request_log_owned_by_current_user(path: &Path) -> std::io::Result<bool> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let uid = fs::symlink_metadata(path)?.uid();
+        // SAFETY: `geteuid` reads the process credential and has no preconditions.
+        let euid = unsafe { libc::geteuid() };
+        Ok(uid == euid)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(true)
+    }
 }
 
 fn open_request_log_read_write(path: &Path) -> std::io::Result<fs::File> {
@@ -369,12 +400,18 @@ fn open_request_log_read_write(path: &Path) -> std::io::Result<fs::File> {
 fn log_is_not_writable(error: &std::io::Error) -> bool {
     if matches!(
         error.kind(),
-        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+        std::io::ErrorKind::PermissionDenied
+            | std::io::ErrorKind::ReadOnlyFilesystem
+            | std::io::ErrorKind::ResourceBusy
+            | std::io::ErrorKind::CrossesDevices
     ) {
         return true;
     }
     #[cfg(unix)]
-    return error.raw_os_error() == Some(libc::EROFS);
+    return matches!(
+        error.raw_os_error(),
+        Some(libc::EROFS | libc::EBUSY | libc::EXDEV)
+    );
     #[cfg(not(unix))]
     {
         let _ = error;
@@ -468,20 +505,67 @@ fn request_path_needs_redaction(record: &Value) -> bool {
 }
 
 fn replace_request_log(path: &Path, file: &mut fs::File) -> std::io::Result<()> {
-    file.seek(SeekFrom::Start(0))?;
     let parent = request_log_parent(path);
+    remove_stale_migration_files(parent)?;
+    file.seek(SeekFrom::Start(0))?;
     let mut rewritten = named_migration_file(parent)?;
     copy_migrated_lines(file, &mut rewritten)?;
     rewritten.as_file().sync_all()?;
     // `persist` renames over `path`. The old inode stays intact until the
     // rename, so a crash cannot leave a 0-byte log. The caller still holds
     // the old inode's lock and drops it after this returns.
-    rewritten.persist(path).map_err(|error| error.error)?;
-    fsync_dir(parent)
+    persist_over_log(rewritten, path)
+}
+
+fn persist_over_log(rewritten: tempfile::NamedTempFile, path: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    {
+        let forced = FORCE_PERSIST_ERRNO.with(Cell::get);
+        if forced != 0 {
+            let _ = rewritten.close();
+            return Err(std::io::Error::from_raw_os_error(forced));
+        }
+    }
+    let parent = request_log_parent(path);
+    match rewritten.persist(path) {
+        Ok(_) => fsync_dir(parent),
+        Err(error) => {
+            let io_error = error.error;
+            // Dropping the `NamedTempFile` unlinks it. `close` does that
+            // before this function returns, including for `EBUSY` and `EXDEV`.
+            let _ = error.file.close();
+            Err(io_error)
+        }
+    }
+}
+
+fn remove_stale_migration_files(parent: &Path) -> std::io::Result<()> {
+    let entries = fs::read_dir(parent)?;
+    for entry in entries {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        if !name.starts_with(MIGRATION_TEMP_PREFIX) {
+            continue;
+        }
+        match fs::remove_file(entry.path()) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 fn named_migration_file(parent: &Path) -> std::io::Result<tempfile::NamedTempFile> {
     let mut builder = tempfile::Builder::new();
+    builder.prefix(MIGRATION_TEMP_PREFIX);
     #[cfg(unix)]
     builder.permissions(fs::Permissions::from_mode(0o600));
     builder.tempfile_in(parent)
@@ -1038,6 +1122,179 @@ mod tests {
             fs::read_to_string(&path).expect("read log"),
             "new\nappended\n"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn busy_or_cross_device_replace_keeps_the_log_and_removes_the_temp_file() {
+        use std::os::unix::fs::MetadataExt;
+        assert!(log_is_not_writable(&std::io::Error::from_raw_os_error(
+            libc::EBUSY
+        )));
+        assert!(log_is_not_writable(&std::io::Error::from_raw_os_error(
+            libc::EXDEV
+        )));
+        assert!(log_is_not_writable(&std::io::Error::new(
+            std::io::ErrorKind::ResourceBusy,
+            "busy"
+        )));
+        assert!(log_is_not_writable(&std::io::Error::new(
+            std::io::ErrorKind::CrossesDevices,
+            "cross"
+        )));
+
+        for errno in [libc::EBUSY, libc::EXDEV] {
+            let temp_dir = tempfile::tempdir().expect("create temp dir");
+            let path = temp_dir.path().join("requests.jsonl");
+            let route = format!("/invitations/{INVITATION_TOKEN}/preview");
+            let body = format!("{}\n", json!({"path": route, "request_id": "legacy"}));
+            fs::write(&path, &body).expect("seed request log");
+            let stale = temp_dir
+                .path()
+                .join(format!("{MIGRATION_TEMP_PREFIX}stale"));
+            fs::write(&stale, b"partial").expect("seed stale temp");
+
+            FORCE_PERSIST_ERRNO.with(|errno_cell| errno_cell.set(errno));
+            let _reset_persist_errno = ResetPersistErrno;
+            let records = read_request_records_at(&path, 10)
+                .expect("list when rename cannot replace the log");
+
+            assert_eq!(records[0]["path"], "/invitations/<redacted>/preview");
+            assert!(!records[0].to_string().contains(INVITATION_TOKEN));
+            assert_eq!(fs::read(&path).expect("log bytes"), body.as_bytes());
+            assert!(
+                !stale.exists(),
+                "stale migration temp survived a failed replace"
+            );
+            assert!(
+                migration_temp_names(temp_dir.path()).is_empty(),
+                "failed replace left a migration temp file"
+            );
+        }
+
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("requests.jsonl");
+        let body = "{\"path\":\"/health\"}\n";
+        fs::write(&path, body).expect("seed destination");
+        let shm = Path::new("/dev/shm");
+        if fs::metadata(shm).expect("shm metadata").dev()
+            != fs::metadata(temp_dir.path()).expect("dir metadata").dev()
+        {
+            let mut builder = tempfile::Builder::new();
+            builder.prefix(MIGRATION_TEMP_PREFIX);
+            let rewritten = builder
+                .tempfile_in(shm)
+                .expect("temp on another filesystem");
+            let temp_path = rewritten.path().to_path_buf();
+            let error = persist_over_log(rewritten, &path).expect_err("cross-device rename");
+            assert!(
+                log_is_not_writable(&error),
+                "EXDEV was not treated as a kept log: {error}"
+            );
+            assert_eq!(fs::read(&path).expect("destination bytes"), body.as_bytes());
+            assert!(
+                !temp_path.exists(),
+                "cross-device temp file was left behind"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migration_skips_a_log_owned_by_another_user() {
+        use std::os::unix::fs::{
+            MetadataExt,
+            PermissionsExt,
+        };
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("requests.jsonl");
+        let route = format!("/invitations/{INVITATION_TOKEN}/preview");
+        let body = format!("{}\n", json!({"path": route, "request_id": "legacy"}));
+        fs::write(&path, &body).expect("seed request log");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o666)).expect("widen log");
+        disown_log(&path);
+
+        let owner = fs::metadata(&path).expect("metadata").uid();
+        // SAFETY: `geteuid` reads the process credential and has no preconditions.
+        let euid = unsafe { libc::geteuid() };
+        assert_ne!(owner, euid);
+        let records = read_request_records_at(&path, 10).expect("list another user's log");
+        assert_eq!(records[0]["path"], "/invitations/<redacted>/preview");
+        assert!(!records[0].to_string().contains(INVITATION_TOKEN));
+        assert_eq!(fs::read(&path).expect("log bytes"), body.as_bytes());
+        let metadata = fs::metadata(&path).expect("metadata after list");
+        assert_eq!(metadata.uid(), owner);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o666);
+        assert!(
+            migration_temp_names(temp_dir.path()).is_empty(),
+            "skipped migration created a temp file"
+        );
+    }
+
+    #[test]
+    fn migration_removes_stale_temp_files_before_replacing_the_log() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("requests.jsonl");
+        let route = format!("/invitations/{INVITATION_TOKEN}/preview");
+        fs::write(
+            &path,
+            format!("{}\n", json!({"path": route, "request_id": "legacy"})),
+        )
+        .expect("seed request log");
+        let stale = temp_dir
+            .path()
+            .join(format!("{MIGRATION_TEMP_PREFIX}interrupted"));
+        fs::write(&stale, b"redacted partial").expect("seed stale temp");
+        let unrelated = temp_dir.path().join(".tmpkeep");
+        fs::write(&unrelated, b"keep").expect("seed unrelated file");
+
+        let records = read_request_records_at(&path, 10).expect("migrate on read");
+        assert_eq!(records[0]["path"], "/invitations/<redacted>/preview");
+        assert!(!stale.exists(), "stale migration temp was left in place");
+        assert_eq!(fs::read(&unrelated).expect("unrelated file"), b"keep");
+        let migrated = fs::read_to_string(&path).expect("read migrated log");
+        assert!(!migrated.contains(INVITATION_TOKEN));
+        assert!(migrated.contains("/invitations/<redacted>/preview"));
+        assert!(
+            migration_temp_names(temp_dir.path()).is_empty(),
+            "migration left its temp file behind"
+        );
+    }
+
+    fn migration_temp_names(parent: &Path) -> Vec<String> {
+        fs::read_dir(parent)
+            .expect("read log dir")
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.starts_with(MIGRATION_TEMP_PREFIX))
+            .collect()
+    }
+
+    struct ResetPersistErrno;
+
+    impl Drop for ResetPersistErrno {
+        fn drop(&mut self) {
+            FORCE_PERSIST_ERRNO.with(|errno_cell| errno_cell.set(0));
+        }
+    }
+
+    #[cfg(unix)]
+    fn disown_log(path: &Path) {
+        // SAFETY: `geteuid` reads the process credential and has no preconditions.
+        let as_root = unsafe { libc::geteuid() } == 0;
+        let mut command = if as_root {
+            std::process::Command::new("chown")
+        } else {
+            let mut command = std::process::Command::new("sudo");
+            command.args(["-n", "chown"]);
+            command
+        };
+        let status = command
+            .args(["nobody:nogroup", "--"])
+            .arg(path)
+            .status()
+            .expect("chown log to nobody");
+        assert!(status.success(), "could not chown the log to nobody");
     }
 
     #[test]
