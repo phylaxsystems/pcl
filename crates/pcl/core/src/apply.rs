@@ -715,6 +715,7 @@ mod tests {
         Param,
         StateMutability,
     };
+    use dapp_api_client::generated::client::types::ProjectsPreviewReleaseBodyContractsValueAssertionsItem;
     use pcl_phoundry::build_and_flatten::BuildAndFlatOutput;
 
     fn apply_args_with_url(api_url: Option<&str>) -> ApplyArgs {
@@ -817,12 +818,15 @@ mod tests {
             .expect("signature is forwarded");
         assert_eq!(sig.as_str(), "constructor(address)");
         assert_eq!(item.args, assertion.args);
-        let wire = serde_json::to_value(item).unwrap();
+        let wire = serde_json::to_value(item).expect("item serializes");
         assert_eq!(wire["compilerInput"], r#"{"language":"Solidity"}"#);
         assert_eq!(wire["compilerSourcePath"], "src/A.a.sol");
-        let preview: dapp_api_client::generated::client::types::ProjectsPreviewReleaseBodyContractsValueAssertionsItem =
-            serde_json::from_value(wire.clone()).unwrap();
-        assert_eq!(serde_json::to_value(preview).unwrap(), wire);
+        let preview: ProjectsPreviewReleaseBodyContractsValueAssertionsItem =
+            serde_json::from_value(wire.clone()).expect("preview accepts the create item");
+        assert_eq!(
+            serde_json::to_value(preview).expect("preview serializes"),
+            wire
+        );
     }
 
     #[test]
