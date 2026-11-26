@@ -974,7 +974,7 @@ fn mock_release_diff(server: &mut mockito::ServerGuard, project: &str) -> mockit
             "GET",
             format!("/api/v1/projects/{project}/releases/release-1/diff").as_str(),
         )
-        .match_query(Matcher::Any)
+        .match_query(Matcher::UrlEncoded("against".into(), "active".into()))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(

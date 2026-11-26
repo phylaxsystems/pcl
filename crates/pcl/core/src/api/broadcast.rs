@@ -1016,11 +1016,12 @@ impl ApiArgs {
         }
 
         progress(cli_args, "Fetching reviewed release diff");
+        // `against` is required. The platform only accepts `active`.
         let release_request = get_operation(
             "projects.getReleaseDiff",
             project,
             Some(release_id),
-            Vec::new(),
+            vec![("against".to_string(), "active".to_string())],
         )?;
         let release_result = self
             .call_workflow_result(config, cli_args, &release_request, request_log_path)
@@ -2539,11 +2540,10 @@ mod tests {
             .expect(0)
             .create_async()
             .await;
+        let diff_path = format!("/api/v1/projects/{project_id}/releases/release-1/diff");
         let diff = server
-            .mock(
-                "GET",
-                format!("/api/v1/projects/{project_id}/releases/release-1/diff").as_str(),
-            )
+            .mock("GET", diff_path.as_str())
+            .match_query(Matcher::UrlEncoded("against".into(), "active".into()))
             .match_header("authorization", "Bearer access-token")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -2619,6 +2619,20 @@ mod tests {
             },
             ..ReleasesArgs::default()
         };
+
+        // The fixture matches `against=active` only. An omitted query is not that request.
+        let omitted = reqwest::Client::new()
+            .get(format!("{}{diff_path}", server.url()))
+            .send()
+            .await
+            .unwrap();
+        let omitted_status = omitted.status();
+        let omitted_body = omitted.text().await.unwrap();
+        assert!(
+            !omitted_status.is_success(),
+            "omitted query matched the release diff fixture: {omitted_status} {omitted_body}"
+        );
+        assert!(!omitted_body.contains("activeRelease"), "{omitted_body}");
 
         let error = api
             .run_releases_broadcast(
