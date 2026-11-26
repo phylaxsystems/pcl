@@ -865,6 +865,7 @@ fn release_deploy_broadcast_refuses_an_unshowable_batch_before_any_send() {
             "assertionId": DEPLOY_REMOVED_ID,
         }]),
     );
+    let release = mock_reviewed_release(&mut server, project);
 
     let rpc_url = rpc.url();
     let output = run_pcl(
@@ -891,6 +892,7 @@ fn release_deploy_broadcast_refuses_an_unshowable_batch_before_any_send() {
     );
     calldata.assert();
     deploy.assert();
+    release.assert();
     rpc_calls.assert();
 }
 
@@ -916,6 +918,7 @@ fn release_deploy_broadcast_yes_prints_the_operations_before_sending() {
             "assertionId": DEPLOY_REMOVED_ID,
         }]),
     );
+    let release = mock_reviewed_release(&mut server, project);
 
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
         .arg("--config-dir")
@@ -945,8 +948,54 @@ fn release_deploy_broadcast_yes_prints_the_operations_before_sending() {
     let sending = stderr
         .find("Broadcasting StateOracle.batch transaction")
         .unwrap_or_else(|| panic!("send never started:\n{stderr}"));
-    assert!(listed < sending, "{stderr}");
+    let identity = stderr
+        .find(&format!(
+            "    previous: {DEPLOY_REMOVED_ID}\n    args:\n      100\n"
+        ))
+        .unwrap_or_else(|| panic!("reviewed identity missing:\n{stderr}"));
+    assert!(listed < identity && identity < sending, "{stderr}");
     calldata.assert();
     deploy.assert();
+    release.assert();
     rpc_calls.assert();
+}
+
+fn mock_reviewed_release(server: &mut mockito::ServerGuard, project: &str) -> mockito::Mock {
+    server
+        .mock(
+            "GET",
+            format!("/api/v1/projects/{project}/releases/release-1").as_str(),
+        )
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "diff": {
+                    "contracts": {
+                        "guard": {
+                            "address": DEPLOY_ADOPTER,
+                            "name": "Guard",
+                            "changeType": "modified",
+                            "metadataChanges": null,
+                            "assertions": [{
+                                "file": "Guard.sol",
+                                "args": ["100"],
+                                "changeType": "removed",
+                                "assertionId": null,
+                                "previousAssertionId": DEPLOY_REMOVED_ID,
+                                "compilerVersionChange": null
+                            }]
+                        }
+                    },
+                    "summary": {
+                        "contracts": { "added": 0, "removed": 0, "modified": 1, "unchanged": 0 },
+                        "assertions": { "added": 0, "removed": 1, "modified": 0, "unchanged": 0 }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect(1)
+        .create()
 }

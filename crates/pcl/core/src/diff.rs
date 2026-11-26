@@ -6,11 +6,13 @@
 //! the generated client).
 
 use colored::Colorize;
-use dapp_api_client::generated::client::types::{
+pub(crate) use dapp_api_client::generated::client::types::{
     ProjectsCreateReleaseResponseDiff as ReleaseDiff,
+    ProjectsCreateReleaseResponseDiffContractsValueAssertionsItemChangeType as AssertionChangeType,
+};
+use dapp_api_client::generated::client::types::{
     ProjectsCreateReleaseResponseDiffContractsValue as ContractDiffEntry,
     ProjectsCreateReleaseResponseDiffContractsValueAssertionsItem as AssertionDiffEntry,
-    ProjectsCreateReleaseResponseDiffContractsValueAssertionsItemChangeType as AssertionChangeType,
     ProjectsCreateReleaseResponseDiffContractsValueChangeType as ContractChangeType,
 };
 use serde::{
@@ -224,10 +226,12 @@ fn render_assertion_diff(out: &mut String, (old, new): (&str, &str), a: &Asserti
 
 /// Untrusted text as given when it is plain, otherwise its quoted Rust escape,
 /// so control, bidi and zero-width characters cannot redraw the plan while the
-/// value stays complete and reversible.
-fn shown(text: &str) -> Cow<'_, str> {
+/// value stays complete and reversible. Empty text and text with surrounding
+/// whitespace are quoted too, so `""` and `" "` do not both look blank.
+pub(crate) fn shown(text: &str) -> Cow<'_, str> {
     let quoted = format!("{text:?}");
-    if quoted.get(1..quoted.len() - 1) == Some(text) {
+    let plain = quoted.get(1..quoted.len().saturating_sub(1)) == Some(text);
+    if plain && !text.is_empty() && text.trim() == text {
         Cow::Borrowed(text)
     } else {
         Cow::Owned(quoted)
@@ -1198,5 +1202,56 @@ mod tests {
             )),
             "{output}"
         );
+    }
+
+    #[test]
+    fn plan_quotes_empty_and_whitespace_sensitive_args() {
+        disable_colors();
+
+        let plan = |args: &[&str]| {
+            let preview: PreviewResponse = serde_json::from_value(json!({
+                "hasChanges": true,
+                "configMismatch": false,
+                "driftDetected": false,
+                "diff": {
+                    "contracts": {
+                        "guard": {
+                            "address": "0x1234567890abcdef1234567890abcdef12345678",
+                            "name": "Guard",
+                            "changeType": "added",
+                            "metadataChanges": null,
+                            "assertions": [{
+                                "file": "Guard.sol",
+                                "args": args,
+                                "changeType": "added",
+                                "assertionId": "0x0000000000000000000000000000000000000000000000000000000000000abc",
+                                "previousAssertionId": null,
+                                "compilerVersionChange": null
+                            }]
+                        }
+                    },
+                    "summary": {
+                        "contracts": { "added": 1, "removed": 0, "modified": 0, "unchanged": 0 },
+                        "assertions": { "added": 1, "removed": 0, "modified": 0, "unchanged": 0 }
+                    }
+                },
+                "diffedAgainstReleaseId": null
+            }))
+            .unwrap();
+            preview.render_plan()
+        };
+
+        let empty = plan(&[""]);
+        let space = plan(&[" "]);
+        let trailing = plan(&["fee "]);
+        let fee = plan(&["fee"]);
+        assert!(empty.contains("            \"\"\n"), "{empty}");
+        assert!(!empty.contains("            \" \"\n"), "{empty}");
+        assert!(space.contains("            \" \"\n"), "{space}");
+        assert!(!space.contains("            \"\"\n"), "{space}");
+        assert!(trailing.contains("            \"fee \"\n"), "{trailing}");
+        assert!(fee.contains("            fee\n"), "{fee}");
+        assert!(!fee.contains("\"fee\""), "{fee}");
+        assert_ne!(empty, space);
     }
 }

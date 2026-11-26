@@ -21,6 +21,10 @@ use super::{
 };
 use crate::{
     config::CliConfig,
+    diff::{
+        AssertionChangeType,
+        ReleaseDiff,
+    },
     onchain::{
         TxArgs,
         TxOutcome,
@@ -50,7 +54,14 @@ use serde_json::{
     Value,
     json,
 };
-use std::path::Path;
+use std::{
+    collections::{
+        HashMap,
+        HashSet,
+    },
+    fmt::Write as _,
+    path::Path,
+};
 
 /// Shared flags for commands that can sign and submit transactions.
 #[derive(clap::Args, Clone, Debug, Default)]
@@ -240,25 +251,29 @@ async fn resolve_signer(
     Ok(wallet.signer(cli_args.human_output()).await?)
 }
 
-/// Checks each signed calldata entry against its listed operation.
+/// Checks each signed calldata entry against its listed operation and the
+/// reviewed release.
 ///
 /// Machine mode uses this directly. Human mode goes through
 /// [`release_deploy_confirmation`], which formats the summary only when that
 /// text will be shown.
 fn ensure_deploy_operations_match(
     calldata: &ReleaseDeployCalldataResponse,
+    diff: &ReleaseDiff,
 ) -> Result<(), ApiCommandError> {
-    review_deploy_operations(calldata, None)
+    review_deploy_operations(calldata, diff, None)
 }
 
 /// The human summary of what the signed calldata does. Refuses unless each
-/// entry matches its listed operation.
+/// entry matches its listed operation and a reviewed assertion, and includes
+/// that assertion's constructor arguments and old/new ids.
 fn release_deploy_confirmation(
     release_id: &str,
     calldata: &ReleaseDeployCalldataResponse,
+    diff: &ReleaseDiff,
 ) -> Result<String, ApiCommandError> {
     let mut lines = Vec::new();
-    review_deploy_operations(calldata, Some(&mut lines))?;
+    review_deploy_operations(calldata, diff, Some(&mut lines))?;
     Ok(format!(
         "StateOracle.batch with {} operation(s) for release {release_id}\n{}",
         lines.len(),
@@ -268,6 +283,7 @@ fn release_deploy_confirmation(
 
 fn review_deploy_operations(
     calldata: &ReleaseDeployCalldataResponse,
+    diff: &ReleaseDiff,
     mut lines: Option<&mut Vec<String>>,
 ) -> Result<(), ApiCommandError> {
     if calldata.operations.is_empty() || calldata.operations.len() != calldata.calldata.len() {
@@ -276,6 +292,7 @@ fn review_deploy_operations(
         ));
     }
 
+    let reviewed = index_reviewed_release(diff);
     for (operation, data) in calldata.operations.iter().zip(&calldata.calldata) {
         let call = decode_deploy_call(data)?;
         if deploy_operation(&call) != *operation {
@@ -283,11 +300,246 @@ fn review_deploy_operations(
                 "an operation does not match its calldata",
             ));
         }
+        if let Some(reason) = unexpected_signed_payload(&call) {
+            return Err(unshowable_operations(reason));
+        }
+        let identity = bind_reviewed_operation(&reviewed, &call)?;
         if let Some(lines) = lines.as_mut() {
-            lines.push(deploy_operation_line(&call));
+            let mut line = deploy_operation_line(&call);
+            if let Some(identity) = identity {
+                append_reviewed_identity(&mut line, &identity);
+            }
+            lines.push(line);
         }
     }
     Ok(())
+}
+
+/// The stored release diff the operator already reviewed. Standalone
+/// broadcast has no earlier preview, so the approval prompt reads it here.
+fn reviewed_release_diff(body: &Value) -> Result<ReleaseDiff, ApiCommandError> {
+    let Some(diff) = body.get("diff").filter(|diff| !diff.is_null()) else {
+        return Err(ApiCommandError::UnexpectedResponse {
+            endpoint: "release",
+            reason: "reviewed release diff is missing".to_string(),
+        });
+    };
+    serde_json::from_value(diff.clone()).map_err(|error| {
+        ApiCommandError::UnexpectedResponse {
+            endpoint: "release",
+            reason: error.to_string(),
+        }
+    })
+}
+
+#[derive(Clone, Copy)]
+struct ReviewedAssertion<'a> {
+    file: &'a str,
+    args: &'a [String],
+    assertion_id: Option<&'a str>,
+    previous_assertion_id: Option<&'a str>,
+}
+
+struct ReviewedRelease<'a> {
+    adds: HashMap<(String, String), Vec<ReviewedAssertion<'a>>>,
+    removes: HashMap<(String, String), Vec<ReviewedAssertion<'a>>>,
+    /// Adopter addresses the reviewed diff names, lowercase.
+    adopters: HashSet<String>,
+}
+
+fn index_reviewed_release(diff: &ReleaseDiff) -> ReviewedRelease<'_> {
+    let mut reviewed = ReviewedRelease {
+        adds: HashMap::new(),
+        removes: HashMap::new(),
+        adopters: HashSet::new(),
+    };
+    for entry in diff.contracts.values() {
+        let (old, new) = reviewed_adopters(entry);
+        reviewed.adopters.insert(old.clone());
+        reviewed.adopters.insert(new.clone());
+        for assertion in &entry.assertions {
+            let identity = ReviewedAssertion {
+                file: assertion.file.as_deref().unwrap_or("(unknown)"),
+                args: &assertion.args,
+                assertion_id: assertion.assertion_id.as_deref().map(String::as_str),
+                previous_assertion_id: assertion
+                    .previous_assertion_id
+                    .as_deref()
+                    .map(String::as_str),
+            };
+            match assertion.change_type {
+                AssertionChangeType::Added => {
+                    if let Some(id) = identity.assertion_id {
+                        reviewed
+                            .adds
+                            .entry(identity_key(&new, id))
+                            .or_default()
+                            .push(identity);
+                    }
+                }
+                AssertionChangeType::Removed => {
+                    if let Some(id) = identity.previous_assertion_id.or(identity.assertion_id) {
+                        reviewed
+                            .removes
+                            .entry(identity_key(&old, id))
+                            .or_default()
+                            .push(identity);
+                    }
+                }
+                AssertionChangeType::Modified => {
+                    if let Some(id) = identity.assertion_id {
+                        reviewed
+                            .adds
+                            .entry(identity_key(&new, id))
+                            .or_default()
+                            .push(identity);
+                    }
+                    if let Some(id) = identity.previous_assertion_id {
+                        reviewed
+                            .removes
+                            .entry(identity_key(&old, id))
+                            .or_default()
+                            .push(identity);
+                    }
+                }
+                AssertionChangeType::Unchanged => {}
+            }
+        }
+    }
+    reviewed
+}
+
+fn reviewed_adopters(
+    entry: &dapp_api_client::generated::client::types::ProjectsCreateReleaseResponseDiffContractsValue,
+) -> (String, String) {
+    let current = entry.address.to_ascii_lowercase();
+    entry
+        .metadata_changes
+        .as_ref()
+        .and_then(|meta| meta.address.as_ref())
+        .map_or((current.clone(), current), |change| {
+            (
+                change.from.to_ascii_lowercase(),
+                change.to.to_ascii_lowercase(),
+            )
+        })
+}
+
+fn identity_key(adopter: &str, assertion_id: &str) -> (String, String) {
+    (
+        adopter.to_ascii_lowercase(),
+        assertion_id.to_ascii_lowercase(),
+    )
+}
+
+fn address_key(address: Address) -> String {
+    format!("{address:#x}")
+}
+
+fn word_key(word: B256) -> String {
+    format!("{word:#x}")
+}
+
+/// Registration data and add-assertion metadata are empty in the calldata this
+/// workflow signs. A different canonical value would otherwise compare equal
+/// and render the same confirmation.
+fn unexpected_signed_payload(call: &DeployCalls::DeployCallsCalls) -> Option<&'static str> {
+    use DeployCalls::DeployCallsCalls as Call;
+    match call {
+        Call::registerAssertionAdopter(call) if !call.data.is_empty() => {
+            Some("registration data is not the empty value this workflow signs")
+        }
+        Call::addAssertion_0(call) if !call.metadata.is_empty() => {
+            Some("addAssertion metadata is not the empty value this workflow signs")
+        }
+        Call::addAssertion_1(call) if !call.metadata.is_empty() => {
+            Some("addAssertion metadata is not the empty value this workflow signs")
+        }
+        _ => None,
+    }
+}
+
+fn bind_reviewed_operation<'a>(
+    reviewed: &ReviewedRelease<'a>,
+    call: &DeployCalls::DeployCallsCalls,
+) -> Result<Option<ReviewedAssertion<'a>>, ApiCommandError> {
+    use DeployCalls::DeployCallsCalls as Call;
+    match call {
+        Call::registerAssertionAdopter(call) => {
+            if reviewed
+                .adopters
+                .contains(&address_key(call.contractAddress))
+            {
+                Ok(None)
+            } else {
+                Err(unshowable_operations(
+                    "a registration is not in the reviewed release",
+                ))
+            }
+        }
+        Call::removeAssertion(call) => {
+            Ok(Some(one_reviewed_assertion(
+                &reviewed.removes,
+                call.contractAddress,
+                call.assertionId,
+            )?))
+        }
+        Call::addAssertion_0(call) => {
+            Ok(Some(one_reviewed_assertion(
+                &reviewed.adds,
+                call.contractAddress,
+                call.assertionId,
+            )?))
+        }
+        Call::addAssertion_1(call) => {
+            Ok(Some(one_reviewed_assertion(
+                &reviewed.adds,
+                call.contractAddress,
+                call.assertionId,
+            )?))
+        }
+    }
+}
+
+fn one_reviewed_assertion<'a>(
+    index: &HashMap<(String, String), Vec<ReviewedAssertion<'a>>>,
+    adopter: Address,
+    assertion_id: B256,
+) -> Result<ReviewedAssertion<'a>, ApiCommandError> {
+    let key = (address_key(adopter), word_key(assertion_id));
+    match index.get(&key).map(Vec::as_slice) {
+        Some([identity]) => Ok(*identity),
+        Some([_, _, ..]) => {
+            Err(unshowable_operations(
+                "an operation matches more than one reviewed assertion",
+            ))
+        }
+        _ => {
+            Err(unshowable_operations(
+                "an operation is not in the reviewed release",
+            ))
+        }
+    }
+}
+
+fn append_reviewed_identity(line: &mut String, identity: &ReviewedAssertion<'_>) {
+    let file = crate::diff::shown(identity.file);
+    let assertion = identity.assertion_id.unwrap_or("(none)");
+    let previous = identity.previous_assertion_id.unwrap_or("(none)");
+    write!(
+        line,
+        "\n    file: {file}\n    assertion: {assertion}\n    previous: {previous}"
+    )
+    .unwrap();
+    if identity.args.is_empty() {
+        line.push_str("\n    args: (none)");
+        return;
+    }
+    line.push_str("\n    args:");
+    for arg in identity.args {
+        let shown = crate::diff::shown(arg);
+        write!(line, "\n      {shown}").unwrap();
+    }
 }
 
 fn decode_deploy_call(data: &[u8]) -> Result<DeployCalls::DeployCallsCalls, ApiCommandError> {
@@ -741,8 +993,16 @@ impl ApiArgs {
             ));
         }
 
+        progress(cli_args, "Fetching reviewed release");
+        let release_request =
+            get_operation("projects.getRelease", project, Some(release_id), Vec::new())?;
+        let release_result = self
+            .call_workflow_result(config, cli_args, &release_request, request_log_path)
+            .await?;
+        let diff = reviewed_release_diff(&release_result.body)?;
+
         if cli_args.human_output() {
-            let confirmation = release_deploy_confirmation(release_id, &calldata)?;
+            let confirmation = release_deploy_confirmation(release_id, &calldata, &diff)?;
             if args.broadcast.yes {
                 eprintln!("{confirmation}");
             }
@@ -755,7 +1015,7 @@ impl ApiArgs {
                 &confirmation,
             )?;
         } else {
-            ensure_deploy_operations_match(&calldata)?;
+            ensure_deploy_operations_match(&calldata, &diff)?;
         }
 
         progress(cli_args, "Broadcasting StateOracle.batch transaction");
@@ -1311,7 +1571,7 @@ mod tests {
         assert!(!parsed.is_noop);
         assert_eq!(parsed.operations.len(), 2);
         assert!(parsed.message.is_none());
-        ensure_deploy_operations_match(&parsed).unwrap();
+        ensure_deploy_operations_match(&parsed, &fixture_reviewed_diff()).unwrap();
     }
 
     #[test]
@@ -1508,10 +1768,62 @@ mod tests {
     fn deploy_confirmation(
         operations: &Value,
         calldata: &[&str],
+        diff: &crate::diff::ReleaseDiff,
     ) -> Result<String, ApiCommandError> {
         let response = parsed_deploy(operations, calldata)?;
-        ensure_deploy_operations_match(&response)?;
-        release_deploy_confirmation("rel-1", &response)
+        ensure_deploy_operations_match(&response, diff)?;
+        release_deploy_confirmation("rel-1", &response, diff)
+    }
+
+    fn reviewed_diff(assertions: Value) -> crate::diff::ReleaseDiff {
+        serde_json::from_value(json!({
+            "contracts": {
+                "guard": {
+                    "address": ADOPTER,
+                    "name": "Guard",
+                    "changeType": "added",
+                    "metadataChanges": null,
+                    "assertions": assertions,
+                }
+            },
+            "summary": {
+                "contracts": { "added": 1, "removed": 0, "modified": 0, "unchanged": 0 },
+                "assertions": { "added": 0, "removed": 0, "modified": 0, "unchanged": 0 }
+            }
+        }))
+        .unwrap()
+    }
+
+    fn fixture_reviewed_diff() -> crate::diff::ReleaseDiff {
+        reviewed_diff(json!([
+            {
+                "file": "Old.sol",
+                "args": [],
+                "changeType": "removed",
+                "assertionId": null,
+                "previousAssertionId": REMOVED_ID,
+                "compilerVersionChange": null
+            },
+            {
+                "file": "New.sol",
+                "args": ["100"],
+                "changeType": "added",
+                "assertionId": ADDED_ID,
+                "previousAssertionId": null,
+                "compilerVersionChange": null
+            }
+        ]))
+    }
+
+    fn empty_reviewed_diff() -> crate::diff::ReleaseDiff {
+        serde_json::from_value(json!({
+            "contracts": {},
+            "summary": {
+                "contracts": { "added": 0, "removed": 0, "modified": 0, "unchanged": 0 },
+                "assertions": { "added": 0, "removed": 0, "modified": 0, "unchanged": 0 }
+            }
+        }))
+        .unwrap()
     }
 
     fn parsed_deploy(
@@ -1557,6 +1869,7 @@ mod tests {
                 ),
             ]),
             &[REGISTER, REMOVE, ADD_0_2_0, ADD_0_4_0],
+            &fixture_reviewed_diff(),
         )
         .unwrap();
 
@@ -1567,12 +1880,112 @@ mod tests {
                 "StateOracle.batch with 4 operation(s) for release rel-1",
                 &format!("  registerAssertionAdopter adopter {ADOPTER} verifier {VERIFIER}"),
                 &format!("  removeAssertion adopter {ADOPTER} assertion {REMOVED_ID}"),
+                "    file: Old.sol",
+                "    assertion: (none)",
+                &format!("    previous: {REMOVED_ID}"),
+                "    args: (none)",
                 &format!("  addAssertion adopter {ADOPTER} assertion {ADDED_ID}"),
+                "    file: New.sol",
+                &format!("    assertion: {ADDED_ID}"),
+                "    previous: (none)",
+                "    args:",
+                "      100",
                 &format!(
                     "  addAssertion adopter {ADOPTER} assertion {ADDED_ID} da verifier {DA_VERIFIER}"
                 ),
+                "    file: New.sol",
+                &format!("    assertion: {ADDED_ID}"),
+                "    previous: (none)",
+                "    args:",
+                "      100",
             ]
         );
+    }
+
+    #[test]
+    fn release_deploy_confirmation_pairs_a_replacement_and_quotes_args() {
+        let diff = reviewed_diff(json!([{
+            "file": "Guard.sol",
+            "args": ["", " ", "fee "],
+            "changeType": "modified",
+            "assertionId": ADDED_ID,
+            "previousAssertionId": REMOVED_ID,
+            "compilerVersionChange": null
+        }]));
+        let text = deploy_confirmation(
+            &json!([
+                assertion_op("removeAssertion", ADOPTER, REMOVED_ID),
+                assertion_op("addAssertion", ADOPTER, ADDED_ID),
+            ]),
+            &[REMOVE, ADD_0_2_0],
+            &diff,
+        )
+        .unwrap();
+
+        let identity = format!(
+            "    file: Guard.sol\n    assertion: {ADDED_ID}\n    previous: {REMOVED_ID}\n    args:\n      \"\"\n      \" \"\n      \"fee \""
+        );
+        let remove =
+            format!("  removeAssertion adopter {ADOPTER} assertion {REMOVED_ID}\n{identity}");
+        let add = format!("  addAssertion adopter {ADOPTER} assertion {ADDED_ID}\n{identity}");
+        assert!(text.contains(&remove), "{text}");
+        assert!(text.contains(&add), "{text}");
+    }
+
+    #[test]
+    fn release_deploy_confirmation_rejects_unreviewed_or_nonempty_payloads() {
+        let diff = fixture_reviewed_diff();
+        let other = "0x0505050505050505050505050505050505050505";
+        let unbound_call = REMOVE.replacen(
+            "abcdef0123456789abcdef0123456789abcdef01",
+            "0505050505050505050505050505050505050505",
+            1,
+        );
+        let unbound = deploy_confirmation(
+            &json!([assertion_op("removeAssertion", other, REMOVED_ID)]),
+            &[&unbound_call],
+            &diff,
+        );
+        assert_unshowable(&unbound, "not in the reviewed release");
+
+        let register = DeployCalls::DeployCallsCalls::registerAssertionAdopter(
+            DeployCalls::registerAssertionAdopterCall {
+                contractAddress: address!("abCDeF0123456789AbcdEf0123456789aBCDEF01"),
+                adminVerifier: address!("0303030303030303030303030303030303030303"),
+                data: Bytes::from_static(&[0xab]),
+            },
+        );
+        let register_hex = format!("0x{}", alloy_primitives::hex::encode(register.abi_encode()));
+        let nonempty_data = deploy_confirmation(
+            &json!([register_op(ADOPTER, VERIFIER)]),
+            &[&register_hex],
+            &diff,
+        );
+        assert_unshowable(&nonempty_data, "registration data");
+
+        let add = DeployCalls::DeployCallsCalls::addAssertion_0(DeployCalls::addAssertion_0Call {
+            contractAddress: address!("abCDeF0123456789AbcdEf0123456789aBCDEF01"),
+            assertionId: ADDED_ID.parse().unwrap(),
+            metadata: Bytes::from_static(&[0x01]),
+            proof: Bytes::new(),
+        });
+        let add_hex = format!("0x{}", alloy_primitives::hex::encode(add.abi_encode()));
+        let nonempty_metadata = deploy_confirmation(
+            &json!([assertion_op("addAssertion", ADOPTER, ADDED_ID)]),
+            &[&add_hex],
+            &diff,
+        );
+        assert_unshowable(&nonempty_metadata, "addAssertion metadata");
+    }
+
+    fn assert_unshowable(result: &Result<String, ApiCommandError>, reason: &str) {
+        match result {
+            Err(ApiCommandError::UnexpectedResponse {
+                endpoint: "deploy-calldata",
+                reason: actual,
+            }) => assert!(actual.contains(reason), "{actual}"),
+            other => panic!("{reason}: {other:?}"),
+        }
     }
 
     #[test]
@@ -1664,12 +2077,13 @@ mod tests {
             match parsed_deploy(&operations, &calldata) {
                 Err(err) => assert_deploy_calldata_rejected(&Err(err), name),
                 Ok(response) => {
+                    let diff = empty_reviewed_diff();
                     assert_deploy_calldata_rejected(
-                        &ensure_deploy_operations_match(&response),
+                        &ensure_deploy_operations_match(&response, &diff),
                         name,
                     );
                     assert_deploy_calldata_rejected(
-                        &release_deploy_confirmation("rel-1", &response).map(|_| ()),
+                        &release_deploy_confirmation("rel-1", &response, &diff).map(|_| ()),
                         name,
                     );
                 }
@@ -1830,7 +2244,7 @@ mod tests {
         let parsed: ReleaseDeployCalldataResponse =
             parse_response("deploy-calldata", &deploy).unwrap();
         assert_eq!(parsed.required_confirmations, Some(6));
-        ensure_deploy_operations_match(&parsed).unwrap();
+        ensure_deploy_operations_match(&parsed, &fixture_reviewed_diff()).unwrap();
 
         // Snake-case payloads accept both casings; absence stays None so the
         // fallback table applies.
