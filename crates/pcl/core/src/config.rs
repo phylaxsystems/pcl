@@ -32,6 +32,7 @@ use std::{
     fmt,
     fs::OpenOptions,
     io::{
+        Read,
         Seek,
         SeekFrom,
         Write,
@@ -76,19 +77,23 @@ const CONFIG_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// are different operations on the same file, and a lock that only refresh
 /// honoured would not serialize them against each other.
 ///
-/// Released when this value is dropped, including on panic, because the lock
-/// is the open file descriptor rather than the file's presence. The kernel
-/// closes that descriptor when the process exits, including when it is killed,
-/// so a later run does not wait on a lockfile nobody holds. A live holder
-/// still yields [`ConfigError::LockTimeout`] after 30 seconds.
+/// The lock file name is the one older CLIs create with `create_new` and
+/// delete on drop. This holder does the same, and also keeps an OS advisory
+/// lock on the descriptor until drop. A clean exit removes the file, so an
+/// older CLI's `create_new` succeeds instead of waiting out its timeout. A
+/// killed process leaves the file, but the kernel releases the advisory lock;
+/// the next newer CLI removes that file only when its recorded pid is dead.
+/// An existing file whose pid is still running is an older writer that already
+/// dropped its descriptor: we wait, and we do not enter.
 ///
-/// The file itself stays. Unlinking it on drop would let a waiter, still
-/// holding the old inode, and a new process, creating a new inode, both
-/// believe they own the lock.
+/// The lock path is never opened through a symlink. Metadata is written only
+/// to the regular file this process just created, after checking that the
+/// path still names that inode.
 #[derive(Debug)]
 pub struct ConfigLock {
-    // Held so the descriptor stays open. The kernel owns the lock; nothing reads the handle.
-    _file: std::fs::File,
+    path: PathBuf,
+    /// Held so the descriptor, and the advisory lock on it, stay open.
+    file: std::fs::File,
 }
 
 /// Creates `dir` and any missing parents. Directories created here are 0700
@@ -110,38 +115,305 @@ impl ConfigLock {
         if let Some(parent) = path.parent() {
             create_private_dir_all(parent).map_err(ConfigError::WriteError)?;
         }
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .map_err(ConfigError::WriteError)?;
         let deadline = Instant::now() + CONFIG_LOCK_TIMEOUT;
         loop {
-            match try_lock_exclusive(&file) {
-                Ok(()) => {
-                    let _ = file.set_len(0);
-                    let _ = file.seek(SeekFrom::Start(0));
-                    let _ = writeln!(
-                        file,
-                        "pid={} acquired_at={}",
-                        std::process::id(),
-                        Utc::now().to_rfc3339()
-                    );
-                    let _ = file.sync_all();
-                    return Ok(Self { _file: file });
-                }
-                Err(error) if lock_is_held_elsewhere(&error) => {
+            if let Some(lock) = try_create_lock(&path)? {
+                return Ok(lock);
+            }
+            match classify_existing_lock(&path)? {
+                ExistingLock::Gone => {}
+                ExistingLock::Stale => reap_stale_lock(&path),
+                ExistingLock::Busy => {
                     if Instant::now() >= deadline {
                         return Err(ConfigError::LockTimeout);
                     }
                     sleep(CONFIG_LOCK_POLL_INTERVAL).await;
                 }
-                Err(error) => return Err(ConfigError::WriteError(error)),
             }
         }
     }
+}
+
+impl Drop for ConfigLock {
+    fn drop(&mut self) {
+        // Unlink only the inode we created. A replacement at the same path
+        // belongs to whoever holds it now.
+        if opened_is_this_regular_file(&self.file, &self.path).unwrap_or(false) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// What an existing `config.toml.lock` means to a newer CLI.
+enum ExistingLock {
+    /// The path is gone, or it was a symlink and that symlink was unlinked.
+    Gone,
+    /// A live holder: either a newer CLI's advisory lock, or an older CLI
+    /// whose pid is still running after it closed the descriptor.
+    Busy,
+    /// The recorded pid is dead and nobody holds the advisory lock.
+    Stale,
+}
+
+/// Creates the lock the way an older CLI does (`create_new`), then keeps the
+/// descriptor and its advisory lock. `Ok(None)` means the path already exists.
+fn try_create_lock(path: &Path) -> Result<Option<ConfigLock>, ConfigError> {
+    let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(None),
+        Err(error) => return Err(ConfigError::WriteError(error)),
+    };
+    if !opened_is_this_regular_file(&file, path).unwrap_or(false) {
+        return Err(ConfigError::WriteError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "config lock path is not the file just created",
+        )));
+    }
+    let _ = writeln!(
+        file,
+        "pid={} acquired_at={}",
+        std::process::id(),
+        Utc::now().to_rfc3339()
+    );
+    let _ = file.sync_all();
+    if let Err(error) = try_lock_exclusive(&file) {
+        if opened_is_this_regular_file(&file, path).unwrap_or(false) {
+            let _ = std::fs::remove_file(path);
+        }
+        return Err(ConfigError::WriteError(error));
+    }
+    Ok(Some(ConfigLock {
+        path: path.to_path_buf(),
+        file,
+    }))
+}
+
+fn classify_existing_lock(path: &Path) -> Result<ExistingLock, ConfigError> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ExistingLock::Gone);
+        }
+        Err(error) => return Err(ConfigError::WriteError(error)),
+    };
+    if meta.file_type().is_symlink() {
+        return unlink_symlink_lock(path);
+    }
+    if !meta.is_file() {
+        return Err(ConfigError::WriteError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "config lock path is not a regular file",
+        )));
+    }
+    let file = match open_nofollow_read(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ExistingLock::Gone);
+        }
+        Err(error) if is_nofollow_rejection(&error) => return unlink_symlink_lock(path),
+        Err(error) => return Err(ConfigError::WriteError(error)),
+    };
+    if !opened_is_this_regular_file(&file, path).map_err(ConfigError::WriteError)? {
+        drop(file);
+        return match std::fs::symlink_metadata(path) {
+            Ok(meta) if meta.file_type().is_symlink() => unlink_symlink_lock(path),
+            _ => {
+                Err(ConfigError::WriteError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "config lock path changed while opening",
+                )))
+            }
+        };
+    }
+    match try_lock_exclusive(&file) {
+        Err(error) if lock_is_held_elsewhere(&error) => Ok(ExistingLock::Busy),
+        Err(error) => Err(ConfigError::WriteError(error)),
+        Ok(()) => {
+            let stale = holder_pid_is_dead(&file);
+            drop(file);
+            if stale {
+                Ok(ExistingLock::Stale)
+            } else {
+                Ok(ExistingLock::Busy)
+            }
+        }
+    }
+}
+
+/// Removes a symlink at the lock path. `remove_file` unlinks the symlink
+/// itself and does not follow it, so the target is left untouched.
+fn unlink_symlink_lock(path: &Path) -> Result<ExistingLock, ConfigError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            std::fs::remove_file(path).map_err(ConfigError::WriteError)?;
+            Ok(ExistingLock::Gone)
+        }
+        Ok(_) => Ok(ExistingLock::Busy),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(ExistingLock::Gone),
+        Err(error) => Err(ConfigError::WriteError(error)),
+    }
+}
+
+/// Removes a leftover lock only while it is still a dead holder's file.
+fn reap_stale_lock(path: &Path) {
+    let Ok(file) = open_nofollow_read(path) else {
+        return;
+    };
+    let still_stale = opened_is_this_regular_file(&file, path).unwrap_or(false)
+        && try_lock_exclusive(&file).is_ok()
+        && holder_pid_is_dead(&file);
+    drop(file);
+    if still_stale {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn holder_pid_is_dead(file: &std::fs::File) -> bool {
+    lock_file_holder_pid(file).is_some_and(|pid| !process_is_alive(pid))
+}
+
+fn lock_file_holder_pid(file: &std::fs::File) -> Option<u32> {
+    let mut file = file.try_clone().ok()?;
+    file.seek(SeekFrom::Start(0)).ok()?;
+    let mut text = String::new();
+    file.read_to_string(&mut text).ok()?;
+    let rest = text.trim().strip_prefix("pid=")?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
+    }
+}
+
+/// True when `file` is a regular file and `path` still names that same inode.
+/// `symlink_metadata` does not follow a symlink, so a path that points
+/// somewhere else does not compare equal.
+fn opened_is_this_regular_file(file: &std::fs::File, path: &Path) -> std::io::Result<bool> {
+    let opened = file.metadata()?;
+    if !opened.is_file() {
+        return Ok(false);
+    }
+    let on_path = std::fs::symlink_metadata(path)?;
+    if !on_path.file_type().is_file() {
+        return Ok(false);
+    }
+    Ok(same_file(&opened, &on_path))
+}
+
+#[cfg(unix)]
+fn same_file(opened: &std::fs::Metadata, on_path: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    opened.dev() == on_path.dev() && opened.ino() == on_path.ino()
+}
+
+#[cfg(windows)]
+fn same_file(opened: &std::fs::Metadata, on_path: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    opened.volume_serial_number() == on_path.volume_serial_number()
+        && opened.file_index() == on_path.file_index()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn same_file(_opened: &std::fs::Metadata, _on_path: &std::fs::Metadata) -> bool {
+    true
+}
+
+fn open_nofollow_read(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+    ))]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Open the reparse point itself instead of its target.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options.open(path)
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const O_NOFOLLOW: i32 = 0x20000;
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+))]
+const O_NOFOLLOW: i32 = 0x0100;
+#[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
+const O_NOFOLLOW: i32 = 0x0000_0200;
+
+fn is_nofollow_rejection(error: &std::io::Error) -> bool {
+    // `ErrorKind::FilesystemLoop` is still unstable. ELOOP is 40 on
+    // Linux/Android and 62 on macOS, iOS, and the BSDs.
+    matches!(error.raw_os_error(), Some(40 | 62))
+}
+
+/// `pid` still has a process. A pid we cannot prove dead is treated as alive,
+/// so a leftover file is not stolen out from under an older writer.
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    unsafe extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    let Ok(pid) = i32::try_from(pid) else {
+        return true;
+    };
+    if pid <= 0 {
+        return true;
+    }
+    // SAFETY: signal 0 does not deliver a signal. It only checks that `pid`
+    // names a process this caller may signal.
+    let rc = unsafe { kill(pid, 0) };
+    if rc == 0 {
+        return true;
+    }
+    // ESRCH (3) is "no such process". EPERM means the process exists.
+    !matches!(std::io::Error::last_os_error().raw_os_error(), Some(3))
+}
+
+#[cfg(windows)]
+fn process_is_alive(pid: u32) -> bool {
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut core::ffi::c_void;
+        fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
+        fn GetLastError() -> u32;
+    }
+    if pid == 0 {
+        return true;
+    }
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const ERROR_INVALID_PARAMETER: u32 = 87;
+    // SAFETY: a null handle is the failure case and is not closed. A non-null
+    // handle is closed before return.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if !handle.is_null() {
+        // SAFETY: `handle` came from OpenProcess and is closed once.
+        unsafe { CloseHandle(handle) };
+        return true;
+    }
+    // SAFETY: GetLastError reads the calling thread's last error and takes no pointer.
+    unsafe { GetLastError() != ERROR_INVALID_PARAMETER }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn process_is_alive(_pid: u32) -> bool {
+    true
 }
 
 /// `flock` / `LockFileEx` report a live holder with these errors when asked
@@ -1041,6 +1313,7 @@ mod tests {
     use std::{
         env,
         fs,
+        io::Write,
         os::unix::fs::PermissionsExt,
     };
     use tempfile::TempDir;
@@ -1396,7 +1669,8 @@ expires_at = 1672502400
             ..CliArgs::default()
         };
         let path = CliConfig::config_file_path(&cli_args).with_extension("toml.lock");
-        std::fs::write(&path, "pid=1 acquired_at=gone\n").expect("leave a lock file");
+        let pid = dead_pid();
+        std::fs::write(&path, format!("pid={pid} acquired_at=gone\n")).expect("leave a lock file");
 
         let acquired = tokio::time::timeout(Duration::from_secs(2), ConfigLock::acquire(&cli_args))
             .await
@@ -1443,6 +1717,90 @@ expires_at = 1672502400
             .await
             .expect("a killed holder must not keep the lock");
         acquired.expect("acquire after the holder is gone");
+    }
+
+    /// A symlink at the lock path must not be followed into its target.
+    #[tokio::test]
+    async fn a_lock_symlink_does_not_truncate_its_target() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let target = config_dir.path().join("precious");
+        std::fs::write(&target, b"keep-me").expect("precious file");
+        let path = CliConfig::config_file_path(&cli_args).with_extension("toml.lock");
+        std::os::unix::fs::symlink(&target, &path).expect("plant a symlink at the lock path");
+
+        let acquired = ConfigLock::acquire(&cli_args)
+            .await
+            .expect("a planted symlink is not the lock file");
+        assert_eq!(
+            std::fs::read(&target).expect("target still readable"),
+            b"keep-me"
+        );
+        assert!(
+            std::fs::symlink_metadata(&path)
+                .expect("lock path")
+                .file_type()
+                .is_file()
+        );
+        drop(acquired);
+        assert_eq!(
+            std::fs::read(&target).expect("target still readable"),
+            b"keep-me"
+        );
+    }
+
+    /// An older CLI holds the lock by the file's presence and a live pid, and
+    /// has already closed the descriptor. A newer CLI must wait. After the
+    /// older writer removes the file, the newer one enters, and its own drop
+    /// removes the file so the older `create_new` can succeed.
+    #[tokio::test]
+    async fn an_old_presence_lock_blocks_a_new_writer_until_it_is_released() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let path = CliConfig::config_file_path(&cli_args).with_extension("toml.lock");
+        let mut old = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .expect("older CLI creates the lock");
+        writeln!(old, "pid={} acquired_at=old", std::process::id())
+            .expect("older CLI records its pid");
+        old.sync_all().expect("older CLI syncs the lock");
+        drop(old);
+
+        let blocked =
+            tokio::time::timeout(Duration::from_millis(400), ConfigLock::acquire(&cli_args)).await;
+        assert!(
+            blocked.is_err(),
+            "a newer CLI entered while an older writer still held the presence lock"
+        );
+
+        std::fs::remove_file(&path).expect("older CLI drops the lock");
+        let acquired = tokio::time::timeout(Duration::from_secs(2), ConfigLock::acquire(&cli_args))
+            .await
+            .expect("the presence lock is gone")
+            .expect("acquire");
+        drop(acquired);
+
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .expect("an older CLI creates the lock after a newer one exits");
+    }
+
+    fn dead_pid() -> u32 {
+        let mut pid = 1_000_000u32;
+        while process_is_alive(pid) && pid < 1_000_050 {
+            pid += 1;
+        }
+        pid
     }
 
     /// Child process for [`a_killed_holder_releases_the_config_lock`].

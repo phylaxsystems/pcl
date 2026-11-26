@@ -336,16 +336,25 @@ impl AuthCommand {
                 device_secret,
                 expires_at,
             } => {
-                let secret = match device_secret.as_deref().filter(|secret| !secret.is_empty()) {
-                    Some(secret) => secret.to_string(),
-                    None => Self::load_pending_device_secret(cli_args, session_id)?,
+                // One read supplies both the secret and the issuer. A later
+                // read can see a file cleanup already removed and would then
+                // allow that secret onto the currently selected platform.
+                let explicit = device_secret.clone().filter(|secret| !secret.is_empty());
+                let loaded = match &explicit {
+                    Some(_) => None,
+                    None => Some(Self::load_pending_device_secret(cli_args, session_id)?),
+                };
+                let secret = if let Some(pending) = &loaded {
+                    PollSecret::Loaded(pending)
+                } else {
+                    PollSecret::Explicit(explicit.as_deref().unwrap_or(""))
                 };
                 self.poll(
                     config,
                     cli_args,
                     json_output,
                     session_id,
-                    &secret,
+                    secret,
                     expires_at.to_owned(),
                 )
                 .await
@@ -999,14 +1008,28 @@ impl AuthCommand {
         cli_args: &CliArgs,
         json_output: bool,
         session_id: &Uuid,
-        device_secret: &str,
+        secret: PollSecret<'_>,
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AuthError> {
         let target = self.effective_auth_url();
+        let device_secret = match secret {
+            PollSecret::Loaded(pending) => pending.device_secret.as_str(),
+            PollSecret::Explicit(secret) => secret,
+        };
         // A platform change must not present this session's secret to the new
         // host, and must not let that host's "no such session" delete the
-        // login that still belongs to the issuing platform.
-        Self::refuse_foreign_pending_login(cli_args, session_id, device_secret, &target)?;
+        // login that still belongs to the issuing platform. A secret loaded
+        // from disk keeps the issuer from that same read.
+        match secret {
+            PollSecret::Loaded(pending) => Self::refuse_loaded_pending_login(pending, &target)?,
+            PollSecret::Explicit(secret) => {
+                Self::refuse_foreign_pending_login(cli_args, session_id, secret, &target)?;
+            }
+        }
+        let clear_loaded = matches!(
+            secret,
+            PollSecret::Loaded(pending) if pending_origin_matches(&pending.origin, &target)
+        );
         let status =
             match Self::check_auth_status(&self.api_client(), device_secret, session_id).await {
                 Ok(status) => status,
@@ -1019,7 +1042,15 @@ impl AuthCommand {
                     error @ (AuthError::SessionExpired
                     | AuthError::SessionNotFound
                     | AuthError::UserNotFound),
-                ) if Self::pending_claim_matches(cli_args, session_id, device_secret, &target) => {
+                ) if clear_loaded
+                    || (matches!(secret, PollSecret::Explicit(_))
+                        && Self::pending_claim_matches(
+                            cli_args,
+                            session_id,
+                            device_secret,
+                            &target,
+                        )) =>
+                {
                     return Err(with_cleanup_warning(
                         error,
                         Self::clear_pending_device_secret(cli_args, session_id),
@@ -1122,15 +1153,13 @@ impl AuthCommand {
     fn load_pending_device_secret(
         cli_args: &CliArgs,
         session_id: &Uuid,
-    ) -> Result<String, AuthError> {
-        Self::read_pending_device_login(cli_args, session_id)?
-            .map(|pending| pending.device_secret)
-            .ok_or_else(|| {
-                AuthError::InvalidAuthData(
-                    "No pending device login is stored for this session. Run pcl auth ensure again."
-                        .to_string(),
-                )
-            })
+    ) -> Result<PendingDeviceLogin, AuthError> {
+        Self::read_pending_device_login(cli_args, session_id)?.ok_or_else(|| {
+            AuthError::InvalidAuthData(
+                "No pending device login is stored for this session. Run pcl auth ensure again."
+                    .to_string(),
+            )
+        })
     }
 
     /// The pending file for this session, when one exists.
@@ -1163,8 +1192,23 @@ impl AuthCommand {
         Ok(Some(pending))
     }
 
+    /// Errors, without sending or deleting, when the claim already in memory
+    /// was issued by a platform other than `target`. No second read.
+    fn refuse_loaded_pending_login(
+        pending: &PendingDeviceLogin,
+        target: &url::Url,
+    ) -> Result<(), AuthError> {
+        if pending_origin_matches(&pending.origin, target) {
+            return Ok(());
+        }
+        Err(Self::foreign_pending_login_error(&pending.origin, target))
+    }
+
     /// Errors, without sending or deleting, when `device_secret` is the stored
     /// claim and `target` is not the platform that issued it.
+    ///
+    /// Used for an explicit `--device-secret`, which was not loaded from the
+    /// file. The file is read once, and that read carries both fields.
     fn refuse_foreign_pending_login(
         cli_args: &CliArgs,
         session_id: &Uuid,
@@ -1187,11 +1231,15 @@ impl AuthCommand {
         {
             return Ok(());
         }
-        let issuing = crate::platform::redact_stored_platform_url(&pending.origin);
+        Err(Self::foreign_pending_login_error(&pending.origin, target))
+    }
+
+    fn foreign_pending_login_error(origin: &str, target: &url::Url) -> AuthError {
+        let issuing = crate::platform::redact_stored_platform_url(origin);
         let requested = crate::platform::redact_platform_url(target);
-        Err(AuthError::InvalidAuthData(format!(
+        AuthError::InvalidAuthData(format!(
             "This pending device login was issued by {issuing}. It was not sent to {requested}, and the stored login was left in place. Poll with the platform that issued it, or run pcl auth ensure again."
-        )))
+        ))
     }
 
     /// Whether the stored claim is the secret just sent, and this poll talked
@@ -2053,6 +2101,14 @@ fn cleanup_warning(message: &str) -> Value {
         "code": "auth.pending_device_login_cleanup_failed",
         "message": message,
     })
+}
+
+/// The device secret for one poll, and the issuer when this process loaded
+/// both from the same read of the pending file.
+#[derive(Clone, Copy)]
+enum PollSecret<'a> {
+    Loaded(&'a PendingDeviceLogin),
+    Explicit(&'a str),
 }
 
 /// Attaches a pending-login cleanup failure to the error being returned, so
@@ -3602,6 +3658,75 @@ mod tests {
             !request_line.contains('?') && !request_line.contains("device_secret"),
             "status URL must not carry the device secret, got {request_line}"
         );
+    }
+
+    /// The issuer travels with the secret from the read that loaded it. Cleanup
+    /// that removes the file before the request must not make that secret
+    /// eligible for a different platform.
+    #[tokio::test]
+    async fn poll_keeps_a_loaded_issuer_when_the_file_disappears() {
+        let mut server = Server::new_async().await;
+        let post = server
+            .mock("POST", "/api/v1/cli/auth/status")
+            .match_body(Matcher::Any)
+            .expect(0)
+            .create_async()
+            .await;
+        let get = server
+            .mock("GET", Matcher::Any)
+            .expect(0)
+            .create_async()
+            .await;
+
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = test_cli_args(config_dir.path());
+        let session_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let auth_response: CliAuthRequestCodeResponse =
+            serde_json::from_str(test_auth_response_json()).unwrap();
+        let issuing = url::Url::parse("https://linea.phylax.systems").unwrap();
+        AuthCommand::store_pending_device_secret(&cli_args, &auth_response, &issuing)
+            .expect("store the login");
+        let pending = AuthCommand::read_pending_device_login(&cli_args, &session_id)
+            .expect("read the stored login")
+            .expect("stored");
+        std::fs::remove_file(AuthCommand::pending_device_secret_path(
+            &AuthCommand::config_dir_for(&cli_args),
+            &session_id,
+        ))
+        .expect("cleanup removes the file before the request");
+
+        let cmd = AuthCommand::try_parse_from(vec![
+            "auth",
+            "--auth-url",
+            &server.url(),
+            "poll",
+            "--session-id",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ])
+        .unwrap();
+        let mut config = create_test_config();
+        let error = cmd
+            .poll(
+                &mut config,
+                &cli_args,
+                false,
+                &session_id,
+                PollSecret::Loaded(&pending),
+                None,
+            )
+            .await
+            .expect_err("a foreign issuer must not be sent");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("linea.phylax.systems"),
+            "error should name the issuing platform: {rendered}"
+        );
+        assert!(
+            !rendered.contains("test_secret"),
+            "error must not include the device secret: {rendered}"
+        );
+        post.assert();
+        get.assert();
     }
 
     /// A 307 or 308 must not replay the status body, secret included, on
