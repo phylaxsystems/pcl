@@ -743,3 +743,271 @@ fn release_deploy_broadcast_next_actions_use_releases_commands() {
     calldata.assert();
     confirm.assert();
 }
+
+#[test]
+fn release_deploy_broadcast_refuses_a_noop_that_lists_operations() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let mut server = mockito::Server::new();
+    write_valid_auth_config_for_platform(config_dir.path(), &server.url());
+    let project = "11111111-1111-4111-8111-111111111111";
+    let calldata = server
+        .mock(
+            "GET",
+            format!("/api/v1/projects/{project}/releases/release-1/deploy-calldata").as_str(),
+        )
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "chainId": 1,
+                "stateOracleAddress": "0x0101010101010101010101010101010101010101",
+                "operations": [{
+                    "type": "removeAssertion",
+                    "adopterAddress": "0xabCDeF0123456789AbcdEf0123456789aBCDEF01",
+                    "assertionId": "0x2222222222222222222222222222222222222222222222222222222222222222",
+                }],
+                "calldata": [],
+                "isNoop": true,
+                "message": "Everything already deployed",
+            })
+            .to_string(),
+        )
+        .expect(1)
+        .create();
+    let confirm = server.mock("POST", Matcher::Any).expect(0).create();
+
+    let output = run_pcl(
+        config_dir.path(),
+        &[
+            "releases",
+            "calldata",
+            "deploy",
+            project,
+            "release-1",
+            "--broadcast",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--yes",
+        ],
+    );
+    assert!(!output.status.success());
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stderr).expect("json error");
+    assert_eq!(
+        envelope["error"]["code"], "api.unexpected_response",
+        "{envelope}"
+    );
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unexpectedly included operations"),
+        "{envelope}"
+    );
+    calldata.assert();
+    confirm.assert();
+}
+
+const DEPLOY_ADOPTER: &str = "0xabCDeF0123456789AbcdEf0123456789aBCDEF01";
+const DEPLOY_REMOVED_ID: &str =
+    "0x2222222222222222222222222222222222222222222222222222222222222222";
+// viem-encoded removeAssertion(DEPLOY_ADOPTER, DEPLOY_REMOVED_ID).
+const DEPLOY_REMOVE_CALLDATA: &str = "0x81347190000000000000000000000000abcdef0123456789abcdef0123456789abcdef012222222222222222222222222222222222222222222222222222222222222222";
+const ANVIL_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+/// Mocks a non-noop deploy-calldata response and a platform that must not be
+/// asked to confirm a deploy.
+fn mock_deploy_calldata(
+    server: &mut mockito::ServerGuard,
+    project: &str,
+    operations: &serde_json::Value,
+) -> (mockito::Mock, mockito::Mock) {
+    let calldata = server
+        .mock(
+            "GET",
+            format!("/api/v1/projects/{project}/releases/release-1/deploy-calldata").as_str(),
+        )
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "chainId": 1,
+                "stateOracleAddress": "0x0101010101010101010101010101010101010101",
+                "operations": operations,
+                "calldata": [DEPLOY_REMOVE_CALLDATA],
+                "isNoop": false,
+                "message": null,
+            })
+            .to_string(),
+        )
+        .expect(1)
+        .create();
+    let deploy = server.mock("POST", Matcher::Any).expect(0).create();
+    (calldata, deploy)
+}
+
+#[test]
+fn release_deploy_broadcast_refuses_an_unshowable_batch_before_any_send() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let mut server = mockito::Server::new();
+    let mut rpc = mockito::Server::new();
+    let rpc_calls = rpc.mock("POST", Matcher::Any).expect(0).create();
+    write_valid_auth_config_for_platform(config_dir.path(), &server.url());
+    let project = "11111111-1111-4111-8111-111111111111";
+    // The operation claims an add; the calldata removes.
+    let (calldata, deploy) = mock_deploy_calldata(
+        &mut server,
+        project,
+        &serde_json::json!([{
+            "type": "addAssertion",
+            "adopterAddress": DEPLOY_ADOPTER,
+            "assertionId": DEPLOY_REMOVED_ID,
+        }]),
+    );
+    let release = mock_release_diff(&mut server, project);
+
+    let rpc_url = rpc.url();
+    let output = run_pcl(
+        config_dir.path(),
+        &[
+            "releases",
+            "calldata",
+            "deploy",
+            project,
+            "release-1",
+            "--broadcast",
+            "--private-key",
+            ANVIL_KEY,
+            "--yes",
+            "--rpc-url",
+            &rpc_url,
+        ],
+    );
+    assert!(!output.status.success());
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stderr).expect("json error");
+    assert_eq!(
+        envelope["error"]["code"], "api.unexpected_response",
+        "{envelope}"
+    );
+    calldata.assert();
+    deploy.assert();
+    release.assert();
+    rpc_calls.assert();
+}
+
+#[test]
+fn release_deploy_broadcast_yes_prints_the_operations_before_sending() {
+    let config_dir = tempfile::tempdir().expect("config dir");
+    let mut server = mockito::Server::new();
+    let mut rpc = mockito::Server::new();
+    // Fails the first RPC call, so reaching it proves the send started.
+    let rpc_calls = rpc
+        .mock("POST", Matcher::Any)
+        .with_status(500)
+        .expect_at_least(1)
+        .create();
+    write_valid_auth_config_for_platform(config_dir.path(), &server.url());
+    let project = "11111111-1111-4111-8111-111111111111";
+    let (calldata, deploy) = mock_deploy_calldata(
+        &mut server,
+        project,
+        &serde_json::json!([{
+            "type": "removeAssertion",
+            "adopterAddress": DEPLOY_ADOPTER,
+            "assertionId": DEPLOY_REMOVED_ID,
+        }]),
+    );
+    let release = mock_release_diff(&mut server, project);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .arg("--config-dir")
+        .arg(config_dir.path())
+        .args([
+            "releases",
+            "calldata",
+            "deploy",
+            project,
+            "release-1",
+            "--broadcast",
+            "--private-key",
+            ANVIL_KEY,
+            "--yes",
+            "--rpc-url",
+            &rpc.url(),
+        ])
+        .output()
+        .expect("run pcl");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let listed = stderr
+        .find(&format!(
+            "StateOracle.batch with 1 operation(s) for release release-1\n  removeAssertion adopter {DEPLOY_ADOPTER} assertion {DEPLOY_REMOVED_ID}\n"
+        ))
+        .unwrap_or_else(|| panic!("operation list missing:\n{stderr}"));
+    let sending = stderr
+        .find("Broadcasting StateOracle.batch transaction")
+        .unwrap_or_else(|| panic!("send never started:\n{stderr}"));
+    let identity = stderr
+        .find(&format!(
+            "    previous: {DEPLOY_REMOVED_ID}\n    args:\n      100\n"
+        ))
+        .unwrap_or_else(|| panic!("reviewed identity missing:\n{stderr}"));
+    assert!(listed < identity && identity < sending, "{stderr}");
+    calldata.assert();
+    deploy.assert();
+    release.assert();
+    rpc_calls.assert();
+}
+
+fn mock_release_diff(server: &mut mockito::ServerGuard, project: &str) -> mockito::Mock {
+    // `projects.getRelease` returns the release detail and has no `diff`.
+    server
+        .mock(
+            "GET",
+            format!("/api/v1/projects/{project}/releases/release-1").as_str(),
+        )
+        .expect(0)
+        .create();
+    server
+        .mock(
+            "GET",
+            format!("/api/v1/projects/{project}/releases/release-1/diff").as_str(),
+        )
+        .match_query(Matcher::UrlEncoded("against".into(), "active".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "activeRelease": {
+                    "id": "22222222-2222-4222-8222-222222222222",
+                    "releaseNumber": 1
+                },
+                "diff": {
+                    "contracts": {
+                        "guard": {
+                            "address": DEPLOY_ADOPTER,
+                            "name": "Guard",
+                            "changeType": "modified",
+                            "metadataChanges": null,
+                            "assertions": [{
+                                "file": "Guard.sol",
+                                "args": ["100"],
+                                "changeType": "removed",
+                                "assertionId": null,
+                                "previousAssertionId": DEPLOY_REMOVED_ID,
+                                "compilerVersionChange": null
+                            }]
+                        }
+                    },
+                    "summary": {
+                        "contracts": { "added": 0, "removed": 0, "modified": 1, "unchanged": 0 },
+                        "assertions": { "added": 0, "removed": 1, "modified": 0, "unchanged": 0 }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect(1)
+        .create()
+}
