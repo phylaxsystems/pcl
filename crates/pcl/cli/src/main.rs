@@ -26,6 +26,10 @@ use pcl_core::{
         with_envelope_metadata,
     },
     config::CliConfig,
+    deploy::{
+        is_release_uuid,
+        release_inspection_actions,
+    },
     download::DownloadError,
     error::{
         ApplyError,
@@ -788,12 +792,16 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
                     (
                         "deploy.checks_failed",
                         true,
-                        vec![
-                            format!("pcl releases show {project_id} {release_id}"),
-                            format!(
-                                "pcl releases retry-check {project_id} {release_id} <check-id>"
-                            ),
-                        ],
+                        if is_release_uuid(release_id) {
+                            vec![
+                                format!("pcl releases show {project_id} {release_id}"),
+                                format!(
+                                    "pcl releases retry-check {project_id} {release_id} <check-id>"
+                                ),
+                            ]
+                        } else {
+                            release_inspection_actions(*project_id, [])
+                        },
                     )
                 }
                 DeployError::TomlWriteBack { .. } => {
@@ -886,6 +894,32 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
                         ],
                     )
                 }
+                DeployError::ReleaseIntentMismatch {
+                    project_id,
+                    release_id,
+                    ..
+                } => {
+                    (
+                        "deploy.release_intent_mismatch",
+                        true,
+                        release_inspection_actions(*project_id, release_id.as_deref()),
+                    )
+                }
+                DeployError::ConfirmedReleaseMismatch {
+                    project_id,
+                    release_id,
+                    confirmed_release_id,
+                    ..
+                } => {
+                    (
+                        "deploy.confirmed_release_mismatch",
+                        false,
+                        release_inspection_actions(
+                            *project_id,
+                            [release_id.as_str(), confirmed_release_id.as_str()],
+                        ),
+                    )
+                }
                 DeployError::AmbiguousInactiveRelease { project_id, .. } => {
                     (
                         "deploy.inactive_release_ambiguous",
@@ -924,6 +958,31 @@ fn deploy_error_envelope(err: &DeployError) -> Value {
             {
                 error.insert("project_id".to_string(), json!(project_id));
                 error.insert("path".to_string(), json!(path));
+            }
+            if let DeployError::ReleaseIntentMismatch {
+                project_id,
+                release_id,
+                ..
+            } = err
+            {
+                error.insert("project_id".to_string(), json!(project_id));
+                error.insert("release_id".to_string(), json!(release_id));
+            }
+            if let DeployError::ConfirmedReleaseMismatch {
+                project_id,
+                release_id,
+                confirmed_release_id,
+                deploy,
+            } = err
+            {
+                error.insert("project_id".to_string(), json!(project_id));
+                error.insert("release_id".to_string(), json!(release_id));
+                error.insert(
+                    "confirmed_release_id".to_string(),
+                    json!(confirmed_release_id),
+                );
+                error.insert("tx_hash".to_string(), deploy["tx"]["tx_hash"].clone());
+                error.insert("deploy".to_string(), (**deploy).clone());
             }
             if let DeployError::CircuitBreakerUnsupported {
                 platform_url,
@@ -1609,6 +1668,182 @@ mod tests {
             "assertion_spec.v2_unsupported"
         );
         assert_eq!(envelope["error"]["code"], "apply.failed");
+    }
+
+    const RELEASE_7: &str = "7777abcd-7777-4777-8777-777777777777";
+    const RELEASE_8: &str = "8888abcd-8888-4888-8888-888888888888";
+
+    #[test]
+    fn deploy_release_intent_mismatch_points_at_the_project_releases() {
+        let project_id = "00000000-0000-0000-0000-000000000000";
+        let created = DeployError::ReleaseIntentMismatch {
+            project_id: "00000000-0000-0000-0000-000000000000".parse().unwrap(),
+            release_id: Some(RELEASE_7.to_string()),
+            reason: "stored snapshot does not match the reviewed preview",
+        };
+
+        let envelope = deploy_error_envelope(&created);
+
+        assert_eq!(envelope["status"], "error");
+        assert_eq!(envelope["error"]["code"], "deploy.release_intent_mismatch");
+        assert_eq!(envelope["error"]["recoverable"], true);
+        assert_eq!(envelope["error"]["project_id"], project_id);
+        assert_eq!(envelope["error"]["release_id"], RELEASE_7);
+        assert_eq!(
+            envelope["next_actions"],
+            json!([
+                format!("pcl releases show {project_id} {RELEASE_7}"),
+                format!("pcl releases list {project_id}"),
+            ])
+        );
+
+        let preview = DeployError::ReleaseIntentMismatch {
+            project_id: "00000000-0000-0000-0000-000000000000".parse().unwrap(),
+            release_id: None,
+            reason: "preview contract set does not match the locally built payload",
+        };
+
+        let envelope = deploy_error_envelope(&preview);
+
+        assert_eq!(envelope["error"]["release_id"], Value::Null);
+        assert_eq!(
+            envelope["next_actions"],
+            json!([format!("pcl releases list {project_id}")])
+        );
+        assert!(
+            envelope["error"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with(&format!("The release preview of project {project_id}"))
+        );
+    }
+
+    #[test]
+    fn deploy_confirmed_release_mismatch_keeps_the_landed_transaction() {
+        let tx_hash = format!("0x{}", "ab".repeat(32));
+        let err = DeployError::ConfirmedReleaseMismatch {
+            project_id: "00000000-0000-0000-0000-000000000000".parse().unwrap(),
+            release_id: RELEASE_7.to_string(),
+            confirmed_release_id: RELEASE_8.to_string(),
+            deploy: Box::new(json!({
+                "noop": false,
+                "tx": { "tx_hash": tx_hash, "chain_id": 1 },
+                "confirm": { "releaseId": RELEASE_8 },
+            })),
+        };
+
+        let envelope = deploy_error_envelope(&err);
+
+        assert_eq!(
+            envelope["error"]["code"],
+            "deploy.confirmed_release_mismatch"
+        );
+        assert_eq!(envelope["error"]["recoverable"], false);
+        assert_eq!(envelope["error"]["tx_hash"], tx_hash);
+        assert_eq!(envelope["error"]["deploy"]["tx"]["tx_hash"], tx_hash);
+        assert_eq!(envelope["error"]["confirmed_release_id"], RELEASE_8);
+        let message = envelope["error"]["message"].as_str().unwrap();
+        assert!(message.contains(&tx_hash), "{message}");
+        let project = "00000000-0000-0000-0000-000000000000";
+        assert_eq!(
+            envelope["next_actions"],
+            json!([
+                format!("pcl releases show {project} {RELEASE_7}"),
+                format!("pcl releases show {project} {RELEASE_8}"),
+                format!("pcl releases list {project}"),
+            ])
+        );
+    }
+
+    #[test]
+    fn deploy_next_actions_never_paste_a_non_uuid_release_id() {
+        const PROJECT: &str = "00000000-0000-0000-0000-000000000000";
+        const RELEASE: &str = "3333abcd-3333-4333-8333-333333333333";
+        let allowed = [
+            format!("pcl releases list {PROJECT}"),
+            format!("pcl releases show {PROJECT} {RELEASE}"),
+        ];
+        for hostile in [
+            "bad; echo unexpected-command",
+            "$(touch pwned)",
+            "`id`",
+            "3333abcd-3333-4333-8333-33333333333\n3",
+            "with space",
+            "",
+            "{3333abcd-3333-4333-8333-333333333333}",
+        ] {
+            let errors = [
+                DeployError::ReleaseIntentMismatch {
+                    project_id: PROJECT.parse().unwrap(),
+                    release_id: Some(hostile.to_string()),
+                    reason: "stored snapshot does not match the reviewed preview",
+                },
+                DeployError::ConfirmedReleaseMismatch {
+                    project_id: PROJECT.parse().unwrap(),
+                    release_id: RELEASE.to_string(),
+                    confirmed_release_id: hostile.to_string(),
+                    deploy: Box::new(Value::Null),
+                },
+                DeployError::ChecksFailed {
+                    project_id: PROJECT.parse().unwrap(),
+                    release_id: hostile.to_string(),
+                    status: "failed".to_string(),
+                },
+            ];
+            for err in errors {
+                let envelope = deploy_error_envelope(&err);
+                let actions = envelope["next_actions"].as_array().unwrap();
+                assert!(
+                    actions.contains(&json!(allowed[0])),
+                    "{hostile:?}: {actions:?}"
+                );
+                for action in actions {
+                    assert!(
+                        allowed.iter().any(|allowed| action == allowed),
+                        "{hostile:?} reached a suggested command: {action}"
+                    );
+                }
+            }
+        }
+
+        let upper = RELEASE.to_ascii_uppercase();
+        let envelope = deploy_error_envelope(&DeployError::ReleaseIntentMismatch {
+            project_id: PROJECT.parse().unwrap(),
+            release_id: Some(upper.clone()),
+            reason: "stored snapshot does not match the reviewed preview",
+        });
+        assert_eq!(
+            envelope["next_actions"][0],
+            format!("pcl releases show {PROJECT} {upper}")
+        );
+    }
+
+    #[test]
+    fn deploy_confirmed_release_mismatch_says_what_already_happened() {
+        let mismatch = |deploy: Value| {
+            let err = DeployError::ConfirmedReleaseMismatch {
+                project_id: "00000000-0000-0000-0000-000000000000".parse().unwrap(),
+                release_id: "3333abcd-3333-4333-8333-333333333333".to_string(),
+                confirmed_release_id: "2222abcd-2222-4222-8222-222222222222".to_string(),
+                deploy: Box::new(deploy),
+            };
+            pcl_core::output::human_string(&deploy_error_envelope(&err))
+        };
+        let tx_hash = format!("0x{}", "ab".repeat(32));
+
+        let sent = mismatch(json!({ "noop": false, "tx": { "tx_hash": tx_hash } }));
+        assert!(
+            sent.contains(&tx_hash) && sent.contains("already confirmed"),
+            "{sent}"
+        );
+
+        let noop = mismatch(json!({ "noop": true, "tx": null }));
+        assert!(
+            noop.contains("no transaction was sent")
+                && noop.contains("already confirmed")
+                && !noop.contains("on-chain deploy"),
+            "{noop}"
+        );
     }
 
     #[test]

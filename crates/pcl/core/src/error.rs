@@ -410,6 +410,34 @@ pub enum DeployError {
     },
 
     #[error(
+        "{subject} of project {project_id} does not match the release built from this checkout ({reason}). pcl stopped before checking, signing or confirming a release. Inspect the project's releases with `pcl releases list {project_id}`.",
+        subject = .release_id.as_ref().map_or_else(|| "The release preview".to_string(), |id| format!("Platform release {id}"))
+    )]
+    ReleaseIntentMismatch {
+        project_id: uuid::Uuid,
+        /// `None` when the preview itself was rejected, before any release
+        /// was selected or created.
+        release_id: Option<String>,
+        reason: &'static str,
+    },
+
+    #[error(
+        "pcl deployed release {release_id} of project {project_id}, but the platform's confirmation names release {confirmed_release_id}. The platform already confirmed it ({sent}), and re-running pcl deploy cannot undo that. Check which release is active with `pcl releases list {project_id}`.",
+        sent = .deploy
+            .get("tx")
+            .and_then(|tx| tx.get("tx_hash"))
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(|| "no transaction was sent".to_string(), |hash| format!("deploy transaction {hash}"))
+    )]
+    ConfirmedReleaseMismatch {
+        project_id: uuid::Uuid,
+        release_id: String,
+        confirmed_release_id: String,
+        /// The broadcast flow's data (calldata, tx, confirmation).
+        deploy: Box<serde_json::Value>,
+    },
+
+    #[error(
         "Project {project_id} has more than one inactive release for environment {environment:?} that matches the current configuration ({release_ids:?}). pcl will not guess which interrupted run to resume. Inspect them with `pcl releases list {project_id}`, then activate or delete the extra releases and re-run `pcl deploy`."
     )]
     AmbiguousInactiveRelease {
