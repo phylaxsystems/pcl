@@ -40,6 +40,7 @@ use foundry_config::{
     find_project_root,
 };
 use std::{
+    cell::OnceCell,
     collections::HashMap,
     path::{
         Path,
@@ -141,6 +142,19 @@ impl BuildAndFlatOutput {
     }
 }
 
+/// Project builds shared by the release payloads of one command, keyed by project root and
+/// contracts directory.
+#[derive(Default)]
+pub struct ReleaseBuilds(HashMap<(PathBuf, PathBuf), ReleaseBuild>);
+
+struct ReleaseBuild {
+    /// The normal cached project build.
+    project: ProjectCompileOutput,
+    /// A private whole-project build, compiled at most once and only when the project build
+    /// kept no job input for a selected artifact.
+    private: OnceCell<ProjectCompileOutput>,
+}
+
 /// Command-line arguments for building and flattening Solidity contracts.
 /// This is used to prepare contracts for submission to the assertion DA layer.
 #[derive(Debug, Default, Parser)]
@@ -197,17 +211,38 @@ impl BuildAndFlattenArgs {
     }
 
     /// Like [`Self::run`], plus the original compiler input of the selected artifact's job,
-    /// keeping only the sources the artifact was compiled from.
-    pub fn run_for_release(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
+    /// keeping only the sources the artifact was compiled from. `builds` shares the project
+    /// builds between the assertions of one command.
+    pub fn run_for_release(
+        &self,
+        builds: &mut ReleaseBuilds,
+    ) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
         foundry_cli::utils::load_dotenv();
-        let build = crate::compile::compile_with_build_info(self.build_opts())?;
-        let (id, artifact) = self.select(&build)?;
+        let key = (self.project_root()?, self.contracts.clone());
+        if !builds.0.contains_key(&key) {
+            let project = crate::compile::compile_with_build_info(self.build_opts())?;
+            builds.0.insert(
+                key.clone(),
+                ReleaseBuild {
+                    project,
+                    private: OnceCell::new(),
+                },
+            );
+        }
+        self.release_from(&builds.0[&key])
+    }
+
+    /// Selects the artifact and its job from one build: the project build when it compiled the
+    /// job or kept it, else a private build of the whole project.
+    fn release_from(&self, build: &ReleaseBuild) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
+        let (id, artifact) = self.select(&build.project)?;
         // Newly compiled: this build holds the job's full build info.
-        if let Some(job) = compiled_job(&build, &id.build_id) {
+        if let Some(job) = compiled_job(&build.project, &id.build_id) {
             return self.release_output(artifact, &job);
         }
-        // Cached: the build info Foundry retained for the job has its input when the build
-        // that compiled it kept full build info.
+        // Cached: the build info retained for the job has its input when the build that
+        // compiled it kept full build info. A build info ID hashes the compiler version and the
+        // full input, so an input retained under the artifact's ID is exactly its job.
         let project = self
             .build_opts()
             .load_config()?
@@ -216,25 +251,22 @@ impl BuildAndFlattenArgs {
         if let Some(job) = retained_job(&project, &id.build_id) {
             return self.release_output(artifact, &job);
         }
-        // Builds without full build info (older PCL, `forge build`) retained no input. Without
-        // its cache index, Foundry rebuilds the whole project through its normal paths and
-        // writes artifacts, cache and full build info that this and later releases reuse, so
-        // the artifact and its job both come from that build.
-        let cache = project.cache_path();
-        if let Err(error) = std::fs::remove_file(cache)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(Box::new(PhoundryError::ReleaseInputNotReproducible {
-                contract: format!("{}:{}", id.source.display(), id.name),
-                reason: format!("cannot rebuild the cache {}: {error}", cache.display()),
-            }));
+        // Not retained (a build without full build info, such as `forge build` or PCL 1.8.0).
+        // One private build of the whole project per command supplies both the artifact and its
+        // job, and leaves the project's cache, artifacts and build info as they are.
+        if build.private.get().is_none() {
+            let compiled = crate::compile::compile_privately_with_build_info(self.build_opts())?;
+            let _ = build.private.set(compiled);
         }
-        let build = crate::compile::compile_with_build_info(self.build_opts())?;
-        let (id, artifact) = self.select(&build)?;
-        let job = compiled_job(&build, &id.build_id).ok_or_else(|| {
+        let private = build
+            .private
+            .get()
+            .ok_or_else(|| Box::new(PhoundryError::InvalidForgeOutput("missing private build")))?;
+        let (id, artifact) = self.select(private)?;
+        let job = compiled_job(private, &id.build_id).ok_or_else(|| {
             Box::new(PhoundryError::ReleaseInputNotReproducible {
                 contract: format!("{}:{}", id.source.display(), id.name),
-                reason: "the rebuild kept no compiler input; rebuild and retry".into(),
+                reason: "the private build kept no compiler input".into(),
             })
         })?;
         self.release_output(artifact, &job)
@@ -783,7 +815,7 @@ contract Vault is TestContract {}"#,
             "pragma solidity 0.8.28; contract Vault { function unrelated() external {} }",
         );
         let output = release_args(&project_root, "Vault", Some("src/Vault.sol"))
-            .run_for_release()
+            .run_for_release(&mut ReleaseBuilds::default())
             .unwrap();
         assert_eq!(output.compilation_target, "src/Vault.sol");
         let input: Value = serde_json::from_str(output.compiler_input.as_deref().unwrap()).unwrap();
@@ -804,7 +836,7 @@ contract Vault is TestContract {}"#,
             .unwrap();
         assert_eq!(verified.bytecode, output.bytecode);
         let warm = release_args(&project_root, "Vault", Some("src/Vault.sol"))
-            .run_for_release()
+            .run_for_release(&mut ReleaseBuilds::default())
             .unwrap();
         assert_eq!(warm.compiler_input, output.compiler_input);
     }
@@ -827,8 +859,9 @@ contract Vault is TestContract {}"#,
             "src/B.sol",
             "pragma solidity 0.8.28; contract Dup { function f() external {} }",
         );
-        let release =
-            |name: &str, source: &str| release_args(&root, name, Some(source)).run_for_release();
+        let release = |name: &str, source: &str| {
+            release_args(&root, name, Some(source)).run_for_release(&mut ReleaseBuilds::default())
+        };
 
         let qualified = release("Dup", "src/B.sol").unwrap();
         assert_eq!(qualified.compilation_target, "src/B.sol");
@@ -876,7 +909,7 @@ contract Vault is TestContract {}"#,
     /// same bytecode.
     fn release_input_of(root: &Path, source: &str, name: &str) -> Value {
         let output = release_args(root, name, Some(source))
-            .run_for_release()
+            .run_for_release(&mut ReleaseBuilds::default())
             .unwrap();
         assert_eq!(recompile_alone(&output, name), output.bytecode);
         let input: Value = serde_json::from_str(output.compiler_input.as_deref().unwrap()).unwrap();
@@ -984,22 +1017,31 @@ engine = "none"
         fs::write(path, serde_json::to_vec(info).unwrap()).unwrap();
     }
 
-    /// Build info files and their modification times; a recompile writes new ones.
-    fn build_outputs(root: &Path) -> Vec<(PathBuf, std::time::SystemTime)> {
-        let mut entries: Vec<_> = fs::read_dir(root.join("out/build-info"))
-            .unwrap()
-            .map(|entry| {
-                let entry = entry.unwrap();
-                (entry.path(), entry.metadata().unwrap().modified().unwrap())
-            })
-            .collect();
-        entries.sort();
-        entries
+    /// Contents of the project's artifacts, cache and build info.
+    fn project_outputs(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut files = vec![];
+        let mut pending = vec![root.join("out"), root.join("assertions/cache")];
+        while let Some(dir) = pending.pop() {
+            for entry in fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else {
+                    files.push((path.clone(), fs::read(path).unwrap()));
+                }
+            }
+        }
+        files.sort();
+        files
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn release_without_retained_input_sends_the_rebuilt_artifact_and_its_job() {
-        let (_temp_dir, root) = setup_test_project();
+    fn compiler_input(output: &BuildAndFlatOutput) -> Value {
+        serde_json::from_str(output.compiler_input.as_deref().unwrap()).unwrap()
+    }
+
+    /// A project with two assertions, an unrelated contract and a test importing `Vault`.
+    fn two_assertion_project() -> (TempDir, PathBuf) {
+        let (temp_dir, root) = setup_test_project();
         write(
             &root,
             "foundry.toml",
@@ -1020,15 +1062,20 @@ engine = "none"
             "src/Second.sol",
             "pragma solidity 0.8.28; contract Second { function s() external {} }",
         );
-        // A test importing Vault is recompiled with it and keeps artifacts from both jobs.
         write(
             &root,
             "test/Vault.t.sol",
             "pragma solidity 0.8.28; import {Vault} from \"../src/Vault.sol\"; contract VaultTest {}",
         );
+        (temp_dir, root)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn release_without_retained_input_uses_one_private_build_and_keeps_project_outputs() {
+        let (_temp_dir, root) = two_assertion_project();
         release_input_of(&root, "src/Vault.sol", "Vault");
-        // An incremental change compiles Vault alone while Other stays cached; then the job's
-        // retained build info loses its input, as with a build that kept no full build info.
+        // An incremental change compiles Vault alone while Other stays cached; then both jobs'
+        // retained build info loses its input, as a build without full build info leaves it.
         write(
             &root,
             "src/Vault.sol",
@@ -1039,23 +1086,67 @@ engine = "none"
         assert_eq!(incremental["settings"], job["input"]["settings"]);
         forget_job_input(&root, "src/Vault.sol", "Vault");
         forget_job_input(&root, "src/Second.sol", "Second");
+        let before = project_outputs(&root);
 
-        let sent = release_input_of(&root, "src/Vault.sol", "Vault");
-        // The sent input is the job that built the artifact now recorded for Vault.
-        let (_, job) = recorded_job(&root, "src/Vault.sol", "Vault");
-        assert_eq!(sent["settings"], job["input"]["settings"]);
-        assert_eq!(sent["language"], job["input"]["language"]);
-        for (name, source) in sent["sources"].as_object().unwrap() {
-            assert_eq!(source, &job["input"]["sources"][name]);
+        let mut builds = ReleaseBuilds::default();
+        let vault = release_args(&root, "Vault", Some("src/Vault.sol"))
+            .run_for_release(&mut builds)
+            .unwrap();
+        let second = release_args(&root, "Second", Some("src/Second.sol"))
+            .run_for_release(&mut builds)
+            .unwrap();
+        assert_eq!(recompile_alone(&vault, "Vault"), vault.bytecode);
+        assert_eq!(recompile_alone(&second, "Second"), second.bytecode);
+        // Both assertions shared one project build and one private build.
+        assert_eq!(builds.0.len(), 1);
+        assert!(builds.0.values().all(|build| build.private.get().is_some()));
+        // The project's artifacts, cache and build info are untouched.
+        assert_eq!(project_outputs(&root), before);
+
+        // Each input is the job a full build of the same sources compiles.
+        fs::remove_dir_all(root.join("out")).unwrap();
+        fs::remove_dir_all(root.join("assertions/cache")).unwrap();
+        assert_eq!(
+            compiler_input(&vault),
+            release_input_of(&root, "src/Vault.sol", "Vault")
+        );
+        assert_eq!(
+            compiler_input(&second),
+            release_input_of(&root, "src/Second.sol", "Second")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn release_pairs_artifact_and_job_from_one_build_when_another_writer_changes_evidence() {
+        let (_temp_dir, root) = two_assertion_project();
+        let reference = release_input_of(&root, "src/Vault.sol", "Vault");
+        let (path, full) = recorded_job(&root, "src/Vault.sol", "Vault");
+        let mut partial = full.clone();
+        partial.as_object_mut().unwrap().remove("input");
+        partial.as_object_mut().unwrap().remove("output");
+        let (full, partial) = (full.to_string(), partial.to_string());
+        // (retained when this build read the cache, what another writer leaves before the job
+        // is looked up, whether the private build is needed)
+        for (start, writer, private) in [
+            (&partial, Some(&full), false),
+            (&full, Some(&partial), true),
+            (&partial, None, true),
+            (&full, None, true),
+        ] {
+            fs::write(&path, start).unwrap();
+            let args = release_args(&root, "Vault", Some("src/Vault.sol"));
+            let build = ReleaseBuild {
+                project: crate::compile::compile_with_build_info(args.build_opts()).unwrap(),
+                private: OnceCell::new(),
+            };
+            match writer {
+                Some(info) => fs::write(&path, info).unwrap(),
+                None => fs::remove_file(&path).unwrap(),
+            }
+            let output = args.release_from(&build).unwrap();
+            assert_eq!(compiler_input(&output), reference);
+            assert_eq!(build.private.get().is_some(), private);
         }
-        // That rebuild retained full build info for every artifact: a second assertion and
-        // later releases reuse it without rebuilding.
-        let (_, second_job) = recorded_job(&root, "src/Second.sol", "Second");
-        assert!(second_job.get("input").is_some());
-        let before = build_outputs(&root);
-        release_input_of(&root, "src/Second.sol", "Second");
-        assert_eq!(release_input_of(&root, "src/Vault.sol", "Vault"), sent);
-        assert_eq!(build_outputs(&root), before);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1124,7 +1215,7 @@ engine = "none"
             "pragma solidity 0.8.28; contract Pin {}",
         );
         let output = release_args(&root, "A", Some("src/A.sol"))
-            .run_for_release()
+            .run_for_release(&mut ReleaseBuilds::default())
             .unwrap();
         // The full project resolves a version every file accepts, not the newest for A alone.
         assert!(
@@ -1140,7 +1231,7 @@ engine = "none"
             "pragma solidity ^0.8.28; invalid syntax;",
         );
         let error = release_args(&root, "A", Some("src/A.sol"))
-            .run_for_release()
+            .run_for_release(&mut ReleaseBuilds::default())
             .unwrap_err();
         assert!(
             matches!(*error, PhoundryError::CompilationError(_)),
@@ -1218,7 +1309,7 @@ engine = "none"
             "pragma solidity 0.8.28; import {X} from \"lib/foo/src/X.sol\"; contract Uses { function v() external pure returns (uint) { return X.v(); } }",
         );
         let output = release_args(&root, "Uses", Some("src/Uses.sol"))
-            .run_for_release()
+            .run_for_release(&mut ReleaseBuilds::default())
             .unwrap();
         let input: Value = serde_json::from_str(output.compiler_input.as_deref().unwrap()).unwrap();
         assert!(

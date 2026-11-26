@@ -30,6 +30,18 @@ pub(crate) fn compile_with_build_info(
     })
 }
 
+/// Compiles the whole project from scratch in memory with full build info, without reading or
+/// writing the project's cache, artifacts or build info.
+pub(crate) fn compile_privately_with_build_info(
+    build_opts: BuildOpts,
+) -> Result<ProjectCompileOutput, Box<PhoundryError>> {
+    compile_project(build_opts, |config| {
+        let mut project = config.ephemeral_project()?;
+        project.build_info = true;
+        Ok(project)
+    })
+}
+
 fn compile_project(
     build_opts: BuildOpts,
     project: impl FnOnce(&Config) -> Result<Project, SolcError>,

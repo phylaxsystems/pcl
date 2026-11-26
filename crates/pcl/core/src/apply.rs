@@ -48,6 +48,7 @@ use pcl_common::args::{
     CliArgs,
     OutputMode,
 };
+use pcl_phoundry::build_and_flatten::ReleaseBuilds;
 use serde_json::{
     Value,
     json,
@@ -386,6 +387,7 @@ impl ApplyArgs {
         root: &Path,
     ) -> Result<(ProjectsCreateReleaseBody, Vec<(String, Bytes)>), ApplyError> {
         let mut built_assertions = HashMap::new();
+        let mut release_builds = ReleaseBuilds::default();
         let mut payload_contracts = HashMap::new();
         #[allow(unused_mut)]
         let mut verification_inputs: Vec<(String, Bytes)> = Vec::new();
@@ -397,7 +399,7 @@ impl ApplyArgs {
                 let build_key = assertion.file.clone();
                 if !built_assertions.contains_key(&build_key) {
                     let output = assertion_build_args(root, &assertion.file)?
-                        .run_for_release()
+                        .run_for_release(&mut release_builds)
                         .map_err(ApplyError::BuildFailed)?;
                     built_assertions.insert(build_key.clone(), output);
                 }

@@ -516,58 +516,17 @@ fn release_runs_a_local_solc_given_relative_to_the_current_directory() {
     }
 }
 
-/// The job input Foundry's cache records for the artifact `name` in `source`.
+/// Adds a second assertion to the fixture project.
 #[cfg(feature = "credible")]
-fn recorded_job_input(project: &Path, source: &str, name: &str) -> serde_json::Value {
-    let cache: serde_json::Value = serde_json::from_slice(
-        &fs::read(project.join("assertions/cache/solidity-files-cache.json")).expect("cache"),
-    )
-    .expect("cache json");
-    let artifact = cache["files"][source]["artifacts"][name].to_string();
-    let build_id = artifact
-        .split("\"build_id\":\"")
-        .nth(1)
-        .and_then(|rest| rest.split('"').next())
-        .expect("recorded build id");
-    let info: serde_json::Value = serde_json::from_slice(
-        &fs::read(project.join(format!("out/build-info/{build_id}.json"))).expect("build info"),
-    )
-    .expect("build info json");
-    info["input"].clone()
-}
-
-#[cfg(feature = "credible")]
-fn build_info_times(project: &Path) -> Vec<(std::path::PathBuf, std::time::SystemTime)> {
-    let mut times: Vec<_> = fs::read_dir(project.join("out/build-info"))
-        .expect("build info dir")
-        .map(|entry| {
-            let entry = entry.expect("entry");
-            (
-                entry.path(),
-                entry
-                    .metadata()
-                    .expect("metadata")
-                    .modified()
-                    .expect("mtime"),
-            )
-        })
-        .collect();
-    times.sort();
-    times
-}
-
-#[cfg(feature = "credible")]
-#[test]
-fn release_on_a_cache_without_full_build_info_rebuilds_once_and_sends_each_job() {
-    let project = fixture_project();
-    let src = project.path().join("assertions/src");
+fn add_second_assertion(project: &Path) {
+    let src = project.join("assertions/src");
     let first = fs::read_to_string(src.join("NoArgsAssertion.a.sol")).expect("read assertion");
     fs::write(
         src.join("Second.a.sol"),
         first.replace("NoArgsAssertion", "Second"),
     )
     .expect("write second assertion");
-    let config = project.path().join("assertions/credible.toml");
+    let config = project.join("assertions/credible.toml");
     let toml = fs::read_to_string(&config).expect("read credible.toml");
     fs::write(
         &config,
@@ -576,41 +535,121 @@ fn release_on_a_cache_without_full_build_info_rebuilds_once_and_sends_each_job()
         ),
     )
     .expect("write credible.toml");
-    // A regular build keeps build info without the compiler input.
+}
+
+/// A regular build, which keeps build info without the compiler input.
+#[cfg(feature = "credible")]
+fn regular_build(project: &Path) {
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
-        .args(["build", "--root", project.path().to_str().expect("utf-8")])
+        .args(["build", "--root", project.to_str().expect("utf-8")])
         .output()
         .expect("run pcl build");
     assert_command_success(&output, "pcl build");
+}
 
-    let (ok, applied) = pcl_json(project.path(), &["apply", "--dry-run"]);
-    assert!(ok, "{applied}");
-    let assertions = applied["data"]["payload"]["contracts"]["mock"]["assertions"]
-        .as_array()
-        .expect("assertions");
-    for item in assertions {
-        let sent: serde_json::Value =
-            serde_json::from_str(item["compilerInput"].as_str().expect("input")).expect("json");
-        let job = recorded_job_input(
-            project.path(),
-            item["compilerSourcePath"].as_str().expect("source"),
-            item["contractName"].as_str().expect("name"),
-        );
-        assert_eq!(sent["settings"], job["settings"]);
-        for (name, source) in sent["sources"].as_object().expect("sources") {
-            assert_eq!(source, &job["sources"][name]);
+/// Contents and permissions of every file under the project's `out` and cache directories.
+#[cfg(feature = "credible")]
+fn project_outputs(project: &Path) -> Vec<(std::path::PathBuf, Vec<u8>, bool)> {
+    let mut files = vec![];
+    let mut pending = vec![project.join("out"), project.join("assertions/cache")];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(dir).expect("read dir") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                let readonly = path.metadata().expect("metadata").permissions().readonly();
+                files.push((path.clone(), fs::read(&path).expect("read"), readonly));
+            }
         }
     }
+    files.sort();
+    files
+}
 
-    // Later commands reuse the full build info without rebuilding.
-    let before = build_info_times(project.path());
-    let (ok, deployed) = pcl_json(project.path(), &["deploy", "--dry-run"]);
-    assert!(ok, "{deployed}");
-    assert_eq!(
-        deployed["data"]["payload"]["contracts"]["mock"]["assertions"],
-        applied["data"]["payload"]["contracts"]["mock"]["assertions"]
-    );
-    let (ok, _) = pcl_json(project.path(), &["apply", "--dry-run"]);
-    assert!(ok);
-    assert_eq!(build_info_times(project.path()), before);
+#[cfg(feature = "credible")]
+fn release_payload(project: &Path, command: &str) -> serde_json::Value {
+    let (ok, envelope) = pcl_json(project, &[command, "--dry-run"]);
+    assert!(ok, "{command}: {envelope}");
+    envelope["data"]["payload"]["contracts"].clone()
+}
+
+#[cfg(feature = "credible")]
+#[test]
+fn release_on_a_cache_without_full_build_info_sends_a_full_build_and_keeps_the_cache() {
+    let cold = fixture_project();
+    add_second_assertion(cold.path());
+    let expected = release_payload(cold.path(), "apply");
+
+    let project = fixture_project();
+    add_second_assertion(project.path());
+    regular_build(project.path());
+    let before = project_outputs(project.path());
+    // Apply and deploy send what a full build of the same sources sends, on every run, and
+    // leave the project's artifacts, cache and build info as they were.
+    for command in ["apply", "deploy", "apply"] {
+        assert_eq!(
+            release_payload(project.path(), command),
+            expected,
+            "{command}"
+        );
+    }
+    assert_eq!(project_outputs(project.path()), before);
+}
+
+#[cfg(all(feature = "credible", unix))]
+#[test]
+fn release_works_with_read_only_build_outputs() {
+    use std::os::unix::fs::PermissionsExt;
+    let set_mode = |path: &Path, writable: bool| {
+        let mode = fs::metadata(path).expect("metadata").permissions().mode();
+        let mode = if writable {
+            mode | 0o200
+        } else {
+            mode & !0o222
+        };
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("chmod");
+    };
+    let cold = fixture_project();
+    add_second_assertion(cold.path());
+    let expected = release_payload(cold.path(), "apply");
+
+    for protect in ["artifacts", "cache directory"] {
+        let project = fixture_project();
+        add_second_assertion(project.path());
+        regular_build(project.path());
+        let protected: Vec<std::path::PathBuf> = if protect == "artifacts" {
+            let mut paths = vec![];
+            let mut pending = vec![project.path().join("out")];
+            while let Some(path) = pending.pop() {
+                if path.is_dir() {
+                    pending.extend(
+                        fs::read_dir(&path)
+                            .expect("dir")
+                            .map(|e| e.expect("entry").path()),
+                    );
+                }
+                paths.push(path);
+            }
+            paths
+        } else {
+            // The index stays writable, but the directory refuses new or removed entries.
+            vec![project.path().join("assertions/cache")]
+        };
+        for path in &protected {
+            set_mode(path, false);
+        }
+        let before = project_outputs(project.path());
+        for command in ["apply", "deploy"] {
+            assert_eq!(
+                release_payload(project.path(), command),
+                expected,
+                "{protect} {command}"
+            );
+        }
+        assert_eq!(project_outputs(project.path()), before, "{protect}");
+        for path in &protected {
+            set_mode(path, true);
+        }
+    }
 }
