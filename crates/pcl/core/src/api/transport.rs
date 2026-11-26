@@ -49,31 +49,18 @@ pub(in crate::api) fn write_request_log(
     request_id: Option<&str>,
     operation_id: Option<&str>,
 ) {
-    #[cfg(not(test))]
-    {
-        let _ = crate::request_log::append_request_record_at(
-            request_log_path,
-            &json!({
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-                "kind": kind,
-                "method": method,
-                "path": path,
-                "status": status,
-                "success": (200..=299).contains(&status),
-                "request_id": request_id,
-                "operation_id": operation_id,
-            }),
-        );
-    }
-    #[cfg(test)]
-    let _ = (
+    let _ = crate::request_log::append_request_record_at(
         request_log_path,
-        kind,
-        method,
-        path,
-        status,
-        request_id,
-        operation_id,
+        &json!({
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "kind": kind,
+            "method": method,
+            "path": path,
+            "status": status,
+            "success": (200..=299).contains(&status),
+            "request_id": request_id,
+            "operation_id": operation_id,
+        }),
     );
 }
 

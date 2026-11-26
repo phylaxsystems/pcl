@@ -80,7 +80,7 @@ pub enum ApiCommandError {
     Json(#[from] serde_json::Error),
 
     #[error("API request failed: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(reqwest::Error),
 
     #[error("API request failed with status {status} for {method} {path}")]
     HttpStatus {
@@ -135,7 +135,42 @@ pub enum ApiCommandError {
     },
 }
 
+impl From<reqwest::Error> for ApiCommandError {
+    /// Drops the URL from transport errors on invitation routes: its path carries the token.
+    fn from(error: reqwest::Error) -> Self {
+        let sensitive = error.url().is_some_and(|url| {
+            crate::request_log::redact_sensitive_request_path(url.path()) != url.path()
+        });
+        Self::Request(if sensitive {
+            error.without_url()
+        } else {
+            error
+        })
+    }
+}
+
 impl ApiCommandError {
+    /// HTTP failure for a route the CLI actually sent. Invitation bearer
+    /// tokens are removed from the stored body before the path is redacted,
+    /// so `error.http.body` cannot echo them.
+    pub(crate) fn http_status(
+        method: &'static str,
+        path: impl Into<String>,
+        status: u16,
+        request_id: Option<String>,
+        body: Value,
+    ) -> Self {
+        let path = path.into();
+        let body = crate::request_log::scrub_invitation_tokens_in_value(&path, body);
+        Self::HttpStatus {
+            method,
+            path: crate::request_log::redact_sensitive_request_path(&path),
+            status,
+            request_id,
+            body: Box::new(body),
+        }
+    }
+
     // A signed transaction whose outcome is unobserved: the hash exists, the
     // result does not, so a retry could double-broadcast.
     fn ambiguous_submission(&self) -> Option<(&TxHash, ChainId)> {
@@ -533,6 +568,8 @@ impl ApiCommandError {
             if let Some(request_id) = request_id {
                 error.insert("request_id".to_string(), json!(request_id));
             }
+            let http_body =
+                crate::request_log::scrub_invitation_tokens_in_value(path, body.as_ref().clone());
             error.insert(
                 "http".to_string(),
                 json!({
@@ -540,7 +577,7 @@ impl ApiCommandError {
                     "path": path,
                     "status": status,
                     "request_id": request_id,
-                    "body": body.as_ref(),
+                    "body": http_body,
                 }),
             );
             error.insert(

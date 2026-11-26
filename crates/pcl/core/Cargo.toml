@@ -50,9 +50,13 @@ toml = "0.8.2"
 dirs = "6.0.0"
 indicatif = "0.18"
 open = "5"
+percent-encoding = "2.3"
 tempfile = { workspace = true }
 url.workspace = true
 uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.186"
 
 [features]
 default = ["full-test"]

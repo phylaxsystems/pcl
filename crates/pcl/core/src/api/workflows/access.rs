@@ -40,14 +40,14 @@ pub(in crate::api) fn access_request(
             WorkflowOperation::new(HttpMethod::Get, "previewInvitation")
                 .path_param("token", &token),
             false,
-            vec![format!("pcl access accept {token}")],
+            ["pcl access accept <token>"],
         );
     }
     if let Some(token) = &args.token {
         return workflow_operation_get(
             WorkflowOperation::new(HttpMethod::Get, "previewInvitation").path_param("token", token),
             false,
-            vec![format!("pcl access accept {token}")],
+            ["pcl access accept <token>"],
         );
     }
     let project = required_project_arg(args.project.as_deref(), "access", "--project")?;

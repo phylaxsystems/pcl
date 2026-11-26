@@ -164,6 +164,8 @@ pcl jobs status <job-id>
 pcl requests list --limit 20
 ```
 
+`requests.jsonl` is owner-readable state. Invitation tokens are redacted before they are written, and on Unix a new log is mode `0600`. Do not copy that file into a shared CI artifact or a shared `PCL_REQUEST_LOG` path. The first `pcl requests list` after upgrading removes invitation tokens already stored in the log and tightens that file to `0600`. A bind-mounted log keeps its old bytes until `pcl requests clear`. `pcl requests clear` deletes the whole history. Freed disk blocks are not wiped.
+
 ## For Agents
 
 Use this section when you are consuming PCL from an LLM, automation, script, or coding agent. It is written as a contract, not a tutorial.
