@@ -13,7 +13,7 @@ use std::{
     str,
 };
 use tokio::io::AsyncWriteExt as _;
-use zip::{ZipArchive, read::root_dir_common_filter};
+use zip::ZipArchive;
 
 pub type Result<T> = std::result::Result<T, DownloadError>;
 
@@ -59,7 +59,10 @@ pub async fn unzip_file(path: impl AsRef<Path>, into: impl AsRef<Path>) -> Resul
             if archive.len() < 2 {
                 archive.extract(&out_dir)?;
             } else {
-                archive.extract_unwrapped_root_dir(&out_dir, root_dir_common_filter)?;
+                // Count every entry. ZIP's common filter skips top-level OS
+                // metadata, so `dependency/src/Library.sol` beside `.DS_Store`
+                // looks like one root and installs `src/Library.sol`.
+                archive.extract_unwrapped_root_dir(&out_dir, consider_every_archive_entry)?;
             }
             Ok(())
         }
@@ -179,6 +182,15 @@ pub async fn delete_dependency_files(
         .map_err(|e| DownloadError::IOError { path, source: e })?;
     debug!(dep:% = dependency; "removed all files for dependency (async)");
     Ok(())
+}
+
+/// Count every archive entry when looking for a single root directory.
+///
+/// ZIP's common filter ignores `.DS_Store`, `Thumbs.db`, and `__MACOSX` while
+/// still extracting them. An archive of `dependency/src/Library.sol` plus a
+/// top-level `.DS_Store` then looks like one root and loses `dependency/`.
+fn consider_every_archive_entry(_path: &Path) -> bool {
+    true
 }
 
 /// Check if a path corresponds to the provided dependency.

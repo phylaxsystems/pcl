@@ -73,6 +73,35 @@ async fn dependency_zip_keeps_the_path_of_a_single_nested_file()
     Ok(())
 }
 
+#[tokio::test]
+async fn dependency_zip_keeps_the_install_path_beside_top_level_os_metadata()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let archive = temp.path().join("dependency.zip");
+    let output = temp.path().join("output");
+    let mut writer = ZipWriter::new(fs::File::create(&archive)?);
+    let options = SimpleFileOptions::default();
+    writer.start_file("dependency/src/Library.sol", options)?;
+    writer.write_all(b"contract Library {}")?;
+    writer.start_file(".DS_Store", options)?;
+    writer.write_all(b"metadata")?;
+    writer.finish()?;
+
+    soldeer_core::download::unzip_file(&archive, &output).await?;
+
+    assert_eq!(
+        fs::read(output.join("dependency/src/Library.sol"))?,
+        b"contract Library {}"
+    );
+    assert!(!output.join("src/Library.sol").exists());
+    assert_eq!(fs::read(output.join(".DS_Store"))?, b"metadata");
+    assert!(
+        !archive.exists(),
+        "successful extraction removes the archive"
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn dependency_zip_cannot_write_through_an_absolute_symlink()
