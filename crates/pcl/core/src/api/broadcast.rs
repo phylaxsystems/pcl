@@ -37,6 +37,10 @@ use alloy_primitives::{
 };
 use alloy_rpc_types_eth::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
+use chrono::{
+    DateTime,
+    SecondsFormat,
+};
 use colored::Colorize;
 use pcl_common::args::CliArgs;
 use serde::Deserialize;
@@ -150,13 +154,58 @@ struct DirectHandover<'a> {
 struct TransferChallenge<'a> {
     project: &'a str,
     current_manager: Address,
-    new_manager: &'a str,
+    new_manager: Address,
     chain_id: u64,
 }
 
 struct TransferProof {
     nonce: String,
     signature: String,
+}
+
+/// The message `buildTransferChallenge` returns for a direct handover.
+///
+/// `packages/dapp-api/src/v1/routers/projects/protocol-manager.ts` joins these
+/// lines with `\n`. Managers are lowercased. Expiry is
+/// `new Date(expiresAt).toISOString()`, which is UTC with milliseconds.
+fn transfer_challenge_message(
+    project_id: &str,
+    current_manager: Address,
+    new_manager: Address,
+    chain_id: u64,
+    nonce: &str,
+    expires_at: &str,
+) -> Result<String, ApiCommandError> {
+    if nonce.is_empty() || nonce.contains(['\n', '\r']) {
+        return Err(ApiCommandError::UnexpectedResponse {
+            endpoint: "protocol-manager/nonce",
+            reason: "nonce is empty or spans more than one line".to_string(),
+        });
+    }
+    let expiry = DateTime::parse_from_rfc3339(expires_at)
+        .map_err(|_| {
+            ApiCommandError::UnexpectedResponse {
+                endpoint: "protocol-manager/nonce",
+                reason: format!("expires_at {expires_at} is not an RFC3339 timestamp"),
+            }
+        })?
+        .to_utc()
+        .to_rfc3339_opts(SecondsFormat::Millis, true);
+    let current_manager = current_manager.to_string().to_ascii_lowercase();
+    let new_manager = new_manager.to_string().to_ascii_lowercase();
+    Ok([
+        "Credible Layer — Transfer Protocol Manager",
+        "",
+        &format!("Project: {project_id}"),
+        &format!("Current Manager: {current_manager}"),
+        &format!("New Manager: {new_manager}"),
+        &format!("Chain ID: {chain_id}"),
+        &format!("Nonce: {nonce}"),
+        &format!("Expiry: {expiry}"),
+        "",
+        "Sign this message to authorize this protocol manager transfer. Both the current and new manager must sign before a direct change takes effect.",
+    ]
+    .join("\n"))
 }
 
 /// `GET /projects/{id}/protocol-manager/accept-calldata`
@@ -996,13 +1045,16 @@ impl ApiArgs {
                 ),
             });
         }
+        let project_id = self
+            .canonical_project_id(config, project, request_log_path)
+            .await?;
         let chain_id = self
-            .project_chain_id(config, cli_args, project, request_log_path)
+            .project_chain_id(config, cli_args, &project_id, request_log_path)
             .await?;
         let challenge = TransferChallenge {
-            project,
+            project: &project_id,
             current_manager: current.address(),
-            new_manager: handover.new_manager,
+            new_manager: handover.new_manager_address,
             chain_id,
         };
         progress(cli_args, "Signing the current manager's transfer challenge");
@@ -1071,7 +1123,38 @@ impl ApiArgs {
             .await?;
         let nonce: ProtocolManagerNonceResponse =
             parse_response("protocol-manager/nonce", &nonce_result.body)?;
-        let signature = sign_personal(signer, &nonce.message).await?;
+        let expires_at =
+            nonce
+                .expires_at
+                .as_deref()
+                .ok_or(ApiCommandError::UnexpectedResponse {
+                    endpoint: "protocol-manager/nonce",
+                    reason: "missing expires_at".to_string(),
+                })?;
+        let expected = transfer_challenge_message(
+            challenge.project,
+            challenge.current_manager,
+            challenge.new_manager,
+            challenge.chain_id,
+            &nonce.nonce,
+            expires_at,
+        )?;
+        if nonce.message != expected {
+            return Err(ApiCommandError::CalldataRefused {
+                action: "direct manager handover",
+                reason: format!(
+                    "nonce message is not the transfer challenge for project {}, current manager {}, new manager {}, chain {}",
+                    challenge.project,
+                    challenge.current_manager,
+                    challenge.new_manager,
+                    challenge.chain_id
+                ),
+                manual_route: vec![
+                    "Fetch a new nonce and confirm its message names this project, both managers, and this chain before signing".to_string(),
+                ],
+            });
+        }
+        let signature = sign_personal(signer, &expected).await?;
         Ok(TransferProof {
             nonce: nonce.nonce,
             signature,
@@ -1683,17 +1766,65 @@ mod tests {
         .await
     }
 
-    #[tokio::test]
-    async fn direct_manager_transfer_posts_both_wallet_proofs() {
+    fn platform_transfer_challenge(
+        project: &str,
+        current_manager: &str,
+        new_manager: &str,
+        chain_id: u64,
+        nonce: &str,
+        expiry: &str,
+    ) -> String {
+        [
+            "Credible Layer — Transfer Protocol Manager",
+            "",
+            &format!("Project: {project}"),
+            &format!("Current Manager: {current_manager}"),
+            &format!("New Manager: {new_manager}"),
+            &format!("Chain ID: {chain_id}"),
+            &format!("Nonce: {nonce}"),
+            &format!("Expiry: {expiry}"),
+            "",
+            "Sign this message to authorize this protocol manager transfer. Both the current and new manager must sign before a direct change takes effect.",
+        ]
+        .join("\n")
+    }
+
+    fn nonce_body(nonce: &str, message: &str, expiry: &str) -> Value {
+        json!({
+            "nonce": nonce,
+            "message": message,
+            "expires_at": expiry
+        })
+    }
+
+    fn direct_manager_args(new_manager: &str) -> ProtocolManagerArgs {
+        ProtocolManagerArgs {
+            new_manager: Some(new_manager.to_string()),
+            new_manager_private_key: Some(NEW_MANAGER_KEY.to_string()),
+            broadcast: BroadcastArgs {
+                broadcast: true,
+                yes: true,
+                wallet: crate::wallet::WalletArgs {
+                    private_key: Some(CURRENT_MANAGER_KEY.to_string()),
+                    ..crate::wallet::WalletArgs::default()
+                },
+                ..BroadcastArgs::default()
+            },
+            ..ProtocolManagerArgs::default()
+        }
+    }
+
+    async fn exercise_direct_handover(
+        first: Value,
+        second: Option<Value>,
+        confirm_body: Option<Value>,
+    ) -> Result<Value, ApiCommandError> {
         let mut server = mockito::Server::new_async().await;
         let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
         let current: PrivateKeySigner = CURRENT_MANAGER_KEY.parse().unwrap();
         let new_manager_signer: PrivateKeySigner = NEW_MANAGER_KEY.parse().unwrap();
         let new_manager = new_manager_signer.address().to_string();
-        let message = "transfer-challenge";
-        let current_signature = sign_personal(&current, message).await.unwrap();
-        let new_manager_signature = sign_personal(&new_manager_signer, message).await.unwrap();
-        let calldata = server
+        let _calldata = server
             .mock(
                 "GET",
                 format!("/api/v1/projects/{project_id}/protocol-manager/transfer-calldata")
@@ -1710,7 +1841,7 @@ mod tests {
             .expect(1)
             .create_async()
             .await;
-        let project = server
+        let _project = server
             .mock("GET", format!("/api/v1/projects/{project_id}").as_str())
             .match_header("authorization", "Bearer access-token")
             .with_status(200)
@@ -1719,75 +1850,275 @@ mod tests {
             .expect(1)
             .create_async()
             .await;
-        let nonce = server
+        let nonce_query = Matcher::AllOf(vec![
+            Matcher::UrlEncoded("address".into(), current.address().to_string()),
+            Matcher::UrlEncoded("new_manager".into(), new_manager.clone()),
+            Matcher::UrlEncoded("chain_id".into(), "1".into()),
+        ]);
+        let _first_nonce = server
             .mock(
                 "GET",
                 format!("/api/v1/projects/{project_id}/protocol-manager/nonce").as_str(),
             )
-            .match_query(Matcher::AllOf(vec![
-                Matcher::UrlEncoded("address".into(), current.address().to_string()),
-                Matcher::UrlEncoded("new_manager".into(), new_manager.clone()),
-                Matcher::UrlEncoded("chain_id".into(), "1".into()),
-            ]))
+            .match_query(nonce_query.clone())
             .match_header("authorization", "Bearer access-token")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(
-                json!({
-                    "nonce": "nonce-1",
-                    "message": message
-                })
-                .to_string(),
-            )
-            .expect(2)
+            .with_body(first.to_string())
+            .expect(1)
             .create_async()
             .await;
-        let confirm = server
+        if let Some(second) = second {
+            let _second_nonce = server
+                .mock(
+                    "GET",
+                    format!("/api/v1/projects/{project_id}/protocol-manager/nonce").as_str(),
+                )
+                .match_query(nonce_query)
+                .match_header("authorization", "Bearer access-token")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(second.to_string())
+                .expect(1)
+                .create_async()
+                .await;
+        }
+        let _confirm = server
             .mock(
                 "POST",
                 format!("/api/v1/projects/{project_id}/protocol-manager/confirm-transfer").as_str(),
             )
             .match_header("authorization", "Bearer access-token")
-            .match_body(Matcher::Json(json!({
-                "mode": "direct",
-                "new_manager_address": new_manager,
-                "nonce": "nonce-1",
-                "signature": current_signature,
-                "new_manager_nonce": "nonce-1",
-                "new_manager_signature": new_manager_signature
-            })))
+            .match_body(match &confirm_body {
+                Some(body) => Matcher::Json(body.clone()),
+                None => Matcher::Any,
+            })
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"status":"ok"}"#)
-            .expect(1)
+            .expect(usize::from(confirm_body.is_some()))
             .create_async()
             .await;
+        direct_handover(&mut server, direct_manager_args(&new_manager)).await
+    }
 
-        let result = direct_handover(
-            &mut server,
-            ProtocolManagerArgs {
-                new_manager: Some(new_manager),
-                new_manager_private_key: Some(NEW_MANAGER_KEY.to_string()),
-                broadcast: BroadcastArgs {
-                    broadcast: true,
-                    yes: true,
-                    wallet: crate::wallet::WalletArgs {
-                        private_key: Some(CURRENT_MANAGER_KEY.to_string()),
-                        ..crate::wallet::WalletArgs::default()
-                    },
-                    ..BroadcastArgs::default()
-                },
-                ..ProtocolManagerArgs::default()
-            },
+    #[tokio::test]
+    async fn direct_manager_transfer_posts_both_wallet_proofs() {
+        let error = exercise_direct_handover(
+            nonce_body("nonce-1", "transfer-challenge", "2030-01-01T00:00:00.000Z"),
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(error, ApiCommandError::CalldataRefused { .. }),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains("not the transfer challenge"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_manager_transfer_signs_the_rebuilt_challenge() {
+        let current: PrivateKeySigner = CURRENT_MANAGER_KEY.parse().unwrap();
+        let new_manager_signer: PrivateKeySigner = NEW_MANAGER_KEY.parse().unwrap();
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let current_manager = current.address().to_string().to_ascii_lowercase();
+        let new_manager = new_manager_signer
+            .address()
+            .to_string()
+            .to_ascii_lowercase();
+        let current_message = platform_transfer_challenge(
+            project_id,
+            &current_manager,
+            &new_manager,
+            1,
+            "nonce-current",
+            "2030-01-01T00:00:00.000Z",
+        );
+        let new_message = platform_transfer_challenge(
+            project_id,
+            &current_manager,
+            &new_manager,
+            1,
+            "nonce-new",
+            "2030-06-01T00:00:00.000Z",
+        );
+        let current_signature = sign_personal(&current, &current_message).await.unwrap();
+        let new_signature = sign_personal(&new_manager_signer, &new_message)
+            .await
+            .unwrap();
+
+        let result = exercise_direct_handover(
+            nonce_body(
+                "nonce-current",
+                &current_message,
+                "2030-01-01T00:00:00.000Z",
+            ),
+            Some(nonce_body(
+                "nonce-new",
+                &new_message,
+                "2030-06-01T00:00:00.000Z",
+            )),
+            Some(json!({
+                "mode": "direct",
+                "new_manager_address": new_manager_signer.address().to_string(),
+                "nonce": "nonce-current",
+                "signature": current_signature,
+                "new_manager_nonce": "nonce-new",
+                "new_manager_signature": new_signature
+            })),
         )
         .await
         .unwrap();
 
         assert_eq!(result["data"]["mode"], "direct");
-        calldata.assert_async().await;
-        project.assert_async().await;
-        nonce.assert_async().await;
-        confirm.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn direct_handover_refuses_a_mismatched_challenge_for_either_proof() {
+        let current: PrivateKeySigner = CURRENT_MANAGER_KEY.parse().unwrap();
+        let new_manager_signer: PrivateKeySigner = NEW_MANAGER_KEY.parse().unwrap();
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let current_manager = current.address().to_string().to_ascii_lowercase();
+        let new_manager = new_manager_signer
+            .address()
+            .to_string()
+            .to_ascii_lowercase();
+        let current_message = platform_transfer_challenge(
+            project_id,
+            &current_manager,
+            &new_manager,
+            1,
+            "nonce-current",
+            "2030-01-01T00:00:00.000Z",
+        );
+        let new_message = platform_transfer_challenge(
+            project_id,
+            &current_manager,
+            &new_manager,
+            1,
+            "nonce-new",
+            "2030-06-01T00:00:00.000Z",
+        );
+        let cases = [
+            (
+                "project",
+                current_message.replace(project_id, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                new_message.replace(project_id, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            ),
+            (
+                "recipient",
+                current_message.replace(&new_manager, "0x0000000000000000000000000000000000000001"),
+                new_message.replace(&new_manager, "0x0000000000000000000000000000000000000001"),
+            ),
+            (
+                "chain",
+                current_message.replace("Chain ID: 1", "Chain ID: 8453"),
+                new_message.replace("Chain ID: 1", "Chain ID: 8453"),
+            ),
+            (
+                "unrelated",
+                "transfer-challenge".to_string(),
+                "sign in to continue".to_string(),
+            ),
+        ];
+
+        for (name, tampered_current, tampered_new) in cases {
+            assert_ne!(tampered_current, current_message, "{name}");
+            assert_ne!(tampered_new, new_message, "{name}");
+            let first = exercise_direct_handover(
+                nonce_body(
+                    "nonce-current",
+                    &tampered_current,
+                    "2030-01-01T00:00:00.000Z",
+                ),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                matches!(first, ApiCommandError::CalldataRefused { .. }),
+                "current manager proof {name}: {first}"
+            );
+            let second = exercise_direct_handover(
+                nonce_body(
+                    "nonce-current",
+                    &current_message,
+                    "2030-01-01T00:00:00.000Z",
+                ),
+                Some(nonce_body(
+                    "nonce-new",
+                    &tampered_new,
+                    "2030-06-01T00:00:00.000Z",
+                )),
+                None,
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                matches!(second, ApiCommandError::CalldataRefused { .. }),
+                "new manager proof {name}: {second}"
+            );
+        }
+    }
+
+    #[test]
+    fn transfer_challenge_message_matches_the_platform_text() {
+        let current = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let new_manager = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
+        let project_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let message = transfer_challenge_message(
+            project_id,
+            current,
+            new_manager,
+            1,
+            "abc",
+            "2030-01-01T00:00:00.000Z",
+        )
+        .unwrap();
+        assert_eq!(
+            message,
+            platform_transfer_challenge(
+                project_id,
+                "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+                1,
+                "abc",
+                "2030-01-01T00:00:00.000Z",
+            )
+        );
+        assert!(
+            transfer_challenge_message(
+                project_id,
+                current,
+                new_manager,
+                1,
+                "",
+                "2030-01-01T00:00:00.000Z",
+            )
+            .is_err()
+        );
+        assert!(
+            transfer_challenge_message(
+                project_id,
+                current,
+                new_manager,
+                1,
+                "ab\nProject: other",
+                "2030-01-01T00:00:00.000Z",
+            )
+            .is_err()
+        );
+        assert!(
+            transfer_challenge_message(project_id, current, new_manager, 1, "abc", "tomorrow")
+                .is_err()
+        );
     }
 
     #[tokio::test]
