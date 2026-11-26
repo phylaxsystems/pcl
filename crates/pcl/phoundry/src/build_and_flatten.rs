@@ -560,7 +560,11 @@ fn recompile_isolated(
         .parse()
         .map_err(|e| format!("invalid solc version: {e}"))?;
     let mut solc = match &config.solc {
-        Some(SolcReq::Local(path)) => Solc::new(path).map_err(|e| e.to_string())?,
+        // The build ran this path from the current directory; replay runs elsewhere.
+        Some(SolcReq::Local(path)) => {
+            Solc::new(std::path::absolute(path).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?
+        }
         _ => {
             Solc::find_svm_installed_version(&version)
                 .map_err(|e| e.to_string())?
@@ -967,6 +971,26 @@ engine = "none"
         fs::remove_dir_all(root.join("out/build-info")).unwrap();
         crate::compile::compile(release_args(&root, "Vault", None).build_opts()).unwrap();
         release_input_of(&root, "src/Vault.sol", "Vault");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn release_replays_a_relative_local_solc() {
+        let Some(installed) = Solc::find_svm_installed_version(&"0.8.28".parse().unwrap()).unwrap()
+        else {
+            return;
+        };
+        let (_temp_dir, root) = setup_test_project();
+        fs::copy(&installed.solc, root.join("solc")).unwrap();
+        // Foundry resolves a local solc from the current directory, which tests cannot change.
+        let cwd = std::env::current_dir().unwrap();
+        let relative = PathBuf::from("../".repeat(cwd.components().count() - 1))
+            .join(root.join("solc").strip_prefix("/").unwrap());
+        write(
+            &root,
+            "foundry.toml",
+            &format!("[profile.default]\nsolc = \"{}\"\n", relative.display()),
+        );
+        release_input_of(&root, "src/TestContract.sol", "TestContract");
     }
 
     #[tokio::test(flavor = "multi_thread")]

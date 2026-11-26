@@ -470,3 +470,48 @@ fn release_sends_the_original_job_settings() {
     assert_eq!(input["settings"]["modelChecker"]["engine"], "none");
     assert!(input.get("basePath").is_none() && input.get("includePaths").is_none());
 }
+
+/// Installed solc 0.8.28 from svm, if any.
+#[cfg(feature = "credible")]
+fn installed_solc() -> Option<std::path::PathBuf> {
+    let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
+    [
+        home.join(".svm"),
+        home.join("Library/Application Support/svm"),
+        home.join(".local/share/svm"),
+    ]
+    .into_iter()
+    .map(|svm| svm.join("0.8.28/solc-0.8.28"))
+    .find(|solc| solc.is_file())
+}
+
+#[cfg(feature = "credible")]
+#[test]
+fn release_runs_a_local_solc_given_relative_to_the_current_directory() {
+    let Some(solc) = installed_solc() else {
+        return;
+    };
+    let project = fixture_project();
+    fs::copy(solc, project.path().join("solc")).expect("copy solc");
+    let config = project.path().join("foundry.toml");
+    let toml = fs::read_to_string(&config).expect("read foundry.toml");
+    fs::write(
+        &config,
+        toml.replace("solc = \"0.8.28\"", "solc = \"./solc\""),
+    )
+    .expect("write");
+    for env in [None, Some("./solc")] {
+        if env.is_some() {
+            fs::write(&config, toml.replace("solc = \"0.8.28\"\n", "")).expect("write");
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pcl"));
+        command
+            .current_dir(project.path())
+            .args(["--json", "apply", "--root", ".", "--dry-run"]);
+        if let Some(solc) = env {
+            command.env("FOUNDRY_SOLC", solc);
+        }
+        let output = command.output().expect("run pcl");
+        assert_command_success(&output, "pcl apply --dry-run with a relative solc");
+    }
+}
