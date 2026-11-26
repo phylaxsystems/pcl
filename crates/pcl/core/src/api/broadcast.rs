@@ -315,21 +315,42 @@ fn review_deploy_operations(
     Ok(())
 }
 
-/// The stored release diff the operator already reviewed. Standalone
-/// broadcast has no earlier preview, so the approval prompt reads it here.
+/// The diff from `projects.getReleaseDiff`. Standalone broadcast has no
+/// earlier preview, so the approval prompt reads `{ activeRelease, diff }`
+/// here. `projects.getRelease` is the release detail and does not carry it.
 fn reviewed_release_diff(body: &Value) -> Result<ReleaseDiff, ApiCommandError> {
-    let Some(diff) = body.get("diff").filter(|diff| !diff.is_null()) else {
+    let Some(diff) = release_diff_body(body) else {
         return Err(ApiCommandError::UnexpectedResponse {
-            endpoint: "release",
+            endpoint: "release-diff",
             reason: "reviewed release diff is missing".to_string(),
         });
     };
     serde_json::from_value(diff.clone()).map_err(|error| {
         ApiCommandError::UnexpectedResponse {
-            endpoint: "release",
+            endpoint: "release-diff",
             reason: error.to_string(),
         }
     })
+}
+
+/// `GET .../releases/{id}/diff` returns `{ activeRelease, diff }`.
+/// `activeRelease` is null when the project has no active release.
+fn release_diff_body(body: &Value) -> Option<&Value> {
+    let active_ok = match body.get("activeRelease") {
+        Some(Value::Null) => true,
+        Some(active) => {
+            active.get("id").and_then(Value::as_str).is_some()
+                && active
+                    .get("releaseNumber")
+                    .and_then(Value::as_u64)
+                    .is_some()
+        }
+        None => false,
+    };
+    if !active_ok {
+        return None;
+    }
+    body.get("diff").filter(|diff| !diff.is_null())
 }
 
 #[derive(Clone, Copy)]
@@ -993,9 +1014,13 @@ impl ApiArgs {
             ));
         }
 
-        progress(cli_args, "Fetching reviewed release");
-        let release_request =
-            get_operation("projects.getRelease", project, Some(release_id), Vec::new())?;
+        progress(cli_args, "Fetching reviewed release diff");
+        let release_request = get_operation(
+            "projects.getReleaseDiff",
+            project,
+            Some(release_id),
+            Vec::new(),
+        )?;
         let release_result = self
             .call_workflow_result(config, cli_args, &release_request, request_log_path)
             .await?;
@@ -2314,5 +2339,211 @@ mod tests {
         };
         assert!(!challenge_expired(&other));
         assert!(!challenge_expired(&ApiCommandError::BroadcastCancelled));
+    }
+
+    #[test]
+    fn reviewed_release_diff_reads_the_get_release_diff_envelope() {
+        let diff = json!({
+            "contracts": {
+                "guard": {
+                    "address": ADOPTER,
+                    "name": "Guard",
+                    "changeType": "removed",
+                    "metadataChanges": null,
+                    "assertions": [{
+                        "file": "Guard.sol",
+                        "args": ["100"],
+                        "changeType": "removed",
+                        "assertionId": null,
+                        "previousAssertionId": REMOVED_ID,
+                        "compilerVersionChange": null
+                    }]
+                }
+            },
+            "summary": {
+                "contracts": { "added": 0, "removed": 1, "modified": 0, "unchanged": 0 },
+                "assertions": { "added": 0, "removed": 1, "modified": 0, "unchanged": 0 }
+            }
+        });
+        let parsed = reviewed_release_diff(&json!({
+            "activeRelease": {
+                "id": "22222222-2222-4222-8222-222222222222",
+                "releaseNumber": 1
+            },
+            "diff": diff,
+        }))
+        .unwrap();
+        let response = parsed_deploy(
+            &json!([assertion_op("removeAssertion", ADOPTER, REMOVED_ID)]),
+            &[REMOVE],
+        )
+        .unwrap();
+        let text = release_deploy_confirmation("rel-1", &response, &parsed).unwrap();
+        assert!(
+            text.contains(&format!("    previous: {REMOVED_ID}\n")),
+            "{text}"
+        );
+        assert!(text.contains("\n      100"), "{text}");
+        assert!(reviewed_release_diff(&json!({ "activeRelease": null, "diff": diff })).is_ok());
+
+        // `projects.getRelease` returns the detail, which has no diff.
+        let detail = json!({
+            "configSnapshot": { "contracts": {} },
+            "checkSummary": { "status": "passed" }
+        });
+        let err = reviewed_release_diff(&detail).unwrap_err();
+        assert!(matches!(
+            err,
+            ApiCommandError::UnexpectedResponse {
+                endpoint: "release-diff",
+                ..
+            }
+        ));
+        assert!(reviewed_release_diff(&json!({ "diff": diff })).is_err());
+    }
+
+    #[tokio::test]
+    async fn non_noop_broadcast_reads_get_release_diff() {
+        let mut server = mockito::Server::new_async().await;
+        let project_id = "11111111-1111-4111-8111-111111111111";
+        let calldata = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/releases/release-1/deploy-calldata")
+                    .as_str(),
+            )
+            .match_query(Matcher::Any)
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "chainId": 1,
+                    "stateOracleAddress": "0x0101010101010101010101010101010101010101",
+                    "operations": [assertion_op("removeAssertion", ADOPTER, REMOVED_ID)],
+                    "calldata": [REMOVE],
+                    "isNoop": false,
+                    "message": null,
+                })
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let detail = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/releases/release-1").as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "configSnapshot": { "contracts": {} },
+                    "checkSummary": { "status": "passed" }
+                })
+                .to_string(),
+            )
+            .expect(0)
+            .create_async()
+            .await;
+        let diff = server
+            .mock(
+                "GET",
+                format!("/api/v1/projects/{project_id}/releases/release-1/diff").as_str(),
+            )
+            .match_header("authorization", "Bearer access-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "activeRelease": {
+                        "id": "22222222-2222-4222-8222-222222222222",
+                        "releaseNumber": 1
+                    },
+                    "diff": {
+                        "contracts": {
+                            "guard": {
+                                "address": ADOPTER,
+                                "name": "Guard",
+                                "changeType": "removed",
+                                "metadataChanges": null,
+                                "assertions": [{
+                                    "file": "Guard.sol",
+                                    "args": ["100"],
+                                    "changeType": "removed",
+                                    "assertionId": null,
+                                    "previousAssertionId": REMOVED_ID,
+                                    "compilerVersionChange": null
+                                }]
+                            }
+                        },
+                        "summary": {
+                            "contracts": { "added": 0, "removed": 1, "modified": 0, "unchanged": 0 },
+                            "assertions": { "added": 0, "removed": 1, "modified": 0, "unchanged": 0 }
+                        }
+                    }
+                })
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let api = ApiArgs::headless(server.url().parse().unwrap());
+        let mut config = CliConfig {
+            auth: Some(crate::config::UserAuth {
+                issuer_platform_url: Some(server.url()),
+                access_token: "access-token".to_string(),
+                refresh_token: "refresh-token".to_string(),
+                expires_at: Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+                refresh_expires_at: None,
+                user_id: None,
+                wallet_address: None,
+                email: Some("agent@example.com".to_string()),
+            }),
+            platform_url: Some(server.url()),
+            rpc: BTreeMap::new(),
+        };
+        let config_dir = tempfile::tempdir().unwrap();
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let args = ReleasesArgs {
+            project: Some(project_id.to_string()),
+            release_id: Some("release-1".to_string()),
+            deploy_calldata: true,
+            broadcast: BroadcastArgs {
+                broadcast: true,
+                yes: true,
+                wallet: WalletArgs {
+                    private_key: Some(
+                        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                            .to_string(),
+                    ),
+                    ..WalletArgs::default()
+                },
+                ..BroadcastArgs::default()
+            },
+            ..ReleasesArgs::default()
+        };
+
+        let error = api
+            .run_releases_broadcast(
+                &mut config,
+                &cli_args,
+                &args,
+                &config_dir.path().join("requests.jsonl"),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ApiCommandError::Onchain(crate::onchain::OnchainError::RpcUrlMissing { chain_id: 1 })
+        ));
+        calldata.assert_async().await;
+        detail.assert_async().await;
+        diff.assert_async().await;
     }
 }

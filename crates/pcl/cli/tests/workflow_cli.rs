@@ -865,7 +865,7 @@ fn release_deploy_broadcast_refuses_an_unshowable_batch_before_any_send() {
             "assertionId": DEPLOY_REMOVED_ID,
         }]),
     );
-    let release = mock_reviewed_release(&mut server, project);
+    let release = mock_release_diff(&mut server, project);
 
     let rpc_url = rpc.url();
     let output = run_pcl(
@@ -918,7 +918,7 @@ fn release_deploy_broadcast_yes_prints_the_operations_before_sending() {
             "assertionId": DEPLOY_REMOVED_ID,
         }]),
     );
-    let release = mock_reviewed_release(&mut server, project);
+    let release = mock_release_diff(&mut server, project);
 
     let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
         .arg("--config-dir")
@@ -960,17 +960,29 @@ fn release_deploy_broadcast_yes_prints_the_operations_before_sending() {
     rpc_calls.assert();
 }
 
-fn mock_reviewed_release(server: &mut mockito::ServerGuard, project: &str) -> mockito::Mock {
+fn mock_release_diff(server: &mut mockito::ServerGuard, project: &str) -> mockito::Mock {
+    // `projects.getRelease` returns the release detail and has no `diff`.
     server
         .mock(
             "GET",
             format!("/api/v1/projects/{project}/releases/release-1").as_str(),
+        )
+        .expect(0)
+        .create();
+    server
+        .mock(
+            "GET",
+            format!("/api/v1/projects/{project}/releases/release-1/diff").as_str(),
         )
         .match_query(Matcher::Any)
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
             serde_json::json!({
+                "activeRelease": {
+                    "id": "22222222-2222-4222-8222-222222222222",
+                    "releaseNumber": 1
+                },
                 "diff": {
                     "contracts": {
                         "guard": {
