@@ -28,6 +28,7 @@ use serde_json::Value;
 
 use foundry_compilers::artifacts::{
     BytecodeHash,
+    ConfigurableContractArtifact,
     MetadataSources,
     remappings::{
         RelativeRemapping,
@@ -214,7 +215,7 @@ impl BuildAndFlattenArgs {
             Path::new(rel_source_path),
         )?;
         let path = root.join(rel_source_path);
-        let standard_json = standard_json_sources(&root, &build);
+        let standard_json = standard_json_sources(&root, &build, artifact)?;
         let flattened = Self::flatten_verified(
             &root,
             &metadata.sources,
@@ -619,19 +620,43 @@ fn display_source(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-/// Files Foundry placed in the standard-JSON input for this compilation.
+/// Files this artifact's compiler build placed in the standard-JSON input.
 ///
 /// Those are the only files that pass through Foundry's CRLF rewrite. solc
-/// reads every other metadata source through its filesystem callback.
-fn standard_json_sources(root: &Path, build: &ProjectCompileOutput) -> BTreeSet<PathBuf> {
-    build
+/// reads every other metadata source through its filesystem callback. Another
+/// build can normalize the same path for a different compiler version; that
+/// build does not describe the bytes this artifact hashed.
+fn standard_json_sources(
+    root: &Path,
+    build: &ProjectCompileOutput,
+    artifact: &ConfigurableContractArtifact,
+) -> Result<BTreeSet<PathBuf>, Box<PhoundryError>> {
+    let build_id = build
+        .artifact_ids()
+        .find(|(_, candidate)| std::ptr::eq(*candidate, artifact))
+        .map(|(id, _)| id.build_id)
+        .ok_or_else(|| {
+            Box::new(PhoundryError::InvalidForgeOutput(
+                "selected artifact has no compiler build",
+            ))
+        })?;
+    let context = build
         .builds()
-        .flat_map(|(_, context)| context.source_id_to_path.values())
+        .find(|(id, _)| id.as_str() == build_id)
+        .map(|(_, context)| context)
+        .ok_or_else(|| {
+            Box::new(PhoundryError::InvalidForgeOutput(
+                "selected artifact build has no compiler input",
+            ))
+        })?;
+    Ok(context
+        .source_id_to_path
+        .values()
         .map(|path| {
             let key = path.strip_prefix(root).unwrap_or(path);
             resolve_source(root, key)
         })
-        .collect()
+        .collect())
 }
 
 /// Fails closed unless each metadata source is still the bytes solc hashed.
@@ -639,7 +664,8 @@ fn standard_json_sources(root: &Path, build: &ProjectCompileOutput) -> BTreeSet<
 /// When the artifact carries the compiler input (`content`), that snapshot is
 /// the source that has to be on disk. The hash covers the import closure, not
 /// only the file named in the config. `standard_json` is the set of files that
-/// entered the compiler input; everything else keeps the raw callback bytes.
+/// entered this artifact's compiler input; everything else keeps the raw
+/// callback bytes.
 fn verify_compiled_sources(
     root: &Path,
     sources: &MetadataSources,
@@ -876,14 +902,14 @@ mod tests {
             "Lib.sol",
             metadata_source(&source_keccak(source), Some(source)),
         )]);
-        verify_compiled_sources(&root, &matching, &[include.clone()], &[], &BTreeSet::new())
+        let includes = std::slice::from_ref(&include);
+        verify_compiled_sources(&root, &matching, includes, &[], &BTreeSet::new())
             .expect("raw CRLF is what solc hashed");
 
         let lf = source.replace("\r\n", "\n");
         std::fs::write(&file, &lf).expect("lf lib");
-        let err =
-            verify_compiled_sources(&root, &matching, &[include.clone()], &[], &BTreeSet::new())
-                .expect_err("LF is not the callback bytes");
+        let err = verify_compiled_sources(&root, &matching, includes, &[], &BTreeSet::new())
+            .expect_err("LF is not the callback bytes");
         assert!(
             matches!(&*err, PhoundryError::SourceHashMismatch { .. }),
             "{err}"
@@ -891,7 +917,7 @@ mod tests {
 
         let changed = source.replace("999", "1");
         std::fs::write(&file, &changed).expect("changed lib");
-        let err = verify_compiled_sources(&root, &matching, &[include], &[], &BTreeSet::new())
+        let err = verify_compiled_sources(&root, &matching, includes, &[], &BTreeSet::new())
             .expect_err("changed callback source");
         assert!(
             matches!(&*err, PhoundryError::SourceHashMismatch { .. }),
@@ -1003,7 +1029,8 @@ mod tests {
             .find_map(|(path, name)| (name == &info.name).then_some(path.clone()))
             .expect("compilation target");
         let source_path = project_root.join(&rel_source_path);
-        let standard_json = standard_json_sources(&project_root, &build);
+        let standard_json =
+            standard_json_sources(&project_root, &build, artifact).expect("compiler input");
 
         let toml_path = root.join("foundry.toml");
         let toml = std::fs::read_to_string(&toml_path).expect("read toml");
@@ -1060,10 +1087,7 @@ mod tests {
         std::fs::write(&swapped_lib, lib_source("1")).expect("swapped lib");
         let original_bytes = std::fs::read(&original_lib).expect("read original");
         let swapped_bytes = std::fs::read(&swapped_lib).expect("read swapped");
-        assert!(
-            original_bytes.windows(2).any(|pair| pair == b"\r\n"),
-            "include-path library is CRLF"
-        );
+        assert!(original_bytes.windows(2).any(|pair| pair == b"\r\n"));
 
         let args = BuildAndFlattenArgs {
             root: Some(root.to_path_buf()),
@@ -1088,18 +1112,12 @@ mod tests {
             .find_map(|(path, name)| (name == &info.name).then_some(path.clone()))
             .expect("compilation target");
         let source_path = project_root.join(&rel_source_path);
-        let standard_json = standard_json_sources(&project_root, &build);
-        assert!(
-            standard_json.contains(&resolve_source(&project_root, Path::new("src/Guard.sol"))),
-            "the project source entered standard JSON"
-        );
-        assert!(
-            !standard_json.contains(&resolve_source(
-                &project_root,
-                Path::new("lib/original/Lib.sol")
-            )),
-            "the include-path library was callback-loaded"
-        );
+        let standard_json =
+            standard_json_sources(&project_root, &build, artifact).expect("compiler input");
+        let guard_path = resolve_source(&project_root, Path::new("src/Guard.sol"));
+        let compiled_lib = resolve_source(&project_root, Path::new("lib/original/Lib.sol"));
+        assert!(standard_json.contains(&guard_path), "guard in input");
+        assert!(!standard_json.contains(&compiled_lib), "lib was callback");
 
         let toml_path = root.join("foundry.toml");
         let toml = std::fs::read_to_string(&toml_path).expect("read toml");
@@ -1204,7 +1222,8 @@ mod tests {
             .find_map(|(path, name)| (name == &info.name).then_some(path.clone()))
             .expect("compilation target");
         let source_path = project_root.join(&rel_source_path);
-        let standard_json = standard_json_sources(&project_root, &build);
+        let standard_json =
+            standard_json_sources(&project_root, &build, artifact).expect("compiler input");
         let helper_path = resolve_source(&project_root, Path::new("vendor/Helper.sol"));
         assert!(
             standard_json.contains(&resolve_source(&project_root, Path::new("src/Guard.sol"))),
@@ -1237,6 +1256,124 @@ mod tests {
             &standard_json,
         )
         .expect_err("a changed nested callback import is not the compiled source");
+        assert!(
+            matches!(&*err, PhoundryError::SourceHashMismatch { .. }),
+            "{err}"
+        );
+    }
+
+    /// Guard is exact 0.8.28 and callback-loads Helper. Legacy is exact 0.8.27
+    /// and puts the same file in its standard-JSON input.
+    fn write_mixed_version_project(root: &Path) -> (PathBuf, impl Fn(&str) -> String) {
+        let helper = root.join("vendor/Helper.sol");
+        for path in ["src", "include", "vendor"] {
+            std::fs::create_dir_all(root.join(path)).expect("project dir");
+        }
+        let files = [
+            (
+                "foundry.toml",
+                "[profile.default]\nsrc = \"src\"\nout = \"out\"\nlibs = []\nevm_version = \"cancun\"\noptimizer = false\nauto_detect_remappings = false\ninclude_paths = [\"include\"]\nremappings = []\n",
+            ),
+            (
+                "src/Guard.sol",
+                "pragma solidity 0.8.28;\nimport \"Lib.sol\";\ncontract Guard { function policy() external pure returns (uint256) { return Lib.value(); } }\n",
+            ),
+            (
+                "include/Lib.sol",
+                "pragma solidity 0.8.28;\nimport \"vendor/Helper.sol\";\nlibrary Lib { function value() internal pure returns (uint256) { return Helper.value(); } }\n",
+            ),
+            (
+                "src/Legacy.sol",
+                "pragma solidity 0.8.27;\nimport \"vendor/Helper.sol\";\ncontract Legacy { function policy() external pure returns (uint256) { return Helper.value(); } }\n",
+            ),
+        ];
+        for (path, body) in files {
+            std::fs::write(root.join(path), body).expect(path);
+        }
+        let helper_source = |marker: &str| {
+            format!(
+                "pragma solidity >=0.8.27 <0.9.0;\r\nlibrary Helper {{\r\n    function value() internal pure returns (uint256) {{\r\n        return {marker};\r\n    }}\r\n}}\r\n"
+            )
+        };
+        std::fs::write(&helper, helper_source("999")).expect("helper");
+        (helper, helper_source)
+    }
+
+    #[test]
+    fn mixed_version_callback_keeps_raw_crlf_when_another_build_normalizes_it() {
+        let project = tempfile::tempdir().expect("temp project");
+        let root = project.path();
+        let (helper, helper_source) = write_mixed_version_project(root);
+        let helper_bytes = std::fs::read(&helper).expect("read helper");
+        assert!(helper_bytes.windows(2).any(|pair| pair == b"\r\n"));
+
+        let args = BuildAndFlattenArgs {
+            root: Some(root.to_path_buf()),
+            assertion_contract: "src/Guard.sol:Guard".to_string(),
+            contracts: PathBuf::from("src"),
+        };
+        let (build, config) = args.build().expect("compile");
+        let project_root = args.project_root().expect("root");
+        let info = ContractInfo::new(&args.assertion_contract);
+        let contract_path =
+            select_contract_path(&build, &info.name, info.path.as_deref(), &project_root)
+                .expect("artifact path");
+        let artifact = build
+            .find(contract_path.as_path(), &info.name)
+            .expect("artifact");
+        let metadata = artifact.metadata.clone().expect("metadata");
+        let settings = serde_json::to_value(&metadata.settings).expect("settings");
+        let rel_source_path = metadata
+            .settings
+            .compilation_target
+            .iter()
+            .find_map(|(path, name)| (name == &info.name).then_some(path.clone()))
+            .expect("compilation target");
+        let source_path = project_root.join(&rel_source_path);
+        let guard_json =
+            standard_json_sources(&project_root, &build, artifact).expect("guard compiler input");
+        let helper_path = resolve_source(&project_root, Path::new("vendor/Helper.sol"));
+        assert!(
+            !guard_json.contains(&helper_path),
+            "Guard callback-loaded Helper"
+        );
+
+        let legacy_path =
+            select_contract_path(&build, "Legacy", Some("src/Legacy.sol"), &project_root)
+                .expect("legacy path");
+        let legacy = build
+            .find(legacy_path.as_path(), "Legacy")
+            .expect("legacy artifact");
+        let legacy_json =
+            standard_json_sources(&project_root, &build, legacy).expect("legacy compiler input");
+        assert!(
+            legacy_json.contains(&helper_path),
+            "Legacy's compiler group normalized Helper"
+        );
+
+        let flattened = BuildAndFlattenArgs::flatten_verified(
+            &project_root,
+            &metadata.sources,
+            &source_path,
+            &settings,
+            &config,
+            &guard_json,
+        )
+        .expect("unchanged CRLF callback import flattens");
+        assert!(flattened.contains("return 999"), "{flattened}");
+        assert!(!flattened.contains("return 2;"), "{flattened}");
+        assert_eq!(std::fs::read(&helper).expect("helper intact"), helper_bytes);
+
+        std::fs::write(&helper, helper_source("2")).expect("change helper");
+        let err = BuildAndFlattenArgs::flatten_verified(
+            &project_root,
+            &metadata.sources,
+            &source_path,
+            &settings,
+            &config,
+            &guard_json,
+        )
+        .expect_err("a changed callback import is not the compiled source");
         assert!(
             matches!(&*err, PhoundryError::SourceHashMismatch { .. }),
             "{err}"
