@@ -178,7 +178,7 @@ so agents can recover from auth, validation, and parser failures without scrapin
 `pcl auth status` also reports token validity, expiry, and platform URL; expired stored tokens return
 a nonzero structured error so agents do not mistake stale credentials for a working login.
 For preflight checks, prefer `pcl auth ensure --json`: it returns `status: ok` when auth is usable,
-or one `status: action_required` envelope with `device_url`, `code`, `device_secret`, and `poll_command`
+or one `status: action_required` envelope with `device_url`, `code`, `session_id`, `expires_at`, and `poll_command`
 when user login is needed. `pcl auth refresh --json` is safe to call and rotates the stored CLI
 refresh token when available; if the refresh token is missing or rejected,
 it returns the same login challenge shape.

@@ -177,6 +177,12 @@ impl Commands {
             || matches!(self, Self::Auth(auth) if auth.can_run_without_valid_config())
     }
 
+    /// Whether a config change made by this command was already saved by the
+    /// command itself.
+    pub fn saves_its_own_config_changes(&self) -> bool {
+        matches!(self, Self::Auth(auth) if auth.saves_claimed_credentials())
+    }
+
     pub fn should_force_config_write(&self) -> bool {
         matches!(self, Self::Config(config) if config.should_force_config_write())
             || matches!(self, Self::Auth(auth) if auth.should_force_config_write())

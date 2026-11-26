@@ -31,7 +31,12 @@ use std::{
     collections::BTreeMap,
     fmt,
     fs::OpenOptions,
-    io::Write,
+    io::{
+        Read,
+        Seek,
+        SeekFrom,
+        Write,
+    },
     path::{
         Path,
         PathBuf,
@@ -72,12 +77,36 @@ const CONFIG_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// are different operations on the same file, and a lock that only refresh
 /// honoured would not serialize them against each other.
 ///
-/// Released on drop, including on panic. A stale file left by a killed process
-/// does not wedge the CLI forever: waiting gives up after 30 seconds and
-/// surfaces [`ConfigError::LockTimeout`] instead.
+/// The lock file name is the one older CLIs create with `create_new` and
+/// delete on drop. This holder does the same, and also keeps an OS advisory
+/// lock on the descriptor until drop. A clean exit removes the file, so an
+/// older CLI's `create_new` succeeds instead of waiting out its timeout. A
+/// killed process leaves the file, but the kernel releases the advisory lock;
+/// the next newer CLI removes that file only when its recorded pid is dead
+/// and only while this process still holds the advisory lock on that inode.
+/// An existing file whose pid is still running is an older writer that already
+/// dropped its descriptor: we wait, and we do not enter.
+///
+/// The lock path is never opened through a symlink. Metadata is written only
+/// to the regular file this process just created, after checking that the
+/// path still names that inode. A probe that grabs the advisory lock before
+/// the creator does is retried; the creator does not delete its own file.
 #[derive(Debug)]
 pub struct ConfigLock {
     path: PathBuf,
+    /// Held so the descriptor, and the advisory lock on it, stay open.
+    file: std::fs::File,
+}
+
+/// Creates `dir` and any missing parents. Directories created here are 0700
+/// on unix (they hold credentials and pending login secrets); an existing
+/// directory keeps its mode.
+pub(crate) fn create_private_dir_all(dir: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(dir)
 }
 
 impl ConfigLock {
@@ -86,28 +115,21 @@ impl ConfigLock {
     pub async fn acquire(cli_args: &CliArgs) -> Result<Self, ConfigError> {
         let path = CliConfig::config_file_path(cli_args).with_extension("toml.lock");
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(ConfigError::WriteError)?;
+            create_private_dir_all(parent).map_err(ConfigError::WriteError)?;
         }
         let deadline = Instant::now() + CONFIG_LOCK_TIMEOUT;
         loop {
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(mut file) => {
-                    let _ = writeln!(
-                        file,
-                        "pid={} acquired_at={}",
-                        std::process::id(),
-                        Utc::now().to_rfc3339()
-                    );
-                    let _ = file.sync_all();
-                    return Ok(Self { path });
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if let Some(lock) = try_create_lock(&path, deadline).await? {
+                return Ok(lock);
+            }
+            match classify_existing_lock(&path)? {
+                ExistingLock::Gone => {}
+                ExistingLock::Busy => {
                     if Instant::now() >= deadline {
                         return Err(ConfigError::LockTimeout);
                     }
                     sleep(CONFIG_LOCK_POLL_INTERVAL).await;
                 }
-                Err(error) => return Err(ConfigError::WriteError(error)),
             }
         }
     }
@@ -115,8 +137,482 @@ impl ConfigLock {
 
 impl Drop for ConfigLock {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        // Unlink only the inode we created. A replacement at the same path
+        // belongs to whoever holds it now.
+        if opened_is_this_regular_file(&self.file, &self.path).unwrap_or(false) {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
+}
+
+/// What an existing `config.toml.lock` means to a newer CLI.
+enum ExistingLock {
+    /// The path is gone, or it was a symlink or a dead holder's file and that
+    /// name was unlinked.
+    Gone,
+    /// A live holder: either a newer CLI's advisory lock, or an older CLI
+    /// whose pid is still running after it closed the descriptor.
+    Busy,
+}
+
+/// Creates the lock the way an older CLI does (`create_new`), then keeps the
+/// descriptor and its advisory lock. `Ok(None)` means the path already exists.
+///
+/// `WouldBlock` from the advisory lock is a contender's probe. The file this
+/// function just created stays in place and the lock is retried until
+/// `deadline`.
+async fn try_create_lock(
+    path: &Path,
+    deadline: Instant,
+) -> Result<Option<ConfigLock>, ConfigError> {
+    let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(None),
+        Err(error) => return Err(ConfigError::WriteError(error)),
+    };
+    if !opened_is_this_regular_file(&file, path).unwrap_or(false) {
+        return Err(ConfigError::WriteError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "config lock path is not the file just created",
+        )));
+    }
+    let _ = writeln!(
+        file,
+        "pid={} acquired_at={}",
+        std::process::id(),
+        Utc::now().to_rfc3339()
+    );
+    let _ = file.sync_all();
+    #[cfg(test)]
+    pause_until_lock_release("PCL_LOCK_BEFORE_FLOCK", "PCL_LOCK_BEFORE_FLOCK_RELEASE");
+    loop {
+        match try_lock_exclusive(&file) {
+            Ok(()) => {
+                if !opened_is_this_regular_file(&file, path).unwrap_or(false) {
+                    return Err(ConfigError::WriteError(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "config lock path changed before the advisory lock was held",
+                    )));
+                }
+                return Ok(Some(ConfigLock {
+                    path: path.to_path_buf(),
+                    file,
+                }));
+            }
+            Err(error) if lock_is_held_elsewhere(&error) => {
+                if Instant::now() >= deadline {
+                    // The probe outlived the wait. Remove only the inode we
+                    // created, so a replacement at this path is left alone.
+                    if opened_is_this_regular_file(&file, path).unwrap_or(false) {
+                        let _ = std::fs::remove_file(path);
+                    }
+                    return Err(ConfigError::LockTimeout);
+                }
+                sleep(CONFIG_LOCK_POLL_INTERVAL).await;
+            }
+            Err(error) => {
+                if opened_is_this_regular_file(&file, path).unwrap_or(false) {
+                    let _ = std::fs::remove_file(path);
+                }
+                return Err(ConfigError::WriteError(error));
+            }
+        }
+    }
+}
+
+fn classify_existing_lock(path: &Path) -> Result<ExistingLock, ConfigError> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ExistingLock::Gone);
+        }
+        Err(error) => return Err(ConfigError::WriteError(error)),
+    };
+    if meta.file_type().is_symlink() {
+        return unlink_symlink_lock(path);
+    }
+    if !meta.is_file() {
+        return Err(ConfigError::WriteError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "config lock path is not a regular file",
+        )));
+    }
+    let file = match open_nofollow_read(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ExistingLock::Gone);
+        }
+        Err(error) if is_nofollow_rejection(&error) => return unlink_symlink_lock(path),
+        Err(error) => return Err(ConfigError::WriteError(error)),
+    };
+    // The holder can unlink or replace the file between this open and the
+    // identity check. A vanished path is retried immediately. A regular-file
+    // replacement is left alone and retried within the acquire deadline.
+    // Permission and other I/O failures, and a path that is not a regular
+    // file, stay errors.
+    #[cfg(test)]
+    pause_until_lock_release("PCL_LOCK_AFTER_OPEN", "PCL_LOCK_AFTER_OPEN_RELEASE");
+    match classify_opened_lock(path, &file)? {
+        OpenedLock::Same => {}
+        OpenedLock::Vanished => return Ok(ExistingLock::Gone),
+        OpenedLock::Replaced => return Ok(ExistingLock::Busy),
+        OpenedLock::Symlink => return unlink_symlink_lock(path),
+    }
+    // A live pid, or a file that does not name a pid yet, is a holder. Do not
+    // take the exclusive lock: that probe makes the creator's own `flock`
+    // fail and used to unlink the file it had just created.
+    if !holder_pid_is_dead(&file) {
+        return Ok(ExistingLock::Busy);
+    }
+    // `file` stays open through the unlink below. Closing it first would
+    // release the advisory lock and let a replacement appear under `remove_file`.
+    let reclaimed = reclaim_dead_lock(path, &file);
+    drop(file);
+    reclaimed
+}
+
+/// How an already-opened lock relates to the path after the holder may have
+/// exited or been replaced.
+enum OpenedLock {
+    /// `path` still names the opened inode.
+    Same,
+    /// The holder unlinked the path. The next attempt may create it.
+    Vanished,
+    /// `path` names a different regular file. That file is not ours.
+    Replaced,
+    /// `path` is now a symlink. Unlink the link, not its target.
+    Symlink,
+}
+
+fn classify_opened_lock(path: &Path, file: &std::fs::File) -> Result<OpenedLock, ConfigError> {
+    let opened = file.metadata().map_err(ConfigError::WriteError)?;
+    if !opened.is_file() {
+        return Err(ConfigError::WriteError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "opened config lock is not a regular file",
+        )));
+    }
+    let on_path = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(OpenedLock::Vanished);
+        }
+        Err(error) => return Err(ConfigError::WriteError(error)),
+    };
+    if on_path.file_type().is_symlink() {
+        return Ok(OpenedLock::Symlink);
+    }
+    if !on_path.is_file() {
+        return Err(ConfigError::WriteError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "config lock path is not a regular file",
+        )));
+    }
+    if same_file(&opened, &on_path) {
+        Ok(OpenedLock::Same)
+    } else {
+        Ok(OpenedLock::Replaced)
+    }
+}
+
+/// Unlinks a dead holder's lock while `file`'s advisory lock is held.
+///
+/// The lock is acquired before the path is checked again, and the caller
+/// keeps `file` open until this returns. Dropping it first lets another
+/// reaper create a replacement that `remove_file` would then delete.
+fn reclaim_dead_lock(path: &Path, file: &std::fs::File) -> Result<ExistingLock, ConfigError> {
+    match try_lock_exclusive(file) {
+        Ok(()) => {}
+        Err(error) if lock_is_held_elsewhere(&error) => return Ok(ExistingLock::Busy),
+        Err(error) => return Err(ConfigError::WriteError(error)),
+    }
+    if !stale_lock_still_ours(file, path) {
+        return Ok(ExistingLock::Busy);
+    }
+    #[cfg(test)]
+    pause_until_lock_release(
+        "PCL_LOCK_BEFORE_REAP_UNLINK",
+        "PCL_LOCK_BEFORE_REAP_UNLINK_RELEASE",
+    );
+    if !stale_lock_still_ours(file, path) {
+        return Ok(ExistingLock::Busy);
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(ConfigError::WriteError(error)),
+    }
+    Ok(ExistingLock::Gone)
+}
+
+fn stale_lock_still_ours(file: &std::fs::File, path: &Path) -> bool {
+    opened_is_this_regular_file(file, path).unwrap_or(false) && holder_pid_is_dead(file)
+}
+
+/// Test hook. The creator or reaper writes `ready_var` and waits until
+/// `release_var` exists, so a contender can run at that exact point.
+#[cfg(test)]
+fn pause_until_lock_release(ready_var: &str, release_var: &str) {
+    let Ok(ready) = std::env::var(ready_var) else {
+        return;
+    };
+    let Ok(release) = std::env::var(release_var) else {
+        return;
+    };
+    if std::fs::write(&ready, "paused").is_err() {
+        return;
+    }
+    let release = PathBuf::from(release);
+    while !release.exists() {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Removes a symlink at the lock path. `remove_file` unlinks the symlink
+/// itself and does not follow it, so the target is left untouched.
+fn unlink_symlink_lock(path: &Path) -> Result<ExistingLock, ConfigError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            std::fs::remove_file(path).map_err(ConfigError::WriteError)?;
+            Ok(ExistingLock::Gone)
+        }
+        Ok(_) => Ok(ExistingLock::Busy),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(ExistingLock::Gone),
+        Err(error) => Err(ConfigError::WriteError(error)),
+    }
+}
+
+fn holder_pid_is_dead(file: &std::fs::File) -> bool {
+    lock_file_holder_pid(file).is_some_and(|pid| !process_is_alive(pid))
+}
+
+fn lock_file_holder_pid(file: &std::fs::File) -> Option<u32> {
+    let mut file = file.try_clone().ok()?;
+    file.seek(SeekFrom::Start(0)).ok()?;
+    let mut text = String::new();
+    file.read_to_string(&mut text).ok()?;
+    let rest = text.trim().strip_prefix("pid=")?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
+    }
+}
+
+/// True when `file` is a regular file and `path` still names that same inode.
+/// `symlink_metadata` does not follow a symlink, so a path that points
+/// somewhere else does not compare equal.
+fn opened_is_this_regular_file(file: &std::fs::File, path: &Path) -> std::io::Result<bool> {
+    let opened = file.metadata()?;
+    if !opened.is_file() {
+        return Ok(false);
+    }
+    let on_path = std::fs::symlink_metadata(path)?;
+    if !on_path.file_type().is_file() {
+        return Ok(false);
+    }
+    Ok(same_file(&opened, &on_path))
+}
+
+#[cfg(unix)]
+fn same_file(opened: &std::fs::Metadata, on_path: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    opened.dev() == on_path.dev() && opened.ino() == on_path.ino()
+}
+
+#[cfg(windows)]
+fn same_file(opened: &std::fs::Metadata, on_path: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    opened.volume_serial_number() == on_path.volume_serial_number()
+        && opened.file_index() == on_path.file_index()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn same_file(_opened: &std::fs::Metadata, _on_path: &std::fs::Metadata) -> bool {
+    true
+}
+
+fn open_nofollow_read(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+    ))]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Open the reparse point itself instead of its target.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options.open(path)
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const O_NOFOLLOW: i32 = 0x20000;
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+))]
+const O_NOFOLLOW: i32 = 0x0100;
+#[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
+const O_NOFOLLOW: i32 = 0x0000_0200;
+
+fn is_nofollow_rejection(error: &std::io::Error) -> bool {
+    // `ErrorKind::FilesystemLoop` is still unstable. ELOOP is 40 on
+    // Linux/Android and 62 on macOS, iOS, and the BSDs.
+    matches!(error.raw_os_error(), Some(40 | 62))
+}
+
+/// `pid` still has a process. A pid we cannot prove dead is treated as alive,
+/// so a leftover file is not stolen out from under an older writer.
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    unsafe extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    let Ok(pid) = i32::try_from(pid) else {
+        return true;
+    };
+    if pid <= 0 {
+        return true;
+    }
+    // SAFETY: signal 0 does not deliver a signal. It only checks that `pid`
+    // names a process this caller may signal.
+    let rc = unsafe { kill(pid, 0) };
+    if rc == 0 {
+        return true;
+    }
+    // ESRCH (3) is "no such process". EPERM means the process exists.
+    !matches!(std::io::Error::last_os_error().raw_os_error(), Some(3))
+}
+
+#[cfg(windows)]
+fn process_is_alive(pid: u32) -> bool {
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut core::ffi::c_void;
+        fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
+        fn GetLastError() -> u32;
+    }
+    if pid == 0 {
+        return true;
+    }
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const ERROR_INVALID_PARAMETER: u32 = 87;
+    // SAFETY: a null handle is the failure case and is not closed. A non-null
+    // handle is closed before return.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if !handle.is_null() {
+        // SAFETY: `handle` came from OpenProcess and is closed once.
+        unsafe { CloseHandle(handle) };
+        return true;
+    }
+    // SAFETY: GetLastError reads the calling thread's last error and takes no pointer.
+    unsafe { GetLastError() != ERROR_INVALID_PARAMETER }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn process_is_alive(_pid: u32) -> bool {
+    true
+}
+
+/// `flock` / `LockFileEx` report a live holder with these errors when asked
+/// not to wait. Both locks die with the holding process.
+fn lock_is_held_elsewhere(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::WouldBlock
+        || matches!(error.raw_os_error(), Some(11 | 35 | 33))
+}
+
+#[cfg(unix)]
+fn try_lock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
+    use std::os::unix::io::AsRawFd;
+    // BSD `flock` operation bits. Linux and macOS share these values.
+    const LOCK_EX: i32 = 2;
+    const LOCK_NB: i32 = 4;
+    unsafe extern "C" {
+        fn flock(fd: std::os::unix::io::RawFd, operation: i32) -> i32;
+    }
+    // SAFETY: `fd` belongs to `file` and outlives this call. `LOCK_EX|LOCK_NB`
+    // does not close it. The kernel drops the lock when the descriptor closes,
+    // including when the process is killed.
+    let rc = unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(windows)]
+fn try_lock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    #[repr(C)]
+    struct Overlapped {
+        internal: usize,
+        internal_high: usize,
+        offset: u32,
+        offset_high: u32,
+        event: *mut core::ffi::c_void,
+    }
+    unsafe extern "system" {
+        fn LockFileEx(
+            file: *mut core::ffi::c_void,
+            flags: u32,
+            reserved: u32,
+            bytes_low: u32,
+            bytes_high: u32,
+            overlapped: *mut Overlapped,
+        ) -> i32;
+    }
+    const LOCKFILE_FAIL_IMMEDIATELY: u32 = 1;
+    const LOCKFILE_EXCLUSIVE_LOCK: u32 = 2;
+    let mut overlapped = Overlapped {
+        internal: 0,
+        internal_high: 0,
+        offset: 0,
+        offset_high: 0,
+        event: std::ptr::null_mut(),
+    };
+    // SAFETY: the handle belongs to `file`. A zero byte count locks from
+    // offset 0 through the end of the file. The overlapped record is live for
+    // the call. The kernel drops the lock when the handle closes.
+    let locked = unsafe {
+        LockFileEx(
+            file.as_raw_handle(),
+            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            0,
+            0,
+            0,
+            &mut overlapped,
+        )
+    };
+    if locked == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn try_lock_exclusive(_file: &std::fs::File) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "the config lock requires unix or windows",
+    ))
 }
 
 /// Main configuration structure for PCL
@@ -417,7 +913,9 @@ impl CliConfig {
     /// file parses and this is not called again.
     pub fn back_up_unreadable(cli_args: &CliArgs) -> Result<Option<PathBuf>, ConfigError> {
         let source = Self::config_file_path(cli_args);
-        if !source.exists() {
+        // A file that parses again (a login already saved over it) is not
+        // the unreadable original; copying it would replace that backup.
+        if !source.exists() || Self::read_from_file(cli_args).is_ok() {
             return Ok(None);
         }
         let backup = source.with_extension("toml.invalid");
@@ -432,7 +930,7 @@ impl CliConfig {
     ///
     /// # Returns
     /// * `Result<(), ConfigError>` - Success or error
-    fn write_to_file_at_dir(&self, config_dir: &PathBuf) -> Result<(), ConfigError> {
+    fn write_to_file_at_dir(&self, config_dir: &Path) -> Result<(), ConfigError> {
         // Ensure directory exists and is writable
         Self::ensure_writable_directory(config_dir)?;
 
@@ -449,17 +947,13 @@ impl CliConfig {
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
         {
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temp_file)
-                .map_err(ConfigError::WriteError)?;
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            // Set the mode at creation so the tokens are never readable in a
+            // window before a chmod.
             #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&temp_file, std::fs::Permissions::from_mode(0o600))
-                    .map_err(ConfigError::WriteError)?;
-            }
+            std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+            let mut file = options.open(&temp_file).map_err(ConfigError::WriteError)?;
             file.write_all(config_str.as_bytes())
                 .map_err(ConfigError::WriteError)?;
             file.sync_all().map_err(ConfigError::WriteError)?;
@@ -483,9 +977,9 @@ impl CliConfig {
     ///
     /// # Returns
     /// * `Result<(), ConfigError>` - Success or error
-    fn ensure_writable_directory(dir: &PathBuf) -> Result<(), ConfigError> {
+    fn ensure_writable_directory(dir: &Path) -> Result<(), ConfigError> {
         if !dir.exists() {
-            std::fs::create_dir_all(dir).map_err(|e| {
+            create_private_dir_all(dir).map_err(|e| {
                 ConfigError::WriteError(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
                     format!("Failed to create config directory: {e}"),
@@ -933,6 +1427,7 @@ mod tests {
     use std::{
         env,
         fs,
+        io::Write,
         os::unix::fs::PermissionsExt,
     };
     use tempfile::TempDir;
@@ -991,6 +1486,15 @@ mod tests {
 
         // Test writing
         config.write_to_file_at_dir(&config_dir).unwrap();
+        assert_eq!(
+            fs::metadata(config_dir.join(CONFIG_FILE))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600,
+            "the credentials file must be owner-only"
+        );
 
         // Test reading
         let read_config = CliConfig::read_from_file_at_dir(&config_dir).unwrap();
@@ -1246,7 +1750,7 @@ expires_at = 1672502400
         assert_eq!(merged, on_disk);
     }
 
-    /// A lock left behind by a killed process must not wedge the CLI forever.
+    /// A lock another live process still holds must not wait forever.
     ///
     /// Runs on a paused clock, which tokio auto-advances whenever every task is
     /// parked on a timer, so the whole `CONFIG_LOCK_TIMEOUT` budget elapses
@@ -1267,6 +1771,434 @@ expires_at = 1672502400
             matches!(error, ConfigError::LockTimeout),
             "expected a lock timeout, got {error:?}"
         );
+    }
+
+    /// The previous holder is gone when its lock file is still on disk and no
+    /// process has the OS lock. That is what a killed process leaves behind.
+    #[tokio::test]
+    async fn a_lock_file_with_no_live_holder_is_free() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let path = CliConfig::config_file_path(&cli_args).with_extension("toml.lock");
+        let pid = dead_pid();
+        std::fs::write(&path, format!("pid={pid} acquired_at=gone\n")).expect("leave a lock file");
+
+        let acquired = tokio::time::timeout(Duration::from_secs(2), ConfigLock::acquire(&cli_args))
+            .await
+            .expect("a leftover lock file is not a live lock");
+        acquired.expect("acquire");
+    }
+
+    /// Killing the holder must free the lock without waiting out the timeout.
+    /// The child takes the same OS lock and is then killed, so `Drop` never runs.
+    #[tokio::test]
+    async fn a_killed_holder_releases_the_config_lock() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let ready = config_dir.path().join("ready");
+        let mut child =
+            std::process::Command::new(std::env::current_exe().expect("test executable"))
+                .arg("--exact")
+                .arg("config::tests::a_config_lock_holder_process")
+                .env("PCL_HOLD_CONFIG_LOCK", config_dir.path())
+                .env("PCL_HOLD_CONFIG_LOCK_READY", &ready)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("spawn holder");
+        let started = std::time::Instant::now();
+        while !ready.exists() {
+            if started.elapsed() > std::time::Duration::from_secs(15) {
+                let _ = child.kill();
+                panic!("holder never acquired the lock");
+            }
+            if let Some(status) = child.try_wait().expect("holder status") {
+                panic!("holder exited before acquiring the lock: {status}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        child.kill().expect("kill holder");
+        child.wait().expect("wait for holder");
+
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let acquired = tokio::time::timeout(Duration::from_secs(2), ConfigLock::acquire(&cli_args))
+            .await
+            .expect("a killed holder must not keep the lock");
+        acquired.expect("acquire after the holder is gone");
+    }
+
+    /// A symlink at the lock path must not be followed into its target.
+    #[tokio::test]
+    async fn a_lock_symlink_does_not_truncate_its_target() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let target = config_dir.path().join("precious");
+        std::fs::write(&target, b"keep-me").expect("precious file");
+        let path = CliConfig::config_file_path(&cli_args).with_extension("toml.lock");
+        std::os::unix::fs::symlink(&target, &path).expect("plant a symlink at the lock path");
+
+        let acquired = ConfigLock::acquire(&cli_args)
+            .await
+            .expect("a planted symlink is not the lock file");
+        assert_eq!(
+            std::fs::read(&target).expect("target still readable"),
+            b"keep-me"
+        );
+        assert!(
+            std::fs::symlink_metadata(&path)
+                .expect("lock path")
+                .file_type()
+                .is_file()
+        );
+        drop(acquired);
+        assert_eq!(
+            std::fs::read(&target).expect("target still readable"),
+            b"keep-me"
+        );
+    }
+
+    /// An older CLI holds the lock by the file's presence and a live pid, and
+    /// has already closed the descriptor. A newer CLI must wait. After the
+    /// older writer removes the file, the newer one enters, and its own drop
+    /// removes the file so the older `create_new` can succeed.
+    #[tokio::test]
+    async fn an_old_presence_lock_blocks_a_new_writer_until_it_is_released() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let path = CliConfig::config_file_path(&cli_args).with_extension("toml.lock");
+        let mut old = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .expect("older CLI creates the lock");
+        writeln!(old, "pid={} acquired_at=old", std::process::id())
+            .expect("older CLI records its pid");
+        old.sync_all().expect("older CLI syncs the lock");
+        drop(old);
+
+        let blocked =
+            tokio::time::timeout(Duration::from_millis(400), ConfigLock::acquire(&cli_args)).await;
+        assert!(
+            blocked.is_err(),
+            "a newer CLI entered while an older writer still held the presence lock"
+        );
+
+        std::fs::remove_file(&path).expect("older CLI drops the lock");
+        let acquired = tokio::time::timeout(Duration::from_secs(2), ConfigLock::acquire(&cli_args))
+            .await
+            .expect("the presence lock is gone")
+            .expect("acquire");
+        drop(acquired);
+
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .expect("an older CLI creates the lock after a newer one exits");
+    }
+
+    fn dead_pid() -> u32 {
+        let mut pid = 1_000_000u32;
+        while process_is_alive(pid) && pid < 1_000_050 {
+            pid += 1;
+        }
+        pid
+    }
+
+    fn lock_identity(path: &Path) -> (u64, u64) {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::symlink_metadata(path).expect("lock metadata");
+        (meta.dev(), meta.ino())
+    }
+
+    fn spawn_holder(
+        config_dir: &Path,
+        ready: &Path,
+        extra_env: &[(&str, &Path)],
+    ) -> std::process::Child {
+        let mut command =
+            std::process::Command::new(std::env::current_exe().expect("test executable"));
+        command
+            .arg("--exact")
+            .arg("config::tests::a_config_lock_holder_process")
+            .env("PCL_HOLD_CONFIG_LOCK", config_dir)
+            .env("PCL_HOLD_CONFIG_LOCK_READY", ready)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        for (key, value) in extra_env {
+            command.env(key, value);
+        }
+        command.spawn().expect("spawn holder")
+    }
+
+    fn wait_for_file(child: &mut std::process::Child, path: &Path, what: &str) {
+        let started = std::time::Instant::now();
+        while !path.exists() {
+            if started.elapsed() > std::time::Duration::from_secs(15) {
+                let _ = child.kill();
+                panic!("{what} did not appear");
+            }
+            if let Some(status) = child.try_wait().expect("holder status") {
+                panic!("holder exited before {what}: {status}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    async fn acquired_within(config_dir: &Path, budget: Duration) -> bool {
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.to_path_buf()),
+            ..CliArgs::default()
+        };
+        tokio::time::timeout(budget, ConfigLock::acquire(&cli_args))
+            .await
+            .is_ok_and(|result| result.is_ok())
+    }
+
+    /// Two reapers and a new writer share a killed holder's file. The reaper
+    /// that holds the advisory lock unlinks it; the others must not delete the
+    /// replacement that reaper then creates.
+    #[tokio::test]
+    async fn stale_reapers_do_not_unlink_a_live_replacement() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let path = CliConfig::config_file_path(&cli_args).with_extension("toml.lock");
+        let pid = dead_pid();
+        std::fs::write(&path, format!("pid={pid} acquired_at=gone\n")).expect("stale lock");
+        let stale_id = lock_identity(&path);
+
+        let paused = config_dir.path().join("reap-paused");
+        let release = config_dir.path().join("reap-release");
+        let ready = config_dir.path().join("ready");
+        let mut child = spawn_holder(
+            config_dir.path(),
+            &ready,
+            &[
+                ("PCL_LOCK_BEFORE_REAP_UNLINK", paused.as_path()),
+                ("PCL_LOCK_BEFORE_REAP_UNLINK_RELEASE", release.as_path()),
+            ],
+        );
+        wait_for_file(&mut child, &paused, "reaper pause");
+
+        let dir = config_dir.path().to_path_buf();
+        let competing_reaper = tokio::spawn({
+            let dir = dir.clone();
+            async move { acquired_within(&dir, Duration::from_millis(400)).await }
+        });
+        let new_writer =
+            tokio::spawn(async move { acquired_within(&dir, Duration::from_millis(400)).await });
+        let (competing_reaper, new_writer) = tokio::join!(competing_reaper, new_writer);
+        assert!(
+            !competing_reaper.expect("competing reaper") && !new_writer.expect("new writer"),
+            "a contender acquired the lock while the stale inode was still held"
+        );
+        assert_eq!(
+            lock_identity(&path),
+            stale_id,
+            "a contender replaced the stale lock before its holder unlinked it"
+        );
+        let stale_body = std::fs::read_to_string(&path).expect("stale lock body");
+        assert!(
+            stale_body.starts_with(&format!("pid={pid} ")),
+            "a contender rewrote the stale lock: {stale_body}"
+        );
+
+        std::fs::write(&release, "go").expect("release the reaper");
+        wait_for_file(&mut child, &ready, "reaper acquire");
+        let replacement = std::fs::read_to_string(&path).expect("replacement lock");
+        assert!(
+            replacement.starts_with(&format!("pid={} ", child.id())),
+            "the reaper should replace the stale file with its own lock, got {replacement}"
+        );
+        assert!(
+            !acquired_within(config_dir.path(), Duration::from_millis(300)).await,
+            "a writer entered while the reaper held the replacement"
+        );
+
+        child.kill().expect("kill reaper");
+        child.wait().expect("wait for reaper");
+        assert!(
+            acquired_within(config_dir.path(), Duration::from_secs(2)).await,
+            "the replacement is free after its holder is gone"
+        );
+    }
+
+    /// A contender's probe takes the advisory lock after the creator has
+    /// written its pid and before the creator locks. The creator must keep
+    /// its file and finish once the probe drops.
+    #[tokio::test]
+    async fn a_probe_does_not_abort_the_lock_creator() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let paused = config_dir.path().join("creator-paused");
+        let release = config_dir.path().join("creator-release");
+        let ready = config_dir.path().join("ready");
+        let mut child = spawn_holder(
+            config_dir.path(),
+            &ready,
+            &[
+                ("PCL_LOCK_BEFORE_FLOCK", paused.as_path()),
+                ("PCL_LOCK_BEFORE_FLOCK_RELEASE", release.as_path()),
+            ],
+        );
+        wait_for_file(&mut child, &paused, "creator pause");
+
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let path = CliConfig::config_file_path(&cli_args).with_extension("toml.lock");
+        let probe = open_nofollow_read(&path).expect("open the creator's lock");
+        try_lock_exclusive(&probe).expect("probe the creator before it locks");
+        let body = std::fs::read(&path).expect("creator wrote its pid");
+        std::fs::write(&release, "go").expect("release the creator");
+        std::thread::sleep(std::time::Duration::from_millis(250));
+
+        assert!(
+            child.try_wait().expect("creator status").is_none(),
+            "the creator exited while the probe held its lock"
+        );
+        assert!(
+            !ready.exists(),
+            "the creator finished while the probe held its lock"
+        );
+        assert_eq!(
+            std::fs::read(&path).expect("creator file still present"),
+            body,
+            "the creator unlinked its own lock after the probe"
+        );
+
+        drop(probe);
+        wait_for_file(&mut child, &ready, "creator acquire");
+        assert!(
+            !acquired_within(config_dir.path(), Duration::from_millis(300)).await,
+            "a contender entered while the creator held the lock"
+        );
+        child.kill().expect("kill creator");
+        child.wait().expect("wait for creator");
+    }
+
+    /// The waiter opens the holder's lock, then the holder drops it before the
+    /// identity check. Acquisition retries and takes the path.
+    #[tokio::test]
+    async fn a_waiter_retries_when_the_holder_unlinks_after_open() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let holder = ConfigLock::acquire(&cli_args)
+            .await
+            .expect("holder acquires");
+        let paused = config_dir.path().join("open-paused");
+        let release = config_dir.path().join("open-release");
+        let ready = config_dir.path().join("ready");
+        let mut child = spawn_holder(
+            config_dir.path(),
+            &ready,
+            &[
+                ("PCL_LOCK_AFTER_OPEN", paused.as_path()),
+                ("PCL_LOCK_AFTER_OPEN_RELEASE", release.as_path()),
+            ],
+        );
+        wait_for_file(&mut child, &paused, "waiter pause");
+        drop(holder);
+        std::fs::write(&release, "go").expect("release the waiter");
+        wait_for_file(&mut child, &ready, "waiter acquire");
+        assert!(
+            !acquired_within(config_dir.path(), Duration::from_millis(300)).await,
+            "a second writer entered while the waiter held the lock it retried into"
+        );
+        child.kill().expect("kill waiter");
+        child.wait().expect("wait for waiter");
+    }
+
+    /// The waiter opens the holder's lock, then another writer replaces it
+    /// before the identity check. The replacement is not deleted, and the
+    /// waiter acquires only after that writer drops it.
+    #[tokio::test]
+    async fn a_waiter_retries_when_the_holder_is_replaced_after_open() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let path = CliConfig::config_file_path(&cli_args).with_extension("toml.lock");
+        let holder = ConfigLock::acquire(&cli_args)
+            .await
+            .expect("holder acquires");
+        let paused = config_dir.path().join("open-paused");
+        let release = config_dir.path().join("open-release");
+        let ready = config_dir.path().join("ready");
+        let mut child = spawn_holder(
+            config_dir.path(),
+            &ready,
+            &[
+                ("PCL_LOCK_AFTER_OPEN", paused.as_path()),
+                ("PCL_LOCK_AFTER_OPEN_RELEASE", release.as_path()),
+            ],
+        );
+        wait_for_file(&mut child, &paused, "waiter pause");
+        drop(holder);
+        let replacement = ConfigLock::acquire(&cli_args)
+            .await
+            .expect("replacement writer acquires");
+        let replacement_body = std::fs::read(&path).expect("replacement lock");
+        let replacement_id = lock_identity(&path);
+        std::fs::write(&release, "go").expect("release the waiter");
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        assert!(
+            child.try_wait().expect("waiter status").is_none(),
+            "the waiter aborted after the lock was replaced"
+        );
+        assert!(
+            !ready.exists(),
+            "the waiter took the replacement writer's lock"
+        );
+        assert_eq!(
+            std::fs::read(&path).expect("replacement still present"),
+            replacement_body,
+            "the waiter unlinked the replacement"
+        );
+        assert_eq!(lock_identity(&path), replacement_id);
+        drop(replacement);
+        wait_for_file(&mut child, &ready, "waiter acquire after replacement");
+        child.kill().expect("kill waiter");
+        child.wait().expect("wait for waiter");
+    }
+
+    /// Child process for [`a_killed_holder_releases_the_config_lock`].
+    /// Without `PCL_HOLD_CONFIG_LOCK` it returns immediately.
+    #[tokio::test]
+    async fn a_config_lock_holder_process() {
+        let Ok(dir) = std::env::var("PCL_HOLD_CONFIG_LOCK") else {
+            return;
+        };
+        let ready = std::env::var("PCL_HOLD_CONFIG_LOCK_READY").expect("ready path");
+        let cli_args = CliArgs {
+            config_dir: Some(PathBuf::from(dir)),
+            ..CliArgs::default()
+        };
+        let _lock = ConfigLock::acquire(&cli_args)
+            .await
+            .expect("hold the config lock");
+        std::fs::write(ready, "held").expect("signal that the lock is held");
+        std::future::pending::<()>().await;
     }
 
     #[test]
@@ -1657,7 +2589,7 @@ expires_at = 1672502400
         std::fs::set_permissions(&temp_dir, perms).unwrap();
 
         let config = CliConfig::default();
-        let result = config.write_to_file_at_dir(&temp_dir.path().to_path_buf());
+        let result = config.write_to_file_at_dir(temp_dir.path());
 
         assert!(result.is_err());
         assert!(
@@ -1793,5 +2725,32 @@ expires_at = 1672502400
         let (config_dir, _temp_dir) = setup_config_dir();
         let config = CliConfig::default();
         assert!(config.write_to_file_at_dir(&config_dir).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_creates_a_missing_config_dir_owner_only() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_dir = temp_dir.path().join("new").join("pcl");
+        CliConfig::default()
+            .write_to_file_at_dir(&config_dir)
+            .unwrap();
+        assert_eq!(
+            fs::metadata(&config_dir).unwrap().permissions().mode() & 0o777,
+            0o700,
+            "a config dir created for credentials must be 0700"
+        );
+
+        // An existing user dir keeps its mode.
+        let existing = TempDir::new().unwrap();
+        fs::set_permissions(existing.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        CliConfig::default()
+            .write_to_file_at_dir(existing.path())
+            .unwrap();
+        assert_eq!(
+            fs::metadata(existing.path()).unwrap().permissions().mode() & 0o777,
+            0o755,
+            "an existing config dir must not be chmodded"
+        );
     }
 }

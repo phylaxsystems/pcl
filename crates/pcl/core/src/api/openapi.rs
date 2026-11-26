@@ -707,7 +707,7 @@ fn special_workflow_alternatives(method: HttpMethod, path: &str) -> Vec<Value> {
             single_special_workflow(
                 "auth",
                 "poll",
-                "pcl auth poll --session-id <session-id> --device-secret <secret> --expires-at <rfc3339> --json",
+                "pcl auth poll --session-id <session-id> --expires-at <rfc3339> --json",
                 "Polling is handled by the auth command returned in data.poll_command.",
             )
         }

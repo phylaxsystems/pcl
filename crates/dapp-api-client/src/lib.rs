@@ -4,6 +4,7 @@
 #![allow(clippy::return_self_not_must_use)]
 
 pub mod auth;
+pub mod cli_auth;
 pub mod client;
 pub mod config;
 pub mod error;
