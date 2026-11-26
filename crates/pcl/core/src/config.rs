@@ -245,17 +245,18 @@ fn classify_existing_lock(path: &Path) -> Result<ExistingLock, ConfigError> {
         Err(error) if is_nofollow_rejection(&error) => return unlink_symlink_lock(path),
         Err(error) => return Err(ConfigError::WriteError(error)),
     };
-    if !opened_is_this_regular_file(&file, path).map_err(ConfigError::WriteError)? {
-        drop(file);
-        return match std::fs::symlink_metadata(path) {
-            Ok(meta) if meta.file_type().is_symlink() => unlink_symlink_lock(path),
-            _ => {
-                Err(ConfigError::WriteError(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "config lock path changed while opening",
-                )))
-            }
-        };
+    // The holder can unlink or replace the file between this open and the
+    // identity check. A vanished path is retried immediately. A regular-file
+    // replacement is left alone and retried within the acquire deadline.
+    // Permission and other I/O failures, and a path that is not a regular
+    // file, stay errors.
+    #[cfg(test)]
+    pause_until_lock_release("PCL_LOCK_AFTER_OPEN", "PCL_LOCK_AFTER_OPEN_RELEASE");
+    match classify_opened_lock(path, &file)? {
+        OpenedLock::Same => {}
+        OpenedLock::Vanished => return Ok(ExistingLock::Gone),
+        OpenedLock::Replaced => return Ok(ExistingLock::Busy),
+        OpenedLock::Symlink => return unlink_symlink_lock(path),
     }
     // A live pid, or a file that does not name a pid yet, is a holder. Do not
     // take the exclusive lock: that probe makes the creator's own `flock`
@@ -268,6 +269,50 @@ fn classify_existing_lock(path: &Path) -> Result<ExistingLock, ConfigError> {
     let reclaimed = reclaim_dead_lock(path, &file);
     drop(file);
     reclaimed
+}
+
+/// How an already-opened lock relates to the path after the holder may have
+/// exited or been replaced.
+enum OpenedLock {
+    /// `path` still names the opened inode.
+    Same,
+    /// The holder unlinked the path. The next attempt may create it.
+    Vanished,
+    /// `path` names a different regular file. That file is not ours.
+    Replaced,
+    /// `path` is now a symlink. Unlink the link, not its target.
+    Symlink,
+}
+
+fn classify_opened_lock(path: &Path, file: &std::fs::File) -> Result<OpenedLock, ConfigError> {
+    let opened = file.metadata().map_err(ConfigError::WriteError)?;
+    if !opened.is_file() {
+        return Err(ConfigError::WriteError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "opened config lock is not a regular file",
+        )));
+    }
+    let on_path = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(OpenedLock::Vanished);
+        }
+        Err(error) => return Err(ConfigError::WriteError(error)),
+    };
+    if on_path.file_type().is_symlink() {
+        return Ok(OpenedLock::Symlink);
+    }
+    if !on_path.is_file() {
+        return Err(ConfigError::WriteError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "config lock path is not a regular file",
+        )));
+    }
+    if same_file(&opened, &on_path) {
+        Ok(OpenedLock::Same)
+    } else {
+        Ok(OpenedLock::Replaced)
+    }
 }
 
 /// Unlinks a dead holder's lock while `file`'s advisory lock is held.
@@ -2046,6 +2091,95 @@ expires_at = 1672502400
         );
         child.kill().expect("kill creator");
         child.wait().expect("wait for creator");
+    }
+
+    /// The waiter opens the holder's lock, then the holder drops it before the
+    /// identity check. Acquisition retries and takes the path.
+    #[tokio::test]
+    async fn a_waiter_retries_when_the_holder_unlinks_after_open() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let holder = ConfigLock::acquire(&cli_args)
+            .await
+            .expect("holder acquires");
+        let paused = config_dir.path().join("open-paused");
+        let release = config_dir.path().join("open-release");
+        let ready = config_dir.path().join("ready");
+        let mut child = spawn_holder(
+            config_dir.path(),
+            &ready,
+            &[
+                ("PCL_LOCK_AFTER_OPEN", paused.as_path()),
+                ("PCL_LOCK_AFTER_OPEN_RELEASE", release.as_path()),
+            ],
+        );
+        wait_for_file(&mut child, &paused, "waiter pause");
+        drop(holder);
+        std::fs::write(&release, "go").expect("release the waiter");
+        wait_for_file(&mut child, &ready, "waiter acquire");
+        assert!(
+            !acquired_within(config_dir.path(), Duration::from_millis(300)).await,
+            "a second writer entered while the waiter held the lock it retried into"
+        );
+        child.kill().expect("kill waiter");
+        child.wait().expect("wait for waiter");
+    }
+
+    /// The waiter opens the holder's lock, then another writer replaces it
+    /// before the identity check. The replacement is not deleted, and the
+    /// waiter acquires only after that writer drops it.
+    #[tokio::test]
+    async fn a_waiter_retries_when_the_holder_is_replaced_after_open() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let path = CliConfig::config_file_path(&cli_args).with_extension("toml.lock");
+        let holder = ConfigLock::acquire(&cli_args)
+            .await
+            .expect("holder acquires");
+        let paused = config_dir.path().join("open-paused");
+        let release = config_dir.path().join("open-release");
+        let ready = config_dir.path().join("ready");
+        let mut child = spawn_holder(
+            config_dir.path(),
+            &ready,
+            &[
+                ("PCL_LOCK_AFTER_OPEN", paused.as_path()),
+                ("PCL_LOCK_AFTER_OPEN_RELEASE", release.as_path()),
+            ],
+        );
+        wait_for_file(&mut child, &paused, "waiter pause");
+        drop(holder);
+        let replacement = ConfigLock::acquire(&cli_args)
+            .await
+            .expect("replacement writer acquires");
+        let replacement_body = std::fs::read(&path).expect("replacement lock");
+        let replacement_id = lock_identity(&path);
+        std::fs::write(&release, "go").expect("release the waiter");
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        assert!(
+            child.try_wait().expect("waiter status").is_none(),
+            "the waiter aborted after the lock was replaced"
+        );
+        assert!(
+            !ready.exists(),
+            "the waiter took the replacement writer's lock"
+        );
+        assert_eq!(
+            std::fs::read(&path).expect("replacement still present"),
+            replacement_body,
+            "the waiter unlinked the replacement"
+        );
+        assert_eq!(lock_identity(&path), replacement_id);
+        drop(replacement);
+        wait_for_file(&mut child, &ready, "waiter acquire after replacement");
+        child.kill().expect("kill waiter");
+        child.wait().expect("wait for waiter");
     }
 
     /// Child process for [`a_killed_holder_releases_the_config_lock`].
