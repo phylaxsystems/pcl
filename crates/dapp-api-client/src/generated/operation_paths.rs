@@ -51,6 +51,7 @@ pub const OPERATION_PATHS: &[(&str, &str, &str)] = &[
     ("indexer.reportAssertionRemoved", "POST", "/indexer/assertion-removed"),
     ("indexer.reportStorageReset", "POST", "/indexer/storage-reset"),
     ("indexer.reportTransferAccepted", "POST", "/indexer/transfer-accepted"),
+    ("indexerProgress", "GET", "/indexer/progress"),
     ("openapi", "GET", "/openapi"),
     ("previewInvitation", "GET", "/invitations/{token}/preview"),
     ("projects.confirmRemove", "POST", "/projects/{project_id}/releases/{release_id}/remove"),

@@ -31,9 +31,9 @@ audit:
 	cargo deny --all-features check advisories
 
 # Spec the committed client was generated from: credible-layer-dapp
-# packages/dapp-api/openapi.json (OpenAPI 27.2.0). Bump both together.
-DAPP_SPEC_REV ?= a1c7423370dc5b8b89b3e9485d9533f9408c89a2
-DAPP_SPEC_SHA256 ?= 2c0d96d5dadaa46b26eaab5574a6e2e5459acfcc99e90fb8e3b4035db155a9fa
+# packages/dapp-api/openapi.json (OpenAPI 27.3.0). Bump both together.
+DAPP_SPEC_REV ?= 33378ec06ce680baafba8ba20d5b65a7cc3916b7
+DAPP_SPEC_SHA256 ?= 27e949aa04b4e3b9a5b0b4ae3ffb21c37612a32a936dc9df87b9f8c3d987fe3e
 DAPP_SPEC_FILE := crates/dapp-api-client/openapi/spec.json
 
 # Regenerate dapp-api-client from the pinned dapp revision (reproducible; needs gh auth)

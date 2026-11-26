@@ -15924,7 +15924,7 @@ No Authorization header is needed when using cookie authentication.
 - Required Authorization headers indicate CLI-only endpoints
 - The authentication middleware automatically detects and validates the appropriate method
 
-Version: 27.2.0*/
+Version: 27.3.0*/
 pub struct Client {
     pub(crate) baseurl: String,
     pub(crate) client: reqwest::Client,
@@ -15960,7 +15960,7 @@ impl Client {
 }
 impl ClientInfo<()> for Client {
     fn api_version() -> &'static str {
-        "27.2.0"
+        "27.3.0"
     }
     fn baseurl(&self) -> &str {
         self.baseurl.as_str()
