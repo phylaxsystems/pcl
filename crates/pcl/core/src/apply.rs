@@ -17,6 +17,7 @@ use crate::{
     config::CliConfig,
     credible_config::{
         CredibleToml,
+        assertion_build_args,
         assertion_contract_name,
     },
     diff::PreviewResponse,
@@ -47,10 +48,7 @@ use pcl_common::args::{
     CliArgs,
     OutputMode,
 };
-use pcl_phoundry::{
-    DEFAULT_ASSERTION_CONTRACTS_DIR,
-    build_and_flatten::BuildAndFlattenArgs,
-};
+use pcl_phoundry::build_and_flatten::ReleaseBuilds;
 use serde_json::{
     Value,
     json,
@@ -389,6 +387,7 @@ impl ApplyArgs {
         root: &Path,
     ) -> Result<(ProjectsCreateReleaseBody, Vec<(String, Bytes)>), ApplyError> {
         let mut built_assertions = HashMap::new();
+        let mut release_builds = ReleaseBuilds::default();
         let mut payload_contracts = HashMap::new();
         #[allow(unused_mut)]
         let mut verification_inputs: Vec<(String, Bytes)> = Vec::new();
@@ -399,13 +398,9 @@ impl ApplyArgs {
             for assertion in &contract.assertions {
                 let build_key = assertion.file.clone();
                 if !built_assertions.contains_key(&build_key) {
-                    let output = BuildAndFlattenArgs {
-                        root: Some(root.to_path_buf()),
-                        assertion_contract: assertion_contract_name(&assertion.file)?,
-                        contracts: assertion_contracts_dir(&assertion.file),
-                    }
-                    .run()
-                    .map_err(ApplyError::BuildFailed)?;
+                    let output = assertion_build_args(root, &assertion.file)?
+                        .run_for_release(&mut release_builds)
+                        .map_err(ApplyError::BuildFailed)?;
                     built_assertions.insert(build_key.clone(), output);
                 }
 
@@ -596,17 +591,6 @@ where
         .map_err(|e| ApplyError::InvalidConfig(format!("Invalid {field}: {e}")))
 }
 
-fn assertion_contracts_dir(file: &str) -> PathBuf {
-    let source_path = file.split_once(':').map_or(file, |(path, _)| path);
-    Path::new(source_path)
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map_or_else(
-            || PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
-            Path::to_path_buf,
-        )
-}
-
 fn build_assertion_item(
     assertion: &crate::credible_config::CredibleAssertion,
     built: &pcl_phoundry::build_and_flatten::BuildAndFlatOutput,
@@ -623,6 +607,15 @@ fn build_assertion_item(
         )?),
         bytecode: parse_field(&built.bytecode, "bytecode")?,
         flattened_source: parse_field(&built.flattened_source, "flattened source")?,
+        compiler_input: built
+            .compiler_input
+            .as_deref()
+            .map(|input| parse_field(input, "compiler input"))
+            .transpose()?,
+        compiler_source_path: Some(parse_field(
+            &built.compilation_target,
+            "compiler source path",
+        )?),
         compiler_version: parse_field(&built.compiler_version, "compiler version")?,
         contract_name: parse_field(contract_name, "contract name")?,
         evm_version: parse_field(&built.evm_version, "evm version")?,
@@ -724,6 +717,7 @@ mod tests {
         Param,
         StateMutability,
     };
+    use dapp_api_client::generated::client::types::ProjectsPreviewReleaseBodyContractsValueAssertionsItem;
     use pcl_phoundry::build_and_flatten::BuildAndFlatOutput;
 
     fn apply_args_with_url(api_url: Option<&str>) -> ApplyArgs {
@@ -785,10 +779,12 @@ mod tests {
     fn make_built(abi: JsonAbi) -> BuildAndFlatOutput {
         BuildAndFlatOutput {
             compiler_version: "v0.8.28+commit.7893614a".to_string(),
+            compilation_target: "src/A.a.sol".into(),
             flattened_source: "// SPDX\ncontract A {}".to_string(),
             abi,
             bytecode: "0x6080".to_string(),
             evm_version: "paris".to_string(),
+            compiler_input: Some(r#"{"language":"Solidity"}"#.into()),
             ..Default::default()
         }
     }
@@ -824,6 +820,15 @@ mod tests {
             .expect("signature is forwarded");
         assert_eq!(sig.as_str(), "constructor(address)");
         assert_eq!(item.args, assertion.args);
+        let wire = serde_json::to_value(item).expect("item serializes");
+        assert_eq!(wire["compilerInput"], r#"{"language":"Solidity"}"#);
+        assert_eq!(wire["compilerSourcePath"], "src/A.a.sol");
+        let preview: ProjectsPreviewReleaseBodyContractsValueAssertionsItem =
+            serde_json::from_value(wire.clone()).expect("preview accepts the create item");
+        assert_eq!(
+            serde_json::to_value(preview).expect("preview serializes"),
+            wire
+        );
     }
 
     #[test]

@@ -1,5 +1,9 @@
 //! Shared types and parsing for `credible.toml` deployment configuration files.
 
+use pcl_phoundry::{
+    DEFAULT_ASSERTION_CONTRACTS_DIR,
+    build_and_flatten::BuildAndFlattenArgs,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -7,7 +11,10 @@ use std::{
         BTreeMap,
         HashMap,
     },
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -139,6 +146,28 @@ pub fn assertion_contract_name(file: &str) -> Result<String, CredibleConfigError
     )))
 }
 
+/// Build arguments for a `file[:Contract]` assertion entry. The artifact is selected by file
+/// and contract name; the file's directory, or the default one for a bare file name, is
+/// compiled as the contracts directory.
+pub fn assertion_build_args(
+    root: &Path,
+    file: &str,
+) -> Result<BuildAndFlattenArgs, CredibleConfigError> {
+    let source = Path::new(file.rsplit_once(':').map_or(file, |(path, _)| path));
+    Ok(BuildAndFlattenArgs {
+        root: Some(root.to_path_buf()),
+        assertion_contract: assertion_contract_name(file)?,
+        contracts: source
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map_or_else(
+                || PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
+                Path::to_path_buf,
+            ),
+        source: Some(source.to_path_buf()),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +194,23 @@ mod tests {
             assertion_contract_name("assertions/src/Other.sol:NamedAssertion").unwrap(),
             "NamedAssertion"
         );
+    }
+
+    #[test]
+    fn assertion_build_args_select_the_named_file() {
+        let root = Path::new("/project");
+        let args = assertion_build_args(root, "assertions/src/A.a.sol:Named").unwrap();
+        assert_eq!(args.assertion_contract, "Named");
+        assert_eq!(args.contracts, Path::new("assertions/src"));
+        assert_eq!(
+            args.source.as_deref(),
+            Some(Path::new("assertions/src/A.a.sol"))
+        );
+
+        let bare = assertion_build_args(root, "A.a.sol").unwrap();
+        assert_eq!(bare.assertion_contract, "A");
+        assert_eq!(bare.contracts, Path::new(DEFAULT_ASSERTION_CONTRACTS_DIR));
+        assert_eq!(bare.source.as_deref(), Some(Path::new("A.a.sol")));
     }
 
     #[test]

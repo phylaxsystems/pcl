@@ -290,3 +290,39 @@ fn generated_error_preserves_release_conflict_details() {
         serde_json::from_value(body.clone()).unwrap();
     assert_eq!(serde_json::to_value(parsed).unwrap(), body);
 }
+
+#[test]
+fn public_invalidations_accept_legacy_id_and_free_form_title() {
+    let mut spec = json!({
+        "paths": { "/views/public/invalidations": { "get": { "responses": { "200": { "content": {
+            "application/json": { "schema": { "properties": { "data": { "properties": { "items": {
+                "items": { "properties": {
+                    "id": { "type": "string", "format": "uuid" },
+                    "title": { "type": "string", "enum": ["Invalidation"] }
+                } }
+            } } } } } }
+        } } } } } }
+    });
+    let properties = "/paths/~1views~1public~1invalidations/get/responses/200/content/application~1json/schema/properties/data/properties/items/items/properties";
+
+    spec_transform::accept_legacy_public_invalidations(&mut spec);
+    let patched = spec.pointer(properties).expect("item properties").clone();
+    assert_eq!(patched["title"], json!({ "type": "string" }));
+    // An existing id schema is kept.
+    assert_eq!(patched["id"]["format"], "uuid");
+
+    spec.pointer_mut(properties)
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("item properties")
+        .remove("id");
+    spec_transform::accept_legacy_public_invalidations(&mut spec);
+    assert_eq!(
+        spec.pointer(properties).expect("item properties")["id"],
+        json!({ "type": "string" })
+    );
+
+    // Specs without the route are left alone.
+    let mut other = json!({ "paths": {} });
+    spec_transform::accept_legacy_public_invalidations(&mut other);
+    assert_eq!(other, json!({ "paths": {} }));
+}

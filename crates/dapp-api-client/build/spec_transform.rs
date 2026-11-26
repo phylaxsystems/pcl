@@ -58,6 +58,26 @@ pub(crate) fn missing_client_operations<'a>(
         .collect()
 }
 
+/// Keeps public invalidation exports readable from older platforms, which return a public
+/// incident `id` and a free-form `title`.
+pub(crate) fn accept_legacy_public_invalidations(spec: &mut Value) {
+    let Some(properties) = spec
+        .pointer_mut(concat!(
+            "/paths/~1views~1public~1invalidations/get/responses/200/content/application~1json/schema",
+            "/properties/data/properties/items/items/properties",
+        ))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    properties
+        .entry("id")
+        .or_insert_with(|| json!({ "type": "string" }));
+    if let Some(title) = properties.get_mut("title").and_then(Value::as_object_mut) {
+        title.remove("enum");
+    }
+}
+
 pub(crate) fn retain_client_operations(spec: &mut Value, operation_ids: &[&str]) {
     let operation_ids: BTreeSet<&str> = operation_ids.iter().copied().collect();
     retain_paths(spec, &operation_ids);

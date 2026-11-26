@@ -6,6 +6,7 @@
 
 use crate::spec_transform::{
     CLIENT_OPERATION_IDS,
+    accept_legacy_public_invalidations,
     missing_client_operations,
     normalize_error_response_schemas,
     retain_client_operations,
@@ -68,6 +69,9 @@ pub fn generate_client_code() -> anyhow::Result<()> {
     // Progenitor sees them. Anonymous response schemas are named from the
     // operation, which can make Error<T> use the success response type.
     normalize_error_response_schemas(&mut spec_value);
+
+    // Older platforms return a public incident ID and a free-form title.
+    accept_legacy_public_invalidations(&mut spec_value);
 
     // PCL workflow commands use a generic OpenAPI operation adapter. Keep typed
     // generated methods only for auth/discovery helpers and the few local flows
