@@ -18,18 +18,13 @@ pub fn compile(build_opts: BuildOpts) -> Result<ProjectCompileOutput, Box<Phound
     compile_project(build_opts, Config::project)
 }
 
-/// Compiles the whole project like [`compile`], keeping each compiler job's full input in its
-/// build info. `cached: false` rebuilds everything in memory without writing to the project.
+/// Compiles the whole project like [`compile`], keeping each compiler job's full input in the
+/// build info Foundry writes for it.
 pub(crate) fn compile_with_build_info(
     build_opts: BuildOpts,
-    cached: bool,
 ) -> Result<ProjectCompileOutput, Box<PhoundryError>> {
     compile_project(build_opts, |config| {
-        let mut project = if cached {
-            config.project()?
-        } else {
-            config.ephemeral_project()?
-        };
+        let mut project = config.project()?;
         project.build_info = true;
         Ok(project)
     })

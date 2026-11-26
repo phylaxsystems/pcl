@@ -515,3 +515,102 @@ fn release_runs_a_local_solc_given_relative_to_the_current_directory() {
         assert_command_success(&output, "pcl apply --dry-run with a relative solc");
     }
 }
+
+/// The job input Foundry's cache records for the artifact `name` in `source`.
+#[cfg(feature = "credible")]
+fn recorded_job_input(project: &Path, source: &str, name: &str) -> serde_json::Value {
+    let cache: serde_json::Value = serde_json::from_slice(
+        &fs::read(project.join("assertions/cache/solidity-files-cache.json")).expect("cache"),
+    )
+    .expect("cache json");
+    let artifact = cache["files"][source]["artifacts"][name].to_string();
+    let build_id = artifact
+        .split("\"build_id\":\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("recorded build id");
+    let info: serde_json::Value = serde_json::from_slice(
+        &fs::read(project.join(format!("out/build-info/{build_id}.json"))).expect("build info"),
+    )
+    .expect("build info json");
+    info["input"].clone()
+}
+
+#[cfg(feature = "credible")]
+fn build_info_times(project: &Path) -> Vec<(std::path::PathBuf, std::time::SystemTime)> {
+    let mut times: Vec<_> = fs::read_dir(project.join("out/build-info"))
+        .expect("build info dir")
+        .map(|entry| {
+            let entry = entry.expect("entry");
+            (
+                entry.path(),
+                entry
+                    .metadata()
+                    .expect("metadata")
+                    .modified()
+                    .expect("mtime"),
+            )
+        })
+        .collect();
+    times.sort();
+    times
+}
+
+#[cfg(feature = "credible")]
+#[test]
+fn release_on_a_cache_without_full_build_info_rebuilds_once_and_sends_each_job() {
+    let project = fixture_project();
+    let src = project.path().join("assertions/src");
+    let first = fs::read_to_string(src.join("NoArgsAssertion.a.sol")).expect("read assertion");
+    fs::write(
+        src.join("Second.a.sol"),
+        first.replace("NoArgsAssertion", "Second"),
+    )
+    .expect("write second assertion");
+    let config = project.path().join("assertions/credible.toml");
+    let toml = fs::read_to_string(&config).expect("read credible.toml");
+    fs::write(
+        &config,
+        format!(
+            "{toml}\n[[contracts.mock.assertions]]\nfile = \"assertions/src/Second.a.sol:Second\"\n"
+        ),
+    )
+    .expect("write credible.toml");
+    // A regular build keeps build info without the compiler input.
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .args(["build", "--root", project.path().to_str().expect("utf-8")])
+        .output()
+        .expect("run pcl build");
+    assert_command_success(&output, "pcl build");
+
+    let (ok, applied) = pcl_json(project.path(), &["apply", "--dry-run"]);
+    assert!(ok, "{applied}");
+    let assertions = applied["data"]["payload"]["contracts"]["mock"]["assertions"]
+        .as_array()
+        .expect("assertions");
+    for item in assertions {
+        let sent: serde_json::Value =
+            serde_json::from_str(item["compilerInput"].as_str().expect("input")).expect("json");
+        let job = recorded_job_input(
+            project.path(),
+            item["compilerSourcePath"].as_str().expect("source"),
+            item["contractName"].as_str().expect("name"),
+        );
+        assert_eq!(sent["settings"], job["settings"]);
+        for (name, source) in sent["sources"].as_object().expect("sources") {
+            assert_eq!(source, &job["sources"][name]);
+        }
+    }
+
+    // Later commands reuse the full build info without rebuilding.
+    let before = build_info_times(project.path());
+    let (ok, deployed) = pcl_json(project.path(), &["deploy", "--dry-run"]);
+    assert!(ok, "{deployed}");
+    assert_eq!(
+        deployed["data"]["payload"]["contracts"]["mock"]["assertions"],
+        applied["data"]["payload"]["contracts"]["mock"]["assertions"]
+    );
+    let (ok, _) = pcl_json(project.path(), &["apply", "--dry-run"]);
+    assert!(ok);
+    assert_eq!(build_info_times(project.path()), before);
+}

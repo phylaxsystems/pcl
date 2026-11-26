@@ -200,11 +200,53 @@ impl BuildAndFlattenArgs {
     /// keeping only the sources the artifact was compiled from.
     pub fn run_for_release(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
         foundry_cli::utils::load_dotenv();
-        let build = crate::compile::compile_with_build_info(self.build_opts(), true)?;
+        let build = crate::compile::compile_with_build_info(self.build_opts())?;
         let (id, artifact) = self.select(&build)?;
+        // Newly compiled: this build holds the job's full build info.
+        if let Some(job) = compiled_job(&build, &id.build_id) {
+            return self.release_output(artifact, &job);
+        }
+        // Cached: the build info Foundry retained for the job has its input when the build
+        // that compiled it kept full build info.
+        let project = self
+            .build_opts()
+            .load_config()?
+            .project()
+            .map_err(PhoundryError::SolcError)?;
+        if let Some(job) = retained_job(&project, &id.build_id) {
+            return self.release_output(artifact, &job);
+        }
+        // Builds without full build info (older PCL, `forge build`) retained no input. Without
+        // its cache index, Foundry rebuilds the whole project through its normal paths and
+        // writes artifacts, cache and full build info that this and later releases reuse, so
+        // the artifact and its job both come from that build.
+        let cache = project.cache_path();
+        if let Err(error) = std::fs::remove_file(cache)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(Box::new(PhoundryError::ReleaseInputNotReproducible {
+                contract: format!("{}:{}", id.source.display(), id.name),
+                reason: format!("cannot rebuild the cache {}: {error}", cache.display()),
+            }));
+        }
+        let build = crate::compile::compile_with_build_info(self.build_opts())?;
+        let (id, artifact) = self.select(&build)?;
+        let job = compiled_job(&build, &id.build_id).ok_or_else(|| {
+            Box::new(PhoundryError::ReleaseInputNotReproducible {
+                contract: format!("{}:{}", id.source.display(), id.name),
+                reason: "the rebuild kept no compiler input; rebuild and retry".into(),
+            })
+        })?;
+        self.release_output(artifact, &job)
+    }
+
+    fn release_output(
+        &self,
+        artifact: &ConfigurableContractArtifact,
+        job: &Value,
+    ) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
         let mut output = self.output(artifact)?;
-        let job = self.job_input(&build, &id, &output)?;
-        output.compiler_input = Some(self.release_input(artifact, &output, &job)?);
+        output.compiler_input = Some(self.release_input(artifact, &output, job)?);
         Ok(output)
     }
 
@@ -255,62 +297,6 @@ impl BuildAndFlattenArgs {
                 }))
             }
         }
-    }
-
-    /// The standard JSON input of the compiler job that produced `id`: from this build, from
-    /// the build info a previous full-info build retained, or else from an uncached rebuild of
-    /// the whole project that must produce the same bytecode.
-    fn job_input(
-        &self,
-        build: &ProjectCompileOutput,
-        id: &ArtifactId,
-        output: &BuildAndFlatOutput,
-    ) -> Result<Value, Box<PhoundryError>> {
-        let input = |build: &ProjectCompileOutput, build_id: &str| {
-            build
-                .output()
-                .build_infos
-                .iter()
-                .find(|info| info.id == build_id)
-                .and_then(|info| info.build_info.get("input").cloned())
-        };
-        if let Some(job) = input(build, &id.build_id) {
-            return Ok(job);
-        }
-        let config = self.build_opts().load_config()?;
-        let retained = config
-            .project()
-            .map_err(PhoundryError::SolcError)?
-            .paths
-            .build_infos
-            .join(&id.build_id)
-            .with_extension("json");
-        if let Some(job) = std::fs::read(retained)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .filter(|info| info["id"] == id.build_id.as_str())
-            .and_then(|mut info| info.get_mut("input").map(Value::take))
-        {
-            return Ok(job);
-        }
-        // Older caches keep build info without the input.
-        let rebuilt = crate::compile::compile_with_build_info(self.build_opts(), false)?;
-        rebuilt
-            .artifact_ids()
-            .filter(|(rebuilt_id, artifact)| {
-                rebuilt_id.source == id.source
-                    && rebuilt_id.name == id.name
-                    && extract_bytecode(&artifact.bytecode).as_ref() == Some(&output.bytecode)
-            })
-            .find_map(|(rebuilt_id, _)| input(&rebuilt, &rebuilt_id.build_id))
-            .ok_or_else(|| {
-                Box::new(PhoundryError::ReleaseInputNotReproducible {
-                    contract: format!("{}:{}", output.compilation_target, id.name),
-                    reason:
-                        "a clean rebuild does not produce the cached artifact; rebuild and retry"
-                            .into(),
-                })
-            })
     }
 
     /// The job's original input with only the artifact's sources; the job's settings are kept
@@ -526,6 +512,30 @@ impl BuildAndFlattenArgs {
 
 fn keccak_hex(content: &str) -> String {
     alloy_primitives::keccak256(content.as_bytes()).to_string()
+}
+
+/// The job input Foundry retained in `build_id`'s build info, if that build kept full build info.
+fn retained_job(project: &Project, build_id: &str) -> Option<Value> {
+    let path = project
+        .paths
+        .build_infos
+        .join(build_id)
+        .with_extension("json");
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .filter(|info| info["id"] == build_id)
+        .and_then(|mut info| info.get_mut("input").map(Value::take))
+}
+
+/// The full input of `build_id` when this build compiled it with full build info.
+fn compiled_job(build: &ProjectCompileOutput, build_id: &str) -> Option<Value> {
+    build
+        .output()
+        .build_infos
+        .iter()
+        .find(|info| info.id == build_id)
+        .and_then(|info| info.build_info.get("input").cloned())
 }
 
 /// Reads `path` when its content matches the hash the compiler recorded: as Foundry passes
@@ -945,6 +955,109 @@ engine = "none"
         }
     }
 
+    /// The build info Foundry's cache records for `name` in `source`: its path and contents.
+    fn recorded_job(root: &Path, source: &str, name: &str) -> (PathBuf, Value) {
+        let cache: Value = serde_json::from_slice(
+            &fs::read(root.join("assertions/cache/solidity-files-cache.json")).unwrap(),
+        )
+        .unwrap();
+        let mut ids = vec![];
+        let mut pending = vec![&cache["files"][source]["artifacts"][name]];
+        while let Some(value) = pending.pop() {
+            if let Value::Object(map) = value {
+                ids.extend(map.get("build_id").and_then(Value::as_str));
+                pending.extend(map.values());
+            }
+        }
+        assert_eq!(ids.len(), 1, "{cache}");
+        let path = root.join("out/build-info").join(format!("{}.json", ids[0]));
+        let info = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        (path, info)
+    }
+
+    /// Strips the retained input of `source`'s job, as a build without full build info leaves it.
+    fn forget_job_input(root: &Path, source: &str, name: &str) {
+        let (path, mut info) = recorded_job(root, source, name);
+        let info = info.as_object_mut().unwrap();
+        info.remove("input");
+        info.remove("output");
+        fs::write(path, serde_json::to_vec(info).unwrap()).unwrap();
+    }
+
+    /// Build info files and their modification times; a recompile writes new ones.
+    fn build_outputs(root: &Path) -> Vec<(PathBuf, std::time::SystemTime)> {
+        let mut entries: Vec<_> = fs::read_dir(root.join("out/build-info"))
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (entry.path(), entry.metadata().unwrap().modified().unwrap())
+            })
+            .collect();
+        entries.sort();
+        entries
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn release_without_retained_input_sends_the_rebuilt_artifact_and_its_job() {
+        let (_temp_dir, root) = setup_test_project();
+        write(
+            &root,
+            "foundry.toml",
+            "[profile.default]\nsolc = \"0.8.28\"\noffline = true\n",
+        );
+        write(
+            &root,
+            "src/Vault.sol",
+            "pragma solidity 0.8.28; import {TestContract} from \"./TestContract.sol\"; contract Vault is TestContract {}",
+        );
+        write(
+            &root,
+            "src/Other.sol",
+            "pragma solidity 0.8.28; contract Other {}",
+        );
+        write(
+            &root,
+            "src/Second.sol",
+            "pragma solidity 0.8.28; contract Second { function s() external {} }",
+        );
+        // A test importing Vault is recompiled with it and keeps artifacts from both jobs.
+        write(
+            &root,
+            "test/Vault.t.sol",
+            "pragma solidity 0.8.28; import {Vault} from \"../src/Vault.sol\"; contract VaultTest {}",
+        );
+        release_input_of(&root, "src/Vault.sol", "Vault");
+        // An incremental change compiles Vault alone while Other stays cached; then the job's
+        // retained build info loses its input, as with a build that kept no full build info.
+        write(
+            &root,
+            "src/Vault.sol",
+            "pragma solidity 0.8.28; import {TestContract} from \"./TestContract.sol\"; contract Vault is TestContract { function v() external {} }",
+        );
+        let incremental = release_input_of(&root, "src/Vault.sol", "Vault");
+        let (_, job) = recorded_job(&root, "src/Vault.sol", "Vault");
+        assert_eq!(incremental["settings"], job["input"]["settings"]);
+        forget_job_input(&root, "src/Vault.sol", "Vault");
+        forget_job_input(&root, "src/Second.sol", "Second");
+
+        let sent = release_input_of(&root, "src/Vault.sol", "Vault");
+        // The sent input is the job that built the artifact now recorded for Vault.
+        let (_, job) = recorded_job(&root, "src/Vault.sol", "Vault");
+        assert_eq!(sent["settings"], job["input"]["settings"]);
+        assert_eq!(sent["language"], job["input"]["language"]);
+        for (name, source) in sent["sources"].as_object().unwrap() {
+            assert_eq!(source, &job["input"]["sources"][name]);
+        }
+        // That rebuild retained full build info for every artifact: a second assertion and
+        // later releases reuse it without rebuilding.
+        let (_, second_job) = recorded_job(&root, "src/Second.sol", "Second");
+        assert!(second_job.get("input").is_some());
+        let before = build_outputs(&root);
+        release_input_of(&root, "src/Second.sol", "Second");
+        assert_eq!(release_input_of(&root, "src/Vault.sol", "Vault"), sent);
+        assert_eq!(build_outputs(&root), before);
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn release_input_accepts_crlf_sources_cold_and_cached() {
         let (_temp_dir, root) = setup_test_project();
@@ -1044,10 +1157,10 @@ engine = "none"
             "[profile.default]\nsolc = \"0.8.28\"\noffline = true\n",
         );
         let args = release_args(&root, "TestContract", Some("src/TestContract.sol"));
-        let build = crate::compile::compile_with_build_info(args.build_opts(), true).unwrap();
+        let build = crate::compile::compile_with_build_info(args.build_opts()).unwrap();
         let (id, artifact) = args.select(&build).unwrap();
         let output = args.output(artifact).unwrap();
-        let job = args.job_input(&build, &id, &output).unwrap();
+        let job = compiled_job(&build, &id.build_id).unwrap();
         assert!(args.release_input(artifact, &output, &job).is_ok());
 
         let other_bytes = BuildAndFlatOutput {
