@@ -82,13 +82,15 @@ const CONFIG_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// lock on the descriptor until drop. A clean exit removes the file, so an
 /// older CLI's `create_new` succeeds instead of waiting out its timeout. A
 /// killed process leaves the file, but the kernel releases the advisory lock;
-/// the next newer CLI removes that file only when its recorded pid is dead.
+/// the next newer CLI removes that file only when its recorded pid is dead
+/// and only while this process still holds the advisory lock on that inode.
 /// An existing file whose pid is still running is an older writer that already
 /// dropped its descriptor: we wait, and we do not enter.
 ///
 /// The lock path is never opened through a symlink. Metadata is written only
 /// to the regular file this process just created, after checking that the
-/// path still names that inode.
+/// path still names that inode. A probe that grabs the advisory lock before
+/// the creator does is retried; the creator does not delete its own file.
 #[derive(Debug)]
 pub struct ConfigLock {
     path: PathBuf,
@@ -117,12 +119,11 @@ impl ConfigLock {
         }
         let deadline = Instant::now() + CONFIG_LOCK_TIMEOUT;
         loop {
-            if let Some(lock) = try_create_lock(&path)? {
+            if let Some(lock) = try_create_lock(&path, deadline).await? {
                 return Ok(lock);
             }
             match classify_existing_lock(&path)? {
                 ExistingLock::Gone => {}
-                ExistingLock::Stale => reap_stale_lock(&path),
                 ExistingLock::Busy => {
                     if Instant::now() >= deadline {
                         return Err(ConfigError::LockTimeout);
@@ -146,18 +147,24 @@ impl Drop for ConfigLock {
 
 /// What an existing `config.toml.lock` means to a newer CLI.
 enum ExistingLock {
-    /// The path is gone, or it was a symlink and that symlink was unlinked.
+    /// The path is gone, or it was a symlink or a dead holder's file and that
+    /// name was unlinked.
     Gone,
     /// A live holder: either a newer CLI's advisory lock, or an older CLI
     /// whose pid is still running after it closed the descriptor.
     Busy,
-    /// The recorded pid is dead and nobody holds the advisory lock.
-    Stale,
 }
 
 /// Creates the lock the way an older CLI does (`create_new`), then keeps the
 /// descriptor and its advisory lock. `Ok(None)` means the path already exists.
-fn try_create_lock(path: &Path) -> Result<Option<ConfigLock>, ConfigError> {
+///
+/// `WouldBlock` from the advisory lock is a contender's probe. The file this
+/// function just created stays in place and the lock is retried until
+/// `deadline`.
+async fn try_create_lock(
+    path: &Path,
+    deadline: Instant,
+) -> Result<Option<ConfigLock>, ConfigError> {
     let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(None),
@@ -176,16 +183,41 @@ fn try_create_lock(path: &Path) -> Result<Option<ConfigLock>, ConfigError> {
         Utc::now().to_rfc3339()
     );
     let _ = file.sync_all();
-    if let Err(error) = try_lock_exclusive(&file) {
-        if opened_is_this_regular_file(&file, path).unwrap_or(false) {
-            let _ = std::fs::remove_file(path);
+    #[cfg(test)]
+    pause_until_lock_release("PCL_LOCK_BEFORE_FLOCK", "PCL_LOCK_BEFORE_FLOCK_RELEASE");
+    loop {
+        match try_lock_exclusive(&file) {
+            Ok(()) => {
+                if !opened_is_this_regular_file(&file, path).unwrap_or(false) {
+                    return Err(ConfigError::WriteError(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "config lock path changed before the advisory lock was held",
+                    )));
+                }
+                return Ok(Some(ConfigLock {
+                    path: path.to_path_buf(),
+                    file,
+                }));
+            }
+            Err(error) if lock_is_held_elsewhere(&error) => {
+                if Instant::now() >= deadline {
+                    // The probe outlived the wait. Remove only the inode we
+                    // created, so a replacement at this path is left alone.
+                    if opened_is_this_regular_file(&file, path).unwrap_or(false) {
+                        let _ = std::fs::remove_file(path);
+                    }
+                    return Err(ConfigError::LockTimeout);
+                }
+                sleep(CONFIG_LOCK_POLL_INTERVAL).await;
+            }
+            Err(error) => {
+                if opened_is_this_regular_file(&file, path).unwrap_or(false) {
+                    let _ = std::fs::remove_file(path);
+                }
+                return Err(ConfigError::WriteError(error));
+            }
         }
-        return Err(ConfigError::WriteError(error));
     }
-    Ok(Some(ConfigLock {
-        path: path.to_path_buf(),
-        file,
-    }))
 }
 
 fn classify_existing_lock(path: &Path) -> Result<ExistingLock, ConfigError> {
@@ -225,18 +257,69 @@ fn classify_existing_lock(path: &Path) -> Result<ExistingLock, ConfigError> {
             }
         };
     }
-    match try_lock_exclusive(&file) {
-        Err(error) if lock_is_held_elsewhere(&error) => Ok(ExistingLock::Busy),
-        Err(error) => Err(ConfigError::WriteError(error)),
-        Ok(()) => {
-            let stale = holder_pid_is_dead(&file);
-            drop(file);
-            if stale {
-                Ok(ExistingLock::Stale)
-            } else {
-                Ok(ExistingLock::Busy)
-            }
-        }
+    // A live pid, or a file that does not name a pid yet, is a holder. Do not
+    // take the exclusive lock: that probe makes the creator's own `flock`
+    // fail and used to unlink the file it had just created.
+    if !holder_pid_is_dead(&file) {
+        return Ok(ExistingLock::Busy);
+    }
+    // `file` stays open through the unlink below. Closing it first would
+    // release the advisory lock and let a replacement appear under `remove_file`.
+    let reclaimed = reclaim_dead_lock(path, &file);
+    drop(file);
+    reclaimed
+}
+
+/// Unlinks a dead holder's lock while `file`'s advisory lock is held.
+///
+/// The lock is acquired before the path is checked again, and the caller
+/// keeps `file` open until this returns. Dropping it first lets another
+/// reaper create a replacement that `remove_file` would then delete.
+fn reclaim_dead_lock(path: &Path, file: &std::fs::File) -> Result<ExistingLock, ConfigError> {
+    match try_lock_exclusive(file) {
+        Ok(()) => {}
+        Err(error) if lock_is_held_elsewhere(&error) => return Ok(ExistingLock::Busy),
+        Err(error) => return Err(ConfigError::WriteError(error)),
+    }
+    if !stale_lock_still_ours(file, path) {
+        return Ok(ExistingLock::Busy);
+    }
+    #[cfg(test)]
+    pause_until_lock_release(
+        "PCL_LOCK_BEFORE_REAP_UNLINK",
+        "PCL_LOCK_BEFORE_REAP_UNLINK_RELEASE",
+    );
+    if !stale_lock_still_ours(file, path) {
+        return Ok(ExistingLock::Busy);
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(ConfigError::WriteError(error)),
+    }
+    Ok(ExistingLock::Gone)
+}
+
+fn stale_lock_still_ours(file: &std::fs::File, path: &Path) -> bool {
+    opened_is_this_regular_file(file, path).unwrap_or(false) && holder_pid_is_dead(file)
+}
+
+/// Test hook. The creator or reaper writes `ready_var` and waits until
+/// `release_var` exists, so a contender can run at that exact point.
+#[cfg(test)]
+fn pause_until_lock_release(ready_var: &str, release_var: &str) {
+    let Ok(ready) = std::env::var(ready_var) else {
+        return;
+    };
+    let Ok(release) = std::env::var(release_var) else {
+        return;
+    };
+    if std::fs::write(&ready, "paused").is_err() {
+        return;
+    }
+    let release = PathBuf::from(release);
+    while !release.exists() {
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 
@@ -251,20 +334,6 @@ fn unlink_symlink_lock(path: &Path) -> Result<ExistingLock, ConfigError> {
         Ok(_) => Ok(ExistingLock::Busy),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(ExistingLock::Gone),
         Err(error) => Err(ConfigError::WriteError(error)),
-    }
-}
-
-/// Removes a leftover lock only while it is still a dead holder's file.
-fn reap_stale_lock(path: &Path) {
-    let Ok(file) = open_nofollow_read(path) else {
-        return;
-    };
-    let still_stale = opened_is_this_regular_file(&file, path).unwrap_or(false)
-        && try_lock_exclusive(&file).is_ok()
-        && holder_pid_is_dead(&file);
-    drop(file);
-    if still_stale {
-        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -1801,6 +1870,182 @@ expires_at = 1672502400
             pid += 1;
         }
         pid
+    }
+
+    fn lock_identity(path: &Path) -> (u64, u64) {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::symlink_metadata(path).expect("lock metadata");
+        (meta.dev(), meta.ino())
+    }
+
+    fn spawn_holder(
+        config_dir: &Path,
+        ready: &Path,
+        extra_env: &[(&str, &Path)],
+    ) -> std::process::Child {
+        let mut command =
+            std::process::Command::new(std::env::current_exe().expect("test executable"));
+        command
+            .arg("--exact")
+            .arg("config::tests::a_config_lock_holder_process")
+            .env("PCL_HOLD_CONFIG_LOCK", config_dir)
+            .env("PCL_HOLD_CONFIG_LOCK_READY", ready)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        for (key, value) in extra_env {
+            command.env(key, value);
+        }
+        command.spawn().expect("spawn holder")
+    }
+
+    fn wait_for_file(child: &mut std::process::Child, path: &Path, what: &str) {
+        let started = std::time::Instant::now();
+        while !path.exists() {
+            if started.elapsed() > std::time::Duration::from_secs(15) {
+                let _ = child.kill();
+                panic!("{what} did not appear");
+            }
+            if let Some(status) = child.try_wait().expect("holder status") {
+                panic!("holder exited before {what}: {status}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    async fn acquired_within(config_dir: &Path, budget: Duration) -> bool {
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.to_path_buf()),
+            ..CliArgs::default()
+        };
+        tokio::time::timeout(budget, ConfigLock::acquire(&cli_args))
+            .await
+            .is_ok_and(|result| result.is_ok())
+    }
+
+    /// Two reapers and a new writer share a killed holder's file. The reaper
+    /// that holds the advisory lock unlinks it; the others must not delete the
+    /// replacement that reaper then creates.
+    #[tokio::test]
+    async fn stale_reapers_do_not_unlink_a_live_replacement() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let path = CliConfig::config_file_path(&cli_args).with_extension("toml.lock");
+        let pid = dead_pid();
+        std::fs::write(&path, format!("pid={pid} acquired_at=gone\n")).expect("stale lock");
+        let stale_id = lock_identity(&path);
+
+        let paused = config_dir.path().join("reap-paused");
+        let release = config_dir.path().join("reap-release");
+        let ready = config_dir.path().join("ready");
+        let mut child = spawn_holder(
+            config_dir.path(),
+            &ready,
+            &[
+                ("PCL_LOCK_BEFORE_REAP_UNLINK", paused.as_path()),
+                ("PCL_LOCK_BEFORE_REAP_UNLINK_RELEASE", release.as_path()),
+            ],
+        );
+        wait_for_file(&mut child, &paused, "reaper pause");
+
+        let dir = config_dir.path().to_path_buf();
+        let competing_reaper = tokio::spawn({
+            let dir = dir.clone();
+            async move { acquired_within(&dir, Duration::from_millis(400)).await }
+        });
+        let new_writer =
+            tokio::spawn(async move { acquired_within(&dir, Duration::from_millis(400)).await });
+        let (competing_reaper, new_writer) = tokio::join!(competing_reaper, new_writer);
+        assert!(
+            !competing_reaper.expect("competing reaper") && !new_writer.expect("new writer"),
+            "a contender acquired the lock while the stale inode was still held"
+        );
+        assert_eq!(
+            lock_identity(&path),
+            stale_id,
+            "a contender replaced the stale lock before its holder unlinked it"
+        );
+        let stale_body = std::fs::read_to_string(&path).expect("stale lock body");
+        assert!(
+            stale_body.starts_with(&format!("pid={pid} ")),
+            "a contender rewrote the stale lock: {stale_body}"
+        );
+
+        std::fs::write(&release, "go").expect("release the reaper");
+        wait_for_file(&mut child, &ready, "reaper acquire");
+        let replacement = std::fs::read_to_string(&path).expect("replacement lock");
+        assert!(
+            replacement.starts_with(&format!("pid={} ", child.id())),
+            "the reaper should replace the stale file with its own lock, got {replacement}"
+        );
+        assert!(
+            !acquired_within(config_dir.path(), Duration::from_millis(300)).await,
+            "a writer entered while the reaper held the replacement"
+        );
+
+        child.kill().expect("kill reaper");
+        child.wait().expect("wait for reaper");
+        assert!(
+            acquired_within(config_dir.path(), Duration::from_secs(2)).await,
+            "the replacement is free after its holder is gone"
+        );
+    }
+
+    /// A contender's probe takes the advisory lock after the creator has
+    /// written its pid and before the creator locks. The creator must keep
+    /// its file and finish once the probe drops.
+    #[tokio::test]
+    async fn a_probe_does_not_abort_the_lock_creator() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let paused = config_dir.path().join("creator-paused");
+        let release = config_dir.path().join("creator-release");
+        let ready = config_dir.path().join("ready");
+        let mut child = spawn_holder(
+            config_dir.path(),
+            &ready,
+            &[
+                ("PCL_LOCK_BEFORE_FLOCK", paused.as_path()),
+                ("PCL_LOCK_BEFORE_FLOCK_RELEASE", release.as_path()),
+            ],
+        );
+        wait_for_file(&mut child, &paused, "creator pause");
+
+        let cli_args = CliArgs {
+            config_dir: Some(config_dir.path().to_path_buf()),
+            ..CliArgs::default()
+        };
+        let path = CliConfig::config_file_path(&cli_args).with_extension("toml.lock");
+        let probe = open_nofollow_read(&path).expect("open the creator's lock");
+        try_lock_exclusive(&probe).expect("probe the creator before it locks");
+        let body = std::fs::read(&path).expect("creator wrote its pid");
+        std::fs::write(&release, "go").expect("release the creator");
+        std::thread::sleep(std::time::Duration::from_millis(250));
+
+        assert!(
+            child.try_wait().expect("creator status").is_none(),
+            "the creator exited while the probe held its lock"
+        );
+        assert!(
+            !ready.exists(),
+            "the creator finished while the probe held its lock"
+        );
+        assert_eq!(
+            std::fs::read(&path).expect("creator file still present"),
+            body,
+            "the creator unlinked its own lock after the probe"
+        );
+
+        drop(probe);
+        wait_for_file(&mut child, &ready, "creator acquire");
+        assert!(
+            !acquired_within(config_dir.path(), Duration::from_millis(300)).await,
+            "a contender entered while the creator held the lock"
+        );
+        child.kill().expect("kill creator");
+        child.wait().expect("wait for creator");
     }
 
     /// Child process for [`a_killed_holder_releases_the_config_lock`].
