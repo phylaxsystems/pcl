@@ -1001,7 +1001,7 @@ impl AuthCommand {
         };
         let endpoint = generated_api_endpoint("web.auth.logout");
         let body = serde_json::Map::new();
-        let response = client.web_auth_logout(&body).await;
+        let response = client.web_auth_logout(None, &body).await;
         let response = match response {
             Ok(response) => response,
             Err(error) => {

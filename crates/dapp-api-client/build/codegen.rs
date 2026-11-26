@@ -69,6 +69,17 @@ pub fn generate_client_code() -> anyhow::Result<()> {
     // operation, which can make Error<T> use the success response type.
     normalize_error_response_schemas(&mut spec_value);
 
+    // Older platforms return a public incident ID and a free-form title. Keep both export formats readable.
+    if let Some(properties) = spec_value.pointer_mut(concat!(
+        "/paths/~1views~1public~1invalidations/get/responses/200/content/application~1json/schema",
+        "/properties/data/properties/items/items/properties",
+    )).and_then(serde_json::Value::as_object_mut) {
+        properties.entry("id").or_insert_with(|| serde_json::json!({"type": "string"}));
+        if let Some(title) = properties.get_mut("title").and_then(serde_json::Value::as_object_mut) {
+            title.remove("enum");
+        }
+    }
+
     // PCL workflow commands use a generic OpenAPI operation adapter. Keep typed
     // generated methods only for auth/discovery helpers and the few local flows
     // that still consume generated response/body types directly.

@@ -10,7 +10,10 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use foundry_compilers::{
-    ProjectCompileOutput,
+    artifacts::{
+        ConfigurableContractArtifact,
+        SolcInput,
+    },
     flatten::{
         Flattener,
         FlattenerError,
@@ -20,13 +23,17 @@ use foundry_compilers::{
 };
 
 use alloy_json_abi::JsonAbi;
+use serde::Deserialize;
 use serde_json::Value;
 
 use foundry_compilers::artifacts::BytecodeHash;
 use foundry_config::find_project_root;
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 use crate::{
@@ -157,14 +164,50 @@ impl BuildAndFlattenArgs {
     pub fn run(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
         foundry_cli::utils::load_dotenv();
 
-        let build = self.build()?;
+        let build = crate::compile::compile(self.build_opts())?;
         let info = ContractInfo::new(&self.assertion_contract);
 
         // Find the contract artifact
         let artifact = build
             .find_contract(info)
             .ok_or_else(|| PhoundryError::ContractNotFound(self.assertion_contract.clone()))?;
+        self.output(artifact)
+    }
 
+    /// Captures the exact compiler input for a release, restricted to its assertion and imports.
+    pub fn run_for_release(
+        &self,
+        source: &Path,
+    ) -> Result<(BuildAndFlatOutput, String), Box<PhoundryError>> {
+        foundry_cli::utils::load_dotenv();
+        let source =
+            foundry_compilers::utils::canonicalize(source).map_err(std::io::Error::from)?;
+        let build = crate::compile::compile_target(self.build_opts(), Some(&source))?;
+        let (id, artifact) = build
+            .artifact_ids()
+            .find(|(id, _)| id.source == source && id.name == self.assertion_contract)
+            .ok_or_else(|| PhoundryError::ContractNotFound(self.assertion_contract.clone()))?;
+        let input = build
+            .output()
+            .build_infos
+            .iter()
+            .find(|info| info.id == id.build_id)
+            .and_then(|info| info.build_info.get("input"))
+            .ok_or(PhoundryError::InvalidForgeOutput(
+                "Missing release compiler input",
+            ))?;
+        // Build info also contains Foundry's local CLI options, which solc does not accept.
+        let input = SolcInput::deserialize(input)
+            .map_err(|_| PhoundryError::InvalidForgeOutput("Invalid Solidity compiler input"))?;
+        let compiler_input = serde_json::to_string(&input)
+            .map_err(|_| PhoundryError::InvalidForgeOutput("Failed to serialize compiler input"))?;
+        Ok((self.output(artifact)?, compiler_input))
+    }
+
+    fn output(
+        &self,
+        artifact: &ConfigurableContractArtifact,
+    ) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
         let abi = artifact.abi.clone().ok_or_else(|| {
             PhoundryError::InvalidForgeOutput("Failed to parse ABI from artifact")
         })?;
@@ -249,18 +292,15 @@ impl BuildAndFlattenArgs {
         Ok(output)
     }
 
-    /// Builds the project and returns the compilation output.
-    fn build(&self) -> Result<ProjectCompileOutput, Box<PhoundryError>> {
-        let build_opts = BuildOpts {
+    fn build_opts(&self) -> BuildOpts {
+        BuildOpts {
             project_paths: ProjectPathOpts {
                 root: self.root.clone(),
                 contracts: Some(self.contracts.clone()),
                 ..Default::default()
             },
             ..Default::default()
-        };
-
-        crate::compile::compile(build_opts)
+        }
     }
 
     /// Flattens the contract source code.
@@ -421,19 +461,57 @@ contract TestContract {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_build_and_flatten_integration() {
+    async fn release_input_rebuilds_the_selected_artifact_with_only_its_imports() {
         let (_temp_dir, project_root) = setup_test_project();
-
+        fs::write(
+            project_root.join("foundry.toml"),
+            r#"
+[profile.default]
+solc = "0.8.28"
+via_ir = true
+optimizer = true
+optimizer_runs = 731
+bytecode_hash = "ipfs"
+[profile.default.optimizer_details]
+cse = false
+"#,
+        )
+        .unwrap();
+        let target = project_root.join("src/Vault.sol");
+        fs::write(
+            &target,
+            r#"// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+import {TestContract} from "./TestContract.sol";
+contract Vault is TestContract {}"#,
+        )
+        .unwrap();
+        fs::write(
+            project_root.join("src/Other.sol"),
+            "pragma solidity 0.8.28; contract Vault { /* unrelated */ }",
+        )
+        .unwrap();
         let args = BuildAndFlattenArgs {
             root: Some(project_root),
-            assertion_contract: "TestContract".to_string(),
-            contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
+            assertion_contract: "Vault".to_string(),
+            contracts: PathBuf::from("src"),
         };
-
-        let result = args.run();
-
-        // The actual result will depend on the test environment
-        // In a real test, we would verify the output
-        assert!(result.is_ok() || result.is_err());
+        let (artifact, json) = args.run_for_release(&target).unwrap();
+        assert_eq!(artifact.compilation_target, "src/Vault.sol");
+        let input: Value = serde_json::from_str(&json).unwrap();
+        let sources = input["sources"].as_object().unwrap();
+        assert_eq!(sources.len(), 2);
+        assert!(sources.contains_key("src/TestContract.sol"));
+        assert!(sources.contains_key(&artifact.compilation_target));
+        assert_eq!(input["settings"]["viaIR"], true);
+        assert_eq!(input["settings"]["optimizer"]["details"]["cse"], false);
+        let version = artifact.compiler_version_short().unwrap().parse().unwrap();
+        let solc = foundry_compilers::solc::Solc::find_or_install(&version).unwrap();
+        let rebuilt: Value = solc.compile_as(&input).unwrap();
+        let bytes = rebuilt["contracts"][&artifact.compilation_target]["Vault"]["evm"]["bytecode"]
+            ["object"]
+            .as_str()
+            .unwrap();
+        assert_eq!(artifact.bytecode, format!("0x{bytes}"));
     }
 }

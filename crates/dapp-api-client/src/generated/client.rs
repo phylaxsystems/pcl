@@ -769,6 +769,16 @@ pub mod types {
     ///                  "type": "string",
     ///                  "pattern": "^0x[a-fA-F0-9]+$"
     ///                },
+    ///                "compilerInput": {
+    ///                  "description": "JSON text of the original Solidity standard-JSON compiler input. Every source must be inline `content`; `urls` are rejected.",
+    ///                  "type": "string",
+    ///                  "minLength": 1
+    ///                },
+    ///                "compilerSourcePath": {
+    ///                  "description": "Exact `compilerInput.sources` key of the compiled contract, as in the metadata compilationTarget.",
+    ///                  "type": "string",
+    ///                  "minLength": 1
+    ///                },
     ///                "compilerVersion": {
     ///                  "type": "string",
     ///                  "minLength": 1
@@ -976,6 +986,16 @@ pub mod types {
     ///            "type": "string",
     ///            "pattern": "^0x[a-fA-F0-9]+$"
     ///          },
+    ///          "compilerInput": {
+    ///            "description": "JSON text of the original Solidity standard-JSON compiler input. Every source must be inline `content`; `urls` are rejected.",
+    ///            "type": "string",
+    ///            "minLength": 1
+    ///          },
+    ///          "compilerSourcePath": {
+    ///            "description": "Exact `compilerInput.sources` key of the compiled contract, as in the metadata compilationTarget.",
+    ///            "type": "string",
+    ///            "minLength": 1
+    ///          },
     ///          "compilerVersion": {
     ///            "type": "string",
     ///            "minLength": 1
@@ -1158,6 +1178,16 @@ pub mod types {
     ///      "type": "string",
     ///      "pattern": "^0x[a-fA-F0-9]+$"
     ///    },
+    ///    "compilerInput": {
+    ///      "description": "JSON text of the original Solidity standard-JSON compiler input. Every source must be inline `content`; `urls` are rejected.",
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "compilerSourcePath": {
+    ///      "description": "Exact `compilerInput.sources` key of the compiled contract, as in the metadata compilationTarget.",
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
     ///    "compilerVersion": {
     ///      "type": "string",
     ///      "minLength": 1
@@ -1209,6 +1239,24 @@ pub mod types {
     pub struct ProjectsCreateReleaseBodyContractsValueAssertionsItem {
         pub args: ::std::vec::Vec<::std::string::String>,
         pub bytecode: ProjectsCreateReleaseBodyContractsValueAssertionsItemBytecode,
+        ///JSON text of the original Solidity standard-JSON compiler input. Every source must be inline `content`; `urls` are rejected.
+        #[serde(
+            rename = "compilerInput",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub compiler_input: ::std::option::Option<
+            ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerInput,
+        >,
+        ///Exact `compilerInput.sources` key of the compiled contract, as in the metadata compilationTarget.
+        #[serde(
+            rename = "compilerSourcePath",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub compiler_source_path: ::std::option::Option<
+            ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerSourcePath,
+        >,
         #[serde(rename = "compilerVersion")]
         pub compiler_version: ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerVersion,
         #[serde(
@@ -1334,6 +1382,194 @@ pub mod types {
     }
     impl<'de> ::serde::Deserialize<'de>
     for ProjectsCreateReleaseBodyContractsValueAssertionsItemBytecode {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///JSON text of the original Solidity standard-JSON compiler input. Every source must be inline `content`; `urls` are rejected.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "JSON text of the original Solidity standard-JSON compiler input. Every source must be inline `content`; `urls` are rejected.",
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerInput(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerInput {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerInput,
+    > for ::std::string::String {
+        fn from(
+            value: ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerInput,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerInput,
+    > for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerInput {
+        fn from(
+            value: &ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerInput,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerInput {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerInput {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerInput {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerInput {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerInput {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///Exact `compilerInput.sources` key of the compiled contract, as in the metadata compilationTarget.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Exact `compilerInput.sources` key of the compiled contract, as in the metadata compilationTarget.",
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerSourcePath(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerSourcePath,
+    > for ::std::string::String {
+        fn from(
+            value: ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerSourcePath,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerSourcePath,
+    > for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
+        fn from(
+            value: &ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerSourcePath,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for ProjectsCreateReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
         fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
         where
             D: ::serde::Deserializer<'de>,
@@ -7191,6 +7427,16 @@ pub mod types {
     ///                  "type": "string",
     ///                  "pattern": "^0x[a-fA-F0-9]+$"
     ///                },
+    ///                "compilerInput": {
+    ///                  "description": "JSON text of the original Solidity standard-JSON compiler input. Every source must be inline `content`; `urls` are rejected.",
+    ///                  "type": "string",
+    ///                  "minLength": 1
+    ///                },
+    ///                "compilerSourcePath": {
+    ///                  "description": "Exact `compilerInput.sources` key of the compiled contract, as in the metadata compilationTarget.",
+    ///                  "type": "string",
+    ///                  "minLength": 1
+    ///                },
     ///                "compilerVersion": {
     ///                  "type": "string",
     ///                  "minLength": 1
@@ -7399,6 +7645,16 @@ pub mod types {
     ///            "type": "string",
     ///            "pattern": "^0x[a-fA-F0-9]+$"
     ///          },
+    ///          "compilerInput": {
+    ///            "description": "JSON text of the original Solidity standard-JSON compiler input. Every source must be inline `content`; `urls` are rejected.",
+    ///            "type": "string",
+    ///            "minLength": 1
+    ///          },
+    ///          "compilerSourcePath": {
+    ///            "description": "Exact `compilerInput.sources` key of the compiled contract, as in the metadata compilationTarget.",
+    ///            "type": "string",
+    ///            "minLength": 1
+    ///          },
     ///          "compilerVersion": {
     ///            "type": "string",
     ///            "minLength": 1
@@ -7581,6 +7837,16 @@ pub mod types {
     ///      "type": "string",
     ///      "pattern": "^0x[a-fA-F0-9]+$"
     ///    },
+    ///    "compilerInput": {
+    ///      "description": "JSON text of the original Solidity standard-JSON compiler input. Every source must be inline `content`; `urls` are rejected.",
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "compilerSourcePath": {
+    ///      "description": "Exact `compilerInput.sources` key of the compiled contract, as in the metadata compilationTarget.",
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
     ///    "compilerVersion": {
     ///      "type": "string",
     ///      "minLength": 1
@@ -7632,6 +7898,24 @@ pub mod types {
     pub struct ProjectsPreviewReleaseBodyContractsValueAssertionsItem {
         pub args: ::std::vec::Vec<::std::string::String>,
         pub bytecode: ProjectsPreviewReleaseBodyContractsValueAssertionsItemBytecode,
+        ///JSON text of the original Solidity standard-JSON compiler input. Every source must be inline `content`; `urls` are rejected.
+        #[serde(
+            rename = "compilerInput",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub compiler_input: ::std::option::Option<
+            ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerInput,
+        >,
+        ///Exact `compilerInput.sources` key of the compiled contract, as in the metadata compilationTarget.
+        #[serde(
+            rename = "compilerSourcePath",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub compiler_source_path: ::std::option::Option<
+            ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerSourcePath,
+        >,
         #[serde(rename = "compilerVersion")]
         pub compiler_version: ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerVersion,
         #[serde(
@@ -7757,6 +8041,194 @@ pub mod types {
     }
     impl<'de> ::serde::Deserialize<'de>
     for ProjectsPreviewReleaseBodyContractsValueAssertionsItemBytecode {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///JSON text of the original Solidity standard-JSON compiler input. Every source must be inline `content`; `urls` are rejected.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "JSON text of the original Solidity standard-JSON compiler input. Every source must be inline `content`; `urls` are rejected.",
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerInput(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerInput {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerInput,
+    > for ::std::string::String {
+        fn from(
+            value: ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerInput,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerInput,
+    > for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerInput {
+        fn from(
+            value: &ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerInput,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerInput {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerInput {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerInput {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerInput {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerInput {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///Exact `compilerInput.sources` key of the compiled contract, as in the metadata compilationTarget.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Exact `compilerInput.sources` key of the compiled contract, as in the metadata compilationTarget.",
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerSourcePath(
+        ::std::string::String,
+    );
+    impl ::std::ops::Deref
+    for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<
+        ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerSourcePath,
+    > for ::std::string::String {
+        fn from(
+            value: ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerSourcePath,
+        ) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<
+        &ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerSourcePath,
+    > for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
+        fn from(
+            value: &ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerSourcePath,
+        ) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr
+    for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str>
+    for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String>
+    for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String>
+    for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de>
+    for ProjectsPreviewReleaseBodyContractsValueAssertionsItemCompilerSourcePath {
         fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
         where
             D: ::serde::Deserializer<'de>,
@@ -14713,7 +15185,6 @@ pub mod types {
     ///          "items": {
     ///            "type": "object",
     ///            "required": [
-    ///              "id",
     ///              "network",
     ///              "referenceId",
     ///              "timestamp",
@@ -14811,7 +15282,6 @@ pub mod types {
     ///      "items": {
     ///        "type": "object",
     ///        "required": [
-    ///          "id",
     ///          "network",
     ///          "referenceId",
     ///          "timestamp",
@@ -14902,7 +15372,6 @@ pub mod types {
     ///{
     ///  "type": "object",
     ///  "required": [
-    ///    "id",
     ///    "network",
     ///    "referenceId",
     ///    "timestamp",
@@ -14942,7 +15411,8 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct ViewsPublicInvalidationsGetPublicInvalidationsResponseDataItemsItem {
-        pub id: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub id: ::std::option::Option<::std::string::String>,
         pub network: ViewsPublicInvalidationsGetPublicInvalidationsResponseDataItemsItemNetwork,
         #[serde(rename = "referenceId")]
         pub reference_id: ::std::string::String,
@@ -15307,6 +15777,86 @@ pub mod types {
             ViewsPublicInvalidationsGetPublicInvalidationsSort::Desc
         }
     }
+    ///`WebAuthLogoutAuthorization`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "pattern": "^Bearer .+$"
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct WebAuthLogoutAuthorization(::std::string::String);
+    impl ::std::ops::Deref for WebAuthLogoutAuthorization {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<WebAuthLogoutAuthorization> for ::std::string::String {
+        fn from(value: WebAuthLogoutAuthorization) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<&WebAuthLogoutAuthorization>
+    for WebAuthLogoutAuthorization {
+        fn from(value: &WebAuthLogoutAuthorization) -> Self {
+            value.clone()
+        }
+    }
+    impl ::std::str::FromStr for WebAuthLogoutAuthorization {
+        type Err = self::error::ConversionError;
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            static PATTERN: ::std::sync::LazyLock<::regress::Regex> = ::std::sync::LazyLock::new(||
+            { ::regress::Regex::new("^Bearer .+$").unwrap() });
+            if PATTERN.find(value).is_none() {
+                return Err("doesn't match pattern \"^Bearer .+$\"".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for WebAuthLogoutAuthorization {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for WebAuthLogoutAuthorization {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for WebAuthLogoutAuthorization {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for WebAuthLogoutAuthorization {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
     ///`WebAuthLogoutResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -15374,7 +15924,7 @@ No Authorization header is needed when using cookie authentication.
 - Required Authorization headers indicate CLI-only endpoints
 - The authentication middleware automatically detects and validates the appropriate method
 
-Version: 24.0.0*/
+Version: 27.2.0*/
 pub struct Client {
     pub(crate) baseurl: String,
     pub(crate) client: reqwest::Client,
@@ -15410,7 +15960,7 @@ impl Client {
 }
 impl ClientInfo<()> for Client {
     fn api_version() -> &'static str {
-        "24.0.0"
+        "27.2.0"
     }
     fn baseurl(&self) -> &str {
         self.baseurl.as_str()
@@ -15519,15 +16069,18 @@ Sends a `GET` request to `/cli/auth/code`
         let response = result?;
         match response.status().as_u16() {
             200u16 => ResponseValue::from_response(response).await,
+            429u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
             500u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }
             _ => Err(Error::UnexpectedResponse(response)),
         }
     }
-    /**Check OTP status
+    /**Check OTP status with a query secret
 
-Check the status of an OTP request and get tokens if verified
+Deprecated. Released CLIs still poll with session_id and device_secret in the query string. New clients POST /status and send those fields in the JSON body. Responses use Cache-Control: private, no-store.
 
 Sends a `GET` request to `/cli/auth/status`
 
@@ -16241,9 +16794,9 @@ Sends a `GET` request to `/views/projects/{projectId}/invalidations`
             _ => Err(Error::UnexpectedResponse(response)),
         }
     }
-    /**Get public invalidations (view endpoint)
+    /**List public invalidated transactions
 
-View endpoint returning paginated public invalidations with data-layer metadata
+Paginated production enforcer transactions. Each row is identified only by that transaction's public reference. Staging and simulation transactions are omitted.
 
 Sends a `GET` request to `/views/public/invalidations`
 
@@ -16299,24 +16852,29 @@ Sends a `GET` request to `/views/public/invalidations`
     }
     /**Logout user
 
-Clear user session and invalidate tokens
+Clear browser session cookies and revoke the app-issued session named by the bearer token. Returns 401 when an app-issued bearer cannot be verified, because its session was not revoked.
 
 Sends a `POST` request to `/web/auth/logout`
 
 Arguments:
+- `authorization`
 - `body`: Body
 */
     pub async fn web_auth_logout<'a>(
         &'a self,
+        authorization: Option<&'a types::WebAuthLogoutAuthorization>,
         body: &'a ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     ) -> Result<ResponseValue<types::WebAuthLogoutResponse>, Error<types::ApiError>> {
         let url = format!("{}/web/auth/logout", self.baseurl,);
-        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
         header_map
             .append(
                 ::reqwest::header::HeaderName::from_static("api-version"),
                 ::reqwest::header::HeaderValue::from_static(Self::api_version()),
             );
+        if let Some(value) = authorization {
+            header_map.append("authorization", value.to_string().try_into()?);
+        }
         #[allow(unused_mut)]
         let mut request = self
             .client
@@ -16337,6 +16895,9 @@ Arguments:
         let response = result?;
         match response.status().as_u16() {
             200u16 => ResponseValue::from_response(response).await,
+            401u16 => {
+                Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
+            }
             500u16 => {
                 Err(Error::ErrorResponse(ResponseValue::from_response(response).await?))
             }

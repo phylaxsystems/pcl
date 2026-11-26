@@ -404,17 +404,18 @@ impl ApplyArgs {
                         assertion_contract: assertion_contract_name(&assertion.file)?,
                         contracts: assertion_contracts_dir(&assertion.file),
                     }
-                    .run()
+                    .run_for_release(&root.join(assertion_source_file(&assertion.file)))
                     .map_err(ApplyError::BuildFailed)?;
                     built_assertions.insert(build_key.clone(), output);
                 }
 
-                let built = built_assertions.get(&build_key).ok_or_else(|| {
-                    ApplyError::InvalidConfig(format!(
-                        "Missing build output for assertion file {}",
-                        assertion.file
-                    ))
-                })?;
+                let (built, compiler_input) =
+                    built_assertions.get(&build_key).ok_or_else(|| {
+                        ApplyError::InvalidConfig(format!(
+                            "Missing build output for assertion file {}",
+                            assertion.file
+                        ))
+                    })?;
 
                 let contract_name = assertion_contract_name(&assertion.file)?;
 
@@ -427,7 +428,12 @@ impl ApplyArgs {
                     verification_inputs.push((display_name, deployment_bytecode));
                 }
 
-                assertions.push(build_assertion_item(assertion, built, &contract_name)?);
+                assertions.push(build_assertion_item(
+                    assertion,
+                    built,
+                    &contract_name,
+                    compiler_input,
+                )?);
             }
 
             let contract_value = build_contract_value(contract, assertions)?;
@@ -597,8 +603,7 @@ where
 }
 
 fn assertion_contracts_dir(file: &str) -> PathBuf {
-    let source_path = file.split_once(':').map_or(file, |(path, _)| path);
-    Path::new(source_path)
+    assertion_source_file(file)
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .map_or_else(
@@ -607,10 +612,15 @@ fn assertion_contracts_dir(file: &str) -> PathBuf {
         )
 }
 
+fn assertion_source_file(file: &str) -> &Path {
+    Path::new(file.rsplit_once(':').map_or(file, |(path, _)| path))
+}
+
 fn build_assertion_item(
     assertion: &crate::credible_config::CredibleAssertion,
     built: &pcl_phoundry::build_and_flatten::BuildAndFlatOutput,
     contract_name: &str,
+    compiler_input: &str,
 ) -> Result<ProjectsCreateReleaseBodyContractsValueAssertionsItem, ApplyError> {
     let constructor_abi_signature = abi::build_signature(&built.abi, &assertion.args)?;
 
@@ -623,6 +633,11 @@ fn build_assertion_item(
         )?),
         bytecode: parse_field(&built.bytecode, "bytecode")?,
         flattened_source: parse_field(&built.flattened_source, "flattened source")?,
+        compiler_input: Some(parse_field(compiler_input, "compiler input")?),
+        compiler_source_path: Some(parse_field(
+            &built.compilation_target,
+            "compiler source path",
+        )?),
         compiler_version: parse_field(&built.compiler_version, "compiler version")?,
         contract_name: parse_field(contract_name, "contract name")?,
         evm_version: parse_field(&built.evm_version, "evm version")?,
@@ -785,6 +800,7 @@ mod tests {
     fn make_built(abi: JsonAbi) -> BuildAndFlatOutput {
         BuildAndFlatOutput {
             compiler_version: "v0.8.28+commit.7893614a".to_string(),
+            compilation_target: "src/A.a.sol".into(),
             flattened_source: "// SPDX\ncontract A {}".to_string(),
             abi,
             bytecode: "0x6080".to_string(),
@@ -816,7 +832,8 @@ mod tests {
             args: vec!["0xF31b02F47596AcC7328E9fb04aFc52Fe91Da6071".to_string()],
         };
 
-        let item = build_assertion_item(&assertion, &built, "A").expect("builds item");
+        let item = build_assertion_item(&assertion, &built, "A", r#"{"language":"Solidity"}"#)
+            .expect("builds item");
 
         let sig = item
             .constructor_abi_signature
@@ -824,6 +841,12 @@ mod tests {
             .expect("signature is forwarded");
         assert_eq!(sig.as_str(), "constructor(address)");
         assert_eq!(item.args, assertion.args);
+        let wire = serde_json::to_value(item).unwrap();
+        assert_eq!(wire["compilerInput"], r#"{"language":"Solidity"}"#);
+        assert_eq!(wire["compilerSourcePath"], "src/A.a.sol");
+        let preview: dapp_api_client::generated::client::types::ProjectsPreviewReleaseBodyContractsValueAssertionsItem =
+            serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(preview).unwrap(), wire);
     }
 
     #[test]
@@ -834,7 +857,8 @@ mod tests {
             args: vec![],
         };
 
-        let item = build_assertion_item(&assertion, &built, "A").expect("builds item");
+        let item = build_assertion_item(&assertion, &built, "A", r#"{"language":"Solidity"}"#)
+            .expect("builds item");
 
         let sig = item
             .constructor_abi_signature
