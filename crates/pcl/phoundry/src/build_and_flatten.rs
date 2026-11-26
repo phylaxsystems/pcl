@@ -10,24 +10,31 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use foundry_compilers::{
-    artifacts::{
-        ConfigurableContractArtifact,
-        SolcInput,
-    },
+    Graph,
+    Project,
+    ProjectCompileOutput,
+    artifacts::ConfigurableContractArtifact,
     flatten::{
         Flattener,
         FlattenerError,
     },
     info::ContractInfo,
-    solc::SolcLanguage,
+    multi::MultiCompilerParser,
+    solc::{
+        Solc,
+        SolcLanguage,
+    },
 };
 
 use alloy_json_abi::JsonAbi;
-use serde::Deserialize;
 use serde_json::Value;
 
 use foundry_compilers::artifacts::BytecodeHash;
-use foundry_config::find_project_root;
+use foundry_config::{
+    Config,
+    SolcReq,
+    find_project_root,
+};
 use std::{
     collections::HashMap,
     path::{
@@ -67,6 +74,8 @@ pub struct BuildAndFlatOutput {
     pub libraries: HashMap<String, String>,
     /// Source path used as the compilation target
     pub compilation_target: String,
+    /// Standard JSON input that reproduces `bytecode`, set by [`BuildAndFlattenArgs::run_for_release`]
+    pub compiler_input: Option<String>,
 }
 
 impl BuildAndFlatOutput {
@@ -97,6 +106,7 @@ impl BuildAndFlatOutput {
             remappings,
             libraries,
             compilation_target,
+            compiler_input: None,
         }
     }
 
@@ -152,6 +162,11 @@ pub struct BuildAndFlattenArgs {
         help = "Directory containing assertion contracts"
     )]
     pub contracts: PathBuf,
+
+    /// Assertion source file, relative to root unless absolute. When set, the artifact is
+    /// selected by file and contract name instead of contract name alone.
+    #[clap(skip)]
+    pub source: Option<PathBuf>,
 }
 
 impl BuildAndFlattenArgs {
@@ -163,45 +178,173 @@ impl BuildAndFlattenArgs {
     /// - `Err(PhoundryError)` if any step in the process fails
     pub fn run(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
         foundry_cli::utils::load_dotenv();
-
         let build = crate::compile::compile(self.build_opts())?;
-        let info = ContractInfo::new(&self.assertion_contract);
-
-        // Find the contract artifact
-        let artifact = build
-            .find_contract(info)
-            .ok_or_else(|| PhoundryError::ContractNotFound(self.assertion_contract.clone()))?;
-        self.output(artifact)
+        self.output(self.select(&build)?)
     }
 
-    /// Captures the exact compiler input for a release, restricted to its assertion and imports.
-    pub fn run_for_release(
-        &self,
-        source: &Path,
-    ) -> Result<(BuildAndFlatOutput, String), Box<PhoundryError>> {
+    /// Like [`Self::run`], plus the standard JSON input that reproduces the selected artifact
+    /// from only the sources it was compiled from.
+    pub fn run_for_release(&self) -> Result<BuildAndFlatOutput, Box<PhoundryError>> {
         foundry_cli::utils::load_dotenv();
-        let source =
-            foundry_compilers::utils::canonicalize(source).map_err(std::io::Error::from)?;
-        let build = crate::compile::compile_target(self.build_opts(), Some(&source))?;
-        let (id, artifact) = build
+        let build = crate::compile::compile(self.build_opts())?;
+        let artifact = self.select(&build)?;
+        let mut output = self.output(artifact)?;
+        output.compiler_input = Some(self.release_input(artifact, &output)?);
+        Ok(output)
+    }
+
+    /// Selects the artifact by file and contract name when `source` is set, else by name.
+    fn select<'a>(
+        &self,
+        build: &'a ProjectCompileOutput,
+    ) -> Result<&'a ConfigurableContractArtifact, Box<PhoundryError>> {
+        let name = &self.assertion_contract;
+        let Some(source) = &self.source else {
+            return build
+                .find_contract(ContractInfo::new(name))
+                .ok_or_else(|| PhoundryError::ContractNotFound(name.clone()).into());
+        };
+        // A bare file name lives in the contracts directory.
+        let path = if source.parent().is_some_and(|p| !p.as_os_str().is_empty()) {
+            self.project_root()?.join(source)
+        } else {
+            self.project_root()?.join(&self.contracts).join(source)
+        };
+        let exact = foundry_compilers::utils::canonicalize(&path).ok();
+        let mut matches: Vec<_> = build
             .artifact_ids()
-            .find(|(id, _)| id.source == source && id.name == self.assertion_contract)
-            .ok_or_else(|| PhoundryError::ContractNotFound(self.assertion_contract.clone()))?;
-        let input = build
-            .output()
-            .build_infos
+            .filter(|(id, _)| &id.name == name)
+            .map(|(id, artifact)| (id.source, artifact))
+            .collect();
+        if let Some((_, artifact)) = matches
             .iter()
-            .find(|info| info.id == id.build_id)
-            .and_then(|info| info.build_info.get("input"))
-            .ok_or(PhoundryError::InvalidForgeOutput(
-                "Missing release compiler input",
-            ))?;
-        // Build info also contains Foundry's local CLI options, which solc does not accept.
-        let input = SolcInput::deserialize(input)
-            .map_err(|_| PhoundryError::InvalidForgeOutput("Invalid Solidity compiler input"))?;
-        let compiler_input = serde_json::to_string(&input)
-            .map_err(|_| PhoundryError::InvalidForgeOutput("Failed to serialize compiler input"))?;
-        Ok((self.output(artifact)?, compiler_input))
+            .find(|(file, _)| Some(file) == exact.as_ref())
+        {
+            return Ok(artifact);
+        }
+        // Entries naming a missing or different file built by contract name before file
+        // matching; keep that when exactly one file declares the contract.
+        matches.sort_by(|a, b| a.0.cmp(&b.0));
+        matches.dedup_by(|a, b| a.0 == b.0);
+        match matches.as_slice() {
+            [(_, artifact)] => Ok(artifact),
+            [] => {
+                Err(Box::new(PhoundryError::AssertionNotFound {
+                    path,
+                    contract: name.clone(),
+                }))
+            }
+            many => {
+                Err(Box::new(PhoundryError::AmbiguousAssertion {
+                    path,
+                    contract: name.clone(),
+                    candidates: many.iter().map(|(file, _)| file.clone()).collect(),
+                }))
+            }
+        }
+    }
+
+    /// Rebuilds the standard JSON input from the artifact's own metadata: its settings and
+    /// exactly the sources it was compiled from. Recompiles that input in isolation and
+    /// requires the same bytecode, so the input never depends on files it does not carry.
+    fn release_input(
+        &self,
+        artifact: &ConfigurableContractArtifact,
+        output: &BuildAndFlatOutput,
+    ) -> Result<String, Box<PhoundryError>> {
+        let not_reproducible = |reason: String| {
+            Box::new(PhoundryError::ReleaseInputNotReproducible {
+                contract: format!("{}:{}", output.compilation_target, self.assertion_contract),
+                reason,
+            })
+        };
+        let metadata: Value = artifact
+            .raw_metadata
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| not_reproducible(format!("invalid contract metadata: {e}")))?
+            .ok_or_else(|| not_reproducible("missing contract metadata".into()))?;
+        let config = self.build_opts().load_config()?;
+        let project = config.project().map_err(PhoundryError::SolcError)?;
+
+        let mut sources = serde_json::Map::new();
+        let mut include_paths = None;
+        for (name, source) in metadata["sources"].as_object().into_iter().flatten() {
+            let content = if let Some(content) = source["content"].as_str() {
+                content.to_string()
+            } else {
+                let hash = source["keccak256"].as_str().unwrap_or_default();
+                // solc names sources by import path; Foundry reads them from the root, then
+                // its include paths. Only resolve the import graph when the root misses.
+                read_source(&project.paths.root, name, hash)
+                    .or_else(|| {
+                        include_paths
+                            .get_or_insert_with(|| solc_include_paths(&project))
+                            .iter()
+                            .find_map(|dir| read_source(dir, name, hash))
+                    })
+                    .ok_or_else(|| {
+                        not_reproducible(format!(
+                            "source {name} no longer matches the build; rebuild and retry"
+                        ))
+                    })?
+            };
+            sources.insert(name.clone(), serde_json::json!({ "content": content }));
+        }
+
+        let mut settings = metadata["settings"]
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        settings.remove("compilationTarget");
+        // Metadata keys libraries as `file:Library`; standard JSON nests them by file.
+        if let Some(Value::Object(libraries)) = settings.remove("libraries") {
+            let mut nested = serde_json::Map::new();
+            for (key, address) in libraries {
+                let (file, library) = key.rsplit_once(':').unwrap_or(("", &key));
+                nested
+                    .entry(file)
+                    .or_insert_with(|| Value::Object(serde_json::Map::new()))
+                    .as_object_mut()
+                    .map(|libs| libs.insert(library.to_string(), address));
+            }
+            settings.insert("libraries".into(), Value::Object(nested));
+        }
+        settings.insert(
+            "outputSelection".into(),
+            serde_json::json!({ "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object", "metadata"] } }),
+        );
+        let input = serde_json::json!({
+            "language": metadata["language"],
+            "sources": sources,
+            "settings": settings,
+        });
+
+        let rebuilt = recompile_isolated(&config, output, &input).map_err(not_reproducible)?;
+        let rebuilt = rebuilt["contracts"][&output.compilation_target][&self.assertion_contract]
+            ["evm"]["bytecode"]["object"]
+            .as_str()
+            .map(|bytes| format!("0x{}", bytes.trim_start_matches("0x")));
+        if rebuilt.as_deref() != Some(output.bytecode.as_str()) {
+            return Err(not_reproducible(
+                "solc emits different bytecode from only the assertion's sources; move the \
+                 assertion into its own directory and point its credible.toml file there"
+                    .into(),
+            ));
+        }
+        serde_json::to_string(&input)
+            .map_err(|e| not_reproducible(format!("failed to serialize compiler input: {e}")))
+    }
+
+    fn project_root(&self) -> Result<PathBuf, Box<PhoundryError>> {
+        match &self.root {
+            Some(root) => Ok(root.clone()),
+            None => {
+                find_project_root(None)
+                    .map_err(|_| Box::new(PhoundryError::DirectoryNotFound(PathBuf::from("."))))
+            }
+        }
     }
 
     fn output(
@@ -240,14 +383,7 @@ impl BuildAndFlattenArgs {
             .ok_or_else(|| PhoundryError::ContractNotFound(self.assertion_contract.clone()))?;
 
         // Determine the full path to the contract
-        let path = match &self.root {
-            Some(root) => root.join(rel_source_path),
-            None => {
-                find_project_root(None)
-                    .map_err(|_| PhoundryError::DirectoryNotFound(PathBuf::from(".")))?
-                    .join(rel_source_path)
-            }
-        };
+        let path = self.project_root()?.join(rel_source_path);
 
         // Flatten the contract
         let flattened = self.flatten(&path)?;
@@ -340,6 +476,59 @@ impl BuildAndFlattenArgs {
     }
 }
 
+/// Reads `dir/name` when its keccak256 matches the hash the compiler recorded for it.
+fn read_source(dir: &Path, name: &str, keccak256: &str) -> Option<String> {
+    let content = std::fs::read_to_string(dir.join(name)).ok()?;
+    (alloy_primitives::keccak256(content.as_bytes()).to_string() == keccak256).then_some(content)
+}
+
+/// Configured include paths plus the library roots Foundry adds while resolving imports.
+fn solc_include_paths(project: &Project) -> Vec<PathBuf> {
+    let mut paths: Vec<_> = project.paths.include_paths.iter().cloned().collect();
+    if let Ok(graph) = Graph::<MultiCompilerParser>::resolve(&project.paths) {
+        paths.extend(graph.into_sources().1.include_paths().iter().cloned());
+    }
+    paths
+}
+
+/// Compiles `input` with the build's solc, rooted in an empty directory so solc cannot read
+/// any file the input does not carry.
+fn recompile_isolated(
+    config: &Config,
+    output: &BuildAndFlatOutput,
+    input: &Value,
+) -> Result<Value, String> {
+    let version = output
+        .compiler_version_short()
+        .map_err(|e| e.to_string())?
+        .parse()
+        .map_err(|e| format!("invalid solc version: {e}"))?;
+    let mut solc = match &config.solc {
+        Some(SolcReq::Local(path)) => Solc::new(path).map_err(|e| e.to_string())?,
+        _ => {
+            Solc::find_svm_installed_version(&version)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("solc {version} is not installed"))?
+        }
+    };
+    let sandbox = tempfile::tempdir().map_err(|e| e.to_string())?;
+    solc.base_path = Some(sandbox.path().to_path_buf());
+    let rebuilt: Value = solc.compile_as(input).map_err(|e| e.to_string())?;
+    if let Some(error) = rebuilt["errors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|error| error["severity"] == "error")
+    {
+        let message = error["formattedMessage"]
+            .as_str()
+            .or_else(|| error["message"].as_str())
+            .unwrap_or_default();
+        return Err(format!("solc rejects the input on its own: {message}"));
+    }
+    Ok(rebuilt)
+}
+
 fn extract_bytecode<T: serde::Serialize>(bytecode: &T) -> Option<String> {
     let value = serde_json::to_value(bytecode).ok()?;
     value
@@ -410,6 +599,7 @@ contract TestContract {
             root: None,
             assertion_contract: "TestContract".to_string(),
             contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
+            source: None,
         };
 
         assert_eq!(args.assertion_contract, "TestContract");
@@ -460,14 +650,46 @@ contract TestContract {
         assert_eq!(output.compiler_version_short().unwrap(), "0.8.28");
     }
 
+    fn release_args(root: &Path, name: &str, source: Option<&str>) -> BuildAndFlattenArgs {
+        BuildAndFlattenArgs {
+            root: Some(root.to_path_buf()),
+            assertion_contract: name.to_string(),
+            contracts: PathBuf::from("src"),
+            source: source.map(PathBuf::from),
+        }
+    }
+
+    /// Compiles `input` with no readable files, as a verifier holding only the input would.
+    fn recompile_alone(output: &BuildAndFlatOutput, name: &str) -> String {
+        let input: Value = serde_json::from_str(output.compiler_input.as_deref().unwrap()).unwrap();
+        let version = output.compiler_version_short().unwrap().parse().unwrap();
+        let mut solc = Solc::find_or_install(&version).unwrap();
+        let empty = TempDir::new().unwrap();
+        solc.base_path = Some(empty.path().to_path_buf());
+        let rebuilt: Value = solc.compile_as(&input).unwrap();
+        let bytes =
+            rebuilt["contracts"][&output.compilation_target][name]["evm"]["bytecode"]["object"]
+                .as_str()
+                .unwrap_or_else(|| panic!("no bytecode: {rebuilt}"));
+        format!("0x{bytes}")
+    }
+
+    fn write(root: &Path, path: &str, content: &str) {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn release_input_rebuilds_the_selected_artifact_with_only_its_imports() {
         let (_temp_dir, project_root) = setup_test_project();
-        fs::write(
-            project_root.join("foundry.toml"),
+        write(
+            &project_root,
+            "foundry.toml",
             r#"
 [profile.default]
 solc = "0.8.28"
+offline = true
 via_ir = true
 optimizer = true
 optimizer_runs = 731
@@ -475,43 +697,206 @@ bytecode_hash = "ipfs"
 [profile.default.optimizer_details]
 cse = false
 "#,
-        )
-        .unwrap();
-        let target = project_root.join("src/Vault.sol");
-        fs::write(
-            &target,
+        );
+        write(
+            &project_root,
+            "src/Vault.sol",
             r#"// SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 import {TestContract} from "./TestContract.sol";
 contract Vault is TestContract {}"#,
-        )
-        .unwrap();
-        fs::write(
-            project_root.join("src/Other.sol"),
-            "pragma solidity 0.8.28; contract Vault { /* unrelated */ }",
-        )
-        .unwrap();
-        let args = BuildAndFlattenArgs {
-            root: Some(project_root),
-            assertion_contract: "Vault".to_string(),
-            contracts: PathBuf::from("src"),
-        };
-        let (artifact, json) = args.run_for_release(&target).unwrap();
-        assert_eq!(artifact.compilation_target, "src/Vault.sol");
-        let input: Value = serde_json::from_str(&json).unwrap();
-        let sources = input["sources"].as_object().unwrap();
-        assert_eq!(sources.len(), 2);
-        assert!(sources.contains_key("src/TestContract.sol"));
-        assert!(sources.contains_key(&artifact.compilation_target));
-        assert_eq!(input["settings"]["viaIR"], true);
-        assert_eq!(input["settings"]["optimizer"]["details"]["cse"], false);
-        let version = artifact.compiler_version_short().unwrap().parse().unwrap();
-        let solc = foundry_compilers::solc::Solc::find_or_install(&version).unwrap();
-        let rebuilt: Value = solc.compile_as(&input).unwrap();
-        let bytes = rebuilt["contracts"][&artifact.compilation_target]["Vault"]["evm"]["bytecode"]
-            ["object"]
-            .as_str()
+        );
+        // Sorts first and shares the name, so name-only lookup would pick it.
+        write(
+            &project_root,
+            "src/AAA.sol",
+            "pragma solidity 0.8.28; contract Vault { function unrelated() external {} }",
+        );
+        let output = release_args(&project_root, "Vault", Some("src/Vault.sol"))
+            .run_for_release()
             .unwrap();
-        assert_eq!(artifact.bytecode, format!("0x{bytes}"));
+        assert_eq!(output.compilation_target, "src/Vault.sol");
+        let input: Value = serde_json::from_str(output.compiler_input.as_deref().unwrap()).unwrap();
+        let sources = input["sources"].as_object().unwrap();
+        assert_eq!(
+            sources.keys().collect::<Vec<_>>(),
+            ["src/TestContract.sol", "src/Vault.sol"]
+        );
+        assert_eq!(input["settings"]["viaIR"], true);
+        assert_eq!(input["settings"]["optimizer"]["runs"], 731);
+        assert_eq!(input["settings"]["optimizer"]["details"]["cse"], false);
+        assert!(input["settings"].get("compilationTarget").is_none());
+        assert_eq!(recompile_alone(&output, "Vault"), output.bytecode);
+
+        // The regular build path selects the same file, from a warm cache.
+        let verified = release_args(&project_root, "Vault", Some("src/Vault.sol"))
+            .run()
+            .unwrap();
+        assert_eq!(verified.bytecode, output.bytecode);
+        let warm = release_args(&project_root, "Vault", Some("src/Vault.sol"))
+            .run_for_release()
+            .unwrap();
+        assert_eq!(warm.compiler_input, output.compiler_input);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn release_selection_matches_file_and_keeps_legacy_name_lookup() {
+        let (_temp_dir, root) = setup_test_project();
+        write(
+            &root,
+            "foundry.toml",
+            "[profile.default]\nsolc = \"0.8.28\"\noffline = true\n",
+        );
+        write(
+            &root,
+            "src/A.sol",
+            "pragma solidity 0.8.28; contract Dup { uint x; }",
+        );
+        write(
+            &root,
+            "src/B.sol",
+            "pragma solidity 0.8.28; contract Dup { function f() external {} }",
+        );
+        let release =
+            |name: &str, source: &str| release_args(&root, name, Some(source)).run_for_release();
+
+        let qualified = release("Dup", "src/B.sol").unwrap();
+        assert_eq!(qualified.compilation_target, "src/B.sol");
+        // A bare file name resolves in the contracts directory.
+        assert_eq!(
+            release("Dup", "B.sol").unwrap().compilation_target,
+            "src/B.sol"
+        );
+        // A file that does not declare the contract falls back to a unique declaration.
+        assert_eq!(
+            release("TestContract", "src/Missing.sol")
+                .unwrap()
+                .compilation_target,
+            "src/TestContract.sol"
+        );
+        assert!(matches!(
+            *release("Dup", "src/Missing.sol").unwrap_err(),
+            PhoundryError::AmbiguousAssertion { ref candidates, .. } if candidates.len() == 2
+        ));
+        let missing = release("Typo", "src/Typo.sol").unwrap_err();
+        assert!(matches!(*missing, PhoundryError::AssertionNotFound { .. }));
+        assert!(missing.to_string().contains("src/Typo.sol"), "{missing}");
+        // Without a file, lookup stays by name.
+        assert!(release_args(&root, "TestContract", None).run().is_ok());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn release_keeps_the_project_build_compiler_and_errors() {
+        // Offline auto-detection needs 0.8.28 installed; a newer one makes this a regression test.
+        if !Solc::installed_versions()
+            .iter()
+            .any(|v| v.to_string() == "0.8.28")
+        {
+            return;
+        }
+        let (_temp_dir, root) = setup_test_project();
+        write(&root, "foundry.toml", "[profile.default]\noffline = true\n");
+        write(&root, "src/A.sol", "pragma solidity ^0.8.28; contract A {}");
+        write(
+            &root,
+            "src/Pin.sol",
+            "pragma solidity 0.8.28; contract Pin {}",
+        );
+        let output = release_args(&root, "A", Some("src/A.sol"))
+            .run_for_release()
+            .unwrap();
+        // The full project resolves a version every file accepts, not the newest for A alone.
+        assert!(
+            output.compiler_version.starts_with("v0.8.28+"),
+            "{}",
+            output.compiler_version
+        );
+        assert_eq!(recompile_alone(&output, "A"), output.bytecode);
+
+        write(
+            &root,
+            "src/Invalid.sol",
+            "pragma solidity ^0.8.28; invalid syntax;",
+        );
+        let error = release_args(&root, "A", Some("src/A.sol"))
+            .run_for_release()
+            .unwrap_err();
+        assert!(
+            matches!(*error, PhoundryError::CompilationError(_)),
+            "{error}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn release_input_refuses_inputs_that_do_not_reproduce_the_build() {
+        let (_temp_dir, root) = setup_test_project();
+        write(
+            &root,
+            "foundry.toml",
+            "[profile.default]\nsolc = \"0.8.28\"\noffline = true\n",
+        );
+        let args = release_args(&root, "TestContract", Some("src/TestContract.sol"));
+        let build = crate::compile::compile(args.build_opts()).unwrap();
+        let artifact = args.select(&build).unwrap();
+        let output = args.output(artifact).unwrap();
+        assert!(args.release_input(artifact, &output).is_ok());
+
+        let other_bytes = BuildAndFlatOutput {
+            bytecode: "0x00".into(),
+            ..args.output(artifact).unwrap()
+        };
+        let error = args.release_input(artifact, &other_bytes).unwrap_err();
+        assert!(error.to_string().contains("different bytecode"), "{error}");
+
+        // A source edited after the build no longer matches the recorded hash.
+        write(
+            &root,
+            "src/TestContract.sol",
+            "pragma solidity 0.8.28; contract TestContract {}",
+        );
+        let error = args.release_input(artifact, &output).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("src/TestContract.sol no longer matches"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn release_input_carries_sources_found_through_include_paths() {
+        let (_temp_dir, root) = setup_test_project();
+        write(
+            &root,
+            "foundry.toml",
+            "[profile.default]\nsolc = \"0.8.28\"\noffline = true\n",
+        );
+        write(
+            &root,
+            "lib/foo/src/Y.sol",
+            "pragma solidity 0.8.28; library Y { function v() internal pure returns (uint) { return 7; } }",
+        );
+        write(
+            &root,
+            "lib/foo/src/X.sol",
+            "pragma solidity 0.8.28; import {Y} from \"src/Y.sol\"; library X { function v() internal pure returns (uint) { return Y.v(); } }",
+        );
+        write(
+            &root,
+            "src/Uses.sol",
+            "pragma solidity 0.8.28; import {X} from \"lib/foo/src/X.sol\"; contract Uses { function v() external pure returns (uint) { return X.v(); } }",
+        );
+        let output = release_args(&root, "Uses", Some("src/Uses.sol"))
+            .run_for_release()
+            .unwrap();
+        let input: Value = serde_json::from_str(output.compiler_input.as_deref().unwrap()).unwrap();
+        assert!(
+            input["sources"]["src/Y.sol"]["content"]
+                .as_str()
+                .unwrap()
+                .contains("return 7")
+        );
+        assert!(input["sources"].get("src/TestContract.sol").is_none());
+        assert_eq!(recompile_alone(&output, "Uses"), output.bytecode);
     }
 }

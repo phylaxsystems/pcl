@@ -257,3 +257,124 @@ fn verify_cli_succeeds_for_credible_toml_fixture() {
 
     assert_verify_success(output);
 }
+
+/// Runs `pcl --json <args> --root <project>` and returns success plus the envelope.
+#[cfg(feature = "credible")]
+fn pcl_json(project: &Path, args: &[&str]) -> (bool, serde_json::Value) {
+    let output = Command::new(env!("CARGO_BIN_EXE_pcl"))
+        .arg("--json")
+        .args(args)
+        .args(["--root", project.to_str().expect("utf-8 temp path")])
+        .output()
+        .expect("run pcl");
+    let stream = if output.stdout.is_empty() {
+        &output.stderr
+    } else {
+        &output.stdout
+    };
+    let envelope = serde_json::from_slice(stream).unwrap_or_else(|_| {
+        panic!(
+            "json envelope\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    (output.status.success(), envelope)
+}
+
+#[cfg(feature = "credible")]
+fn set_assertion_file(project: &Path, file: &str) {
+    let config = project.join("assertions/credible.toml");
+    let toml: Vec<String> = fs::read_to_string(&config)
+        .expect("read credible.toml")
+        .lines()
+        .map(|line| {
+            if line.starts_with("file = ") {
+                format!("file = \"{file}\"")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+    fs::write(config, toml.join("\n")).expect("write credible.toml");
+}
+
+#[cfg(feature = "credible")]
+#[test]
+fn release_and_verify_select_the_configured_file_over_a_same_named_contract() {
+    let project = fixture_project();
+    // Sorts first and declares the same contract name without triggers.
+    fs::write(
+        project.path().join("assertions/src/AAA.sol"),
+        "pragma solidity ^0.8.28;\ncontract NoArgsAssertion { function x() external {} }\n",
+    )
+    .expect("write duplicate");
+
+    for file in [
+        "assertions/src/NoArgsAssertion.a.sol:NoArgsAssertion",
+        "assertions/src/NoArgsAssertion.a.sol",
+    ] {
+        set_assertion_file(project.path(), file);
+        let (ok, envelope) = pcl_json(project.path(), &["apply", "--dry-run"]);
+        assert!(ok, "{envelope}");
+        let item = &envelope["data"]["payload"]["contracts"]["mock"]["assertions"][0];
+        assert_eq!(
+            item["compilerSourcePath"],
+            "assertions/src/NoArgsAssertion.a.sol"
+        );
+        let input: serde_json::Value =
+            serde_json::from_str(item["compilerInput"].as_str().expect("compiler input"))
+                .expect("compiler input json");
+        let sources: Vec<_> = input["sources"]
+            .as_object()
+            .expect("sources")
+            .keys()
+            .collect();
+        assert_eq!(sources, ["assertions/src/NoArgsAssertion.a.sol"]);
+        let (ok, envelope) = pcl_json(project.path(), &["verify"]);
+        assert!(ok, "{file}: {envelope}");
+    }
+    let (ok, envelope) = pcl_json(
+        project.path(),
+        &[
+            "verify",
+            "assertions/src/NoArgsAssertion.a.sol:NoArgsAssertion",
+        ],
+    );
+    assert!(ok, "{envelope}");
+}
+
+#[cfg(feature = "credible")]
+#[test]
+fn release_accepts_bare_toml_file_names_and_names_missing_files() {
+    let project = fixture_project();
+    set_assertion_file(project.path(), "NoArgsAssertion.a.sol");
+    let (ok, envelope) = pcl_json(project.path(), &["apply", "--dry-run"]);
+    assert!(ok, "{envelope}");
+    assert_eq!(
+        envelope["data"]["payload"]["contracts"]["mock"]["assertions"][0]["compilerSourcePath"],
+        "assertions/src/NoArgsAssertion.a.sol"
+    );
+
+    set_assertion_file(project.path(), "assertions/src/Typo.a.sol");
+    let (ok, envelope) = pcl_json(project.path(), &["apply", "--dry-run"]);
+    assert!(!ok);
+    assert_eq!(envelope["error"]["code"], "build.failed");
+    let message = envelope["error"]["message"].as_str().expect("message");
+    assert!(message.contains("assertions/src/Typo.a.sol"), "{message}");
+}
+
+#[cfg(feature = "credible")]
+#[test]
+fn release_fails_on_unrelated_invalid_project_sources() {
+    let project = fixture_project();
+    fs::write(
+        project.path().join("assertions/src/Invalid.sol"),
+        "pragma solidity ^0.8.28; invalid syntax;",
+    )
+    .expect("write invalid source");
+    for command in [["apply", "--dry-run"], ["deploy", "--dry-run"]] {
+        let (ok, envelope) = pcl_json(project.path(), &command);
+        assert!(!ok, "{command:?} succeeded: {envelope}");
+        assert_eq!(envelope["error"]["code"], "build.failed", "{envelope}");
+    }
+}

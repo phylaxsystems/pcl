@@ -9276,6 +9276,7 @@ name = "pcl-phoundry"
 version = "1.9.0"
 dependencies = [
  "alloy-json-abi",
+ "alloy-primitives",
  "clap",
  "color-eyre",
  "forge",

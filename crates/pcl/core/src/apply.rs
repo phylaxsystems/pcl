@@ -17,6 +17,7 @@ use crate::{
     config::CliConfig,
     credible_config::{
         CredibleToml,
+        assertion_build_args,
         assertion_contract_name,
     },
     diff::PreviewResponse,
@@ -46,10 +47,6 @@ use inquire::Select;
 use pcl_common::args::{
     CliArgs,
     OutputMode,
-};
-use pcl_phoundry::{
-    DEFAULT_ASSERTION_CONTRACTS_DIR,
-    build_and_flatten::BuildAndFlattenArgs,
 };
 use serde_json::{
     Value,
@@ -399,23 +396,18 @@ impl ApplyArgs {
             for assertion in &contract.assertions {
                 let build_key = assertion.file.clone();
                 if !built_assertions.contains_key(&build_key) {
-                    let output = BuildAndFlattenArgs {
-                        root: Some(root.to_path_buf()),
-                        assertion_contract: assertion_contract_name(&assertion.file)?,
-                        contracts: assertion_contracts_dir(&assertion.file),
-                    }
-                    .run_for_release(&root.join(assertion_source_file(&assertion.file)))
-                    .map_err(ApplyError::BuildFailed)?;
+                    let output = assertion_build_args(root, &assertion.file)?
+                        .run_for_release()
+                        .map_err(ApplyError::BuildFailed)?;
                     built_assertions.insert(build_key.clone(), output);
                 }
 
-                let (built, compiler_input) =
-                    built_assertions.get(&build_key).ok_or_else(|| {
-                        ApplyError::InvalidConfig(format!(
-                            "Missing build output for assertion file {}",
-                            assertion.file
-                        ))
-                    })?;
+                let built = built_assertions.get(&build_key).ok_or_else(|| {
+                    ApplyError::InvalidConfig(format!(
+                        "Missing build output for assertion file {}",
+                        assertion.file
+                    ))
+                })?;
 
                 let contract_name = assertion_contract_name(&assertion.file)?;
 
@@ -428,12 +420,7 @@ impl ApplyArgs {
                     verification_inputs.push((display_name, deployment_bytecode));
                 }
 
-                assertions.push(build_assertion_item(
-                    assertion,
-                    built,
-                    &contract_name,
-                    compiler_input,
-                )?);
+                assertions.push(build_assertion_item(assertion, built, &contract_name)?);
             }
 
             let contract_value = build_contract_value(contract, assertions)?;
@@ -602,25 +589,10 @@ where
         .map_err(|e| ApplyError::InvalidConfig(format!("Invalid {field}: {e}")))
 }
 
-fn assertion_contracts_dir(file: &str) -> PathBuf {
-    assertion_source_file(file)
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map_or_else(
-            || PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
-            Path::to_path_buf,
-        )
-}
-
-fn assertion_source_file(file: &str) -> &Path {
-    Path::new(file.rsplit_once(':').map_or(file, |(path, _)| path))
-}
-
 fn build_assertion_item(
     assertion: &crate::credible_config::CredibleAssertion,
     built: &pcl_phoundry::build_and_flatten::BuildAndFlatOutput,
     contract_name: &str,
-    compiler_input: &str,
 ) -> Result<ProjectsCreateReleaseBodyContractsValueAssertionsItem, ApplyError> {
     let constructor_abi_signature = abi::build_signature(&built.abi, &assertion.args)?;
 
@@ -633,7 +605,11 @@ fn build_assertion_item(
         )?),
         bytecode: parse_field(&built.bytecode, "bytecode")?,
         flattened_source: parse_field(&built.flattened_source, "flattened source")?,
-        compiler_input: Some(parse_field(compiler_input, "compiler input")?),
+        compiler_input: built
+            .compiler_input
+            .as_deref()
+            .map(|input| parse_field(input, "compiler input"))
+            .transpose()?,
         compiler_source_path: Some(parse_field(
             &built.compilation_target,
             "compiler source path",
@@ -805,6 +781,7 @@ mod tests {
             abi,
             bytecode: "0x6080".to_string(),
             evm_version: "paris".to_string(),
+            compiler_input: Some(r#"{"language":"Solidity"}"#.into()),
             ..Default::default()
         }
     }
@@ -832,8 +809,7 @@ mod tests {
             args: vec!["0xF31b02F47596AcC7328E9fb04aFc52Fe91Da6071".to_string()],
         };
 
-        let item = build_assertion_item(&assertion, &built, "A", r#"{"language":"Solidity"}"#)
-            .expect("builds item");
+        let item = build_assertion_item(&assertion, &built, "A").expect("builds item");
 
         let sig = item
             .constructor_abi_signature
@@ -857,8 +833,7 @@ mod tests {
             args: vec![],
         };
 
-        let item = build_assertion_item(&assertion, &built, "A", r#"{"language":"Solidity"}"#)
-            .expect("builds item");
+        let item = build_assertion_item(&assertion, &built, "A").expect("builds item");
 
         let sig = item
             .constructor_abi_signature

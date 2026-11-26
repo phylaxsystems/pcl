@@ -3,7 +3,7 @@ use crate::{
     credible_config::{
         CredibleConfigError,
         CredibleToml,
-        assertion_contract_name,
+        assertion_build_args,
     },
     error::VerifyError,
     output::{
@@ -162,17 +162,21 @@ impl VerifyArgs {
     }
 
     fn build_single(&self, assertion: &str, root: &Path) -> Result<Vec<VerifyInput>, VerifyError> {
-        let contract_name = parse_assertion_name(assertion);
-        let output = BuildAndFlattenArgs {
-            root: Some(root.to_path_buf()),
-            assertion_contract: contract_name.clone(),
-            contracts: assertion_contracts_dir(assertion),
-        }
-        .run()
-        .map_err(VerifyError::BuildFailed)?;
+        // `file:Contract` selects like apply; a bare contract name is looked up by name.
+        let args = if assertion.contains(':') {
+            assertion_build_args(root, assertion)?
+        } else {
+            BuildAndFlattenArgs {
+                root: Some(root.to_path_buf()),
+                assertion_contract: assertion.to_string(),
+                contracts: PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
+                source: None,
+            }
+        };
+        let output = args.run().map_err(VerifyError::BuildFailed)?;
 
         let bytecode = build_deployment_bytecode(&output.bytecode, &output.abi, &self.args)?;
-        let display_name = format_display_name(&contract_name, &self.args);
+        let display_name = format_display_name(&args.assertion_contract, &self.args);
 
         Ok(vec![VerifyInput {
             display_name,
@@ -187,18 +191,12 @@ impl VerifyArgs {
         let mut inputs = Vec::new();
         for contract in credible.contracts.values() {
             for assertion in &contract.assertions {
-                let contract_name = assertion_contract_name(&assertion.file)?;
-                let output = BuildAndFlattenArgs {
-                    root: Some(root.to_path_buf()),
-                    assertion_contract: contract_name.clone(),
-                    contracts: assertion_contracts_dir(&assertion.file),
-                }
-                .run()
-                .map_err(VerifyError::BuildFailed)?;
+                let args = assertion_build_args(root, &assertion.file)?;
+                let output = args.run().map_err(VerifyError::BuildFailed)?;
 
                 let bytecode =
                     build_deployment_bytecode(&output.bytecode, &output.abi, &assertion.args)?;
-                let display_name = format_display_name(&contract_name, &assertion.args);
+                let display_name = format_display_name(&args.assertion_contract, &assertion.args);
 
                 inputs.push(VerifyInput {
                     display_name,
@@ -215,29 +213,6 @@ impl VerifyArgs {
 
         Ok(inputs)
     }
-}
-
-/// Parses a CLI assertion argument into a contract name.
-///
-/// - `ContractName` -> `ContractName`
-/// - `file.sol:ContractName` -> `ContractName`
-fn parse_assertion_name(arg: &str) -> String {
-    if let Some((_, contract_name)) = arg.rsplit_once(':') {
-        contract_name.to_string()
-    } else {
-        arg.to_string()
-    }
-}
-
-fn assertion_contracts_dir(file: &str) -> PathBuf {
-    let source_path = file.split_once(':').map_or(file, |(path, _)| path);
-    Path::new(source_path)
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map_or_else(
-            || PathBuf::from(DEFAULT_ASSERTION_CONTRACTS_DIR),
-            Path::to_path_buf,
-        )
 }
 
 /// Result of verifying a set of assertions.
@@ -355,19 +330,6 @@ pub fn print_human_result(display_name: &str, result: &VerificationResult) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_assertion_name_bare() {
-        assert_eq!(parse_assertion_name("MyContract"), "MyContract");
-    }
-
-    #[test]
-    fn parse_assertion_name_qualified() {
-        assert_eq!(
-            parse_assertion_name("MyContract.a.sol:MyContract"),
-            "MyContract"
-        );
-    }
 
     #[test]
     fn format_display_name_no_args() {

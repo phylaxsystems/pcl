@@ -30,6 +30,20 @@ pub enum PhoundryError {
     FoundryConfigError(#[source] foundry_config::error::ExtractConfigError),
     #[error("Contract {0} was not found in the build output")]
     ContractNotFound(String),
+    #[error(
+        "Assertion {contract} was not found: {path:?} does not declare it and no other built file does"
+    )]
+    AssertionNotFound { path: PathBuf, contract: String },
+    #[error(
+        "Assertion {contract} is not declared in {path:?} and several files declare it: {candidates:?}. Set the file that declares it"
+    )]
+    AmbiguousAssertion {
+        path: PathBuf,
+        contract: String,
+        candidates: Vec<PathBuf>,
+    },
+    #[error("Compiler input for {contract} cannot reproduce the project build: {reason}")]
+    ReleaseInputNotReproducible { contract: String, reason: String },
     #[error("Invalid path: {0:?}")]
     InvalidPath(PathBuf),
     #[error("Directory not found: {0:?}")]
