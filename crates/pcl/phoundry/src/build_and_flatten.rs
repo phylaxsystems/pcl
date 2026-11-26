@@ -616,17 +616,17 @@ fn verify_compiled_sources(
         )));
     }
     for (path, source) in &sources.inner {
-        let file = locate_compiled_source(root, Path::new(path), include_paths, libs);
+        let key = Path::new(path);
+        let file = locate_compiled_source(root, key, include_paths, libs);
         let on_disk =
             std::fs::read_to_string(&file).map_err(|_| source_hash_mismatch(root, &file))?;
-        let on_disk = normalized_source(&on_disk);
-        if let Some(snapshot) = source.content.as_deref() {
-            let snapshot = normalized_source(snapshot);
-            if on_disk != snapshot {
-                return Err(source_hash_mismatch(root, &file));
-            }
+        let consumed = consumed_source(root, key, on_disk);
+        if let Some(snapshot) = source.content.as_deref()
+            && consumed != snapshot
+        {
+            return Err(source_hash_mismatch(root, &file));
         }
-        if !source_hashes_match(&source_keccak(&on_disk), &source.keccak256) {
+        if !source_hashes_match(&source_keccak(&consumed), &source.keccak256) {
             return Err(source_hash_mismatch(root, &file));
         }
     }
@@ -639,7 +639,21 @@ fn source_hash_mismatch(root: &Path, path: &Path) -> Box<PhoundryError> {
     })
 }
 
-/// Foundry normalizes CRLF before solc, and the metadata hash is of that text.
+/// The text solc hashed for this metadata source unit.
+///
+/// Foundry rewrites CRLF to LF for every file it puts in standard JSON, and
+/// those units are files under the project root. A unit solc loaded itself
+/// through an include path, such as `import "Lib.sol"`, is not one of those
+/// files. The compiler hashes that callback read unchanged, CRLF included.
+fn consumed_source(root: &Path, key: &Path, on_disk: String) -> String {
+    if resolve_source(root, key).is_file() {
+        normalized_source(&on_disk)
+    } else {
+        on_disk
+    }
+}
+
+/// Foundry's rewrite of a standard-JSON source before solc hashes it.
 fn normalized_source(content: &str) -> String {
     if content.contains('\r') {
         content.replace("\r\n", "\n")
@@ -808,6 +822,42 @@ mod tests {
     }
 
     #[test]
+    fn include_path_crlf_keeps_callback_bytes() {
+        let project = tempfile::tempdir().expect("temp project");
+        let root = project.path().canonicalize().expect("canonical root");
+        let include = root.join("lib/original");
+        std::fs::create_dir_all(&include).expect("include dir");
+        let source = "pragma solidity 0.8.28;\r\nlibrary Lib {\r\n    function value() internal pure returns (uint256) {\r\n        return 999;\r\n    }\r\n}\r\n";
+        let file = include.join("Lib.sol");
+        std::fs::write(&file, source).expect("crlf lib");
+
+        let matching = sources_of(vec![(
+            "Lib.sol",
+            metadata_source(&source_keccak(source), Some(source)),
+        )]);
+        verify_compiled_sources(&root, &matching, &[include.clone()], &[])
+            .expect("raw CRLF is what solc hashed");
+
+        let lf = source.replace("\r\n", "\n");
+        std::fs::write(&file, &lf).expect("lf lib");
+        let err = verify_compiled_sources(&root, &matching, &[include.clone()], &[])
+            .expect_err("LF is not the callback bytes");
+        assert!(
+            matches!(&*err, PhoundryError::SourceHashMismatch { .. }),
+            "{err}"
+        );
+
+        let changed = source.replace("999", "1");
+        std::fs::write(&file, &changed).expect("changed lib");
+        let err = verify_compiled_sources(&root, &matching, &[include], &[])
+            .expect_err("changed callback source");
+        assert!(
+            matches!(&*err, PhoundryError::SourceHashMismatch { .. }),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn configured_path_flattens_the_artifact_that_was_compiled() {
         let fixture =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../cli/tests/fixtures/duplicate-guard");
@@ -959,13 +1009,17 @@ mod tests {
         .expect("guard");
         let lib_source = |marker: &str| {
             format!(
-                "pragma solidity 0.8.28; library Lib {{ function value() internal pure returns (uint256) {{ return {marker}; }} }}\n"
+                "pragma solidity 0.8.28;\r\nlibrary Lib {{\r\n    function value() internal pure returns (uint256) {{\r\n        return {marker};\r\n    }}\r\n}}\r\n"
             )
         };
         std::fs::write(&original_lib, lib_source("999")).expect("original lib");
         std::fs::write(&swapped_lib, lib_source("1")).expect("swapped lib");
         let original_bytes = std::fs::read(&original_lib).expect("read original");
         let swapped_bytes = std::fs::read(&swapped_lib).expect("read swapped");
+        assert!(
+            original_bytes.windows(2).any(|pair| pair == b"\r\n"),
+            "include-path library is CRLF"
+        );
 
         let args = BuildAndFlattenArgs {
             root: Some(root.to_path_buf()),
@@ -1017,6 +1071,20 @@ mod tests {
         assert_eq!(
             std::fs::read(&swapped_lib).expect("swapped intact"),
             swapped_bytes
+        );
+
+        std::fs::write(&original_lib, lib_source("2")).expect("change compiled lib");
+        let err = BuildAndFlattenArgs::flatten_verified(
+            &project_root,
+            &metadata.sources,
+            &source_path,
+            &settings,
+            &config,
+        )
+        .expect_err("a changed include-path library is not the compiled source");
+        assert!(
+            matches!(&*err, PhoundryError::SourceHashMismatch { .. }),
+            "{err}"
         );
     }
 
